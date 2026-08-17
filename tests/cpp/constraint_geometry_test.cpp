@@ -263,6 +263,131 @@ void test_box_center_degeneracy_is_finite_and_deterministic() {
   }
 }
 
+void test_cylinder_ids_validation_and_checkpoint() {
+  cm::ConstraintSet constraints;
+  cm::CylinderConstraintInit cylinder;
+  cylinder.radius = 2.0F;
+  cylinder.half_height = 3.0F;
+  const auto cylinder_id = constraints.add_cylinder(cylinder);
+  assert(cylinder_id == 1);
+  assert(constraints.size() == 1);
+  assert(close(constraints.cylinders()[0].half_height, 3.0F));
+
+  cylinder.radius = 0.0F;
+  bool rejected = false;
+  try {
+    static_cast<void>(constraints.add_cylinder(cylinder));
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  assert(rejected);
+
+  cylinder.radius = 2.0F;
+  cylinder.half_height = -1.0F;
+  rejected = false;
+  try {
+    static_cast<void>(constraints.add_cylinder(cylinder));
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  assert(rejected);
+
+  const auto checkpoint = constraints.checkpoint();
+  assert(checkpoint.cylinders.size() == 1);
+  const cm::ConstraintSet restored(checkpoint);
+  assert(restored.cylinders().size() == 1);
+  assert(close(restored.cylinders()[0].radius, 2.0F));
+}
+
+void test_outside_cylinder_barrel_contact_uses_two_weighted_endpoints() {
+  cm::WorldState state;
+  add_capsule(state, {1.4F, 0.0F, 0.0F}, {0.0F, 0.0F, 1.0F});
+  cm::ConstraintSet constraints;
+  cm::CylinderConstraintInit cylinder;
+  cylinder.coefficient = 2.0F;
+  const auto cylinder_id = constraints.add_cylinder(cylinder);
+
+  const auto graph = cm::find_external_contacts_cpu(state, constraints);
+  assert(graph.size() == 2);
+  for (const auto& contact : graph.contacts()) {
+    assert(contact.constraint_id == cylinder_id);
+    assert(contact.constraint_kind == cm::ExternalConstraintKind::cylinder);
+    assert(close(contact.signed_separation, -0.1F));
+    assert(close(contact.normal.x, -1.0F));
+    assert(close(contact.point_on_cell.x, 0.9F));
+    assert(close(contact.weight, std::sqrt(2.0F)));
+  }
+}
+
+void test_outside_cylinder_rim_contact_has_blended_normal() {
+  cm::WorldState state;
+  add_capsule(state, {1.3F, 0.0F, 1.3F}, {0.0F, 1.0F, 0.0F}, 0.0F);
+  cm::ConstraintSet constraints;
+  cm::CylinderConstraintInit cylinder;
+  constraints.add_cylinder(cylinder);
+
+  const auto graph = cm::find_external_contacts_cpu(state, constraints);
+  assert(graph.size() == 2);
+  const auto diagonal = 1.0F / std::sqrt(2.0F);
+  for (const auto& contact : graph.contacts()) {
+    assert(close(contact.signed_separation, 0.3F * std::sqrt(2.0F) - 0.5F));
+    assert(close(contact.normal.x, -diagonal));
+    assert(close(contact.normal.z, -diagonal));
+    assert(close(cm::norm(contact.normal), 1.0F));
+  }
+}
+
+void test_outside_cylinder_cap_contact_points_axially() {
+  cm::WorldState state;
+  add_capsule(state, {0.5F, 0.0F, 1.4F}, {1.0F, 0.0F, 0.0F}, 0.0F);
+  cm::ConstraintSet constraints;
+  cm::CylinderConstraintInit cylinder;
+  constraints.add_cylinder(cylinder);
+
+  const auto graph = cm::find_external_contacts_cpu(state, constraints);
+  assert(graph.size() == 2);
+  for (const auto& contact : graph.contacts()) {
+    assert(close(contact.signed_separation, -0.1F));
+    assert(close(contact.normal.z, -1.0F));
+    assert(close(contact.point_on_cell.z, 0.9F));
+  }
+}
+
+void test_inside_cylinder_confines_like_a_dish() {
+  cm::WorldState state;
+  add_capsule(state, {4.8F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F}, 0.0F);
+  cm::ConstraintSet constraints;
+  cm::CylinderConstraintInit cylinder;
+  cylinder.radius = 5.0F;
+  cylinder.half_height = 5.0F;
+  cylinder.allowed_region = cm::ConstraintRegion::inside;
+  constraints.add_cylinder(cylinder);
+
+  const auto graph = cm::find_external_contacts_cpu(state, constraints);
+  assert(graph.size() == 2);
+  for (const auto& contact : graph.contacts()) {
+    assert(close(contact.signed_separation, -0.3F));
+    assert(close(contact.normal.x, 1.0F));
+    assert(close(contact.point_on_cell.x, 5.3F));
+  }
+}
+
+void test_cylinder_axis_degeneracy_is_finite_and_radial() {
+  cm::WorldState state;
+  add_capsule(state, {}, {0.0F, 1.0F, 0.0F}, 0.0F);
+  cm::ConstraintSet constraints;
+  cm::CylinderConstraintInit cylinder;
+  constraints.add_cylinder(cylinder);
+
+  const auto graph = cm::find_external_contacts_cpu(state, constraints);
+  assert(graph.size() == 2);
+  for (const auto& contact : graph.contacts()) {
+    assert(close(cm::norm(contact.normal), 1.0F));
+    assert(close(contact.normal.x, -1.0F));
+    assert(close(contact.signed_separation, -1.5F));
+  }
+}
+
 void test_simulation_exposes_cpu_constraint_graph() {
   cm::Simulation simulation;
   cm::CellInit cell;
@@ -291,6 +416,12 @@ int main() {
   test_box_interior_endpoint_escapes_toward_nearest_face();
   test_inside_box_confines_like_a_chamber();
   test_box_center_degeneracy_is_finite_and_deterministic();
+  test_cylinder_ids_validation_and_checkpoint();
+  test_outside_cylinder_barrel_contact_uses_two_weighted_endpoints();
+  test_outside_cylinder_rim_contact_has_blended_normal();
+  test_outside_cylinder_cap_contact_points_axially();
+  test_inside_cylinder_confines_like_a_dish();
+  test_cylinder_axis_degeneracy_is_finite_and_radial();
   test_simulation_exposes_cpu_constraint_graph();
   return 0;
 }

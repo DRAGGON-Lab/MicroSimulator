@@ -187,6 +187,79 @@ void append_box_contacts(std::vector<ExternalContact>& contacts, const CellGeome
   }
 }
 
+struct CylinderSurface {
+  float signed_distance;
+  Vec3 outward;
+};
+
+CylinderSurface cylinder_surface(const Vec3& point, const CylinderConstraint& cylinder,
+                                 float degeneracy_epsilon) {
+  const Vec3 delta{point.x - cylinder.center.x, point.y - cylinder.center.y, 0.0F};
+  const auto radial_distance = norm(delta);
+  const auto radial = radial_distance > degeneracy_epsilon ? delta * (1.0F / radial_distance)
+                                                           : Vec3{1.0F, 0.0F, 0.0F};
+  const auto z_offset = point.z - cylinder.center.z;
+  const auto z_sign = z_offset >= 0.0F ? 1.0F : -1.0F;
+  const Vec3 axial{0.0F, 0.0F, z_sign};
+  const auto radial_excess = radial_distance - cylinder.radius;
+  const auto axial_excess = std::abs(z_offset) - cylinder.half_height;
+  if (radial_excess > 0.0F && axial_excess > 0.0F) {
+    const auto distance = std::sqrt((radial_excess * radial_excess) + (axial_excess * axial_excess));
+    return {distance, (radial * radial_excess + axial * axial_excess) * (1.0F / distance)};
+  }
+  if (radial_excess > 0.0F) {
+    return {radial_excess, radial};
+  }
+  if (axial_excess > 0.0F) {
+    return {axial_excess, axial};
+  }
+  if (-radial_excess <= -axial_excess) {
+    return {radial_excess, radial};
+  }
+  return {axial_excess, axial};
+}
+
+void append_cylinder_contacts(std::vector<ExternalContact>& contacts,
+                              const CellGeometryView& geometry, std::size_t slot,
+                              const CylinderConstraint& cylinder,
+                              const ConstraintContactParameters& parameters) {
+  const auto cell_endpoints = endpoints(geometry, slot);
+  std::array<float, 2> separations{};
+  std::array<Vec3, 2> normals{};
+  std::array<bool, 2> active{};
+  for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
+    const auto surface = cylinder_surface(cell_endpoints[index].centerline_point, cylinder,
+                                          parameters.degeneracy_epsilon);
+    if (cylinder.allowed_region == ConstraintRegion::outside) {
+      separations[index] = surface.signed_distance - geometry.radii[slot];
+      normals[index] = surface.outward * -1.0F;
+    } else {
+      separations[index] = -surface.signed_distance - geometry.radii[slot];
+      normals[index] = surface.outward;
+    }
+    active[index] = separations[index] < parameters.activation_margin;
+  }
+  const auto active_count = static_cast<unsigned>(active[0]) + static_cast<unsigned>(active[1]);
+  const auto weight = cylinder.coefficient * (active_count == 2 ? inverse_sqrt_two : 1.0F);
+  for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
+    if (!active[index]) {
+      continue;
+    }
+    contacts.push_back({
+        .cell_id = geometry.ids[slot],
+        .cell_slot = static_cast<Slot>(slot),
+        .constraint_id = cylinder.id,
+        .constraint_kind = ExternalConstraintKind::cylinder,
+        .endpoint = cell_endpoints[index].endpoint,
+        .point_on_cell =
+            cell_endpoints[index].centerline_point + normals[index] * geometry.radii[slot],
+        .normal = normals[index],
+        .signed_separation = separations[index],
+        .weight = weight,
+    });
+  }
+}
+
 }  // namespace
 
 ExternalContactGraph find_external_contacts_cpu(const WorldState& state,
@@ -205,6 +278,9 @@ ExternalContactGraph find_external_contacts_cpu(const WorldState& state,
     }
     for (const auto& box : constraints.boxes()) {
       append_box_contacts(contacts, geometry, slot, box, parameters);
+    }
+    for (const auto& cylinder : constraints.cylinders()) {
+      append_cylinder_contacts(contacts, geometry, slot, cylinder, parameters);
     }
   }
   std::ranges::sort(contacts, {}, [](const ExternalContact& contact) {

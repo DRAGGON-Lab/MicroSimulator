@@ -924,6 +924,16 @@ class CudaBackend final : public ComputeBackend {
                                     box.coefficient),
       });
     }
+    for (const auto& cylinder : constraints.cylinders()) {
+      values.push_back({
+          .id = cylinder.id,
+          .kind = static_cast<std::uint32_t>(ExternalConstraintKind::cylinder),
+          .allowed_region = static_cast<std::uint32_t>(cylinder.allowed_region),
+          .geometry = make_float4(cylinder.center.x, cylinder.center.y, cylinder.center.z,
+                                  cylinder.radius),
+          .parameters = make_float4(cylinder.half_height, 0.0F, 0.0F, cylinder.coefficient),
+      });
+    }
     std::ranges::sort(values, {}, &cuda::ExternalConstraintGpu::id);
     copy_to_device(external_constraints_, values, "failed to upload CUDA external constraints");
   }
@@ -1096,7 +1106,8 @@ class CudaBackend final : public ComputeBackend {
     std::vector<ExternalContact> contacts;
     contacts.reserve(contact_count);
     for (std::uint32_t index = 0; index < contact_count; ++index) {
-      if (constraint_kinds[index] > static_cast<std::uint32_t>(ExternalConstraintKind::box) ||
+      if (constraint_kinds[index] >
+              static_cast<std::uint32_t>(ExternalConstraintKind::cylinder) ||
           endpoints[index] > static_cast<std::uint32_t>(RodEndpoint::positive)) {
         throw std::runtime_error("CUDA external-contact kernel produced an invalid tag");
       }

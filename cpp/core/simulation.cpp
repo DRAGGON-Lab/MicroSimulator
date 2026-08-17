@@ -112,6 +112,10 @@ ConstraintId Simulation::add_box_constraint(const BoxConstraintInit& box) {
   return constraints_.add_box(box);
 }
 
+ConstraintId Simulation::add_cylinder_constraint(const CylinderConstraintInit& cylinder) {
+  return constraints_.add_cylinder(cylinder);
+}
+
 void Simulation::set_cell_geometry(CellId id, Vec3 position, Vec3 direction, float length) {
   state_.set_cell_geometry(id, position, direction, length);
 }
