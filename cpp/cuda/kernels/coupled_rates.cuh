@@ -16,10 +16,11 @@ cudaError_t launch_advance_coupled(
     const std::uint32_t* signal_outputs, float* workspace, const float* grid_levels,
     float* grid_output, const float* diffusion, const float4* advection, const float* fixed_values,
     const float* reaction_source, const float* reaction_loss, const std::uint8_t* obstacles,
-    float* cell_signal_rates, std::uint32_t* error, SignalGridBoundariesGpu boundaries,
-    SignalGridShapeGpu shape, float4 origin, float4 spacing, float dt,
-    std::uint32_t species_count, std::uint32_t signal_count, std::uint32_t instruction_count,
-    std::uint32_t cell_count, std::uint32_t level_count, bool crank_nicolson,
-    cudaStream_t stream);
+    const float* x_faces, const float* y_faces, const float* z_faces,
+    std::uint32_t has_velocity_field, float* cell_signal_rates, std::uint32_t* error,
+    SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape, float4 origin, float4 spacing,
+    float dt, std::uint32_t species_count, std::uint32_t signal_count,
+    std::uint32_t instruction_count, std::uint32_t cell_count, std::uint32_t level_count,
+    bool crank_nicolson, cudaStream_t stream);
 
 }  // namespace cm::cuda

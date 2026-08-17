@@ -288,7 +288,9 @@ __global__ void advance_coupled_grid(const float* levels, float* output, const f
                                      const float4* advection, const float* fixed_values,
                                      const float* reaction_source, const float* reaction_loss,
                                      const float4* centers, const float* cell_signal_rates,
-                                     const std::uint8_t* obstacles, std::uint32_t* error,
+                                     const std::uint8_t* obstacles, const float* x_faces,
+                                     const float* y_faces, const float* z_faces,
+                                     std::uint32_t has_velocity_field, std::uint32_t* error,
                                      SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
                                      float4 origin, float4 spacing, float dt,
                                      std::uint32_t signal_count, std::uint32_t cell_count,
@@ -364,7 +366,22 @@ __global__ void advance_coupled_grid(const float* levels, float* output, const f
           ? (boundaries.z_upper == 0 ||
              (boundaries.z_upper == 1 && obstacles[site_index(shape, x, y, 0)] != 0))
           : obstacles[site_index(shape, x, y, z + 1)] != 0;
-  const float velocity[3]{advection[signal].x, advection[signal].y, advection[signal].z};
+  float face_lower[3];
+  float face_upper[3];
+  if (has_velocity_field != 0) {
+    face_lower[0] = x_faces[x * shape.y * shape.z + y * shape.z + z];
+    face_upper[0] = x_faces[(x + 1) * shape.y * shape.z + y * shape.z + z];
+    face_lower[1] = y_faces[x * (shape.y + 1) * shape.z + y * shape.z + z];
+    face_upper[1] = y_faces[x * (shape.y + 1) * shape.z + (y + 1) * shape.z + z];
+    face_lower[2] = z_faces[x * shape.y * (shape.z + 1) + y * (shape.z + 1) + z];
+    face_upper[2] = z_faces[x * shape.y * (shape.z + 1) + y * (shape.z + 1) + z + 1];
+  } else {
+    const float velocity[3]{advection[signal].x, advection[signal].y, advection[signal].z};
+    for (std::uint32_t axis = 0; axis < 3; ++axis) {
+      face_lower[axis] = velocity[axis];
+      face_upper[axis] = velocity[axis];
+    }
+  }
   const float grid_spacing[3]{spacing.x, spacing.y, spacing.z};
   float rate = 0.0F;
   for (std::uint32_t axis = 0; axis < 3; ++axis) {
@@ -380,10 +397,10 @@ __global__ void advance_coupled_grid(const float* levels, float* output, const f
     const auto inverse_spacing = 1.0F / grid_spacing[axis];
     rate += diffusion[signal] * (lower[axis] - 2.0F * current + upper[axis]) * inverse_spacing *
             inverse_spacing;
-    auto lower_flux =
-        velocity[axis] >= 0.0F ? velocity[axis] * lower[axis] : velocity[axis] * current;
-    auto upper_flux =
-        velocity[axis] >= 0.0F ? velocity[axis] * current : velocity[axis] * upper[axis];
+    auto lower_flux = face_lower[axis] >= 0.0F ? face_lower[axis] * lower[axis]
+                                               : face_lower[axis] * current;
+    auto upper_flux = face_upper[axis] >= 0.0F ? face_upper[axis] * current
+                                               : face_upper[axis] * upper[axis];
     if (closed_lower[axis]) {
       lower_flux = 0.0F;
     }
@@ -417,11 +434,12 @@ cudaError_t launch_advance_coupled(
     const std::uint32_t* signal_outputs, float* workspace, const float* grid_levels,
     float* grid_output, const float* diffusion, const float4* advection, const float* fixed_values,
     const float* reaction_source, const float* reaction_loss, const std::uint8_t* obstacles,
-    float* cell_signal_rates, std::uint32_t* error, SignalGridBoundariesGpu boundaries,
-    SignalGridShapeGpu shape, float4 origin, float4 spacing, float dt,
-    std::uint32_t species_count, std::uint32_t signal_count, std::uint32_t instruction_count,
-    std::uint32_t cell_count, std::uint32_t level_count, bool crank_nicolson,
-    cudaStream_t stream) {
+    const float* x_faces, const float* y_faces, const float* z_faces,
+    std::uint32_t has_velocity_field, float* cell_signal_rates, std::uint32_t* error,
+    SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape, float4 origin, float4 spacing,
+    float dt, std::uint32_t species_count, std::uint32_t signal_count,
+    std::uint32_t instruction_count, std::uint32_t cell_count, std::uint32_t level_count,
+    bool crank_nicolson, cudaStream_t stream) {
   if (cell_count != 0) {
     const auto cell_blocks = ((cell_count - 1) / threads_per_block) + 1;
     advance_coupled_cells<<<cell_blocks, threads_per_block, 0, stream>>>(
@@ -437,8 +455,9 @@ cudaError_t launch_advance_coupled(
   const auto grid_blocks = ((level_count - 1) / threads_per_block) + 1;
   advance_coupled_grid<<<grid_blocks, threads_per_block, 0, stream>>>(
       grid_levels, grid_output, diffusion, advection, fixed_values, reaction_source, reaction_loss,
-      centers, cell_signal_rates, obstacles, error, boundaries, shape, origin, spacing, dt,
-      signal_count, cell_count, level_count, crank_nicolson);
+      centers, cell_signal_rates, obstacles, x_faces, y_faces, z_faces, has_velocity_field, error,
+      boundaries, shape, origin, spacing, dt, signal_count, cell_count, level_count,
+      crank_nicolson);
   return cudaGetLastError();
 }
 

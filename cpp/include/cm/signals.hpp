@@ -61,6 +61,12 @@ struct SignalGridAffineReaction {
   void validate(std::size_t level_count) const;
 };
 
+struct SignalGridVelocityField {
+  std::vector<float> x_faces;
+  std::vector<float> y_faces;
+  std::vector<float> z_faces;
+};
+
 struct SignalGridSpec {
   std::uint32_t signal_count{0};
   GridShape shape;
@@ -70,6 +76,7 @@ struct SignalGridSpec {
   std::vector<Vec3> advection;
   std::optional<SignalGridAffineReaction> reaction;
   std::vector<std::uint8_t> obstacles;
+  std::optional<SignalGridVelocityField> velocity_field;
   SignalIntegrationKind integration{SignalIntegrationKind::forward_euler};
   SignalSolveParameters solver;
   GridBoundary x_lower;
@@ -84,6 +91,9 @@ struct SignalGridSpec {
   [[nodiscard]] float voxel_volume() const noexcept;
   [[nodiscard]] bool has_obstacles() const noexcept;
   [[nodiscard]] bool solid_site(std::size_t site) const noexcept;
+  [[nodiscard]] std::size_t x_face_count() const;
+  [[nodiscard]] std::size_t y_face_count() const;
+  [[nodiscard]] std::size_t z_face_count() const;
   void validate() const;
 };
 

@@ -70,6 +70,51 @@ std::size_t flat_site(const GridShape& shape, std::uint32_t x, std::uint32_t y, 
          (static_cast<std::size_t>(y) * shape.z) + z;
 }
 
+std::size_t x_face_index(const GridShape& shape, std::uint32_t fx, std::uint32_t y,
+                         std::uint32_t z) {
+  return (static_cast<std::size_t>(fx) * shape.y * shape.z) +
+         (static_cast<std::size_t>(y) * shape.z) + z;
+}
+
+std::size_t y_face_index(const GridShape& shape, std::uint32_t x, std::uint32_t fy,
+                         std::uint32_t z) {
+  return (static_cast<std::size_t>(x) * (shape.y + 1) * shape.z) +
+         (static_cast<std::size_t>(fy) * shape.z) + z;
+}
+
+std::size_t z_face_index(const GridShape& shape, std::uint32_t x, std::uint32_t y,
+                         std::uint32_t fz) {
+  return (static_cast<std::size_t>(x) * shape.y * (shape.z + 1)) +
+         (static_cast<std::size_t>(y) * (shape.z + 1)) + fz;
+}
+
+struct FaceVelocities {
+  float lower[3];
+  float upper[3];
+};
+
+FaceVelocities face_velocities(const SignalGridSpec& spec, std::size_t signal, std::uint32_t x,
+                               std::uint32_t y, std::uint32_t z) {
+  FaceVelocities result{};
+  if (spec.velocity_field.has_value()) {
+    const auto& field = *spec.velocity_field;
+    result.lower[0] = field.x_faces[x_face_index(spec.shape, x, y, z)];
+    result.upper[0] = field.x_faces[x_face_index(spec.shape, x + 1, y, z)];
+    result.lower[1] = field.y_faces[y_face_index(spec.shape, x, y, z)];
+    result.upper[1] = field.y_faces[y_face_index(spec.shape, x, y + 1, z)];
+    result.lower[2] = field.z_faces[z_face_index(spec.shape, x, y, z)];
+    result.upper[2] = field.z_faces[z_face_index(spec.shape, x, y, z + 1)];
+    return result;
+  }
+  const std::array<float, 3> velocity{spec.advection[signal].x, spec.advection[signal].y,
+                                      spec.advection[signal].z};
+  for (std::size_t axis = 0; axis < velocity.size(); ++axis) {
+    result.lower[axis] = velocity[axis];
+    result.upper[axis] = velocity[axis];
+  }
+  return result;
+}
+
 float boundary_value(const GridBoundary& boundary, std::size_t signal, float current,
                      float periodic) {
   switch (boundary.kind) {
@@ -149,8 +194,7 @@ float signal_operator_diagonal(const SignalGridSpec& spec, std::size_t signal, s
   }
   const std::array<std::uint32_t, 3> dimensions{spec.shape.x, spec.shape.y, spec.shape.z};
   const std::array<float, 3> spacing{spec.spacing.x, spec.spacing.y, spec.spacing.z};
-  const std::array<float, 3> velocity{spec.advection[signal].x, spec.advection[signal].y,
-                                      spec.advection[signal].z};
+  const auto faces = face_velocities(spec, signal, x, y, z);
   const auto closure = face_closure(spec, x, y, z);
   float diagonal = 0.0F;
   for (std::size_t axis = 0; axis < dimensions.size(); ++axis) {
@@ -166,12 +210,11 @@ float signal_operator_diagonal(const SignalGridSpec& spec, std::size_t signal, s
     if (closure.upper[axis]) {
       diagonal += diffusion_scale;
     }
-    if (velocity[axis] >= 0.0F) {
-      if (!closure.upper[axis]) {
-        diagonal -= velocity[axis] * inverse_spacing;
-      }
-    } else if (!closure.lower[axis]) {
-      diagonal += velocity[axis] * inverse_spacing;
+    if (!closure.upper[axis] && faces.upper[axis] > 0.0F) {
+      diagonal -= faces.upper[axis] * inverse_spacing;
+    }
+    if (!closure.lower[axis] && faces.lower[axis] < 0.0F) {
+      diagonal += faces.lower[axis] * inverse_spacing;
     }
   }
   if (spec.reaction.has_value()) {
@@ -320,6 +363,21 @@ std::size_t SignalGridSpec::level_count() const {
 
 float SignalGridSpec::voxel_volume() const noexcept { return spacing.x * spacing.y * spacing.z; }
 
+std::size_t SignalGridSpec::x_face_count() const {
+  return checked_multiply(static_cast<std::size_t>(shape.x) + 1,
+                          checked_multiply(shape.y, shape.z, "face plane"), "x face count");
+}
+
+std::size_t SignalGridSpec::y_face_count() const {
+  return checked_multiply(static_cast<std::size_t>(shape.y) + 1,
+                          checked_multiply(shape.x, shape.z, "face plane"), "y face count");
+}
+
+std::size_t SignalGridSpec::z_face_count() const {
+  return checked_multiply(static_cast<std::size_t>(shape.z) + 1,
+                          checked_multiply(shape.x, shape.y, "face plane"), "z face count");
+}
+
 bool SignalGridSpec::has_obstacles() const noexcept { return !obstacles.empty(); }
 
 bool SignalGridSpec::solid_site(std::size_t site) const noexcept {
@@ -373,6 +431,82 @@ void SignalGridSpec::validate() const {
                reaction->loss_rates[(signal * sites) + site] != 0.0F)) {
             throw std::invalid_argument(
                 "signal grid affine reaction must be zero at obstacle sites");
+          }
+        }
+      }
+    }
+  }
+  if (velocity_field.has_value()) {
+    const auto& field = *velocity_field;
+    if (field.x_faces.size() != x_face_count() || field.y_faces.size() != y_face_count() ||
+        field.z_faces.size() != z_face_count()) {
+      throw std::invalid_argument("signal grid velocity field must cover every lattice face");
+    }
+    for (const auto* faces : {&field.x_faces, &field.y_faces, &field.z_faces}) {
+      for (const auto value : *faces) {
+        if (!std::isfinite(value)) {
+          throw std::invalid_argument("signal grid velocity field values must be finite");
+        }
+      }
+    }
+    for (const auto velocity : advection) {
+      if (velocity.x != 0.0F || velocity.y != 0.0F || velocity.z != 0.0F) {
+        throw std::invalid_argument(
+            "signal grid velocity field requires zero constant advection vectors");
+      }
+    }
+    for (std::uint32_t x = 0; x < shape.x; ++x) {
+      for (std::uint32_t y = 0; y < shape.y; ++y) {
+        for (std::uint32_t z = 0; z < shape.z; ++z) {
+          const auto closure = face_closure(*this, x, y, z);
+          const auto faces = face_velocities(*this, 0, x, y, z);
+          const auto solid_here = solid_site(flat_site(shape, x, y, z));
+          const std::array<std::uint32_t, 3> dimensions{shape.x, shape.y, shape.z};
+          for (std::size_t axis = 0; axis < dimensions.size(); ++axis) {
+            if (dimensions[axis] == 1) {
+              continue;
+            }
+            if ((closure.lower[axis] || solid_here) && faces.lower[axis] != 0.0F) {
+              throw std::invalid_argument(
+                  "signal grid velocity field must be zero on closed faces");
+            }
+            if ((closure.upper[axis] || solid_here) && faces.upper[axis] != 0.0F) {
+              throw std::invalid_argument(
+                  "signal grid velocity field must be zero on closed faces");
+            }
+          }
+        }
+      }
+    }
+    if (x_lower.kind == GridBoundaryKind::periodic && shape.x > 1) {
+      for (std::uint32_t y = 0; y < shape.y; ++y) {
+        for (std::uint32_t z = 0; z < shape.z; ++z) {
+          if (field.x_faces[x_face_index(shape, 0, y, z)] !=
+              field.x_faces[x_face_index(shape, shape.x, y, z)]) {
+            throw std::invalid_argument(
+                "signal grid velocity field periodic faces must hold equal values");
+          }
+        }
+      }
+    }
+    if (y_lower.kind == GridBoundaryKind::periodic && shape.y > 1) {
+      for (std::uint32_t x = 0; x < shape.x; ++x) {
+        for (std::uint32_t z = 0; z < shape.z; ++z) {
+          if (field.y_faces[y_face_index(shape, x, 0, z)] !=
+              field.y_faces[y_face_index(shape, x, shape.y, z)]) {
+            throw std::invalid_argument(
+                "signal grid velocity field periodic faces must hold equal values");
+          }
+        }
+      }
+    }
+    if (z_lower.kind == GridBoundaryKind::periodic && shape.z > 1) {
+      for (std::uint32_t x = 0; x < shape.x; ++x) {
+        for (std::uint32_t y = 0; y < shape.y; ++y) {
+          if (field.z_faces[z_face_index(shape, x, y, 0)] !=
+              field.z_faces[z_face_index(shape, x, y, shape.z)]) {
+            throw std::invalid_argument(
+                "signal grid velocity field periodic faces must hold equal values");
           }
         }
       }
@@ -472,11 +606,32 @@ void SignalGrid::validate_step(float dt) const {
   }
   const std::array<std::uint32_t, 3> dimensions{spec_.shape.x, spec_.shape.y, spec_.shape.z};
   const std::array<float, 3> spacing{spec_.spacing.x, spec_.spacing.y, spec_.spacing.z};
+  double maximum_outflow = 0.0;
+  if (spec_.velocity_field.has_value()) {
+    for (std::uint32_t x = 0; x < spec_.shape.x; ++x) {
+      for (std::uint32_t y = 0; y < spec_.shape.y; ++y) {
+        for (std::uint32_t z = 0; z < spec_.shape.z; ++z) {
+          const auto faces = face_velocities(spec_, 0, x, y, z);
+          double outflow = 0.0;
+          for (std::size_t axis = 0; axis < dimensions.size(); ++axis) {
+            if (dimensions[axis] == 1) {
+              continue;
+            }
+            const auto inverse_spacing = 1.0 / static_cast<double>(spacing[axis]);
+            outflow += (std::max(static_cast<double>(faces.upper[axis]), 0.0) -
+                        std::min(static_cast<double>(faces.lower[axis]), 0.0)) *
+                       inverse_spacing;
+          }
+          maximum_outflow = std::max(maximum_outflow, outflow);
+        }
+      }
+    }
+  }
   for (std::size_t signal = 0; signal < spec_.signal_count; ++signal) {
     const std::array<float, 3> velocity{spec_.advection[signal].x, spec_.advection[signal].y,
                                         spec_.advection[signal].z};
     double inverse_square_sum = 0.0;
-    double courant_sum = 0.0;
+    double courant_sum = maximum_outflow;
     for (std::size_t axis = 0; axis < dimensions.size(); ++axis) {
       if (dimensions[axis] == 1) {
         continue;
@@ -538,8 +693,6 @@ std::vector<float> signal_grid_transport_rates(const SignalGrid& grid,
 
   for (std::size_t signal = 0; signal < spec.signal_count; ++signal) {
     const auto diffusion = spec.diffusion[signal];
-    const std::array<float, 3> velocity{spec.advection[signal].x, spec.advection[signal].y,
-                                        spec.advection[signal].z};
     const std::array<float, 3> spacing{spec.spacing.x, spec.spacing.y, spec.spacing.z};
     for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
       for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
@@ -549,6 +702,7 @@ std::vector<float> signal_grid_transport_rates(const SignalGrid& grid,
             continue;
           }
           const auto current = level(signal, x, y, z);
+          const auto faces = face_velocities(spec, signal, x, y, z);
           const auto closure = face_closure(spec, x, y, z);
           std::array<float, 3> lower{};
           std::array<float, 3> upper{};
@@ -586,10 +740,10 @@ std::vector<float> signal_grid_transport_rates(const SignalGrid& grid,
             const auto inverse_spacing = 1.0F / spacing[axis];
             rate += diffusion * (lower[axis] - (2.0F * current) + upper[axis]) * inverse_spacing *
                     inverse_spacing;
-            auto lower_flux =
-                velocity[axis] >= 0.0F ? velocity[axis] * lower[axis] : velocity[axis] * current;
-            auto upper_flux =
-                velocity[axis] >= 0.0F ? velocity[axis] * current : velocity[axis] * upper[axis];
+            auto lower_flux = faces.lower[axis] >= 0.0F ? faces.lower[axis] * lower[axis]
+                                                        : faces.lower[axis] * current;
+            auto upper_flux = faces.upper[axis] >= 0.0F ? faces.upper[axis] * current
+                                                        : faces.upper[axis] * upper[axis];
             if (closure.lower[axis]) {
               lower_flux = 0.0F;
             }

@@ -64,6 +64,27 @@ cm::SignalGridSpec make_masked_spec() {
   return spec;
 }
 
+cm::SignalGridSpec make_velocity_field_spec() {
+  auto spec = make_spec();
+  spec.advection = {{0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}};
+  cm::SignalGridVelocityField field;
+  field.x_faces.resize(spec.x_face_count(), 0.0F);
+  field.y_faces.resize(spec.y_face_count(), 0.0F);
+  field.z_faces.resize(spec.z_face_count(), 0.0F);
+  for (std::uint32_t fx = 0; fx <= spec.shape.x; ++fx) {
+    for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
+      for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
+        const auto index = (static_cast<std::size_t>(fx) * spec.shape.y * spec.shape.z) +
+                           (static_cast<std::size_t>(y) * spec.shape.z) + z;
+        field.x_faces[index] =
+            0.05F + (0.01F * static_cast<float>(y)) - (0.008F * static_cast<float>(z));
+      }
+    }
+  }
+  spec.velocity_field = std::move(field);
+  return spec;
+}
+
 std::vector<float> make_levels(const cm::SignalGridSpec& spec) {
   std::vector<float> levels(spec.level_count());
   for (std::size_t index = 0; index < levels.size(); ++index) {
@@ -95,8 +116,12 @@ void assert_matches(const cm::Simulation& actual, const cm::Simulation& expected
   }
 }
 
-void run_case(cm::SignalIntegrationKind integration, float dt, bool masked = false) {
-  auto spec = masked ? make_masked_spec() : make_spec();
+enum class SpecKind { plain, masked, velocity_field };
+
+void run_case(cm::SignalIntegrationKind integration, float dt, SpecKind kind = SpecKind::plain) {
+  auto spec = kind == SpecKind::masked         ? make_masked_spec()
+              : kind == SpecKind::velocity_field ? make_velocity_field_spec()
+                                                 : make_spec();
   spec.integration = integration;
   const auto levels = make_levels(spec);
   cm::Simulation reference;
@@ -121,6 +146,8 @@ void run_case(cm::SignalIntegrationKind integration, float dt, bool masked = fal
 int main() {
   run_case(cm::SignalIntegrationKind::forward_euler, 0.02F);
   run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F);
-  run_case(cm::SignalIntegrationKind::forward_euler, 0.02F, true);
-  run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F, true);
+  run_case(cm::SignalIntegrationKind::forward_euler, 0.02F, SpecKind::masked);
+  run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::masked);
+  run_case(cm::SignalIntegrationKind::forward_euler, 0.02F, SpecKind::velocity_field);
+  run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::velocity_field);
 }
