@@ -100,6 +100,8 @@ bool Simulation::has_coupled_rate_plan() const noexcept { return coupled_rate_pl
 
 CellId Simulation::add_cell(const CellInit& cell) { return state_.add_cell(cell); }
 
+void Simulation::remove_cell(CellId id) { state_.remove_cell(id); }
+
 ConstraintId Simulation::add_plane_constraint(const PlaneConstraintInit& plane) {
   return constraints_.add_plane(plane);
 }

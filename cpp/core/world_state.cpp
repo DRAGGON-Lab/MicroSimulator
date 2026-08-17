@@ -271,6 +271,43 @@ std::pair<CellId, CellId> WorldState::divide_equal(CellId parent_id) {
   return divide(parent_id, 0.5F);
 }
 
+void WorldState::remove_cell(CellId id) {
+  const auto slot = slot_for(id);
+  const auto last = ids_.size() - 1;
+  if (slot != last) {
+    ids_[slot] = ids_[last];
+    position_x_[slot] = position_x_[last];
+    position_y_[slot] = position_y_[last];
+    position_z_[slot] = position_z_[last];
+    direction_x_[slot] = direction_x_[last];
+    direction_y_[slot] = direction_y_[last];
+    direction_z_[slot] = direction_z_[last];
+    length_[slot] = length_[last];
+    radius_[slot] = radius_[last];
+    growth_rate_[slot] = growth_rate_[last];
+    cell_type_[slot] = cell_type_[last];
+    fixed_[slot] = fixed_[last];
+    for (std::size_t index = 0; index < species_count_; ++index) {
+      species_[(slot * species_count_) + index] = species_[(last * species_count_) + index];
+    }
+    id_to_slot_[ids_[slot]] = static_cast<Slot>(slot);
+  }
+  ids_.pop_back();
+  position_x_.pop_back();
+  position_y_.pop_back();
+  position_z_.pop_back();
+  direction_x_.pop_back();
+  direction_y_.pop_back();
+  direction_z_.pop_back();
+  length_.pop_back();
+  radius_.pop_back();
+  growth_rate_.pop_back();
+  cell_type_.pop_back();
+  fixed_.pop_back();
+  species_.resize(ids_.size() * species_count_);
+  id_to_slot_.erase(id);
+}
+
 void WorldState::advance_growth(float dt) {
   if (!std::isfinite(dt) || dt < 0.0F) {
     throw std::invalid_argument("time step must be finite and non-negative");
