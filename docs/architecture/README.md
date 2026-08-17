@@ -13,6 +13,7 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 - [Persistent fixed rod cells](0009-fixed-cells.md)
 - [Restartable native model controllers](0014-native-controllers.md)
 - [Axis-aligned box constraints](0016-box-constraints.md)
+- [Axis-aligned cylinder constraints](0018-cylinder-constraints.md)
 
 ## Biological dynamics and signaling
 
