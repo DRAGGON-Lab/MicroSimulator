@@ -12,6 +12,7 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 - [Explicit daughter fractions](0007-division.md)
 - [Persistent fixed rod cells](0009-fixed-cells.md)
 - [Restartable native model controllers](0014-native-controllers.md)
+- [Axis-aligned box constraints](0016-box-constraints.md)
 
 ## Biological dynamics and signaling
 
