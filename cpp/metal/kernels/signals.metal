@@ -36,7 +36,8 @@ struct TransportPoint {
 TransportPoint transport_point(device const float* levels, device const float* diffusion,
                                device const float4* advection, device const float* fixed_values,
                                device const float* reaction_source,
-                               device const float* reaction_loss, constant uint* boundary_kinds,
+                               device const float* reaction_loss,
+                               device const uchar* obstacles, constant uint* boundary_kinds,
                                GridShape shape, float4 spacing, uint signal_count, uint index) {
   uint signal = index / shape.sites;
   uint site = index - signal * shape.sites;
@@ -44,6 +45,9 @@ TransportPoint transport_point(device const float* levels, device const float* d
   uint yz = site - x * shape.y * shape.z;
   uint y = yz / shape.z;
   uint z = yz - y * shape.z;
+  if (obstacles[site] != 0u) {
+    return {0.0f, 0.0f};
+  }
   float current = levels[index];
 
   float3 lower;
@@ -71,8 +75,35 @@ TransportPoint transport_point(device const float* levels, device const float* d
                 : grid_level(levels, shape, signal, x, y, z + 1u);
 
   uint3 dimensions = uint3(shape.x, shape.y, shape.z);
-  bool3 at_lower = bool3(x == 0u, y == 0u, z == 0u);
-  bool3 at_upper = bool3(x + 1u == shape.x, y + 1u == shape.y, z + 1u == shape.z);
+  bool3 closed_lower;
+  bool3 closed_upper;
+  closed_lower.x =
+      x == 0u ? (boundary_kinds[0] == 0u ||
+                 (boundary_kinds[0] == 1u && obstacles[site_index(shape, shape.x - 1u, y, z)] != 0u))
+              : obstacles[site_index(shape, x - 1u, y, z)] != 0u;
+  closed_upper.x =
+      x + 1u == shape.x
+          ? (boundary_kinds[1] == 0u ||
+             (boundary_kinds[1] == 1u && obstacles[site_index(shape, 0u, y, z)] != 0u))
+          : obstacles[site_index(shape, x + 1u, y, z)] != 0u;
+  closed_lower.y =
+      y == 0u ? (boundary_kinds[2] == 0u ||
+                 (boundary_kinds[2] == 1u && obstacles[site_index(shape, x, shape.y - 1u, z)] != 0u))
+              : obstacles[site_index(shape, x, y - 1u, z)] != 0u;
+  closed_upper.y =
+      y + 1u == shape.y
+          ? (boundary_kinds[3] == 0u ||
+             (boundary_kinds[3] == 1u && obstacles[site_index(shape, x, 0u, z)] != 0u))
+          : obstacles[site_index(shape, x, y + 1u, z)] != 0u;
+  closed_lower.z =
+      z == 0u ? (boundary_kinds[4] == 0u ||
+                 (boundary_kinds[4] == 1u && obstacles[site_index(shape, x, y, shape.z - 1u)] != 0u))
+              : obstacles[site_index(shape, x, y, z - 1u)] != 0u;
+  closed_upper.z =
+      z + 1u == shape.z
+          ? (boundary_kinds[5] == 0u ||
+             (boundary_kinds[5] == 1u && obstacles[site_index(shape, x, y, 0u)] != 0u))
+          : obstacles[site_index(shape, x, y, z + 1u)] != 0u;
   float3 velocity = advection[signal].xyz;
   float3 grid_spacing = spacing.xyz;
   float rate = 0.0f;
@@ -81,32 +112,38 @@ TransportPoint transport_point(device const float* levels, device const float* d
     if (dimensions[axis] == 1u) {
       continue;
     }
+    if (closed_lower[axis]) {
+      lower[axis] = current;
+    }
+    if (closed_upper[axis]) {
+      upper[axis] = current;
+    }
     float inverse_spacing = 1.0f / grid_spacing[axis];
     float diffusion_scale = diffusion[signal] * inverse_spacing * inverse_spacing;
     rate += diffusion_scale * (lower[axis] - 2.0f * current + upper[axis]);
     diagonal -= 2.0f * diffusion_scale;
-    if (at_lower[axis] && boundary_kinds[axis * 2u] == 0u) {
+    if (closed_lower[axis]) {
       diagonal += diffusion_scale;
     }
-    if (at_upper[axis] && boundary_kinds[axis * 2u + 1u] == 0u) {
+    if (closed_upper[axis]) {
       diagonal += diffusion_scale;
     }
     float lower_flux =
         velocity[axis] >= 0.0f ? velocity[axis] * lower[axis] : velocity[axis] * current;
     float upper_flux =
         velocity[axis] >= 0.0f ? velocity[axis] * current : velocity[axis] * upper[axis];
-    if (at_lower[axis] && boundary_kinds[axis * 2u] == 0u) {
+    if (closed_lower[axis]) {
       lower_flux = 0.0f;
     }
-    if (at_upper[axis] && boundary_kinds[axis * 2u + 1u] == 0u) {
+    if (closed_upper[axis]) {
       upper_flux = 0.0f;
     }
     rate -= (upper_flux - lower_flux) * inverse_spacing;
     if (velocity[axis] >= 0.0f) {
-      if (!(at_upper[axis] && boundary_kinds[axis * 2u + 1u] == 0u)) {
+      if (!closed_upper[axis]) {
         diagonal -= velocity[axis] * inverse_spacing;
       }
-    } else if (!(at_lower[axis] && boundary_kinds[axis * 2u] == 0u)) {
+    } else if (!closed_lower[axis]) {
       diagonal += velocity[axis] * inverse_spacing;
     }
   }
@@ -124,14 +161,15 @@ kernel void advance_signal_grid(
     constant uint& signal_count [[buffer(10)]], constant uint& level_count [[buffer(11)]],
     constant uint& crank_nicolson [[buffer(12)]],
     device const float* reaction_source [[buffer(13)]],
-    device const float* reaction_loss [[buffer(14)]], uint index [[thread_position_in_grid]]) {
+    device const float* reaction_loss [[buffer(14)]],
+    device const uchar* obstacles [[buffer(15)]], uint index [[thread_position_in_grid]]) {
   if (index >= level_count) {
     return;
   }
 
   TransportPoint transport =
       transport_point(levels, diffusion, advection, fixed_values, reaction_source, reaction_loss,
-                      boundary_kinds, shape, spacing, signal_count, index);
+                      obstacles, boundary_kinds, shape, spacing, signal_count, index);
   float scale = crank_nicolson == 0u ? dt : 0.5f * dt;
   float candidate = levels[index] + scale * transport.rate;
 
@@ -149,13 +187,14 @@ kernel void crank_nicolson_jacobi(
     constant GridShape& shape [[buffer(8)]], constant float4& spacing [[buffer(9)]],
     constant float& half_dt [[buffer(10)]], constant uint& signal_count [[buffer(11)]],
     constant uint& level_count [[buffer(12)]], device const float* reaction_source [[buffer(13)]],
-    device const float* reaction_loss [[buffer(14)]], uint index [[thread_position_in_grid]]) {
+    device const float* reaction_loss [[buffer(14)]],
+    device const uchar* obstacles [[buffer(15)]], uint index [[thread_position_in_grid]]) {
   if (index >= level_count) {
     return;
   }
   TransportPoint transport =
       transport_point(current, diffusion, advection, fixed_values, reaction_source, reaction_loss,
-                      boundary_kinds, shape, spacing, signal_count, index);
+                      obstacles, boundary_kinds, shape, spacing, signal_count, index);
   float remainder = transport.rate - transport.diagonal * current[index];
   float candidate =
       (right_hand_side[index] + half_dt * remainder) / (1.0f - half_dt * transport.diagonal);
@@ -173,13 +212,14 @@ kernel void crank_nicolson_residual_terms(
     constant float4& spacing [[buffer(8)]], constant float& half_dt [[buffer(9)]],
     constant uint& signal_count [[buffer(10)]], constant uint& level_count [[buffer(11)]],
     device const float* reaction_source [[buffer(12)]],
-    device const float* reaction_loss [[buffer(13)]], uint index [[thread_position_in_grid]]) {
+    device const float* reaction_loss [[buffer(13)]],
+    device const uchar* obstacles [[buffer(14)]], uint index [[thread_position_in_grid]]) {
   if (index >= level_count) {
     return;
   }
   TransportPoint transport =
       transport_point(current, diffusion, advection, fixed_values, reaction_source, reaction_loss,
-                      boundary_kinds, shape, spacing, signal_count, index);
+                      obstacles, boundary_kinds, shape, spacing, signal_count, index);
   float residual = right_hand_side[index] - current[index] + half_dt * transport.rate;
   terms[index] = residual * residual;
 }

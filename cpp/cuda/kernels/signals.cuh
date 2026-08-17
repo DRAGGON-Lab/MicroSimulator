@@ -25,10 +25,11 @@ struct SignalGridBoundariesGpu {
 void launch_advance_signal_grid(const float* levels, float* output, const float* diffusion,
                                 const float4* advection, const float* fixed_values,
                                 const float* reaction_source, const float* reaction_loss,
-                                std::uint32_t* error, SignalGridBoundariesGpu boundaries,
-                                SignalGridShapeGpu shape, float4 spacing, float dt,
-                                std::uint32_t signal_count, std::uint32_t level_count,
-                                bool crank_nicolson, cudaStream_t stream);
+                                const std::uint8_t* obstacles, std::uint32_t* error,
+                                SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
+                                float4 spacing, float dt, std::uint32_t signal_count,
+                                std::uint32_t level_count, bool crank_nicolson,
+                                cudaStream_t stream);
 
 void launch_signal_square_terms(const float* input, float* terms, std::uint32_t level_count,
                                 cudaStream_t stream);
@@ -36,15 +37,16 @@ void launch_signal_crank_nicolson_jacobi(const float* current, float* output,
                                          const float* right_hand_side, const float* diffusion,
                                          const float4* advection, const float* fixed_values,
                                          const float* reaction_source, const float* reaction_loss,
-                                         std::uint32_t* error, SignalGridBoundariesGpu boundaries,
+                                         const std::uint8_t* obstacles, std::uint32_t* error,
+                                         SignalGridBoundariesGpu boundaries,
                                          SignalGridShapeGpu shape, float4 spacing, float half_dt,
                                          std::uint32_t signal_count, std::uint32_t level_count,
                                          cudaStream_t stream);
 void launch_signal_crank_nicolson_residual_terms(
     const float* current, const float* right_hand_side, float* terms, const float* diffusion,
     const float4* advection, const float* fixed_values, const float* reaction_source,
-    const float* reaction_loss, SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
-    float4 spacing, float half_dt, std::uint32_t signal_count, std::uint32_t level_count,
-    cudaStream_t stream);
+    const float* reaction_loss, const std::uint8_t* obstacles,
+    SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape, float4 spacing, float half_dt,
+    std::uint32_t signal_count, std::uint32_t level_count, cudaStream_t stream);
 
 }  // namespace cm::cuda

@@ -63,7 +63,8 @@ __device__ float cell_site_weight(float4 center, SignalGridShapeGpu shape, float
 }
 
 __device__ float sample_signal(const float* levels, SignalGridShapeGpu shape, float4 origin,
-                               float4 spacing, float4 center, std::uint32_t signal) {
+                               float4 spacing, const std::uint8_t* obstacles, float4 center,
+                               std::uint32_t signal) {
   const auto coordinate_x = axis_coordinate(center.x, origin.x, spacing.x, shape.x);
   const auto coordinate_y = axis_coordinate(center.y, origin.y, spacing.y, shape.y);
   const auto coordinate_z = axis_coordinate(center.z, origin.z, spacing.z, shape.z);
@@ -74,6 +75,8 @@ __device__ float sample_signal(const float* levels, SignalGridShapeGpu shape, fl
   const auto count_y = shape.y == 1 || lower_y == shape.y - 1 ? 1U : 2U;
   const auto count_z = shape.z == 1 || lower_z == shape.z - 1 ? 1U : 2U;
   float result = 0.0F;
+  float fluid_weight = 0.0F;
+  bool dropped = false;
   for (std::uint32_t dx = 0; dx < count_x; ++dx) {
     const auto x = lower_x + dx;
     const auto weight_x = axis_site_weight(coordinate_x, shape.x, x);
@@ -83,11 +86,63 @@ __device__ float sample_signal(const float* levels, SignalGridShapeGpu shape, fl
       for (std::uint32_t dz = 0; dz < count_z; ++dz) {
         const auto z = lower_z + dz;
         const auto weight_z = axis_site_weight(coordinate_z, shape.z, z);
-        result += weight_x * weight_y * weight_z * grid_level(levels, shape, signal, x, y, z);
+        const auto weight = weight_x * weight_y * weight_z;
+        if (obstacles[site_index(shape, x, y, z)] != 0) {
+          if (weight != 0.0F) {
+            dropped = true;
+          }
+          continue;
+        }
+        fluid_weight += weight;
+        result += weight * grid_level(levels, shape, signal, x, y, z);
       }
     }
   }
+  if (dropped) {
+    result /= fluid_weight;
+  }
   return result;
+}
+
+__device__ float cell_scatter_weight(float4 center, SignalGridShapeGpu shape, float4 origin,
+                                     float4 spacing, const std::uint8_t* obstacles, std::uint32_t x,
+                                     std::uint32_t y, std::uint32_t z) {
+  if (obstacles[site_index(shape, x, y, z)] != 0) {
+    return 0.0F;
+  }
+  const auto raw = cell_site_weight(center, shape, origin, spacing, x, y, z);
+  const auto coordinate_x = axis_coordinate(center.x, origin.x, spacing.x, shape.x);
+  const auto coordinate_y = axis_coordinate(center.y, origin.y, spacing.y, shape.y);
+  const auto coordinate_z = axis_coordinate(center.z, origin.z, spacing.z, shape.z);
+  const auto lower_x = static_cast<std::uint32_t>(floorf(coordinate_x));
+  const auto lower_y = static_cast<std::uint32_t>(floorf(coordinate_y));
+  const auto lower_z = static_cast<std::uint32_t>(floorf(coordinate_z));
+  const auto count_x = shape.x == 1 || lower_x == shape.x - 1 ? 1U : 2U;
+  const auto count_y = shape.y == 1 || lower_y == shape.y - 1 ? 1U : 2U;
+  const auto count_z = shape.z == 1 || lower_z == shape.z - 1 ? 1U : 2U;
+  float fluid_weight = 0.0F;
+  bool dropped = false;
+  for (std::uint32_t dx = 0; dx < count_x; ++dx) {
+    const auto sx = lower_x + dx;
+    const auto weight_x = axis_site_weight(coordinate_x, shape.x, sx);
+    for (std::uint32_t dy = 0; dy < count_y; ++dy) {
+      const auto sy = lower_y + dy;
+      const auto weight_y = axis_site_weight(coordinate_y, shape.y, sy);
+      for (std::uint32_t dz = 0; dz < count_z; ++dz) {
+        const auto sz = lower_z + dz;
+        const auto weight_z = axis_site_weight(coordinate_z, shape.z, sz);
+        const auto weight = weight_x * weight_y * weight_z;
+        if (obstacles[site_index(shape, sx, sy, sz)] != 0) {
+          if (weight != 0.0F) {
+            dropped = true;
+          }
+          continue;
+        }
+        fluid_weight += weight;
+      }
+    }
+  }
+  return dropped ? raw / fluid_weight : raw;
 }
 
 __device__ float evaluate_instruction(const RateInstructionGpu& instruction, const float* workspace,
@@ -164,9 +219,10 @@ __global__ void advance_coupled_cells(
     const float4* geometry, const float* growth_rates, const std::int32_t* cell_types,
     const RateInstructionGpu* instructions, const std::uint32_t* species_outputs,
     const std::uint32_t* signal_outputs, float* workspace, const float* grid_levels,
-    float* cell_signal_rates, std::uint32_t* error, SignalGridShapeGpu shape, float4 origin,
-    float4 spacing, float dt, std::uint32_t species_count, std::uint32_t signal_count,
-    std::uint32_t instruction_count, std::uint32_t cell_count) {
+    float* cell_signal_rates, const std::uint8_t* obstacles, std::uint32_t* error,
+    SignalGridShapeGpu shape, float4 origin, float4 spacing, float dt,
+    std::uint32_t species_count, std::uint32_t signal_count, std::uint32_t instruction_count,
+    std::uint32_t cell_count) {
   const auto cell = (blockIdx.x * blockDim.x) + threadIdx.x;
   if (cell >= cell_count) {
     return;
@@ -184,7 +240,7 @@ __global__ void advance_coupled_cells(
   auto* cell_signals = cell_signal_rates + signal_offset;
   for (std::uint32_t signal = 0; signal < signal_count; ++signal) {
     cell_signals[signal] =
-        sample_signal(grid_levels, shape, origin, spacing, centers[cell], signal);
+        sample_signal(grid_levels, shape, origin, spacing, obstacles, centers[cell], signal);
   }
 
   const auto workspace_offset = cell * instruction_count;
@@ -232,9 +288,10 @@ __global__ void advance_coupled_grid(const float* levels, float* output, const f
                                      const float4* advection, const float* fixed_values,
                                      const float* reaction_source, const float* reaction_loss,
                                      const float4* centers, const float* cell_signal_rates,
-                                     std::uint32_t* error, SignalGridBoundariesGpu boundaries,
-                                     SignalGridShapeGpu shape, float4 origin, float4 spacing,
-                                     float dt, std::uint32_t signal_count, std::uint32_t cell_count,
+                                     const std::uint8_t* obstacles, std::uint32_t* error,
+                                     SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
+                                     float4 origin, float4 spacing, float dt,
+                                     std::uint32_t signal_count, std::uint32_t cell_count,
                                      std::uint32_t level_count, bool crank_nicolson) {
   const auto index = (blockIdx.x * blockDim.x) + threadIdx.x;
   if (index >= level_count) {
@@ -248,6 +305,10 @@ __global__ void advance_coupled_grid(const float* levels, float* output, const f
   const auto y = yz / shape.z;
   const auto z = yz - y * shape.z;
   const auto current = levels[index];
+  if (obstacles[site] != 0) {
+    output[index] = current;
+    return;
+  }
 
   float lower[3];
   float upper[3];
@@ -274,16 +335,47 @@ __global__ void advance_coupled_grid(const float* levels, float* output, const f
                  : grid_level(levels, shape, signal, x, y, z + 1);
 
   const std::uint32_t dimensions[3]{shape.x, shape.y, shape.z};
-  const bool at_lower[3]{x == 0, y == 0, z == 0};
-  const bool at_upper[3]{x + 1 == shape.x, y + 1 == shape.y, z + 1 == shape.z};
-  const std::uint32_t lower_kinds[3]{boundaries.x_lower, boundaries.y_lower, boundaries.z_lower};
-  const std::uint32_t upper_kinds[3]{boundaries.x_upper, boundaries.y_upper, boundaries.z_upper};
+  bool closed_lower[3];
+  bool closed_upper[3];
+  closed_lower[0] =
+      x == 0 ? (boundaries.x_lower == 0 ||
+                (boundaries.x_lower == 1 && obstacles[site_index(shape, shape.x - 1, y, z)] != 0))
+             : obstacles[site_index(shape, x - 1, y, z)] != 0;
+  closed_upper[0] =
+      x + 1 == shape.x
+          ? (boundaries.x_upper == 0 ||
+             (boundaries.x_upper == 1 && obstacles[site_index(shape, 0, y, z)] != 0))
+          : obstacles[site_index(shape, x + 1, y, z)] != 0;
+  closed_lower[1] =
+      y == 0 ? (boundaries.y_lower == 0 ||
+                (boundaries.y_lower == 1 && obstacles[site_index(shape, x, shape.y - 1, z)] != 0))
+             : obstacles[site_index(shape, x, y - 1, z)] != 0;
+  closed_upper[1] =
+      y + 1 == shape.y
+          ? (boundaries.y_upper == 0 ||
+             (boundaries.y_upper == 1 && obstacles[site_index(shape, x, 0, z)] != 0))
+          : obstacles[site_index(shape, x, y + 1, z)] != 0;
+  closed_lower[2] =
+      z == 0 ? (boundaries.z_lower == 0 ||
+                (boundaries.z_lower == 1 && obstacles[site_index(shape, x, y, shape.z - 1)] != 0))
+             : obstacles[site_index(shape, x, y, z - 1)] != 0;
+  closed_upper[2] =
+      z + 1 == shape.z
+          ? (boundaries.z_upper == 0 ||
+             (boundaries.z_upper == 1 && obstacles[site_index(shape, x, y, 0)] != 0))
+          : obstacles[site_index(shape, x, y, z + 1)] != 0;
   const float velocity[3]{advection[signal].x, advection[signal].y, advection[signal].z};
   const float grid_spacing[3]{spacing.x, spacing.y, spacing.z};
   float rate = 0.0F;
   for (std::uint32_t axis = 0; axis < 3; ++axis) {
     if (dimensions[axis] == 1) {
       continue;
+    }
+    if (closed_lower[axis]) {
+      lower[axis] = current;
+    }
+    if (closed_upper[axis]) {
+      upper[axis] = current;
     }
     const auto inverse_spacing = 1.0F / grid_spacing[axis];
     rate += diffusion[signal] * (lower[axis] - 2.0F * current + upper[axis]) * inverse_spacing *
@@ -292,10 +384,10 @@ __global__ void advance_coupled_grid(const float* levels, float* output, const f
         velocity[axis] >= 0.0F ? velocity[axis] * lower[axis] : velocity[axis] * current;
     auto upper_flux =
         velocity[axis] >= 0.0F ? velocity[axis] * current : velocity[axis] * upper[axis];
-    if (at_lower[axis] && lower_kinds[axis] == 0) {
+    if (closed_lower[axis]) {
       lower_flux = 0.0F;
     }
-    if (at_upper[axis] && upper_kinds[axis] == 0) {
+    if (closed_upper[axis]) {
       upper_flux = 0.0F;
     }
     rate -= (upper_flux - lower_flux) * inverse_spacing;
@@ -305,7 +397,7 @@ __global__ void advance_coupled_grid(const float* levels, float* output, const f
   float source = 0.0F;
   const auto inverse_voxel_volume = 1.0F / (spacing.x * spacing.y * spacing.z);
   for (std::uint32_t cell = 0; cell < cell_count; ++cell) {
-    const auto weight = cell_site_weight(centers[cell], shape, origin, spacing, x, y, z);
+    const auto weight = cell_scatter_weight(centers[cell], shape, origin, spacing, obstacles, x, y, z);
     source += weight * cell_signal_rates[cell * signal_count + signal] * inverse_voxel_volume;
   }
   const auto transport_scale = crank_nicolson ? 0.5F * dt : dt;
@@ -324,17 +416,19 @@ cudaError_t launch_advance_coupled(
     const RateInstructionGpu* instructions, const std::uint32_t* species_outputs,
     const std::uint32_t* signal_outputs, float* workspace, const float* grid_levels,
     float* grid_output, const float* diffusion, const float4* advection, const float* fixed_values,
-    const float* reaction_source, const float* reaction_loss, float* cell_signal_rates,
-    std::uint32_t* error, SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
-    float4 origin, float4 spacing, float dt, std::uint32_t species_count,
-    std::uint32_t signal_count, std::uint32_t instruction_count, std::uint32_t cell_count,
-    std::uint32_t level_count, bool crank_nicolson, cudaStream_t stream) {
+    const float* reaction_source, const float* reaction_loss, const std::uint8_t* obstacles,
+    float* cell_signal_rates, std::uint32_t* error, SignalGridBoundariesGpu boundaries,
+    SignalGridShapeGpu shape, float4 origin, float4 spacing, float dt,
+    std::uint32_t species_count, std::uint32_t signal_count, std::uint32_t instruction_count,
+    std::uint32_t cell_count, std::uint32_t level_count, bool crank_nicolson,
+    cudaStream_t stream) {
   if (cell_count != 0) {
     const auto cell_blocks = ((cell_count - 1) / threads_per_block) + 1;
     advance_coupled_cells<<<cell_blocks, threads_per_block, 0, stream>>>(
         species_levels, previous_lengths, centers, geometry, growth_rates, cell_types, instructions,
-        species_outputs, signal_outputs, workspace, grid_levels, cell_signal_rates, error, shape,
-        origin, spacing, dt, species_count, signal_count, instruction_count, cell_count);
+        species_outputs, signal_outputs, workspace, grid_levels, cell_signal_rates, obstacles,
+        error, shape, origin, spacing, dt, species_count, signal_count, instruction_count,
+        cell_count);
     const auto cell_error = cudaGetLastError();
     if (cell_error != cudaSuccess) {
       return cell_error;
@@ -343,8 +437,8 @@ cudaError_t launch_advance_coupled(
   const auto grid_blocks = ((level_count - 1) / threads_per_block) + 1;
   advance_coupled_grid<<<grid_blocks, threads_per_block, 0, stream>>>(
       grid_levels, grid_output, diffusion, advection, fixed_values, reaction_source, reaction_loss,
-      centers, cell_signal_rates, error, boundaries, shape, origin, spacing, dt, signal_count,
-      cell_count, level_count, crank_nicolson);
+      centers, cell_signal_rates, obstacles, error, boundaries, shape, origin, spacing, dt,
+      signal_count, cell_count, level_count, crank_nicolson);
   return cudaGetLastError();
 }
 
