@@ -1,7 +1,7 @@
 import canonicalize from "canonicalize";
 
 export const SCENE_FORMAT = "microsimulator-scene";
-export const SCENE_VERSION = 1;
+export const SCENE_VERSION = 2;
 export const MAX_SCENE_BYTES = 1 << 30;
 
 const UINT32_MAX = 2 ** 32 - 1;
@@ -12,6 +12,7 @@ const FLOAT32_MAX = 3.4028234663852886e38;
 
 export type BackendKind = "cpu" | "metal" | "cuda";
 export type BoundaryKind = "no_flux" | "periodic" | "fixed";
+export type RegionKind = "outside" | "inside";
 export type Vector3 = readonly [number, number, number];
 
 export interface SceneBackend {
@@ -34,6 +35,35 @@ export interface SceneCell {
   readonly cellType: number;
   readonly fixed: boolean;
   readonly species: readonly number[];
+}
+
+export interface ScenePlaneConstraint {
+  readonly id: string;
+  readonly point: Vector3;
+  readonly inwardNormal: Vector3;
+  readonly coefficient: number;
+}
+
+export interface SceneSphereConstraint {
+  readonly id: string;
+  readonly center: Vector3;
+  readonly radius: number;
+  readonly coefficient: number;
+  readonly allowedRegion: RegionKind;
+}
+
+export interface SceneBoxConstraint {
+  readonly id: string;
+  readonly center: Vector3;
+  readonly halfExtents: Vector3;
+  readonly coefficient: number;
+  readonly allowedRegion: RegionKind;
+}
+
+export interface SceneConstraints {
+  readonly planes: readonly ScenePlaneConstraint[];
+  readonly spheres: readonly SceneSphereConstraint[];
+  readonly boxes: readonly SceneBoxConstraint[];
 }
 
 export interface SceneGridBoundary {
@@ -62,6 +92,7 @@ export interface SceneFrame {
   readonly backend: SceneBackend;
   readonly speciesCount: number;
   readonly cells: readonly SceneCell[];
+  readonly constraints: SceneConstraints;
   readonly signalGrid: SceneSignalGrid | null;
 }
 
@@ -294,6 +325,109 @@ function parseBoundary(
   return { kind, values };
 }
 
+function positiveNumber(value: unknown, path: string): number {
+  const result = number(value, path, true);
+  if (result <= 0) {
+    return fail(path, "must be positive");
+  }
+  return result;
+}
+
+function parseRegion(value: unknown, path: string): RegionKind {
+  const region = string(value, path);
+  if (region !== "outside" && region !== "inside") {
+    return fail(path, `unknown region kind ${JSON.stringify(region)}`);
+  }
+  return region;
+}
+
+function parsePlaneConstraint(
+  value: unknown,
+  path: string,
+): ScenePlaneConstraint {
+  const data = record(value, path);
+  exactKeys(data, path, ["id", "point", "inward_normal", "coefficient"]);
+  const inwardNormal = tuple3(data.inward_normal, `${path}.inward_normal`);
+  if (Math.abs(Math.hypot(...inwardNormal) - 1) > 1e-5) {
+    return fail(`${path}.inward_normal`, "must be normalized");
+  }
+  return {
+    id: identifier(data.id, `${path}.id`),
+    point: tuple3(data.point, `${path}.point`),
+    inwardNormal,
+    coefficient: positiveNumber(data.coefficient, `${path}.coefficient`),
+  };
+}
+
+function parseSphereConstraint(
+  value: unknown,
+  path: string,
+): SceneSphereConstraint {
+  const data = record(value, path);
+  exactKeys(data, path, [
+    "id",
+    "center",
+    "radius",
+    "coefficient",
+    "allowed_region",
+  ]);
+  return {
+    id: identifier(data.id, `${path}.id`),
+    center: tuple3(data.center, `${path}.center`),
+    radius: positiveNumber(data.radius, `${path}.radius`),
+    coefficient: positiveNumber(data.coefficient, `${path}.coefficient`),
+    allowedRegion: parseRegion(data.allowed_region, `${path}.allowed_region`),
+  };
+}
+
+function parseBoxConstraint(value: unknown, path: string): SceneBoxConstraint {
+  const data = record(value, path);
+  exactKeys(data, path, [
+    "id",
+    "center",
+    "half_extents",
+    "coefficient",
+    "allowed_region",
+  ]);
+  return {
+    id: identifier(data.id, `${path}.id`),
+    center: tuple3(data.center, `${path}.center`),
+    halfExtents: tuple3(data.half_extents, `${path}.half_extents`, true),
+    coefficient: positiveNumber(data.coefficient, `${path}.coefficient`),
+    allowedRegion: parseRegion(data.allowed_region, `${path}.allowed_region`),
+  };
+}
+
+function parseConstraints(value: unknown, path: string): SceneConstraints {
+  const data = record(value, path);
+  exactKeys(data, path, ["planes", "spheres", "boxes"]);
+  const constraints: SceneConstraints = {
+    planes: array(data.planes, `${path}.planes`).map((item, index) =>
+      parsePlaneConstraint(item, `${path}.planes[${index}]`),
+    ),
+    spheres: array(data.spheres, `${path}.spheres`).map((item, index) =>
+      parseSphereConstraint(item, `${path}.spheres[${index}]`),
+    ),
+    boxes: array(data.boxes, `${path}.boxes`).map((item, index) =>
+      parseBoxConstraint(item, `${path}.boxes[${index}]`),
+    ),
+  };
+  const identifiers = new Set<string>();
+  for (const kind of [
+    constraints.planes,
+    constraints.spheres,
+    constraints.boxes,
+  ] as const) {
+    for (const constraint of kind) {
+      if (identifiers.has(constraint.id)) {
+        return fail(path, `duplicate constraint identifier ${constraint.id}`);
+      }
+      identifiers.add(constraint.id);
+    }
+  }
+  return constraints;
+}
+
 function parseSignalGrid(value: unknown, path: string): SceneSignalGrid | null {
   if (value === null) {
     return null;
@@ -387,6 +521,7 @@ function parseFrame(value: unknown, path: string): SceneFrame {
     "backend",
     "species_count",
     "cells",
+    "constraints",
     "signal_grid",
   ]);
   const time = number(data.time, `${path}.time`);
@@ -420,6 +555,7 @@ function parseFrame(value: unknown, path: string): SceneFrame {
     backend: parseBackend(data.backend, `${path}.backend`),
     speciesCount,
     cells,
+    constraints: parseConstraints(data.constraints, `${path}.constraints`),
     signalGrid: parseSignalGrid(data.signal_grid, `${path}.signal_grid`),
   };
 }
