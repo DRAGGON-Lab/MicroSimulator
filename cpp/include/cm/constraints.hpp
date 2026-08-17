@@ -13,14 +13,17 @@ namespace cm {
 using ConstraintId = std::uint64_t;
 inline constexpr ConstraintId invalid_constraint_id = 0;
 
-enum class SphereRegion : std::uint8_t {
+enum class ConstraintRegion : std::uint8_t {
   outside,
   inside,
 };
 
+using SphereRegion = ConstraintRegion;
+
 enum class ExternalConstraintKind : std::uint8_t {
   plane,
   sphere,
+  box,
 };
 
 enum class RodEndpoint : std::uint8_t {
@@ -41,6 +44,13 @@ struct SphereConstraintInit {
   SphereRegion allowed_region{SphereRegion::outside};
 };
 
+struct BoxConstraintInit {
+  Vec3 center{};
+  Vec3 half_extents{1.0F, 1.0F, 1.0F};
+  float coefficient{1.0F};
+  ConstraintRegion allowed_region{ConstraintRegion::outside};
+};
+
 struct PlaneConstraint {
   ConstraintId id{invalid_constraint_id};
   Vec3 point{};
@@ -56,10 +66,19 @@ struct SphereConstraint {
   SphereRegion allowed_region{SphereRegion::outside};
 };
 
+struct BoxConstraint {
+  ConstraintId id{invalid_constraint_id};
+  Vec3 center{};
+  Vec3 half_extents{1.0F, 1.0F, 1.0F};
+  float coefficient{1.0F};
+  ConstraintRegion allowed_region{ConstraintRegion::outside};
+};
+
 struct ConstraintSetCheckpoint {
   ConstraintId next_id{1};
   std::vector<PlaneConstraint> planes;
   std::vector<SphereConstraint> spheres;
+  std::vector<BoxConstraint> boxes;
 
   void validate() const;
 };
@@ -71,6 +90,7 @@ class ConstraintSet {
 
   ConstraintId add_plane(const PlaneConstraintInit& plane);
   ConstraintId add_sphere(const SphereConstraintInit& sphere);
+  ConstraintId add_box(const BoxConstraintInit& box);
 
   [[nodiscard]] std::size_t size() const noexcept;
   [[nodiscard]] bool empty() const noexcept;
@@ -78,6 +98,8 @@ class ConstraintSet {
   [[nodiscard]] std::span<const PlaneConstraint> planes() && = delete;
   [[nodiscard]] std::span<const SphereConstraint> spheres() const& noexcept;
   [[nodiscard]] std::span<const SphereConstraint> spheres() && = delete;
+  [[nodiscard]] std::span<const BoxConstraint> boxes() const& noexcept;
+  [[nodiscard]] std::span<const BoxConstraint> boxes() && = delete;
   [[nodiscard]] ConstraintSetCheckpoint checkpoint() const;
   void validate() const;
 
@@ -87,6 +109,7 @@ class ConstraintSet {
   ConstraintId next_id_{1};
   std::vector<PlaneConstraint> planes_;
   std::vector<SphereConstraint> spheres_;
+  std::vector<BoxConstraint> boxes_;
 };
 
 struct ConstraintContactParameters {

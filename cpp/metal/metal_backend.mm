@@ -1378,6 +1378,16 @@ class MetalBackend final : public ComputeBackend {
           .parameters = {0.0F, 0.0F, 0.0F, sphere.coefficient},
       });
     }
+    for (const auto& box : constraints.boxes()) {
+      values.push_back({
+          .id = box.id,
+          .kind = static_cast<std::uint32_t>(ExternalConstraintKind::box),
+          .allowed_region = static_cast<std::uint32_t>(box.allowed_region),
+          .geometry = {box.center.x, box.center.y, box.center.z, 0.0F},
+          .parameters = {box.half_extents.x, box.half_extents.y, box.half_extents.z,
+                         box.coefficient},
+      });
+    }
     std::ranges::sort(values, {}, &MetalExternalConstraint::id);
     std::memcpy(external_constraints_.contents, values.data(),
                 values.size() * sizeof(MetalExternalConstraint));
@@ -1606,7 +1616,7 @@ class MetalBackend final : public ComputeBackend {
     std::vector<ExternalContact> contacts;
     contacts.reserve(contact_count);
     for (std::uint32_t index = 0; index < contact_count; ++index) {
-      if (constraint_kinds[index] > static_cast<std::uint32_t>(ExternalConstraintKind::sphere) ||
+      if (constraint_kinds[index] > static_cast<std::uint32_t>(ExternalConstraintKind::box) ||
           endpoints[index] > static_cast<std::uint32_t>(RodEndpoint::positive)) {
         throw std::runtime_error("Metal external-contact kernel produced an invalid tag");
       }

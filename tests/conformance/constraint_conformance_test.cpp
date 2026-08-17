@@ -51,6 +51,30 @@ void populate_mixed_constraints(cm::Simulation& simulation) {
   second_plane.point = {6.0F, 0.0F, 0.0F};
   second_plane.inward_normal = {-1.0F, 0.0F, 0.0F};
   assert(simulation.add_plane_constraint(second_plane) == 4);
+
+  cm::BoxConstraintInit wall;
+  wall.center = {0.0F, 1.3F, 0.0F};
+  wall.half_extents = {3.0F, 0.5F, 1.0F};
+  wall.coefficient = 0.9F;
+  assert(simulation.add_box_constraint(wall) == 5);
+}
+
+void populate_box_regions(cm::Simulation& simulation) {
+  add_cell(simulation, {1.4F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F}, 2.0F);
+  add_cell(simulation, {1.3F, 1.3F, 0.0F}, {0.0F, 0.0F, 1.0F}, 0.0F);
+  add_cell(simulation, {0.5F, 0.6F, 0.0F}, {1.0F, 0.0F, 0.0F}, 0.0F);
+  add_cell(simulation, {4.8F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F}, 0.0F);
+
+  cm::BoxConstraintInit outside;
+  outside.half_extents = {2.0F, 1.0F, 3.0F};
+  outside.coefficient = 1.25F;
+  assert(simulation.add_box_constraint(outside) == 1);
+
+  cm::BoxConstraintInit chamber;
+  chamber.half_extents = {5.0F, 5.0F, 5.0F};
+  chamber.coefficient = 0.5F;
+  chamber.allowed_region = cm::ConstraintRegion::inside;
+  assert(simulation.add_box_constraint(chamber) == 2);
 }
 
 void populate_degenerate_sphere(cm::Simulation& simulation) {
@@ -58,6 +82,12 @@ void populate_degenerate_sphere(cm::Simulation& simulation) {
   cm::SphereConstraintInit sphere;
   sphere.radius = 2.0F;
   simulation.add_sphere_constraint(sphere);
+}
+
+void populate_degenerate_box(cm::Simulation& simulation) {
+  add_cell(simulation, {}, {0.0F, 1.0F, 0.0F}, 0.0F);
+  cm::BoxConstraintInit box;
+  simulation.add_box_constraint(box);
 }
 
 void compare_graphs(const cm::ExternalContactGraph& actual,
@@ -125,7 +155,9 @@ int main() {
     }
     run_empty_inputs(backend, device_index);
     run_fixture(backend, device_index, populate_mixed_constraints);
+    run_fixture(backend, device_index, populate_box_regions);
     run_fixture(backend, device_index, populate_degenerate_sphere);
+    run_fixture(backend, device_index, populate_degenerate_box);
   });
   return 0;
 }

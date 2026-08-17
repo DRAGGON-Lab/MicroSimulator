@@ -197,7 +197,7 @@ ExternalEvaluation evaluate_external_constraint(const Capsule cell,
       result.separations[endpoint] =
           dot(point - constraint.geometry.xyz, inward_normal) - cell.radius;
       result.normals[endpoint] = -inward_normal;
-    } else {
+    } else if (constraint.kind == 1) {
       float3 center_delta = point - constraint.geometry.xyz;
       float distance = length(center_delta);
       float3 radial =
@@ -208,6 +208,36 @@ ExternalEvaluation evaluate_external_constraint(const Capsule cell,
       } else {
         result.separations[endpoint] = constraint.geometry.w - distance - cell.radius;
         result.normals[endpoint] = radial;
+      }
+    } else {
+      float3 half_extents = constraint.parameters.xyz;
+      float3 delta = point - constraint.geometry.xyz;
+      float3 outside_vector = delta - clamp(delta, -half_extents, half_extents);
+      float outside_distance = length(outside_vector);
+      float signed_distance;
+      float3 outward;
+      if (outside_distance > contact_parameters.y) {
+        signed_distance = outside_distance;
+        outward = outside_vector / outside_distance;
+      } else {
+        float3 clearances = half_extents - abs(delta);
+        if (clearances.x <= clearances.y && clearances.x <= clearances.z) {
+          signed_distance = -clearances.x;
+          outward = float3(delta.x >= 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f);
+        } else if (clearances.y <= clearances.z) {
+          signed_distance = -clearances.y;
+          outward = float3(0.0f, delta.y >= 0.0f ? 1.0f : -1.0f, 0.0f);
+        } else {
+          signed_distance = -clearances.z;
+          outward = float3(0.0f, 0.0f, delta.z >= 0.0f ? 1.0f : -1.0f);
+        }
+      }
+      if (constraint.allowed_region == 0) {
+        result.separations[endpoint] = signed_distance - cell.radius;
+        result.normals[endpoint] = -outward;
+      } else {
+        result.separations[endpoint] = -signed_distance - cell.radius;
+        result.normals[endpoint] = outward;
       }
     }
     result.active[endpoint] = result.separations[endpoint] < contact_parameters.x;
