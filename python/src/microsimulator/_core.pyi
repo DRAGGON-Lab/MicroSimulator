@@ -148,6 +148,7 @@ class SignalGridSpec:
     diffusion: list[float]
     advection: list[Vec3]
     reaction: SignalGridAffineReaction | None
+    obstacles: list[int]
     integration: SignalIntegrationKind
     solver: SignalSolveParameters
     x_lower: GridBoundary
