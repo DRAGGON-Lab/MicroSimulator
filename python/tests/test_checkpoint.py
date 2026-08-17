@@ -189,6 +189,7 @@ def _remove_affine_reaction(document: dict[str, Any]) -> None:
 
 def _remove_constraint_boxes(document: dict[str, Any]) -> None:
     del document["simulation"]["constraints"]["boxes"]
+    del document["simulation"]["constraints"]["cylinders"]
 
 
 def _remove_grid_obstacles(document: dict[str, Any]) -> None:
@@ -388,6 +389,7 @@ def test_version_seven_checkpoint_migrates_without_boxes(tmp_path: Path) -> None
     restored = load_checkpoint(path)
     checkpoint = restored._checkpoint()
     assert checkpoint.constraints.boxes == []
+    assert checkpoint.constraints.cylinders == []
     assert len(checkpoint.constraints.planes) == 1
     assert len(checkpoint.constraints.spheres) == 1
     box = BoxConstraintInit()

@@ -34,6 +34,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     Vec3,
     _BoxConstraint,
     _ConstraintSetCheckpoint,
+    _CylinderConstraint,
     _LineageEntry,
     _PlaneConstraint,
     _SignalGridCheckpoint,
@@ -271,6 +272,17 @@ def _simulation_to_json(checkpoint: _SimulationCheckpoint) -> dict[str, JSONValu
         }
         for box in checkpoint.constraints.boxes
     ]
+    cylinders: list[JSONValue] = [
+        {
+            "id": cylinder.id,
+            "center": _vec3_to_json(cylinder.center),
+            "radius": cylinder.radius,
+            "half_height": cylinder.half_height,
+            "coefficient": cylinder.coefficient,
+            "allowed_region": _CONSTRAINT_REGION_NAMES[cylinder.allowed_region],
+        }
+        for cylinder in checkpoint.constraints.cylinders
+    ]
     instructions = _instructions_to_json(checkpoint.species_rate_plan.instructions)
     return {
         "time": checkpoint.time,
@@ -285,6 +297,7 @@ def _simulation_to_json(checkpoint: _SimulationCheckpoint) -> dict[str, JSONValu
             "planes": planes,
             "spheres": spheres,
             "boxes": boxes,
+            "cylinders": cylinders,
         },
         "species_rate_plan": {
             "species_count": checkpoint.species_rate_plan.species_count,
@@ -556,6 +569,23 @@ def _box(value: object, path: str) -> _BoxConstraint:
     return box
 
 
+def _cylinder(value: object, path: str) -> _CylinderConstraint:
+    data = _object(value, path)
+    _keys(data, path, {"id", "center", "radius", "half_height", "coefficient", "allowed_region"})
+    cylinder = _CylinderConstraint()
+    cylinder.id = _integer(data["id"], f"{path}.id", 1, _UINT64_MAX)
+    cylinder.center = _vec3(data["center"], f"{path}.center")
+    cylinder.radius = _number(data["radius"], f"{path}.radius", float32=True)
+    cylinder.half_height = _number(data["half_height"], f"{path}.half_height", float32=True)
+    cylinder.coefficient = _number(data["coefficient"], f"{path}.coefficient", float32=True)
+    region_name = _string(data["allowed_region"], f"{path}.allowed_region")
+    try:
+        cylinder.allowed_region = _CONSTRAINT_REGIONS[region_name]
+    except KeyError:
+        _fail(f"{path}.allowed_region", f"unknown cylinder region {region_name!r}")
+    return cylinder
+
+
 def _instruction(value: object, path: str) -> RateInstruction:
     data = _object(value, path)
     _keys(data, path, {"operation", "first", "second", "third", "value"})
@@ -779,7 +809,7 @@ def _native_checkpoint(value: object, schema_version: int) -> _SimulationCheckpo
     constraint_data = _object(data["constraints"], "$.simulation.constraints")
     constraint_keys = {"next_id", "planes", "spheres"}
     if schema_version >= 8:
-        constraint_keys.add("boxes")
+        constraint_keys.update({"boxes", "cylinders"})
     _keys(constraint_data, "$.simulation.constraints", constraint_keys)
     constraints = _ConstraintSetCheckpoint()
     constraints.next_id = _integer(
@@ -802,6 +832,12 @@ def _native_checkpoint(value: object, schema_version: int) -> _SimulationCheckpo
             _box(item, f"$.simulation.constraints.boxes[{index}]")
             for index, item in enumerate(
                 _array(constraint_data["boxes"], "$.simulation.constraints.boxes")
+            )
+        ]
+        constraints.cylinders = [
+            _cylinder(item, f"$.simulation.constraints.cylinders[{index}]")
+            for index, item in enumerate(
+                _array(constraint_data["cylinders"], "$.simulation.constraints.cylinders")
             )
         ]
 

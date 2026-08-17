@@ -65,6 +65,7 @@ class ExternalConstraintKind(Enum):
     PLANE: ExternalConstraintKind
     SPHERE: ExternalConstraintKind
     BOX: ExternalConstraintKind
+    CYLINDER: ExternalConstraintKind
 
 class RodEndpoint(Enum):
     NEGATIVE: RodEndpoint
@@ -323,6 +324,15 @@ class BoxConstraintInit:
 
     def __init__(self) -> None: ...
 
+class CylinderConstraintInit:
+    center: Vec3
+    radius: float
+    half_height: float
+    coefficient: float
+    allowed_region: ConstraintRegion
+
+    def __init__(self) -> None: ...
+
 class _PlaneConstraint:
     id: int
     point: Vec3
@@ -349,11 +359,22 @@ class _BoxConstraint:
 
     def __init__(self) -> None: ...
 
+class _CylinderConstraint:
+    id: int
+    center: Vec3
+    radius: float
+    half_height: float
+    coefficient: float
+    allowed_region: ConstraintRegion
+
+    def __init__(self) -> None: ...
+
 class _ConstraintSetCheckpoint:
     next_id: int
     planes: list[_PlaneConstraint]
     spheres: list[_SphereConstraint]
     boxes: list[_BoxConstraint]
+    cylinders: list[_CylinderConstraint]
 
     def __init__(self) -> None: ...
     def validate(self) -> None: ...
@@ -483,6 +504,7 @@ class Simulation:
     def add_plane_constraint(self, plane: PlaneConstraintInit) -> int: ...
     def add_sphere_constraint(self, sphere: SphereConstraintInit) -> int: ...
     def add_box_constraint(self, box: BoxConstraintInit) -> int: ...
+    def add_cylinder_constraint(self, cylinder: CylinderConstraintInit) -> int: ...
     def set_cell_geometry(
         self, id: int, position: Vec3, direction: Vec3, length: float
     ) -> None: ...

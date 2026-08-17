@@ -499,6 +499,49 @@ export class ColonyViewer {
       );
     }
 
+    const zToAxis = new Quaternion().setFromUnitVectors(
+      new Vector3(0, 1, 0),
+      new Vector3(0, 0, 1),
+    );
+    for (const cylinder of constraints.cylinders) {
+      const outside = cylinder.allowedRegion === "outside";
+      const geometry = new CylinderGeometry(
+        cylinder.radius,
+        cylinder.radius,
+        cylinder.halfHeight * 2,
+        48,
+        1,
+        !outside,
+      );
+      const mesh = new Mesh(
+        geometry,
+        translucent(outside ? wallColor : chamberColor, outside ? 0.22 : 0.12),
+      );
+      mesh.position.fromArray(cylinder.center);
+      mesh.quaternion.copy(zToAxis);
+      mesh.renderOrder = 2;
+      const edges = new LineSegments(
+        new EdgesGeometry(geometry, 30),
+        edgeMaterial,
+      );
+      edges.position.fromArray(cylinder.center);
+      edges.quaternion.copy(zToAxis);
+      edges.renderOrder = 3;
+      this.device.add(mesh, edges);
+      const center = new Vector3().fromArray(cylinder.center);
+      const extent = new Vector3(
+        cylinder.radius,
+        cylinder.radius,
+        cylinder.halfHeight,
+      );
+      bounds.union(
+        new Box3(
+          new Vector3().copy(center).sub(extent),
+          new Vector3().copy(center).add(extent),
+        ),
+      );
+    }
+
     if (constraints.planes.length > 0) {
       const focus = bounds.isEmpty()
         ? new Vector3()

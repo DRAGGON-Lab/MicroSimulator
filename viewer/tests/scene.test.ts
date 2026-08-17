@@ -56,6 +56,20 @@ const PYTHON_SCENE = `{
           "id": "3"
         }
       ],
+      "cylinders": [
+        {
+          "allowed_region": "inside",
+          "center": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "coefficient": 1.0,
+          "half_height": 2.0,
+          "id": "4",
+          "radius": 6.0
+        }
+      ],
       "planes": [
         {
           "coefficient": 1.25,
@@ -80,7 +94,7 @@ const PYTHON_SCENE = `{
   },
   "integrity": {
     "algorithm": "sha256",
-    "frame": "e7437c10051bc6953c974737b40bfd6c2ee85a60c9deb5801aae5f6864408447"
+    "frame": "1f64bdd2bd5e230f094922c4c4701a3919972a8f26ae462aa9b253709e056584"
   },
   "producer": {
     "name": "microsimulator",
@@ -116,6 +130,10 @@ describe("scene reader", () => {
     expect(frame.constraints.boxes[0]?.id).toBe("3");
     expect(frame.constraints.boxes[0]?.halfExtents).toEqual([1.5, 0.5, 2]);
     expect(frame.constraints.boxes[0]?.allowedRegion).toBe("outside");
+    expect(frame.constraints.cylinders[0]?.id).toBe("4");
+    expect(frame.constraints.cylinders[0]?.radius).toBe(6);
+    expect(frame.constraints.cylinders[0]?.halfHeight).toBe(2);
+    expect(frame.constraints.cylinders[0]?.allowedRegion).toBe("inside");
   });
 
   it("reads the previous scene format and still rejects tampering", async () => {
