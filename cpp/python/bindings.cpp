@@ -138,6 +138,12 @@ NB_MODULE(_core, module) {
       .def_rw("loss_rates", &cm::SignalGridAffineReaction::loss_rates)
       .def("validate", &cm::SignalGridAffineReaction::validate, "level_count"_a);
 
+  nb::class_<cm::SignalGridVelocityField>(module, "SignalGridVelocityField")
+      .def(nb::init<>())
+      .def_rw("x_faces", &cm::SignalGridVelocityField::x_faces)
+      .def_rw("y_faces", &cm::SignalGridVelocityField::y_faces)
+      .def_rw("z_faces", &cm::SignalGridVelocityField::z_faces);
+
   nb::class_<cm::SignalGridSpec>(module, "SignalGridSpec")
       .def(nb::init<>())
       .def_rw("signal_count", &cm::SignalGridSpec::signal_count)
@@ -148,6 +154,7 @@ NB_MODULE(_core, module) {
       .def_rw("advection", &cm::SignalGridSpec::advection)
       .def_rw("reaction", &cm::SignalGridSpec::reaction)
       .def_rw("obstacles", &cm::SignalGridSpec::obstacles)
+      .def_rw("velocity_field", &cm::SignalGridSpec::velocity_field)
       .def_rw("integration", &cm::SignalGridSpec::integration)
       .def_rw("solver", &cm::SignalGridSpec::solver)
       .def_rw("x_lower", &cm::SignalGridSpec::x_lower)
