@@ -108,6 +108,10 @@ ConstraintId Simulation::add_sphere_constraint(const SphereConstraintInit& spher
   return constraints_.add_sphere(sphere);
 }
 
+ConstraintId Simulation::add_box_constraint(const BoxConstraintInit& box) {
+  return constraints_.add_box(box);
+}
+
 void Simulation::set_cell_geometry(CellId id, Vec3 position, Vec3 direction, float length) {
   state_.set_cell_geometry(id, position, direction, length);
 }

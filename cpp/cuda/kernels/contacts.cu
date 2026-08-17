@@ -232,7 +232,7 @@ evaluate_external_constraint(const Capsule& cell, const ExternalConstraintGpu& c
       result.separations[endpoint] =
           dot_product(subtract(point, plane_point), inward_normal) - cell.radius;
       result.normals[endpoint] = multiply(inward_normal, -1.0F);
-    } else {
+    } else if (constraint.kind == 1) {
       const auto sphere_center =
           make_float3(constraint.geometry.x, constraint.geometry.y, constraint.geometry.z);
       const auto center_delta = subtract(point, sphere_center);
@@ -246,6 +246,44 @@ evaluate_external_constraint(const Capsule& cell, const ExternalConstraintGpu& c
       } else {
         result.separations[endpoint] = constraint.geometry.w - distance - cell.radius;
         result.normals[endpoint] = radial;
+      }
+    } else {
+      const auto box_center =
+          make_float3(constraint.geometry.x, constraint.geometry.y, constraint.geometry.z);
+      const auto half_extents =
+          make_float3(constraint.parameters.x, constraint.parameters.y, constraint.parameters.z);
+      const auto delta = subtract(point, box_center);
+      const auto outside_vector =
+          make_float3(delta.x - fminf(fmaxf(delta.x, -half_extents.x), half_extents.x),
+                      delta.y - fminf(fmaxf(delta.y, -half_extents.y), half_extents.y),
+                      delta.z - fminf(fmaxf(delta.z, -half_extents.z), half_extents.z));
+      const auto outside_distance = magnitude(outside_vector);
+      float signed_distance{};
+      float3 outward{};
+      if (outside_distance > contact_parameters.degeneracy_epsilon) {
+        signed_distance = outside_distance;
+        outward = multiply(outside_vector, 1.0F / outside_distance);
+      } else {
+        const auto clearances = make_float3(half_extents.x - fabsf(delta.x),
+                                            half_extents.y - fabsf(delta.y),
+                                            half_extents.z - fabsf(delta.z));
+        if (clearances.x <= clearances.y && clearances.x <= clearances.z) {
+          signed_distance = -clearances.x;
+          outward = make_float3(delta.x >= 0.0F ? 1.0F : -1.0F, 0.0F, 0.0F);
+        } else if (clearances.y <= clearances.z) {
+          signed_distance = -clearances.y;
+          outward = make_float3(0.0F, delta.y >= 0.0F ? 1.0F : -1.0F, 0.0F);
+        } else {
+          signed_distance = -clearances.z;
+          outward = make_float3(0.0F, 0.0F, delta.z >= 0.0F ? 1.0F : -1.0F);
+        }
+      }
+      if (constraint.allowed_region == 0) {
+        result.separations[endpoint] = signed_distance - cell.radius;
+        result.normals[endpoint] = multiply(outward, -1.0F);
+      } else {
+        result.separations[endpoint] = -signed_distance - cell.radius;
+        result.normals[endpoint] = outward;
       }
     }
     result.active[endpoint] = result.separations[endpoint] < contact_parameters.activation_margin;

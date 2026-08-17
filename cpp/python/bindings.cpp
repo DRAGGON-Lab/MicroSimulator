@@ -69,13 +69,15 @@ NB_MODULE(_core, module) {
       .value("SELECT", cm::RateOp::select)
       .value("SIGNAL", cm::RateOp::signal);
 
-  nb::enum_<cm::SphereRegion>(module, "SphereRegion")
-      .value("OUTSIDE", cm::SphereRegion::outside)
-      .value("INSIDE", cm::SphereRegion::inside);
+  nb::enum_<cm::ConstraintRegion>(module, "ConstraintRegion")
+      .value("OUTSIDE", cm::ConstraintRegion::outside)
+      .value("INSIDE", cm::ConstraintRegion::inside);
+  module.attr("SphereRegion") = module.attr("ConstraintRegion");
 
   nb::enum_<cm::ExternalConstraintKind>(module, "ExternalConstraintKind")
       .value("PLANE", cm::ExternalConstraintKind::plane)
-      .value("SPHERE", cm::ExternalConstraintKind::sphere);
+      .value("SPHERE", cm::ExternalConstraintKind::sphere)
+      .value("BOX", cm::ExternalConstraintKind::box);
 
   nb::enum_<cm::RodEndpoint>(module, "RodEndpoint")
       .value("NEGATIVE", cm::RodEndpoint::negative)
@@ -303,6 +305,13 @@ NB_MODULE(_core, module) {
       .def_rw("coefficient", &cm::SphereConstraintInit::coefficient)
       .def_rw("allowed_region", &cm::SphereConstraintInit::allowed_region);
 
+  nb::class_<cm::BoxConstraintInit>(module, "BoxConstraintInit")
+      .def(nb::init<>())
+      .def_rw("center", &cm::BoxConstraintInit::center)
+      .def_rw("half_extents", &cm::BoxConstraintInit::half_extents)
+      .def_rw("coefficient", &cm::BoxConstraintInit::coefficient)
+      .def_rw("allowed_region", &cm::BoxConstraintInit::allowed_region);
+
   nb::class_<cm::PlaneConstraint>(module, "_PlaneConstraint")
       .def(nb::init<>())
       .def_rw("id", &cm::PlaneConstraint::id)
@@ -318,11 +327,20 @@ NB_MODULE(_core, module) {
       .def_rw("coefficient", &cm::SphereConstraint::coefficient)
       .def_rw("allowed_region", &cm::SphereConstraint::allowed_region);
 
+  nb::class_<cm::BoxConstraint>(module, "_BoxConstraint")
+      .def(nb::init<>())
+      .def_rw("id", &cm::BoxConstraint::id)
+      .def_rw("center", &cm::BoxConstraint::center)
+      .def_rw("half_extents", &cm::BoxConstraint::half_extents)
+      .def_rw("coefficient", &cm::BoxConstraint::coefficient)
+      .def_rw("allowed_region", &cm::BoxConstraint::allowed_region);
+
   nb::class_<cm::ConstraintSetCheckpoint>(module, "_ConstraintSetCheckpoint")
       .def(nb::init<>())
       .def_rw("next_id", &cm::ConstraintSetCheckpoint::next_id)
       .def_rw("planes", &cm::ConstraintSetCheckpoint::planes)
       .def_rw("spheres", &cm::ConstraintSetCheckpoint::spheres)
+      .def_rw("boxes", &cm::ConstraintSetCheckpoint::boxes)
       .def("validate", &cm::ConstraintSetCheckpoint::validate);
 
   nb::class_<cm::SimulationCheckpoint>(module, "_SimulationCheckpoint")
@@ -415,6 +433,7 @@ NB_MODULE(_core, module) {
       .def("add_cell", &cm::Simulation::add_cell, "cell"_a)
       .def("add_plane_constraint", &cm::Simulation::add_plane_constraint, "plane"_a)
       .def("add_sphere_constraint", &cm::Simulation::add_sphere_constraint, "sphere"_a)
+      .def("add_box_constraint", &cm::Simulation::add_box_constraint, "box"_a)
       .def("set_cell_geometry", &cm::Simulation::set_cell_geometry, "id"_a, "position"_a,
            "direction"_a, "length"_a)
       .def("set_cell_attributes", &cm::Simulation::set_cell_attributes, "id"_a, "growth_rate"_a,
