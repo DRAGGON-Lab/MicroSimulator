@@ -70,7 +70,7 @@ float cell_site_weight(float4 center, GridShape shape, float4 origin, float4 spa
 }
 
 float sample_signal(device const float* levels, GridShape shape, float4 origin, float4 spacing,
-                    float4 center, uint signal) {
+                    device const uchar* obstacles, float4 center, uint signal) {
   float coordinate_x = axis_coordinate(center.x, origin.x, spacing.x, shape.x);
   float coordinate_y = axis_coordinate(center.y, origin.y, spacing.y, shape.y);
   float coordinate_z = axis_coordinate(center.z, origin.z, spacing.z, shape.z);
@@ -81,6 +81,8 @@ float sample_signal(device const float* levels, GridShape shape, float4 origin, 
   uint count_y = shape.y == 1u || lower_y == shape.y - 1u ? 1u : 2u;
   uint count_z = shape.z == 1u || lower_z == shape.z - 1u ? 1u : 2u;
   float result = 0.0f;
+  float fluid_weight = 0.0f;
+  bool dropped = false;
   for (uint dx = 0; dx < count_x; ++dx) {
     uint x = lower_x + dx;
     float wx = axis_site_weight(coordinate_x, shape.x, x);
@@ -90,11 +92,62 @@ float sample_signal(device const float* levels, GridShape shape, float4 origin, 
       for (uint dz = 0; dz < count_z; ++dz) {
         uint z = lower_z + dz;
         float wz = axis_site_weight(coordinate_z, shape.z, z);
-        result += wx * wy * wz * grid_level(levels, shape, signal, x, y, z);
+        float weight = wx * wy * wz;
+        if (obstacles[site_index(shape, x, y, z)] != 0u) {
+          if (weight != 0.0f) {
+            dropped = true;
+          }
+          continue;
+        }
+        fluid_weight += weight;
+        result += weight * grid_level(levels, shape, signal, x, y, z);
       }
     }
   }
+  if (dropped) {
+    result /= fluid_weight;
+  }
   return result;
+}
+
+float cell_scatter_weight(float4 center, GridShape shape, float4 origin, float4 spacing,
+                          device const uchar* obstacles, uint x, uint y, uint z) {
+  if (obstacles[site_index(shape, x, y, z)] != 0u) {
+    return 0.0f;
+  }
+  float raw = cell_site_weight(center, shape, origin, spacing, x, y, z);
+  float coordinate_x = axis_coordinate(center.x, origin.x, spacing.x, shape.x);
+  float coordinate_y = axis_coordinate(center.y, origin.y, spacing.y, shape.y);
+  float coordinate_z = axis_coordinate(center.z, origin.z, spacing.z, shape.z);
+  uint lower_x = uint(floor(coordinate_x));
+  uint lower_y = uint(floor(coordinate_y));
+  uint lower_z = uint(floor(coordinate_z));
+  uint count_x = shape.x == 1u || lower_x == shape.x - 1u ? 1u : 2u;
+  uint count_y = shape.y == 1u || lower_y == shape.y - 1u ? 1u : 2u;
+  uint count_z = shape.z == 1u || lower_z == shape.z - 1u ? 1u : 2u;
+  float fluid_weight = 0.0f;
+  bool dropped = false;
+  for (uint dx = 0; dx < count_x; ++dx) {
+    uint sx = lower_x + dx;
+    float wx = axis_site_weight(coordinate_x, shape.x, sx);
+    for (uint dy = 0; dy < count_y; ++dy) {
+      uint sy = lower_y + dy;
+      float wy = axis_site_weight(coordinate_y, shape.y, sy);
+      for (uint dz = 0; dz < count_z; ++dz) {
+        uint sz = lower_z + dz;
+        float wz = axis_site_weight(coordinate_z, shape.z, sz);
+        float weight = wx * wy * wz;
+        if (obstacles[site_index(shape, sx, sy, sz)] != 0u) {
+          if (weight != 0.0f) {
+            dropped = true;
+          }
+          continue;
+        }
+        fluid_weight += weight;
+      }
+    }
+  }
+  return dropped ? raw / fluid_weight : raw;
 }
 
 float evaluate_instruction(const RateInstruction instruction, device const float* workspace,
@@ -177,7 +230,8 @@ kernel void advance_coupled_cells(
     constant float4& origin [[buffer(14)]], constant float4& spacing [[buffer(15)]],
     constant float& dt [[buffer(16)]], constant uint& species_count [[buffer(17)]],
     constant uint& signal_count [[buffer(18)]], constant uint& instruction_count [[buffer(19)]],
-    constant uint& cell_count [[buffer(20)]], uint cell [[thread_position_in_grid]]) {
+    constant uint& cell_count [[buffer(20)]],
+    device const uchar* obstacles [[buffer(21)]], uint cell [[thread_position_in_grid]]) {
   if (cell >= cell_count) {
     return;
   }
@@ -194,7 +248,7 @@ kernel void advance_coupled_cells(
   device float* cell_signals = cell_signal_rates + signal_offset;
   for (uint signal = 0; signal < signal_count; ++signal) {
     cell_signals[signal] =
-        sample_signal(grid_levels, shape, origin, spacing, centers[cell], signal);
+        sample_signal(grid_levels, shape, origin, spacing, obstacles, centers[cell], signal);
   }
 
   uint workspace_offset = cell * instruction_count;
@@ -247,7 +301,8 @@ kernel void advance_coupled_grid(
     constant uint& cell_count [[buffer(14)]], constant uint& level_count [[buffer(15)]],
     constant uint& crank_nicolson [[buffer(16)]],
     device const float* reaction_source [[buffer(17)]],
-    device const float* reaction_loss [[buffer(18)]], uint index [[thread_position_in_grid]]) {
+    device const float* reaction_loss [[buffer(18)]],
+    device const uchar* obstacles [[buffer(19)]], uint index [[thread_position_in_grid]]) {
   if (index >= level_count) {
     return;
   }
@@ -259,6 +314,10 @@ kernel void advance_coupled_grid(
   uint y = yz / shape.z;
   uint z = yz - y * shape.z;
   float current = levels[index];
+  if (obstacles[site] != 0u) {
+    output[index] = current;
+    return;
+  }
 
   float3 lower;
   float3 upper;
@@ -285,14 +344,47 @@ kernel void advance_coupled_grid(
                 : grid_level(levels, shape, signal, x, y, z + 1u);
 
   uint3 dimensions = uint3(shape.x, shape.y, shape.z);
-  bool3 at_lower = bool3(x == 0u, y == 0u, z == 0u);
-  bool3 at_upper = bool3(x + 1u == shape.x, y + 1u == shape.y, z + 1u == shape.z);
+  bool3 closed_lower;
+  bool3 closed_upper;
+  closed_lower.x =
+      x == 0u ? (boundary_kinds[0] == 0u ||
+                 (boundary_kinds[0] == 1u && obstacles[site_index(shape, shape.x - 1u, y, z)] != 0u))
+              : obstacles[site_index(shape, x - 1u, y, z)] != 0u;
+  closed_upper.x =
+      x + 1u == shape.x
+          ? (boundary_kinds[1] == 0u ||
+             (boundary_kinds[1] == 1u && obstacles[site_index(shape, 0u, y, z)] != 0u))
+          : obstacles[site_index(shape, x + 1u, y, z)] != 0u;
+  closed_lower.y =
+      y == 0u ? (boundary_kinds[2] == 0u ||
+                 (boundary_kinds[2] == 1u && obstacles[site_index(shape, x, shape.y - 1u, z)] != 0u))
+              : obstacles[site_index(shape, x, y - 1u, z)] != 0u;
+  closed_upper.y =
+      y + 1u == shape.y
+          ? (boundary_kinds[3] == 0u ||
+             (boundary_kinds[3] == 1u && obstacles[site_index(shape, x, 0u, z)] != 0u))
+          : obstacles[site_index(shape, x, y + 1u, z)] != 0u;
+  closed_lower.z =
+      z == 0u ? (boundary_kinds[4] == 0u ||
+                 (boundary_kinds[4] == 1u && obstacles[site_index(shape, x, y, shape.z - 1u)] != 0u))
+              : obstacles[site_index(shape, x, y, z - 1u)] != 0u;
+  closed_upper.z =
+      z + 1u == shape.z
+          ? (boundary_kinds[5] == 0u ||
+             (boundary_kinds[5] == 1u && obstacles[site_index(shape, x, y, 0u)] != 0u))
+          : obstacles[site_index(shape, x, y, z + 1u)] != 0u;
   float3 velocity = advection[signal].xyz;
   float3 grid_spacing = spacing.xyz;
   float rate = 0.0f;
   for (uint axis = 0; axis < 3u; ++axis) {
     if (dimensions[axis] == 1u) {
       continue;
+    }
+    if (closed_lower[axis]) {
+      lower[axis] = current;
+    }
+    if (closed_upper[axis]) {
+      upper[axis] = current;
     }
     float inverse_spacing = 1.0f / grid_spacing[axis];
     rate += diffusion[signal] * (lower[axis] - 2.0f * current + upper[axis]) * inverse_spacing *
@@ -301,10 +393,10 @@ kernel void advance_coupled_grid(
         velocity[axis] >= 0.0f ? velocity[axis] * lower[axis] : velocity[axis] * current;
     float upper_flux =
         velocity[axis] >= 0.0f ? velocity[axis] * current : velocity[axis] * upper[axis];
-    if (at_lower[axis] && boundary_kinds[axis * 2u] == 0u) {
+    if (closed_lower[axis]) {
       lower_flux = 0.0f;
     }
-    if (at_upper[axis] && boundary_kinds[axis * 2u + 1u] == 0u) {
+    if (closed_upper[axis]) {
       upper_flux = 0.0f;
     }
     rate -= (upper_flux - lower_flux) * inverse_spacing;
@@ -314,7 +406,7 @@ kernel void advance_coupled_grid(
   float source = 0.0f;
   float inverse_voxel_volume = 1.0f / (spacing.x * spacing.y * spacing.z);
   for (uint cell = 0; cell < cell_count; ++cell) {
-    float weight = cell_site_weight(centers[cell], shape, origin, spacing, x, y, z);
+    float weight = cell_scatter_weight(centers[cell], shape, origin, spacing, obstacles, x, y, z);
     source += weight * cell_signal_rates[cell * signal_count + signal] * inverse_voxel_volume;
   }
   float transport_scale = crank_nicolson == 0u ? dt : 0.5f * dt;

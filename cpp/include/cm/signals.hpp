@@ -69,6 +69,7 @@ struct SignalGridSpec {
   std::vector<float> diffusion;
   std::vector<Vec3> advection;
   std::optional<SignalGridAffineReaction> reaction;
+  std::vector<std::uint8_t> obstacles;
   SignalIntegrationKind integration{SignalIntegrationKind::forward_euler};
   SignalSolveParameters solver;
   GridBoundary x_lower;
@@ -81,6 +82,8 @@ struct SignalGridSpec {
   [[nodiscard]] std::size_t site_count() const;
   [[nodiscard]] std::size_t level_count() const;
   [[nodiscard]] float voxel_volume() const noexcept;
+  [[nodiscard]] bool has_obstacles() const noexcept;
+  [[nodiscard]] bool solid_site(std::size_t site) const noexcept;
   void validate() const;
 };
 

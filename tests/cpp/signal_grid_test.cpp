@@ -205,4 +205,65 @@ int main() {
     restored.add_cell(cell);
     assert_throws<std::logic_error>([&] { restored.configure_signal_grid(spec); });
   }
+
+  {
+    auto spec = line_spec(3);
+    spec.advection = {{0.5F, 0.0F, 0.0F}};
+    spec.obstacles = {0, 1, 0};
+    cm::SignalGrid grid(spec, {1.0F, 0.0F, 0.5F});
+    static_cast<void>(cm::advance_signal_grid_cpu(grid, 0.25F));
+    assert_close(grid.levels()[0], 1.0F);
+    assert_close(grid.levels()[1], 0.0F);
+    assert_close(grid.levels()[2], 0.5F);
+  }
+
+  {
+    auto spec = line_spec(4);
+    spec.obstacles = {0, 0, 1, 0};
+    cm::SignalGrid grid(spec, {2.0F, 0.0F, 0.0F, 5.0F});
+    static_cast<void>(cm::advance_signal_grid_cpu(grid, 0.25F));
+    assert_close(grid.levels()[0], 1.5F);
+    assert_close(grid.levels()[1], 0.5F);
+    assert_close(grid.levels()[2], 0.0F);
+    assert_close(grid.levels()[3], 5.0F);
+    assert_close(grid.levels()[0] + grid.levels()[1], 2.0F);
+  }
+
+  {
+    auto spec = line_spec(4);
+    spec.integration = cm::SignalIntegrationKind::crank_nicolson;
+    spec.obstacles = {0, 0, 1, 0};
+    cm::SignalGrid grid(spec, {2.0F, 0.0F, 0.0F, 5.0F});
+    const auto report = cm::advance_signal_grid_cpu(grid, 1.0F);
+    assert(report.converged);
+    assert(std::abs(grid.levels()[0] + grid.levels()[1] - 2.0F) <= 1.0e-4F);
+    assert(grid.levels()[2] == 0.0F);
+    assert(std::abs(grid.levels()[3] - 5.0F) <= 1.0e-4F);
+  }
+
+  {
+    auto spec = line_spec(2);
+    spec.obstacles = {0, 1};
+    cm::SignalGrid grid(spec, {3.0F, 0.0F});
+    assert_close(grid.sample({0.5F, 0.0F, 0.0F})[0], 3.0F);
+    assert_throws<std::invalid_argument>(
+        [&] { static_cast<void>(grid.sample({1.0F, 0.0F, 0.0F})); });
+  }
+
+  {
+    auto invalid = line_spec(2);
+    invalid.obstacles = {1};
+    assert_throws<std::invalid_argument>([&] { invalid.validate(); });
+    invalid.obstacles = {0, 2};
+    assert_throws<std::invalid_argument>([&] { invalid.validate(); });
+    invalid.obstacles = {0, 1};
+    invalid.validate();
+    assert_throws<std::invalid_argument>(
+        [&] { cm::SignalGrid grid(invalid, {0.0F, 1.0F}); });
+    invalid.reaction = cm::SignalGridAffineReaction{
+        .source_rates = {0.0F, 1.0F},
+        .loss_rates = {0.0F, 0.0F},
+    };
+    assert_throws<std::invalid_argument>([&] { invalid.validate(); });
+  }
 }
