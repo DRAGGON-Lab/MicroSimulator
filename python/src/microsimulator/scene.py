@@ -19,6 +19,7 @@ import rfc8785
 
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendKind,
+    ConstraintRegion,
     GridBoundary,
     GridBoundaryKind,
     Simulation,
@@ -27,7 +28,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
 from .checkpoint import JSONValue
 
 SCENE_FORMAT = "microsimulator-scene"
-SCENE_VERSION = 1
+SCENE_VERSION = 2
 MAX_SCENE_BYTES = 1 << 30
 
 _UINT32_MAX = (1 << 32) - 1
@@ -38,6 +39,7 @@ _FLOAT32_MAX = 3.4028234663852886e38
 
 type SceneBackendKind = Literal["cpu", "metal", "cuda"]
 type SceneBoundaryKind = Literal["no_flux", "periodic", "fixed"]
+type SceneRegionKind = Literal["outside", "inside"]
 
 _BACKEND_NAMES: dict[BackendKind, SceneBackendKind] = {
     BackendKind.CPU: "cpu",
@@ -49,8 +51,13 @@ _BOUNDARY_NAMES: dict[GridBoundaryKind, SceneBoundaryKind] = {
     GridBoundaryKind.PERIODIC: "periodic",
     GridBoundaryKind.FIXED: "fixed",
 }
+_REGION_NAMES: dict[ConstraintRegion, SceneRegionKind] = {
+    ConstraintRegion.OUTSIDE: "outside",
+    ConstraintRegion.INSIDE: "inside",
+}
 _BACKEND_KINDS = frozenset(_BACKEND_NAMES.values())
 _BOUNDARY_KINDS = frozenset(_BOUNDARY_NAMES.values())
+_REGION_KINDS = frozenset(_REGION_NAMES.values())
 
 
 class SceneError(ValueError):
@@ -103,11 +110,45 @@ class SceneSignalGrid:
 
 
 @dataclass(frozen=True, slots=True)
+class ScenePlaneConstraint:
+    id: int
+    point: tuple[float, float, float]
+    inward_normal: tuple[float, float, float]
+    coefficient: float
+
+
+@dataclass(frozen=True, slots=True)
+class SceneSphereConstraint:
+    id: int
+    center: tuple[float, float, float]
+    radius: float
+    coefficient: float
+    allowed_region: SceneRegionKind
+
+
+@dataclass(frozen=True, slots=True)
+class SceneBoxConstraint:
+    id: int
+    center: tuple[float, float, float]
+    half_extents: tuple[float, float, float]
+    coefficient: float
+    allowed_region: SceneRegionKind
+
+
+@dataclass(frozen=True, slots=True)
+class SceneConstraints:
+    planes: tuple[ScenePlaneConstraint, ...]
+    spheres: tuple[SceneSphereConstraint, ...]
+    boxes: tuple[SceneBoxConstraint, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SceneFrame:
     time: float
     backend: SceneBackend
     species_count: int
     cells: tuple[SceneCell, ...]
+    constraints: SceneConstraints
     signal_grid: SceneSignalGrid | None
 
 
@@ -152,6 +193,37 @@ def capture_scene(simulation: Simulation) -> SceneFrame:
         )
         for cell in checkpoint.world.cells
     )
+    constraints = SceneConstraints(
+        planes=tuple(
+            ScenePlaneConstraint(
+                id=plane.id,
+                point=_tuple3(plane.point),
+                inward_normal=_tuple3(plane.inward_normal),
+                coefficient=plane.coefficient,
+            )
+            for plane in checkpoint.constraints.planes
+        ),
+        spheres=tuple(
+            SceneSphereConstraint(
+                id=sphere.id,
+                center=_tuple3(sphere.center),
+                radius=sphere.radius,
+                coefficient=sphere.coefficient,
+                allowed_region=_REGION_NAMES[sphere.allowed_region],
+            )
+            for sphere in checkpoint.constraints.spheres
+        ),
+        boxes=tuple(
+            SceneBoxConstraint(
+                id=box.id,
+                center=_tuple3(box.center),
+                half_extents=_tuple3(box.half_extents),
+                coefficient=box.coefficient,
+                allowed_region=_REGION_NAMES[box.allowed_region],
+            )
+            for box in checkpoint.constraints.boxes
+        ),
+    )
     signal_grid = None
     if checkpoint.signal_grid is not None:
         grid = checkpoint.signal_grid
@@ -180,6 +252,7 @@ def capture_scene(simulation: Simulation) -> SceneFrame:
         ),
         species_count=checkpoint.world.species_count,
         cells=cells,
+        constraints=constraints,
         signal_grid=signal_grid,
     )
     _validate_frame(frame)
@@ -225,6 +298,37 @@ def _frame_to_json(frame: SceneFrame) -> dict[str, JSONValue]:
             },
             "levels": list(value.levels),
         }
+    constraints: JSONValue = {
+        "planes": [
+            {
+                "id": str(plane.id),
+                "point": list(plane.point),
+                "inward_normal": list(plane.inward_normal),
+                "coefficient": plane.coefficient,
+            }
+            for plane in frame.constraints.planes
+        ],
+        "spheres": [
+            {
+                "id": str(sphere.id),
+                "center": list(sphere.center),
+                "radius": sphere.radius,
+                "coefficient": sphere.coefficient,
+                "allowed_region": sphere.allowed_region,
+            }
+            for sphere in frame.constraints.spheres
+        ],
+        "boxes": [
+            {
+                "id": str(box.id),
+                "center": list(box.center),
+                "half_extents": list(box.half_extents),
+                "coefficient": box.coefficient,
+                "allowed_region": box.allowed_region,
+            }
+            for box in frame.constraints.boxes
+        ],
+    }
     return {
         "time": frame.time,
         "backend": {
@@ -236,6 +340,7 @@ def _frame_to_json(frame: SceneFrame) -> dict[str, JSONValue]:
         },
         "species_count": frame.species_count,
         "cells": cells,
+        "constraints": constraints,
         "signal_grid": grid,
     }
 
@@ -478,6 +583,77 @@ def _cell(value: object, path: str, species_count: int) -> SceneCell:
     )
 
 
+def _region(value: object, path: str) -> SceneRegionKind:
+    name = _string(value, path)
+    if name not in _REGION_KINDS:
+        _fail(path, f"unknown region kind {name!r}")
+    return name
+
+
+def _positive_number(value: object, path: str) -> float:
+    result = _number(value, path, float32=True)
+    if result <= 0.0:
+        _fail(path, "must be positive")
+    return result
+
+
+def _plane_constraint(value: object, path: str) -> ScenePlaneConstraint:
+    data = _object(value, path)
+    _keys(data, path, {"id", "point", "inward_normal", "coefficient"})
+    return ScenePlaneConstraint(
+        id=_identifier(data["id"], f"{path}.id"),
+        point=_tuple3_from_json(data["point"], f"{path}.point"),
+        inward_normal=_tuple3_from_json(data["inward_normal"], f"{path}.inward_normal"),
+        coefficient=_positive_number(data["coefficient"], f"{path}.coefficient"),
+    )
+
+
+def _sphere_constraint(value: object, path: str) -> SceneSphereConstraint:
+    data = _object(value, path)
+    _keys(data, path, {"id", "center", "radius", "coefficient", "allowed_region"})
+    return SceneSphereConstraint(
+        id=_identifier(data["id"], f"{path}.id"),
+        center=_tuple3_from_json(data["center"], f"{path}.center"),
+        radius=_positive_number(data["radius"], f"{path}.radius"),
+        coefficient=_positive_number(data["coefficient"], f"{path}.coefficient"),
+        allowed_region=_region(data["allowed_region"], f"{path}.allowed_region"),
+    )
+
+
+def _box_constraint(value: object, path: str) -> SceneBoxConstraint:
+    data = _object(value, path)
+    _keys(data, path, {"id", "center", "half_extents", "coefficient", "allowed_region"})
+    half_extents = _tuple3_from_json(data["half_extents"], f"{path}.half_extents")
+    if any(extent <= 0.0 for extent in half_extents):
+        _fail(f"{path}.half_extents", "values must be positive")
+    return SceneBoxConstraint(
+        id=_identifier(data["id"], f"{path}.id"),
+        center=_tuple3_from_json(data["center"], f"{path}.center"),
+        half_extents=half_extents,
+        coefficient=_positive_number(data["coefficient"], f"{path}.coefficient"),
+        allowed_region=_region(data["allowed_region"], f"{path}.allowed_region"),
+    )
+
+
+def _constraints(value: object, path: str) -> SceneConstraints:
+    data = _object(value, path)
+    _keys(data, path, {"planes", "spheres", "boxes"})
+    return SceneConstraints(
+        planes=tuple(
+            _plane_constraint(item, f"{path}.planes[{index}]")
+            for index, item in enumerate(_array(data["planes"], f"{path}.planes"))
+        ),
+        spheres=tuple(
+            _sphere_constraint(item, f"{path}.spheres[{index}]")
+            for index, item in enumerate(_array(data["spheres"], f"{path}.spheres"))
+        ),
+        boxes=tuple(
+            _box_constraint(item, f"{path}.boxes[{index}]")
+            for index, item in enumerate(_array(data["boxes"], f"{path}.boxes"))
+        ),
+    )
+
+
 def _signal_grid(value: object, path: str) -> SceneSignalGrid | None:
     if value is None:
         return None
@@ -522,7 +698,7 @@ def _signal_grid(value: object, path: str) -> SceneSignalGrid | None:
 
 def _frame(value: object, path: str) -> SceneFrame:
     data = _object(value, path)
-    _keys(data, path, {"time", "backend", "species_count", "cells", "signal_grid"})
+    _keys(data, path, {"time", "backend", "species_count", "cells", "constraints", "signal_grid"})
     species_count = _integer(data["species_count"], f"{path}.species_count", 0, _UINT32_MAX)
     frame = SceneFrame(
         time=_number(data["time"], f"{path}.time"),
@@ -532,6 +708,7 @@ def _frame(value: object, path: str) -> SceneFrame:
             _cell(item, f"{path}.cells[{index}]", species_count)
             for index, item in enumerate(_array(data["cells"], f"{path}.cells"))
         ),
+        constraints=_constraints(data["constraints"], f"{path}.constraints"),
         signal_grid=_signal_grid(data["signal_grid"], f"{path}.signal_grid"),
     )
     _validate_frame(frame)
@@ -594,6 +771,52 @@ def _validate_frame(frame: SceneFrame) -> None:
             _fail(f"{path}.species", f"expected {frame.species_count} values")
         for species_index, level in enumerate(cell.species):
             _number(level, f"{path}.species[{species_index}]", float32=True)
+
+    constraint_ids: set[int] = set()
+
+    def _check_constraint_id(identifier: int, path: str) -> None:
+        _integer(identifier, path, 1, _UINT64_MAX)
+        if identifier in constraint_ids:
+            _fail(path, "duplicate constraint identifier")
+        constraint_ids.add(identifier)
+
+    def _check_tuple3(vector: tuple[float, float, float], path: str) -> None:
+        if len(vector) != 3:
+            _fail(path, "expected exactly three values")
+        for component, value in enumerate(vector):
+            _number(value, f"{path}[{component}]", float32=True)
+
+    for index, plane in enumerate(frame.constraints.planes):
+        path = f"$.frame.constraints.planes[{index}]"
+        _check_constraint_id(plane.id, f"{path}.id")
+        _check_tuple3(plane.point, f"{path}.point")
+        _check_tuple3(plane.inward_normal, f"{path}.inward_normal")
+        normal_norm = math.sqrt(sum(value * value for value in plane.inward_normal))
+        if abs(normal_norm - 1.0) > 1.0e-5:
+            _fail(f"{path}.inward_normal", "must be normalized")
+        if _number(plane.coefficient, f"{path}.coefficient", float32=True) <= 0.0:
+            _fail(f"{path}.coefficient", "must be positive")
+    for index, sphere in enumerate(frame.constraints.spheres):
+        path = f"$.frame.constraints.spheres[{index}]"
+        _check_constraint_id(sphere.id, f"{path}.id")
+        _check_tuple3(sphere.center, f"{path}.center")
+        if _number(sphere.radius, f"{path}.radius", float32=True) <= 0.0:
+            _fail(f"{path}.radius", "must be positive")
+        if _number(sphere.coefficient, f"{path}.coefficient", float32=True) <= 0.0:
+            _fail(f"{path}.coefficient", "must be positive")
+        if sphere.allowed_region not in _REGION_KINDS:
+            _fail(f"{path}.allowed_region", f"unknown region kind {sphere.allowed_region!r}")
+    for index, box in enumerate(frame.constraints.boxes):
+        path = f"$.frame.constraints.boxes[{index}]"
+        _check_constraint_id(box.id, f"{path}.id")
+        _check_tuple3(box.center, f"{path}.center")
+        _check_tuple3(box.half_extents, f"{path}.half_extents")
+        if any(extent <= 0.0 for extent in box.half_extents):
+            _fail(f"{path}.half_extents", "values must be positive")
+        if _number(box.coefficient, f"{path}.coefficient", float32=True) <= 0.0:
+            _fail(f"{path}.coefficient", "must be positive")
+        if box.allowed_region not in _REGION_KINDS:
+            _fail(f"{path}.allowed_region", f"unknown region kind {box.allowed_region!r}")
 
     grid = frame.signal_grid
     if grid is None:
