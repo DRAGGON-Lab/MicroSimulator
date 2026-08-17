@@ -22,6 +22,7 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 - [Neighbor diffusion](0010-neighbor-diffusion.md)
 - [Bounded SBML import](0011-sbml-import.md)
 - [Affine grid reactions](0015-affine-grid-reactions.md)
+- [Signal grid obstacles](0017-grid-obstacles.md)
 
 ## Data and presentation
 
