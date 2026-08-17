@@ -33,8 +33,8 @@ Each cell records its stable `id`, optional lineage `parent_id`, compact `slot`,
 
 ## Constraints
 
-`constraints` records the simulation's external constraint set as three arrays: `planes`,
-`spheres`, and `boxes`. Empty arrays are valid. Every constraint carries its stable `id` as a
+`constraints` records the simulation's external constraint set as four arrays: `planes`,
+`spheres`, `boxes`, and `cylinders`. Empty arrays are valid. Every constraint carries its stable `id` as a
 canonical decimal string (the shared identifier space with cells uses the same unsigned 64-bit
 range) and a positive `coefficient`.
 
@@ -44,6 +44,8 @@ range) and a positive `coefficient`.
   `"inside"`.
 - A box records a `center`, positive `half_extents`, and an `allowed_region` of `"outside"`
   or `"inside"`. Boxes are axis-aligned.
+- A cylinder records a `center`, positive `radius`, positive `half_height`, and an
+  `allowed_region` of `"outside"` or `"inside"`. Cylinders are z-aligned.
 
 Constraints are presentation data for device geometry: a viewer renders walls, pillars, and
 chambers from them but attaches no mechanical semantics.

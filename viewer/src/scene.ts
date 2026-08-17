@@ -60,10 +60,20 @@ export interface SceneBoxConstraint {
   readonly allowedRegion: RegionKind;
 }
 
+export interface SceneCylinderConstraint {
+  readonly id: string;
+  readonly center: Vector3;
+  readonly radius: number;
+  readonly halfHeight: number;
+  readonly coefficient: number;
+  readonly allowedRegion: RegionKind;
+}
+
 export interface SceneConstraints {
   readonly planes: readonly ScenePlaneConstraint[];
   readonly spheres: readonly SceneSphereConstraint[];
   readonly boxes: readonly SceneBoxConstraint[];
+  readonly cylinders: readonly SceneCylinderConstraint[];
 }
 
 export interface SceneGridBoundary {
@@ -398,9 +408,32 @@ function parseBoxConstraint(value: unknown, path: string): SceneBoxConstraint {
   };
 }
 
+function parseCylinderConstraint(
+  value: unknown,
+  path: string,
+): SceneCylinderConstraint {
+  const data = record(value, path);
+  exactKeys(data, path, [
+    "id",
+    "center",
+    "radius",
+    "half_height",
+    "coefficient",
+    "allowed_region",
+  ]);
+  return {
+    id: identifier(data.id, `${path}.id`),
+    center: tuple3(data.center, `${path}.center`),
+    radius: positiveNumber(data.radius, `${path}.radius`),
+    halfHeight: positiveNumber(data.half_height, `${path}.half_height`),
+    coefficient: positiveNumber(data.coefficient, `${path}.coefficient`),
+    allowedRegion: parseRegion(data.allowed_region, `${path}.allowed_region`),
+  };
+}
+
 function parseConstraints(value: unknown, path: string): SceneConstraints {
   const data = record(value, path);
-  exactKeys(data, path, ["planes", "spheres", "boxes"]);
+  exactKeys(data, path, ["planes", "spheres", "boxes", "cylinders"]);
   const constraints: SceneConstraints = {
     planes: array(data.planes, `${path}.planes`).map((item, index) =>
       parsePlaneConstraint(item, `${path}.planes[${index}]`),
@@ -411,12 +444,16 @@ function parseConstraints(value: unknown, path: string): SceneConstraints {
     boxes: array(data.boxes, `${path}.boxes`).map((item, index) =>
       parseBoxConstraint(item, `${path}.boxes[${index}]`),
     ),
+    cylinders: array(data.cylinders, `${path}.cylinders`).map((item, index) =>
+      parseCylinderConstraint(item, `${path}.cylinders[${index}]`),
+    ),
   };
   const identifiers = new Set<string>();
   for (const kind of [
     constraints.planes,
     constraints.spheres,
     constraints.boxes,
+    constraints.cylinders,
   ] as const) {
     for (const constraint of kind) {
       if (identifiers.has(constraint.id)) {

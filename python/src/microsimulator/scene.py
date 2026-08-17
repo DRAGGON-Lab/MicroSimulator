@@ -136,10 +136,21 @@ class SceneBoxConstraint:
 
 
 @dataclass(frozen=True, slots=True)
+class SceneCylinderConstraint:
+    id: int
+    center: tuple[float, float, float]
+    radius: float
+    half_height: float
+    coefficient: float
+    allowed_region: SceneRegionKind
+
+
+@dataclass(frozen=True, slots=True)
 class SceneConstraints:
     planes: tuple[ScenePlaneConstraint, ...]
     spheres: tuple[SceneSphereConstraint, ...]
     boxes: tuple[SceneBoxConstraint, ...]
+    cylinders: tuple[SceneCylinderConstraint, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +233,17 @@ def capture_scene(simulation: Simulation) -> SceneFrame:
                 allowed_region=_REGION_NAMES[box.allowed_region],
             )
             for box in checkpoint.constraints.boxes
+        ),
+        cylinders=tuple(
+            SceneCylinderConstraint(
+                id=cylinder.id,
+                center=_tuple3(cylinder.center),
+                radius=cylinder.radius,
+                half_height=cylinder.half_height,
+                coefficient=cylinder.coefficient,
+                allowed_region=_REGION_NAMES[cylinder.allowed_region],
+            )
+            for cylinder in checkpoint.constraints.cylinders
         ),
     )
     signal_grid = None
@@ -327,6 +349,17 @@ def _frame_to_json(frame: SceneFrame) -> dict[str, JSONValue]:
                 "allowed_region": box.allowed_region,
             }
             for box in frame.constraints.boxes
+        ],
+        "cylinders": [
+            {
+                "id": str(cylinder.id),
+                "center": list(cylinder.center),
+                "radius": cylinder.radius,
+                "half_height": cylinder.half_height,
+                "coefficient": cylinder.coefficient,
+                "allowed_region": cylinder.allowed_region,
+            }
+            for cylinder in frame.constraints.cylinders
         ],
     }
     return {
@@ -635,9 +668,22 @@ def _box_constraint(value: object, path: str) -> SceneBoxConstraint:
     )
 
 
+def _cylinder_constraint(value: object, path: str) -> SceneCylinderConstraint:
+    data = _object(value, path)
+    _keys(data, path, {"id", "center", "radius", "half_height", "coefficient", "allowed_region"})
+    return SceneCylinderConstraint(
+        id=_identifier(data["id"], f"{path}.id"),
+        center=_tuple3_from_json(data["center"], f"{path}.center"),
+        radius=_positive_number(data["radius"], f"{path}.radius"),
+        half_height=_positive_number(data["half_height"], f"{path}.half_height"),
+        coefficient=_positive_number(data["coefficient"], f"{path}.coefficient"),
+        allowed_region=_region(data["allowed_region"], f"{path}.allowed_region"),
+    )
+
+
 def _constraints(value: object, path: str) -> SceneConstraints:
     data = _object(value, path)
-    _keys(data, path, {"planes", "spheres", "boxes"})
+    _keys(data, path, {"planes", "spheres", "boxes", "cylinders"})
     return SceneConstraints(
         planes=tuple(
             _plane_constraint(item, f"{path}.planes[{index}]")
@@ -650,6 +696,10 @@ def _constraints(value: object, path: str) -> SceneConstraints:
         boxes=tuple(
             _box_constraint(item, f"{path}.boxes[{index}]")
             for index, item in enumerate(_array(data["boxes"], f"{path}.boxes"))
+        ),
+        cylinders=tuple(
+            _cylinder_constraint(item, f"{path}.cylinders[{index}]")
+            for index, item in enumerate(_array(data["cylinders"], f"{path}.cylinders"))
         ),
     )
 
@@ -817,6 +867,19 @@ def _validate_frame(frame: SceneFrame) -> None:
             _fail(f"{path}.coefficient", "must be positive")
         if box.allowed_region not in _REGION_KINDS:
             _fail(f"{path}.allowed_region", f"unknown region kind {box.allowed_region!r}")
+
+    for index, cylinder in enumerate(frame.constraints.cylinders):
+        path = f"$.frame.constraints.cylinders[{index}]"
+        _check_constraint_id(cylinder.id, f"{path}.id")
+        _check_tuple3(cylinder.center, f"{path}.center")
+        if _number(cylinder.radius, f"{path}.radius", float32=True) <= 0.0:
+            _fail(f"{path}.radius", "must be positive")
+        if _number(cylinder.half_height, f"{path}.half_height", float32=True) <= 0.0:
+            _fail(f"{path}.half_height", "must be positive")
+        if _number(cylinder.coefficient, f"{path}.coefficient", float32=True) <= 0.0:
+            _fail(f"{path}.coefficient", "must be positive")
+        if cylinder.allowed_region not in _REGION_KINDS:
+            _fail(f"{path}.allowed_region", f"unknown region kind {cylinder.allowed_region!r}")
 
     grid = frame.signal_grid
     if grid is None:

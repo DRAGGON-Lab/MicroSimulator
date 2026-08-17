@@ -12,7 +12,7 @@ const FRAME = {
     native: false,
   },
   cells: [],
-  constraints: { boxes: [], planes: [], spheres: [] },
+  constraints: { boxes: [], cylinders: [], planes: [], spheres: [] },
   signal_grid: null,
   species_count: 0,
   time: 0,
