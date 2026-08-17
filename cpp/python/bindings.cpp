@@ -146,6 +146,7 @@ NB_MODULE(_core, module) {
       .def_rw("diffusion", &cm::SignalGridSpec::diffusion)
       .def_rw("advection", &cm::SignalGridSpec::advection)
       .def_rw("reaction", &cm::SignalGridSpec::reaction)
+      .def_rw("obstacles", &cm::SignalGridSpec::obstacles)
       .def_rw("integration", &cm::SignalGridSpec::integration)
       .def_rw("solver", &cm::SignalGridSpec::solver)
       .def_rw("x_lower", &cm::SignalGridSpec::x_lower)

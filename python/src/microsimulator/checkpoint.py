@@ -176,6 +176,7 @@ def _signal_grid_to_json(checkpoint: _SignalGridCheckpoint | None) -> JSONValue:
                 if spec.reaction is not None
                 else None
             ),
+            "obstacles": list(spec.obstacles),
             "integration": _SIGNAL_INTEGRATION_NAMES[spec.integration],
             "solver": {
                 "max_iterations": spec.solver.max_iterations,
@@ -623,6 +624,8 @@ def _signal_grid(value: object, path: str, schema_version: int) -> _SignalGridCh
         spec_keys.update({"integration", "solver"})
     if schema_version >= 7:
         spec_keys.add("reaction")
+    if schema_version >= 8:
+        spec_keys.add("obstacles")
     _keys(
         spec_data,
         f"{path}.spec",
@@ -657,6 +660,13 @@ def _signal_grid(value: object, path: str, schema_version: int) -> _SignalGridCh
     ]
     if schema_version >= 7:
         spec.reaction = _affine_reaction(spec_data["reaction"], f"{path}.spec.reaction")
+    if schema_version >= 8:
+        spec.obstacles = [
+            _integer(item, f"{path}.spec.obstacles[{index}]", 0, 1)
+            for index, item in enumerate(
+                _array(spec_data["obstacles"], f"{path}.spec.obstacles")
+            )
+        ]
     if schema_version >= 5:
         integration_name = _string(spec_data["integration"], f"{path}.spec.integration")
         if integration_name not in _SIGNAL_INTEGRATIONS:
