@@ -24,6 +24,7 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 - [Bounded SBML import](0011-sbml-import.md)
 - [Affine grid reactions](0015-affine-grid-reactions.md)
 - [Signal grid obstacles](0017-grid-obstacles.md)
+- [Face-staggered signal velocity fields](0019-velocity-fields.md)
 
 ## Data and presentation
 
