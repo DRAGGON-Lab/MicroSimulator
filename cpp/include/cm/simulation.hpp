@@ -33,6 +33,7 @@ class Simulation {
   ConstraintId add_plane_constraint(const PlaneConstraintInit& plane);
   ConstraintId add_sphere_constraint(const SphereConstraintInit& sphere);
   ConstraintId add_box_constraint(const BoxConstraintInit& box);
+  ConstraintId add_cylinder_constraint(const CylinderConstraintInit& cylinder);
   void set_cell_geometry(CellId id, Vec3 position, Vec3 direction, float length);
   void set_cell_attributes(CellId id, float growth_rate, std::int32_t cell_type);
   void set_cell_fixed(CellId id, bool fixed);

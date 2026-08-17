@@ -77,6 +77,24 @@ void populate_box_regions(cm::Simulation& simulation) {
   assert(simulation.add_box_constraint(chamber) == 2);
 }
 
+void populate_cylinder_regions(cm::Simulation& simulation) {
+  add_cell(simulation, {1.4F, 0.0F, 0.0F}, {0.0F, 0.0F, 1.0F}, 2.0F);
+  add_cell(simulation, {1.3F, 0.0F, 1.3F}, {0.0F, 1.0F, 0.0F}, 0.0F);
+  add_cell(simulation, {0.5F, 0.0F, 1.4F}, {1.0F, 0.0F, 0.0F}, 0.0F);
+  add_cell(simulation, {4.8F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F}, 0.0F);
+
+  cm::CylinderConstraintInit pillar;
+  pillar.coefficient = 1.25F;
+  assert(simulation.add_cylinder_constraint(pillar) == 1);
+
+  cm::CylinderConstraintInit dish;
+  dish.radius = 5.0F;
+  dish.half_height = 5.0F;
+  dish.coefficient = 0.5F;
+  dish.allowed_region = cm::ConstraintRegion::inside;
+  assert(simulation.add_cylinder_constraint(dish) == 2);
+}
+
 void populate_degenerate_sphere(cm::Simulation& simulation) {
   add_cell(simulation, {}, {0.0F, 1.0F, 0.0F}, 0.0F);
   cm::SphereConstraintInit sphere;
@@ -156,6 +174,7 @@ int main() {
     run_empty_inputs(backend, device_index);
     run_fixture(backend, device_index, populate_mixed_constraints);
     run_fixture(backend, device_index, populate_box_regions);
+    run_fixture(backend, device_index, populate_cylinder_regions);
     run_fixture(backend, device_index, populate_degenerate_sphere);
     run_fixture(backend, device_index, populate_degenerate_box);
   });

@@ -100,6 +100,33 @@ void populate_inside_box(cm::Simulation& simulation) {
   simulation.add_box_constraint(box);
 }
 
+void populate_outside_cylinder(cm::Simulation& simulation) {
+  cm::CellInit cell;
+  cell.position = {1.4F, 0.0F, 0.0F};
+  cell.direction = {0.0F, 0.0F, 1.0F};
+  cell.length = 2.0F;
+  cell.radius = 0.5F;
+  simulation.add_cell(cell);
+
+  cm::CylinderConstraintInit cylinder;
+  cylinder.coefficient = 1.25F;
+  simulation.add_cylinder_constraint(cylinder);
+}
+
+void populate_inside_cylinder(cm::Simulation& simulation) {
+  cm::CellInit cell;
+  cell.position = {4.8F, 0.0F, 0.0F};
+  cell.length = 0.0F;
+  cell.radius = 0.5F;
+  simulation.add_cell(cell);
+
+  cm::CylinderConstraintInit cylinder;
+  cylinder.radius = 5.0F;
+  cylinder.half_height = 5.0F;
+  cylinder.allowed_region = cm::ConstraintRegion::inside;
+  simulation.add_cylinder_constraint(cylinder);
+}
+
 void compare_results(const cm::MechanicsSolveResult& actual,
                      const cm::MechanicsSolveResult& expected) {
   assert(actual.report.status == expected.report.status);
@@ -178,6 +205,8 @@ int main() {
     run_fixture(backend, device_index, populate_inside_sphere);
     run_fixture(backend, device_index, populate_outside_box);
     run_fixture(backend, device_index, populate_inside_box);
+    run_fixture(backend, device_index, populate_outside_cylinder);
+    run_fixture(backend, device_index, populate_inside_cylinder);
   });
   return 0;
 }

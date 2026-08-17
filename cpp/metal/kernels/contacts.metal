@@ -209,7 +209,7 @@ ExternalEvaluation evaluate_external_constraint(const Capsule cell,
         result.separations[endpoint] = constraint.geometry.w - distance - cell.radius;
         result.normals[endpoint] = radial;
       }
-    } else {
+    } else if (constraint.kind == 2) {
       float3 half_extents = constraint.parameters.xyz;
       float3 delta = point - constraint.geometry.xyz;
       float3 outside_vector = delta - clamp(delta, -half_extents, half_extents);
@@ -231,6 +231,41 @@ ExternalEvaluation evaluate_external_constraint(const Capsule cell,
           signed_distance = -clearances.z;
           outward = float3(0.0f, 0.0f, delta.z >= 0.0f ? 1.0f : -1.0f);
         }
+      }
+      if (constraint.allowed_region == 0) {
+        result.separations[endpoint] = signed_distance - cell.radius;
+        result.normals[endpoint] = -outward;
+      } else {
+        result.separations[endpoint] = -signed_distance - cell.radius;
+        result.normals[endpoint] = outward;
+      }
+    } else {
+      float3 delta = float3(point.xy - constraint.geometry.xy, 0.0f);
+      float radial_distance = length(delta);
+      float3 radial = radial_distance > contact_parameters.y ? delta / radial_distance
+                                                             : float3(1.0f, 0.0f, 0.0f);
+      float z_offset = point.z - constraint.geometry.z;
+      float3 axial = float3(0.0f, 0.0f, z_offset >= 0.0f ? 1.0f : -1.0f);
+      float radial_excess = radial_distance - constraint.geometry.w;
+      float axial_excess = fabs(z_offset) - constraint.parameters.x;
+      float signed_distance;
+      float3 outward;
+      if (radial_excess > 0.0f && axial_excess > 0.0f) {
+        signed_distance =
+            sqrt(radial_excess * radial_excess + axial_excess * axial_excess);
+        outward = (radial * radial_excess + axial * axial_excess) / signed_distance;
+      } else if (radial_excess > 0.0f) {
+        signed_distance = radial_excess;
+        outward = radial;
+      } else if (axial_excess > 0.0f) {
+        signed_distance = axial_excess;
+        outward = axial;
+      } else if (-radial_excess <= -axial_excess) {
+        signed_distance = radial_excess;
+        outward = radial;
+      } else {
+        signed_distance = axial_excess;
+        outward = axial;
       }
       if (constraint.allowed_region == 0) {
         result.separations[endpoint] = signed_distance - cell.radius;
