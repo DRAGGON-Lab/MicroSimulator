@@ -458,6 +458,7 @@ NB_MODULE(_core, module) {
       .def_prop_ro("last_signal_solve_report", &cm::Simulation::last_signal_solve_report)
       .def_prop_ro("has_coupled_rate_plan", &cm::Simulation::has_coupled_rate_plan)
       .def("add_cell", &cm::Simulation::add_cell, "cell"_a)
+      .def("remove_cell", &cm::Simulation::remove_cell, "id"_a)
       .def("add_plane_constraint", &cm::Simulation::add_plane_constraint, "plane"_a)
       .def("add_sphere_constraint", &cm::Simulation::add_sphere_constraint, "sphere"_a)
       .def("add_box_constraint", &cm::Simulation::add_box_constraint, "box"_a)
