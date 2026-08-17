@@ -302,7 +302,10 @@ kernel void advance_coupled_grid(
     constant uint& crank_nicolson [[buffer(16)]],
     device const float* reaction_source [[buffer(17)]],
     device const float* reaction_loss [[buffer(18)]],
-    device const uchar* obstacles [[buffer(19)]], uint index [[thread_position_in_grid]]) {
+    device const uchar* obstacles [[buffer(19)]],
+    device const float* x_faces [[buffer(20)]], device const float* y_faces [[buffer(21)]],
+    device const float* z_faces [[buffer(22)]],
+    constant uint& has_velocity_field [[buffer(23)]], uint index [[thread_position_in_grid]]) {
   if (index >= level_count) {
     return;
   }
@@ -373,7 +376,22 @@ kernel void advance_coupled_grid(
           ? (boundary_kinds[5] == 0u ||
              (boundary_kinds[5] == 1u && obstacles[site_index(shape, x, y, 0u)] != 0u))
           : obstacles[site_index(shape, x, y, z + 1u)] != 0u;
-  float3 velocity = advection[signal].xyz;
+  float face_lower[3];
+  float face_upper[3];
+  if (has_velocity_field != 0u) {
+    face_lower[0] = x_faces[x * shape.y * shape.z + y * shape.z + z];
+    face_upper[0] = x_faces[(x + 1u) * shape.y * shape.z + y * shape.z + z];
+    face_lower[1] = y_faces[x * (shape.y + 1u) * shape.z + y * shape.z + z];
+    face_upper[1] = y_faces[x * (shape.y + 1u) * shape.z + (y + 1u) * shape.z + z];
+    face_lower[2] = z_faces[x * shape.y * (shape.z + 1u) + y * (shape.z + 1u) + z];
+    face_upper[2] = z_faces[x * shape.y * (shape.z + 1u) + y * (shape.z + 1u) + z + 1u];
+  } else {
+    float3 velocity = advection[signal].xyz;
+    for (uint axis = 0; axis < 3u; ++axis) {
+      face_lower[axis] = velocity[axis];
+      face_upper[axis] = velocity[axis];
+    }
+  }
   float3 grid_spacing = spacing.xyz;
   float rate = 0.0f;
   for (uint axis = 0; axis < 3u; ++axis) {
@@ -389,10 +407,10 @@ kernel void advance_coupled_grid(
     float inverse_spacing = 1.0f / grid_spacing[axis];
     rate += diffusion[signal] * (lower[axis] - 2.0f * current + upper[axis]) * inverse_spacing *
             inverse_spacing;
-    float lower_flux =
-        velocity[axis] >= 0.0f ? velocity[axis] * lower[axis] : velocity[axis] * current;
-    float upper_flux =
-        velocity[axis] >= 0.0f ? velocity[axis] * current : velocity[axis] * upper[axis];
+    float lower_flux = face_lower[axis] >= 0.0f ? face_lower[axis] * lower[axis]
+                                                : face_lower[axis] * current;
+    float upper_flux = face_upper[axis] >= 0.0f ? face_upper[axis] * current
+                                                : face_upper[axis] * upper[axis];
     if (closed_lower[axis]) {
       lower_flux = 0.0f;
     }
