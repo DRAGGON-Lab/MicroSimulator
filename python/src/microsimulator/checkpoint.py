@@ -28,6 +28,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     RateOp,
     SignalGridAffineReaction,
     SignalGridSpec,
+    SignalGridVelocityField,
     SignalIntegrationKind,
     Simulation,
     SpeciesRatePlan,
@@ -178,6 +179,15 @@ def _signal_grid_to_json(checkpoint: _SignalGridCheckpoint | None) -> JSONValue:
                 else None
             ),
             "obstacles": list(spec.obstacles),
+            "velocity_field": (
+                {
+                    "x_faces": list(spec.velocity_field.x_faces),
+                    "y_faces": list(spec.velocity_field.y_faces),
+                    "z_faces": list(spec.velocity_field.z_faces),
+                }
+                if spec.velocity_field is not None
+                else None
+            ),
             "integration": _SIGNAL_INTEGRATION_NAMES[spec.integration],
             "solver": {
                 "max_iterations": spec.solver.max_iterations,
@@ -655,7 +665,7 @@ def _signal_grid(value: object, path: str, schema_version: int) -> _SignalGridCh
     if schema_version >= 7:
         spec_keys.add("reaction")
     if schema_version >= 8:
-        spec_keys.add("obstacles")
+        spec_keys.update({"obstacles", "velocity_field"})
     _keys(
         spec_data,
         f"{path}.spec",
@@ -697,6 +707,30 @@ def _signal_grid(value: object, path: str, schema_version: int) -> _SignalGridCh
                 _array(spec_data["obstacles"], f"{path}.spec.obstacles")
             )
         ]
+        field_value = spec_data["velocity_field"]
+        if field_value is not None:
+            field_data = _object(field_value, f"{path}.spec.velocity_field")
+            _keys(field_data, f"{path}.spec.velocity_field", {"x_faces", "y_faces", "z_faces"})
+            field = SignalGridVelocityField()
+            field.x_faces = [
+                _number(item, f"{path}.spec.velocity_field.x_faces[{index}]", float32=True)
+                for index, item in enumerate(
+                    _array(field_data["x_faces"], f"{path}.spec.velocity_field.x_faces")
+                )
+            ]
+            field.y_faces = [
+                _number(item, f"{path}.spec.velocity_field.y_faces[{index}]", float32=True)
+                for index, item in enumerate(
+                    _array(field_data["y_faces"], f"{path}.spec.velocity_field.y_faces")
+                )
+            ]
+            field.z_faces = [
+                _number(item, f"{path}.spec.velocity_field.z_faces[{index}]", float32=True)
+                for index, item in enumerate(
+                    _array(field_data["z_faces"], f"{path}.spec.velocity_field.z_faces")
+                )
+            ]
+            spec.velocity_field = field
     if schema_version >= 5:
         integration_name = _string(spec_data["integration"], f"{path}.spec.integration")
         if integration_name not in _SIGNAL_INTEGRATIONS:

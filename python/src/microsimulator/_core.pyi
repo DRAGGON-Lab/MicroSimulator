@@ -141,6 +141,13 @@ class SignalGridAffineReaction:
     def __init__(self) -> None: ...
     def validate(self, level_count: int) -> None: ...
 
+class SignalGridVelocityField:
+    x_faces: list[float]
+    y_faces: list[float]
+    z_faces: list[float]
+
+    def __init__(self) -> None: ...
+
 class SignalGridSpec:
     signal_count: int
     shape: GridShape
@@ -150,6 +157,7 @@ class SignalGridSpec:
     advection: list[Vec3]
     reaction: SignalGridAffineReaction | None
     obstacles: list[int]
+    velocity_field: SignalGridVelocityField | None
     integration: SignalIntegrationKind
     solver: SignalSolveParameters
     x_lower: GridBoundary

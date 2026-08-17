@@ -196,6 +196,7 @@ def _remove_grid_obstacles(document: dict[str, Any]) -> None:
     grid = document["simulation"].get("signal_grid")
     if grid is not None:
         del grid["spec"]["obstacles"]
+        del grid["spec"]["velocity_field"]
 
 
 @pytest.mark.parametrize("format_name", [CHECKPOINT_FORMAT, "cellmodeller2-checkpoint"])
