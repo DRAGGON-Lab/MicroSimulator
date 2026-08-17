@@ -19,6 +19,7 @@ from typing import NoReturn, cast
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendKind,
     CellSnapshot,
+    ConstraintRegion,
     CoupledRatePlan,
     GridBoundary,
     GridBoundaryKind,
@@ -30,8 +31,8 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     SignalIntegrationKind,
     Simulation,
     SpeciesRatePlan,
-    SphereRegion,
     Vec3,
+    _BoxConstraint,
     _ConstraintSetCheckpoint,
     _LineageEntry,
     _PlaneConstraint,
@@ -42,7 +43,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
 )
 
 CHECKPOINT_FORMAT = "microsimulator-checkpoint"
-CHECKPOINT_VERSION = 7
+CHECKPOINT_VERSION = 8
 MAX_CHECKPOINT_BYTES = 1 << 30
 _NATIVE_CHECKPOINT_VERSION = 4
 
@@ -114,11 +115,11 @@ _RATE_OP_NAMES = {
     RateOp.SIGNAL: "signal",
 }
 _RATE_OPS = {name: operation for operation, name in _RATE_OP_NAMES.items()}
-_SPHERE_REGION_NAMES = {
-    SphereRegion.OUTSIDE: "outside",
-    SphereRegion.INSIDE: "inside",
+_CONSTRAINT_REGION_NAMES = {
+    ConstraintRegion.OUTSIDE: "outside",
+    ConstraintRegion.INSIDE: "inside",
 }
-_SPHERE_REGIONS = {name: region for region, name in _SPHERE_REGION_NAMES.items()}
+_CONSTRAINT_REGIONS = {name: region for region, name in _CONSTRAINT_REGION_NAMES.items()}
 _BACKEND_NAMES = {
     BackendKind.CPU: "cpu",
     BackendKind.METAL: "metal",
@@ -255,9 +256,19 @@ def _simulation_to_json(checkpoint: _SimulationCheckpoint) -> dict[str, JSONValu
             "center": _vec3_to_json(sphere.center),
             "radius": sphere.radius,
             "coefficient": sphere.coefficient,
-            "allowed_region": _SPHERE_REGION_NAMES[sphere.allowed_region],
+            "allowed_region": _CONSTRAINT_REGION_NAMES[sphere.allowed_region],
         }
         for sphere in checkpoint.constraints.spheres
+    ]
+    boxes: list[JSONValue] = [
+        {
+            "id": box.id,
+            "center": _vec3_to_json(box.center),
+            "half_extents": _vec3_to_json(box.half_extents),
+            "coefficient": box.coefficient,
+            "allowed_region": _CONSTRAINT_REGION_NAMES[box.allowed_region],
+        }
+        for box in checkpoint.constraints.boxes
     ]
     instructions = _instructions_to_json(checkpoint.species_rate_plan.instructions)
     return {
@@ -272,6 +283,7 @@ def _simulation_to_json(checkpoint: _SimulationCheckpoint) -> dict[str, JSONValu
             "next_id": checkpoint.constraints.next_id,
             "planes": planes,
             "spheres": spheres,
+            "boxes": boxes,
         },
         "species_rate_plan": {
             "species_count": checkpoint.species_rate_plan.species_count,
@@ -521,10 +533,26 @@ def _sphere(value: object, path: str) -> _SphereConstraint:
     sphere.coefficient = _number(data["coefficient"], f"{path}.coefficient", float32=True)
     region_name = _string(data["allowed_region"], f"{path}.allowed_region")
     try:
-        sphere.allowed_region = _SPHERE_REGIONS[region_name]
+        sphere.allowed_region = _CONSTRAINT_REGIONS[region_name]
     except KeyError:
         _fail(f"{path}.allowed_region", f"unknown sphere region {region_name!r}")
     return sphere
+
+
+def _box(value: object, path: str) -> _BoxConstraint:
+    data = _object(value, path)
+    _keys(data, path, {"id", "center", "half_extents", "coefficient", "allowed_region"})
+    box = _BoxConstraint()
+    box.id = _integer(data["id"], f"{path}.id", 1, _UINT64_MAX)
+    box.center = _vec3(data["center"], f"{path}.center")
+    box.half_extents = _vec3(data["half_extents"], f"{path}.half_extents")
+    box.coefficient = _number(data["coefficient"], f"{path}.coefficient", float32=True)
+    region_name = _string(data["allowed_region"], f"{path}.allowed_region")
+    try:
+        box.allowed_region = _CONSTRAINT_REGIONS[region_name]
+    except KeyError:
+        _fail(f"{path}.allowed_region", f"unknown box region {region_name!r}")
+    return box
 
 
 def _instruction(value: object, path: str) -> RateInstruction:
@@ -739,7 +767,10 @@ def _native_checkpoint(value: object, schema_version: int) -> _SimulationCheckpo
     ]
 
     constraint_data = _object(data["constraints"], "$.simulation.constraints")
-    _keys(constraint_data, "$.simulation.constraints", {"next_id", "planes", "spheres"})
+    constraint_keys = {"next_id", "planes", "spheres"}
+    if schema_version >= 8:
+        constraint_keys.add("boxes")
+    _keys(constraint_data, "$.simulation.constraints", constraint_keys)
     constraints = _ConstraintSetCheckpoint()
     constraints.next_id = _integer(
         constraint_data["next_id"], "$.simulation.constraints.next_id", 1, _UINT64_MAX
@@ -756,6 +787,13 @@ def _native_checkpoint(value: object, schema_version: int) -> _SimulationCheckpo
             _array(constraint_data["spheres"], "$.simulation.constraints.spheres")
         )
     ]
+    if schema_version >= 8:
+        constraints.boxes = [
+            _box(item, f"$.simulation.constraints.boxes[{index}]")
+            for index, item in enumerate(
+                _array(constraint_data["boxes"], "$.simulation.constraints.boxes")
+            )
+        ]
 
     plan_data = _object(data["species_rate_plan"], "$.simulation.species_rate_plan")
     _keys(
@@ -839,7 +877,7 @@ def load_checkpoint_bundle(
     if "version" not in root:
         _fail("$", "missing keys ['version']")
     schema_version = _integer(root["version"], "$.version", 0, _UINT32_MAX)
-    supported_versions = {1, 2, 3, 4, 5, 6, CHECKPOINT_VERSION}
+    supported_versions = {1, 2, 3, 4, 5, 6, 7, CHECKPOINT_VERSION}
     if schema_version not in supported_versions:
         _fail("$.version", f"unsupported checkpoint version {schema_version}")
     required = {

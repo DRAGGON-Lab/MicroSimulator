@@ -57,6 +57,7 @@ _BACKEND_NAMES = {
 _CONSTRAINT_NAMES = {
     ExternalConstraintKind.PLANE: "plane",
     ExternalConstraintKind.SPHERE: "sphere",
+    ExternalConstraintKind.BOX: "box",
 }
 _ENDPOINT_NAMES = {
     RodEndpoint.NEGATIVE: "negative",

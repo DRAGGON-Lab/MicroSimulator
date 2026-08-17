@@ -6,8 +6,10 @@ import pytest
 from microsimulator import (
     BackendFeature,
     BackendKind,
+    BoxConstraintInit,
     CellInit,
     ConstraintContactParameters,
+    ConstraintRegion,
     ContactParameters,
     ExternalConstraintKind,
     MechanicsIntegrationParameters,
@@ -348,6 +350,41 @@ def test_constraints_participate_in_mechanical_relaxation(backend: BackendKind) 
     assert result.report.status == SolverStatus.CONVERGED
     assert result.corrections[0].translation.y > 0.0
     assert simulation.cell(cell_id).position.y > 0.4
+
+
+@pytest.mark.parametrize("backend", list(BackendKind))
+def test_box_constraints_participate_in_mechanical_relaxation(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip("native backend is not built")
+    simulation = Simulation(backend)
+    if not simulation.supports(BackendFeature.EXTERNAL_CONSTRAINTS):
+        pytest.skip("backend does not implement external constraints")
+    cell = CellInit()
+    cell.position = Vec3(1.4, 0.0, 0.0)
+    cell.direction = Vec3(0.0, 1.0, 0.0)
+    cell.length = 2.0
+    cell.radius = 0.5
+    cell_id = simulation.add_cell(cell)
+
+    box = BoxConstraintInit()
+    box.half_extents = Vec3(1.0, 1.0, 1.0)
+    box.allowed_region = ConstraintRegion.OUTSIDE
+    constraint_id = simulation.add_box_constraint(box)
+
+    graph = simulation.find_external_contacts()
+    assert len(graph) == 2
+    assert all(contact.constraint_id == constraint_id for contact in graph.contacts)
+    assert all(contact.constraint_kind == ExternalConstraintKind.BOX for contact in graph.contacts)
+    assert all(
+        math.isclose(contact.signed_separation, -0.1, abs_tol=1.0e-6)
+        for contact in graph.contacts
+    )
+
+    result = simulation.relax_cell_mechanics()
+
+    assert result.report.status == SolverStatus.CONVERGED
+    assert result.corrections[0].translation.x > 0.0
+    assert simulation.cell(cell_id).position.x > 1.4
 
 
 def test_cpu_mechanics_relaxation_updates_geometry() -> None:
