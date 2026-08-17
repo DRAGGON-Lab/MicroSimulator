@@ -55,13 +55,16 @@ class RateOp(Enum):
     SELECT: RateOp
     SIGNAL: RateOp
 
-class SphereRegion(Enum):
-    OUTSIDE: SphereRegion
-    INSIDE: SphereRegion
+class ConstraintRegion(Enum):
+    OUTSIDE: ConstraintRegion
+    INSIDE: ConstraintRegion
+
+SphereRegion = ConstraintRegion
 
 class ExternalConstraintKind(Enum):
     PLANE: ExternalConstraintKind
     SPHERE: ExternalConstraintKind
+    BOX: ExternalConstraintKind
 
 class RodEndpoint(Enum):
     NEGATIVE: RodEndpoint
@@ -311,6 +314,14 @@ class SphereConstraintInit:
 
     def __init__(self) -> None: ...
 
+class BoxConstraintInit:
+    center: Vec3
+    half_extents: Vec3
+    coefficient: float
+    allowed_region: ConstraintRegion
+
+    def __init__(self) -> None: ...
+
 class _PlaneConstraint:
     id: int
     point: Vec3
@@ -328,10 +339,20 @@ class _SphereConstraint:
 
     def __init__(self) -> None: ...
 
+class _BoxConstraint:
+    id: int
+    center: Vec3
+    half_extents: Vec3
+    coefficient: float
+    allowed_region: ConstraintRegion
+
+    def __init__(self) -> None: ...
+
 class _ConstraintSetCheckpoint:
     next_id: int
     planes: list[_PlaneConstraint]
     spheres: list[_SphereConstraint]
+    boxes: list[_BoxConstraint]
 
     def __init__(self) -> None: ...
     def validate(self) -> None: ...
@@ -460,6 +481,7 @@ class Simulation:
     def add_cell(self, cell: CellInit) -> int: ...
     def add_plane_constraint(self, plane: PlaneConstraintInit) -> int: ...
     def add_sphere_constraint(self, sphere: SphereConstraintInit) -> int: ...
+    def add_box_constraint(self, box: BoxConstraintInit) -> int: ...
     def set_cell_geometry(
         self, id: int, position: Vec3, direction: Vec3, length: float
     ) -> None: ...

@@ -11,9 +11,11 @@ from microsimulator import (
     CHECKPOINT_FORMAT,
     CHECKPOINT_VERSION,
     BackendKind,
+    BoxConstraintInit,
     CellInit,
     CheckpointBundle,
     CheckpointError,
+    ConstraintRegion,
     CoupledRatePlan,
     GridShape,
     PlaneConstraintInit,
@@ -109,6 +111,13 @@ def _make_simulation() -> tuple[Simulation, int, int]:
     sphere.allowed_region = SphereRegion.INSIDE
     assert simulation.add_sphere_constraint(sphere) == 2
 
+    box = BoxConstraintInit()
+    box.center = Vec3(50.0, 50.0, 50.0)
+    box.half_extents = Vec3(4.0, 2.0, 1.0)
+    box.coefficient = 0.5
+    box.allowed_region = ConstraintRegion.OUTSIDE
+    assert simulation.add_box_constraint(box) == 3
+
     simulation.step(0.125)
     daughter_a, daughter_b = simulation.divide_equal(first_id)
     simulation.step(0.03125)
@@ -176,6 +185,10 @@ def _remove_affine_reaction(document: dict[str, Any]) -> None:
     grid = document["simulation"]["signal_grid"]
     if grid is not None:
         del grid["spec"]["reaction"]
+
+
+def _remove_constraint_boxes(document: dict[str, Any]) -> None:
+    del document["simulation"]["constraints"]["boxes"]
 
 
 @pytest.mark.parametrize("format_name", [CHECKPOINT_FORMAT, "cellmodeller2-checkpoint"])
@@ -247,6 +260,7 @@ def test_version_one_checkpoint_migrates_to_an_empty_signal_state(tmp_path: Path
     del document["simulation"]["signal_grid"]
     del document["simulation"]["coupled_rate_plan"]
     _remove_fixed_fields(document)
+    _remove_constraint_boxes(document)
     _rewrite_with_state_digest(path, document)
 
     restored = load_checkpoint(path)
@@ -268,6 +282,7 @@ def test_version_two_checkpoint_migrates_without_a_coupled_plan(tmp_path: Path) 
     del document["simulation"]["signal_grid"]["spec"]["solver"]
     _remove_affine_reaction(document)
     _remove_fixed_fields(document)
+    _remove_constraint_boxes(document)
     _rewrite_with_state_digest(path, document)
 
     restored = load_checkpoint(path)
@@ -288,6 +303,7 @@ def test_version_three_checkpoint_migrates_without_controller_state(tmp_path: Pa
     del document["simulation"]["signal_grid"]["spec"]["solver"]
     _remove_affine_reaction(document)
     _remove_fixed_fields(document)
+    _remove_constraint_boxes(document)
     _rewrite_with_state_digest(path, document)
 
     bundle = load_checkpoint_bundle(path)
@@ -307,6 +323,7 @@ def test_version_four_signal_grid_migrates_to_forward_euler(tmp_path: Path) -> N
     del document["simulation"]["signal_grid"]["spec"]["solver"]
     _remove_affine_reaction(document)
     _remove_fixed_fields(document)
+    _remove_constraint_boxes(document)
     _rewrite_with_state_digest(path, document)
 
     restored = load_checkpoint(path)
@@ -323,6 +340,7 @@ def test_version_five_cells_migrate_to_movable(tmp_path: Path) -> None:
     document["version"] = 5
     _remove_affine_reaction(document)
     _remove_fixed_fields(document)
+    _remove_constraint_boxes(document)
     _rewrite_with_state_digest(path, document)
 
     restored = load_checkpoint(path)
@@ -336,12 +354,31 @@ def test_version_six_signal_grid_migrates_without_affine_reactions(tmp_path: Pat
     document = _document(path)
     document["version"] = 6
     _remove_affine_reaction(document)
+    _remove_constraint_boxes(document)
     _rewrite_with_state_digest(path, document)
 
     restored = load_checkpoint(path)
     checkpoint = restored._checkpoint()
     assert checkpoint.signal_grid is not None
     assert checkpoint.signal_grid.spec.reaction is None
+
+
+def test_version_seven_checkpoint_migrates_without_boxes(tmp_path: Path) -> None:
+    simulation, _, _ = _make_simulation()
+    path = tmp_path / "legacy-v7.cm2.json"
+    save_checkpoint(simulation, path)
+    document = _document(path)
+    document["version"] = 7
+    _remove_constraint_boxes(document)
+    _rewrite_with_state_digest(path, document)
+
+    restored = load_checkpoint(path)
+    checkpoint = restored._checkpoint()
+    assert checkpoint.constraints.boxes == []
+    assert len(checkpoint.constraints.planes) == 1
+    assert len(checkpoint.constraints.spheres) == 1
+    box = BoxConstraintInit()
+    assert restored.add_box_constraint(box) == 4
 
 
 def test_affine_grid_reaction_round_trips_exactly(tmp_path: Path) -> None:
