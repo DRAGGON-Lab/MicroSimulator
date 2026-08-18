@@ -488,6 +488,7 @@ NB_MODULE(_core, module) {
             simulation.set_signal_levels(levels);
           },
           "levels"_a)
+      .def("set_velocity_field", &cm::Simulation::set_velocity_field, "field"_a.none())
       .def("divide", &cm::Simulation::divide, "parent_id"_a, "first_fraction"_a)
       .def("divide_equal", &cm::Simulation::divide_equal, "parent_id"_a)
       .def("step", &cm::Simulation::step, "dt"_a)
