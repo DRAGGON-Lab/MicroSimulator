@@ -425,6 +425,7 @@ class CudaBackend final : public ComputeBackend {
     const auto cell_signal_count =
         checked_product(cell_count_size, signal_count_size, "cell signal");
     const auto grid_level_count = grid.levels().size();
+    const auto& spec = grid.spec();
     for (const auto count :
          {cell_count_size, species_count_size, signal_count_size, instruction_count_size,
           species_level_count, workspace_count, cell_signal_count, grid_level_count}) {
@@ -460,7 +461,6 @@ class CudaBackend final : public ComputeBackend {
     const auto geometry = state.geometry_state();
     const auto attributes = state.cell_attributes();
     auto species_state = state.species_state();
-    const auto& spec = grid.spec();
     std::vector<float4> centers(cell_count_size);
     std::vector<float4> shapes(cell_count_size);
     for (std::size_t index = 0; index < cell_count_size; ++index) {
