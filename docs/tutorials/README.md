@@ -11,6 +11,8 @@ These tutorials introduce the MicroSimulator modeling interface through runnable
 5. [Plasmid segregation, contacts, and conjugation](discrete-state-and-contacts.md)
 6. [Checkpoints, contact graphs, and quantitative analysis](analysis.md)
 7. [SimBOL circuit examples](simbol.md)
+8. [Microfluidic devices: walls, flow, and washout](microfluidics.md)
+9. [Solved flow: a pillar channel, Brinkman feedback, and the benchmarks](flow-solvers.md)
 
 The examples use `uv`, the `microsimulator` command, data-only checkpoints, and the standalone viewer. Each model selects its backend explicitly and can be run headlessly for batch experiments.
 

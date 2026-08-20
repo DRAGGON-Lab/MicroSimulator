@@ -50,6 +50,8 @@ _MODELS: tuple[tuple[str, dict[str, JSONValue], float], ...] = (
     ("plasmid_segregation.py", {"copies_per_cell": 10}, 0.001),
     ("conjugation.py", {"transfer_probability": 0.1}, 0.001),
     ("danino_clock.py", {}, 0.001),
+    ("biopixel_trap.py", {}, 0.001),
+    ("pillar_channel.py", {}, 0.001),
 )
 
 
@@ -116,7 +118,7 @@ def test_conjugation_tutorial_uses_current_contact_graph() -> None:
     assert model.simulation.cell(acceptor.id).cell_type == 2
 
 
-def test_danino_tutorial_declares_spatial_ahl_and_nutrient_reactions() -> None:
+def test_danino_tutorial_uses_device_flow_obstacles_and_washout() -> None:
     model, _ = build_model(
         _TUTORIALS / "danino_clock.py",
         ModelContext(BackendKind.CPU, 0, seed=31),
@@ -127,20 +129,48 @@ def test_danino_tutorial_declares_spatial_ahl_and_nutrient_reactions() -> None:
     checkpoint = model.simulation._checkpoint()
     assert checkpoint.signal_grid is not None
     spec = checkpoint.signal_grid.spec
-    assert spec.reaction is not None
-    sites = spec.site_count
-    outside = 0
-    inside = 20 * spec.shape.y * spec.shape.z
-    assert spec.origin.x + 19 * spec.spacing.x < -60.0
-    assert spec.origin.x + 20 * spec.spacing.x == -60.0
-    assert spec.reaction.source_rates[outside] == 0.0
-    assert spec.reaction.loss_rates[outside] == 5.0
-    assert spec.reaction.source_rates[sites + outside] == 0.0
-    assert spec.reaction.loss_rates[sites + outside] == 0.5
-    assert spec.reaction.source_rates[inside] == 0.0
-    assert spec.reaction.loss_rates[inside] == 0.0
-    assert spec.reaction.source_rates[sites + inside] == 20.0
-    assert spec.reaction.loss_rates[sites + inside] == 2.0
+    assert spec.reaction is None
+    assert spec.velocity_field is not None
+    assert any(value != 0.0 for value in spec.velocity_field.y_faces)
+    # The solved field is dominated by the axial channel flow; transverse
+    # components exist only as weak circulation at the trap mouth.
+    assert max(abs(value) for value in spec.velocity_field.x_faces) < max(
+        abs(value) for value in spec.velocity_field.y_faces
+    )
+    solid = sum(spec.obstacles)
+    assert 0 < solid < len(spec.obstacles)
+    assert spec.y_lower.values == [0.0, 10.0]
+    assert len(checkpoint.constraints.boxes) == 4
+
+
+def test_pillar_channel_anchors_sheds_and_washes_out() -> None:
+    model, _ = build_model(
+        _TUTORIALS / "pillar_channel.py",
+        ModelContext(BackendKind.CPU, 0, seed=7),
+    )
+    assert isinstance(model, SimulationController)
+    # 250 steps crosses the Brinkman re-solve cadence at step 100 and sheds
+    # daughters from every anchored lineage into the stream.
+    for _ in range(250):
+        model.step(0.02)
+
+    adhesion_sites = ((-20.0, -46.0), (20.0, -46.0), (0.0, 14.0))
+    cells = model.simulation.cells()
+    anchored = [cell for cell in cells if cell.fixed]
+    released = [cell for cell in cells if not cell.fixed]
+    assert len(anchored) == 3
+    assert len(released) > 3
+    for cell in anchored:
+        nearest = min(
+            math.hypot(cell.position.x - x, cell.position.y - y) for x, y in adhesion_sites
+        )
+        assert nearest < 4.0
+    # Released cells drift downstream of the anchors; the flow is doing work.
+    assert any(cell.position.y > 30.0 for cell in released)
+    for cell in cells:
+        assert cell.position.z == 0.0
+        assert abs(cell.position.x) < 40.0
+        assert abs(cell.position.y) < 120.0
 
 
 def test_plasmid_tutorial_resume_is_exact(tmp_path: Path) -> None:

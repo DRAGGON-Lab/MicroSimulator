@@ -116,7 +116,7 @@ These choices change trajectories relative to the generated callback scripts. A 
 uv run microsimulator view \
   --model examples/tutorials/danino_clock.py \
   --seed 42 \
-  --dt 0.01 \
+  --dt 0.005 \
   --open
 ```
 
@@ -126,46 +126,68 @@ The example includes:
 - shared extracellular AHL and nutrient fields;
 - AHL-activated production with a third-order Hill response;
 - LuxI-dependent AHL production and AiiA-dependent AHL removal;
-- an AHL sink in the channel, nutrient replenishment in the trap, nutrient decay in the channel, and nutrient-limited growth;
+- a flow-fed channel that delivers nutrient, carries secreted AHL downstream, and washes out escaped cells;
+- nutrient-limited growth from the sampled local field;
 - stochastic daughter perturbations; and
-- the finite trap/channel obstacle geometry, expressed with typed plane and outside-sphere constraints.
+- the device geometry, flow field, obstacle mask, and inlet/outlet built from one `TrapChannelDevice` description in `cellmodeller2.microfluidics`.
 
 The biological motif is based on Danino et al., “A synchronized quorum of genetic clocks,” Nature 463, 326–330 (2010), as cited by the SimBOL model. The example equations and constants are a tutorial realization, not a reproduction of the paper’s experimental parameter inference.
 
-### Spatial field reactions
+### What the clock needs to run
 
-`CM_Danino.py` subclasses the legacy grid to apply an x-dependent AHL sink and an x-dependent nutrient source/decay field. It then reads nutrient to regulate growth. MicroSimulator represents those terms with the optional affine reaction field on `SignalGridSpec`:
+Three of the model's constants exist to make the clock a clock, and each is set against something measurable rather than by taste.
 
-```text
-dc[channel, x, y, z] / dt += source_rate[channel, x, y, z]
-                              - loss_rate[channel, x, y, z] * c[channel, x, y, z].
-```
+The Hill threshold must sit below the AHL the circuit can reach. LuxI and AiiA are driven by the same activation term, so their ratio, and with it the AHL where production balances enzymatic removal, is pinned by their decay constants at `2 * 0.3 / 1.2`. A threshold above that half is unreachable at any cell density and for any run length: the circuit sits at its basal state forever. `AHL_THRESHOLD` is set inside the window where the response is steep enough to oscillate.
 
-The coefficient arrays use the same signal-major, then x/y/z-major order as the concentration field. The model builds them once from the physical lattice coordinate `origin.x + x * spacing.x`; no Python callback runs during signal integration. With `outside = x < -60`, the declared coefficients are:
+The rate scale sets the period. Growth defines the model's unit of time, so what matters is the clock's period relative to a doubling; `CLOCK_RATE` scales every rate constant together, which leaves the circuit's fixed points untouched and divides its period.
 
-| Field and region             | source rate | loss rate |
-| ---------------------------- | ----------: | --------: |
-| AHL, inside trap             |           0 |         0 |
-| AHL, outside in channel      |           0 |         5 |
-| nutrient, inside trap        |          20 |         2 |
-| nutrient, outside in channel |           0 |       0.5 |
+AHL's diffusivity sets whether the trap oscillates as one. A patch of colony stays in phase with its neighbours only within about `sqrt(D * period)` of them, so with a period near one time unit and a trap 120 micrometers deep, `AHL_DIFFUSION` has to reach the order of ten thousand. Below that the trap breaks into independent patches.
 
-Thus the inside nutrient equation is `dN/dt += 2(10 - N)`. The outside reaction is `dN/dt += -0.5 N`, and the outside AHL reaction is `dA/dt += -5 A`. Both fields begin at zero, so the nutrient reservoir develops dynamically rather than being installed as an initial condition.
+AiiA's removal of AHL is a loss proportional to the AHL already present, which is a property of the field rather than of the cell, so the model rasterizes AiiA into an affine grid reaction each step and hands it to transport with `set_signal_reaction`. Transport takes a loss into its implicit diagonal and stays positive while the loss times the step is under two; the same removal scattered from the cells is explicit and needs half that step. What a synchronized pulse reaches in a packed trap is what sets `--dt` here.
 
-Before each biological step, the controller samples nutrient channel 1 at each cell center and applies the saturating growth law:
+A run at seed 42 measures the result: the trap is quiet through the colony's growth, first pulses once it holds about four thousand cells, and then pulses every 1.03 time units - 1.5 doubling times, the fast end of the 1.5 to 3 the paper reports - for as long as the run continues. The front and back halves of the trap rise and fall together, correlated 0.87 at zero lag. That is the quorum the circuit is named for: not a clock that each cell keeps, but one the population only starts once it is dense enough to talk to itself.
+
+### Device flow and washout
+
+`CM_Danino.py` subclasses the legacy grid to fake the channel with an x-dependent AHL sink and
+nutrient source field. The CellModeller2 model expresses the channel physically: a
+`TrapChannelDevice` projects one geometry description into box wall constraints, a signal-grid
+obstacle mask, a numerically solved steady flow field along the channel, and fixed inlet
+and outlet boundaries; as the colony packs the trap, the model re-solves the flow with the
+colony's Brinkman drag and swaps the field into the running simulation. Nutrient enters at
+the inlet at concentration 10 and is carried past the trap mouth; AHL secreted by the colony
+diffuses out of the trap and is advected downstream; walls block both diffusion and
+advection.
+
+Cells feel the same flow: the controller enables `flow_drift`, so a cell that escapes the
+trap is carried along the channel, and the regulation step removes any cell past the washout
+boundary with a `StepPlan` removal, forgetting its division target first.
+
+Before each biological step, the controller samples nutrient channel 1 at each cell center
+and applies the saturating growth law:
 
 ```text
 growth = nutrient / (5 + nutrient).
 ```
 
-The affine coefficients are immutable grid configuration and exact checkpoint state. CPU, Metal, and CUDA evaluate the same focused native operator; the model does not inject or compile an arbitrary voxel function at runtime.
+Growth and consumption are one loop: the coupled rate plan returns a nutrient sink of
+`growth_rate * cell_volume / NUTRIENT_YIELD` per cell, so a cell consumes in proportion to
+the growth the sampled field allows, and a packed trap draws down the field that feeds it.
+The yield sets the coupling strength; nutrient is an abstract limiting substrate in the
+inlet's concentration units.
+
+The device starts flooded with media, matching how a physical device is loaded before flow
+begins.
 
 ### Numerical interpretation
 
 Forward Euler evaluates transport, affine field reaction, and cell scatter from the old field and commits them together. Its preflight stability bound includes the largest local loss rate for each signal. This model selects Crank–Nicolson: spatial losses enter the implicit diagonal, fixed sources enter both trapezoidal halves, and cell-scattered AHL exchange remains an old-field explicit source. A converged negative result is still rejected because Crank–Nicolson is not positivity preserving for arbitrarily stiff steps.
 
+Crank–Nicolson accepts a step on its residual, and this model's cell exchange — AHL secreted into the field, nutrient drawn out of it — is small next to a nutrient background of ten. Convergence is therefore judged against the residual the step starts with rather than against the field, so the threshold does not grow with the background and a cell's contribution cannot fall under it. The model keeps the engine's default tolerances.
+
 ## Exercises
 
+- Vary `mean_flow_speed` and measure how the trap's AHL retention, and therefore the clock's synchronization, responds.
 - Run an inducer sweep with a data-only run manifest and compare reporter concentration at a fixed physical time and cell count.
 - Compare BBa_0004 with a self-repressed LacI equation derived directly from the summarized SBOL topology. Treat it as a different model, not a bug-free rerun of the generated script.
 - Restore the larger BBa_0003 grid and perform a grid-extent convergence check.

@@ -3,9 +3,21 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
-from microsimulator import GridShape, SignalGridSpec, Vec3
+import pytest
+from microsimulator import (
+    BackendKind,
+    GridShape,
+    ModelContext,
+    SignalGridSpec,
+    SimulationController,
+    Vec3,
+)
 from microsimulator.microfluidics import BiopixelTrapDevice, TrapChannelDevice
+from microsimulator.runner import build_model
+
+_EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 
 
 def _grid() -> SignalGridSpec:
@@ -134,3 +146,63 @@ def test_planar_mask_wall_error_is_bounded_by_half_spacing() -> None:
             upper = spec.origin.x + (columns[-1] + 0.5) * h
             assert abs(lower - device.channel_far_x) <= h / 2 + 1e-5
             assert abs(upper - device.trap_back_x) <= h / 2 + 1e-5
+
+
+def test_trap_example_builds_steps_and_transports_nutrient() -> None:
+    model, _ = build_model(
+        _EXAMPLES / "microfluidic_trap.py",
+        ModelContext(BackendKind.CPU, 0, seed=11),
+    )
+    assert isinstance(model, SimulationController)
+    for _ in range(20):
+        model.step(0.02)
+
+    simulation = model.simulation
+    device = TrapChannelDevice()
+    channel_x = (device.channel_far_x + device.trap_open_x) * 0.5
+    upstream = simulation.sample_signals(Vec3(channel_x, -100.0, 0.0))[0]
+    trap_interior = simulation.sample_signals(Vec3(0.0, 0.0, 0.0))[0]
+    assert upstream > 5.0
+    assert trap_interior > 5.0
+    assert upstream >= trap_interior - 1.0e-3
+    with pytest.raises(ValueError, match="inside a grid obstacle"):
+        simulation.sample_signals(Vec3(0.0, 100.0, 0.0))
+    assert len(simulation.cells()) >= 1
+
+
+def test_biopixel_model_uses_reported_cavity_dimensions() -> None:
+    device = BiopixelTrapDevice(mean_flow_speed=20.0)
+
+    assert device.trap_width == 100.0
+    assert device.trap_depth == 85.0
+    assert device.trap_height == 1.65
+    assert device.channel_height == 10.0
+
+    # The CAD layout is tested independently in test_masks.py. These checks
+    # cover the published cavity size and the separately chosen model channel.
+    half = (2.5, 2.5, 0.825)
+    assert not device._solid(42.5, 0.0, 0.825, half)
+    assert device._solid(42.5, 0.0, 2.475, half)
+    assert not device._solid(-50.0, 0.0, 9.075, half)
+
+
+def test_biopixel_example_confines_a_monolayer_under_flow() -> None:
+    model, _ = build_model(
+        _EXAMPLES / "tutorials" / "biopixel_trap.py",
+        ModelContext(BackendKind.CPU, 0, seed=5),
+    )
+    assert isinstance(model, SimulationController)
+    # 110 steps crosses the model's Brinkman re-solve cadence at step 100, so
+    # the run exercises the colony-drag solve and the runtime field swap.
+    for _ in range(110):
+        model.step(0.02)
+
+    cells = model.simulation.cells()
+    assert len(cells) >= 2
+    for cell in cells:
+        assert 0.0 < cell.position.z < 1.65
+        assert -50.0 < cell.position.y < 50.0
+        assert cell.position.x < 95.0
+    checkpoint = model.simulation._checkpoint()
+    assert checkpoint.signal_grid is not None
+    assert checkpoint.signal_grid.spec.velocity_field is not None
