@@ -4,6 +4,8 @@ using namespace metal;
 
 constant float inverse_sqrt_two = 0.7071067811865475f;
 constant float float_epsilon = 1.1920928955078125e-7f;
+constant uint segment_minimization_iterations = 40;
+constant uint interior_location = 2;
 
 struct Capsule {
   ulong id;
@@ -36,8 +38,18 @@ struct ExternalEvaluation {
   float3 centerline_points[2];
   float3 normals[2];
   float separations[2];
-  bool active[2];
+  uint locations[2];
   uint active_count;
+};
+
+struct SurfacePoint {
+  float signed_distance;
+  float3 outward;
+};
+
+struct CenterlineMinimum {
+  float3 point;
+  SurfacePoint surface;
 };
 
 Capsule load_capsule(device const ulong* ids, device const float4* centers,
@@ -182,101 +194,236 @@ float3 deterministic_normal(const Capsule first, const Capsule second, const Poi
   return normalize(cross(first.axis, basis));
 }
 
+SurfacePoint external_surface(float3 point, const ExternalConstraint constraint, float epsilon) {
+  if (constraint.kind == 0) {
+    float3 inward_normal = constraint.parameters.xyz;
+    return {dot(point - constraint.geometry.xyz, inward_normal), inward_normal};
+  }
+  if (constraint.kind == 1) {
+    float3 delta = point - constraint.geometry.xyz;
+    float distance = length(delta);
+    float3 outward = distance > epsilon ? delta / distance : float3(1.0f, 0.0f, 0.0f);
+    return {distance - constraint.geometry.w, outward};
+  }
+  if (constraint.kind == 2) {
+    float3 half_extents = constraint.parameters.xyz;
+    float3 delta = point - constraint.geometry.xyz;
+    float3 outside_vector = delta - clamp(delta, -half_extents, half_extents);
+    float outside_distance = length(outside_vector);
+    if (outside_distance > epsilon) {
+      return {outside_distance, outside_vector / outside_distance};
+    }
+    float3 clearances = half_extents - abs(delta);
+    if (clearances.x <= clearances.y && clearances.x <= clearances.z) {
+      float sign = fabs(delta.x) <= epsilon || delta.x >= 0.0f ? 1.0f : -1.0f;
+      return {-clearances.x, float3(sign, 0.0f, 0.0f)};
+    }
+    if (clearances.y <= clearances.z) {
+      float sign = fabs(delta.y) <= epsilon || delta.y >= 0.0f ? 1.0f : -1.0f;
+      return {-clearances.y, float3(0.0f, sign, 0.0f)};
+    }
+    float sign = fabs(delta.z) <= epsilon || delta.z >= 0.0f ? 1.0f : -1.0f;
+    return {-clearances.z, float3(0.0f, 0.0f, sign)};
+  }
+
+  float3 delta = float3(point.xy - constraint.geometry.xy, 0.0f);
+  float radial_distance = length(delta);
+  float3 radial = radial_distance > epsilon ? delta / radial_distance : float3(1.0f, 0.0f, 0.0f);
+  float z_offset = point.z - constraint.geometry.z;
+  float3 axial = float3(0.0f, 0.0f, z_offset >= 0.0f ? 1.0f : -1.0f);
+  float radial_excess = radial_distance - constraint.geometry.w;
+  float axial_excess = fabs(z_offset) - constraint.parameters.x;
+  if (radial_excess > 0.0f && axial_excess > 0.0f) {
+    float distance = sqrt(radial_excess * radial_excess + axial_excess * axial_excess);
+    return {distance, (radial * radial_excess + axial * axial_excess) / distance};
+  }
+  if (radial_excess > 0.0f) {
+    return {radial_excess, radial};
+  }
+  if (axial_excess > 0.0f) {
+    return {axial_excess, axial};
+  }
+  if (-radial_excess <= -axial_excess) {
+    return {radial_excess, radial};
+  }
+  return {axial_excess, axial};
+}
+
+bool segment_intersects_bounds(float3 start, float3 end, float3 lower, float3 upper) {
+  float3 delta = end - start;
+  float starts[3] = {start.x, start.y, start.z};
+  float deltas[3] = {delta.x, delta.y, delta.z};
+  float lowers[3] = {lower.x, lower.y, lower.z};
+  float uppers[3] = {upper.x, upper.y, upper.z};
+  float entry = 0.0f;
+  float exit = 1.0f;
+  for (uint axis = 0; axis < 3; ++axis) {
+    if (deltas[axis] == 0.0f) {
+      if (starts[axis] < lowers[axis] || starts[axis] > uppers[axis]) {
+        return false;
+      }
+      continue;
+    }
+    float first = (lowers[axis] - starts[axis]) / deltas[axis];
+    float second = (uppers[axis] - starts[axis]) / deltas[axis];
+    if (first > second) {
+      float temporary = first;
+      first = second;
+      second = temporary;
+    }
+    entry = max(entry, first);
+    exit = min(exit, second);
+    if (entry > exit) {
+      return false;
+    }
+  }
+  return true;
+}
+
+CenterlineMinimum minimize_surface_on_segment(float3 start, float3 end,
+                                              const ExternalConstraint constraint, float epsilon) {
+  float3 delta = end - start;
+  float lower = 0.0f;
+  float upper = 1.0f;
+  for (uint iteration = 0; iteration < segment_minimization_iterations; ++iteration) {
+    float first_parameter = lower + (upper - lower) / 3.0f;
+    float second_parameter = upper - (upper - lower) / 3.0f;
+    SurfacePoint first = external_surface(start + delta * first_parameter, constraint, epsilon);
+    SurfacePoint second = external_surface(start + delta * second_parameter, constraint, epsilon);
+    if (first.signed_distance < second.signed_distance) {
+      upper = second_parameter;
+    } else if (second.signed_distance < first.signed_distance) {
+      lower = first_parameter;
+    } else {
+      lower = first_parameter;
+      upper = second_parameter;
+    }
+  }
+
+  CenterlineMinimum result = {start, external_surface(start, constraint, epsilon)};
+  float candidates[5] = {1.0f, 0.5f, lower, (lower + upper) * 0.5f, upper};
+  for (uint index = 0; index < 5; ++index) {
+    float3 point = start + delta * candidates[index];
+    SurfacePoint surface = external_surface(point, constraint, epsilon);
+    if (surface.signed_distance < result.surface.signed_distance) {
+      result = {point, surface};
+    }
+  }
+  if (constraint.kind == 3) {
+    if (fabs(delta.z) > epsilon) {
+      float parameter = clamp((constraint.geometry.z - start.z) / delta.z, 0.0f, 1.0f);
+      float3 point = start + delta * parameter;
+      SurfacePoint surface = external_surface(point, constraint, epsilon);
+      if (surface.signed_distance <= result.surface.signed_distance) {
+        result = {point, surface};
+      }
+    }
+    float radial_length_squared = delta.x * delta.x + delta.y * delta.y;
+    if (radial_length_squared > epsilon * epsilon) {
+      float parameter = clamp(-((start.x - constraint.geometry.x) * delta.x +
+                                (start.y - constraint.geometry.y) * delta.y) /
+                                  radial_length_squared,
+                              0.0f, 1.0f);
+      float3 point = start + delta * parameter;
+      SurfacePoint surface = external_surface(point, constraint, epsilon);
+      if (surface.signed_distance <= result.surface.signed_distance) {
+        result = {point, surface};
+      }
+    }
+  }
+  return result;
+}
+
+CenterlineMinimum sphere_minimum(float3 start, float3 end, const ExternalConstraint constraint,
+                                 float epsilon) {
+  float3 delta = end - start;
+  float length_squared = dot(delta, delta);
+  float parameter =
+      length_squared > epsilon * epsilon
+          ? clamp(-dot(start - constraint.geometry.xyz, delta) / length_squared, 0.0f, 1.0f)
+          : 0.0f;
+  float3 point = start + delta * parameter;
+  return {point, external_surface(point, constraint, epsilon)};
+}
+
+void add_external_contact(thread ExternalEvaluation& result, uint location, float3 centerline_point,
+                          const SurfacePoint surface, float radius, bool outside) {
+  uint index = result.active_count++;
+  result.centerline_points[index] = centerline_point;
+  result.normals[index] = outside ? -surface.outward : surface.outward;
+  result.separations[index] =
+      (outside ? surface.signed_distance : -surface.signed_distance) - radius;
+  result.locations[index] = location;
+}
+
 ExternalEvaluation evaluate_external_constraint(const Capsule cell,
                                                 const ExternalConstraint constraint,
                                                 float2 contact_parameters) {
   ExternalEvaluation result;
-  float half_length = cell.length * 0.5f;
-  result.centerline_points[0] = cell.center - cell.axis * half_length;
-  result.centerline_points[1] = cell.center + cell.axis * half_length;
   result.active_count = 0;
-  for (uint endpoint = 0; endpoint < 2; ++endpoint) {
-    float3 point = result.centerline_points[endpoint];
-    if (constraint.kind == 0) {
-      float3 inward_normal = constraint.parameters.xyz;
-      result.separations[endpoint] =
-          dot(point - constraint.geometry.xyz, inward_normal) - cell.radius;
-      result.normals[endpoint] = -inward_normal;
-    } else if (constraint.kind == 1) {
-      float3 center_delta = point - constraint.geometry.xyz;
-      float distance = length(center_delta);
-      float3 radial =
-          distance > contact_parameters.y ? center_delta / distance : float3(1.0f, 0.0f, 0.0f);
-      if (constraint.allowed_region == 0) {
-        result.separations[endpoint] = distance - constraint.geometry.w - cell.radius;
-        result.normals[endpoint] = -radial;
+  float half_length = cell.length * 0.5f;
+  float3 endpoints[2] = {
+      cell.center - cell.axis * half_length,
+      cell.center + cell.axis * half_length,
+  };
+  SurfacePoint endpoint_surfaces[2] = {
+      external_surface(endpoints[0], constraint, contact_parameters.y),
+      external_surface(endpoints[1], constraint, contact_parameters.y),
+  };
+
+  bool finite_outside = constraint.kind != 0 && constraint.allowed_region == 0;
+  if (finite_outside) {
+    if (constraint.kind >= 2) {
+      float reach = cell.radius + contact_parameters.x;
+      float3 lower;
+      float3 upper;
+      if (constraint.kind == 2) {
+        lower = constraint.geometry.xyz - constraint.parameters.xyz - reach;
+        upper = constraint.geometry.xyz + constraint.parameters.xyz + reach;
       } else {
-        result.separations[endpoint] = constraint.geometry.w - distance - cell.radius;
-        result.normals[endpoint] = radial;
+        float3 extents =
+            float3(constraint.geometry.w, constraint.geometry.w, constraint.parameters.x);
+        lower = constraint.geometry.xyz - extents - reach;
+        upper = constraint.geometry.xyz + extents + reach;
       }
-    } else if (constraint.kind == 2) {
-      float3 half_extents = constraint.parameters.xyz;
-      float3 delta = point - constraint.geometry.xyz;
-      float3 outside_vector = delta - clamp(delta, -half_extents, half_extents);
-      float outside_distance = length(outside_vector);
-      float signed_distance;
-      float3 outward;
-      if (outside_distance > contact_parameters.y) {
-        signed_distance = outside_distance;
-        outward = outside_vector / outside_distance;
-      } else {
-        float3 clearances = half_extents - abs(delta);
-        if (clearances.x <= clearances.y && clearances.x <= clearances.z) {
-          signed_distance = -clearances.x;
-          outward = float3(delta.x >= 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f);
-        } else if (clearances.y <= clearances.z) {
-          signed_distance = -clearances.y;
-          outward = float3(0.0f, delta.y >= 0.0f ? 1.0f : -1.0f, 0.0f);
-        } else {
-          signed_distance = -clearances.z;
-          outward = float3(0.0f, 0.0f, delta.z >= 0.0f ? 1.0f : -1.0f);
-        }
-      }
-      if (constraint.allowed_region == 0) {
-        result.separations[endpoint] = signed_distance - cell.radius;
-        result.normals[endpoint] = -outward;
-      } else {
-        result.separations[endpoint] = -signed_distance - cell.radius;
-        result.normals[endpoint] = outward;
-      }
-    } else {
-      float3 delta = float3(point.xy - constraint.geometry.xy, 0.0f);
-      float radial_distance = length(delta);
-      float3 radial = radial_distance > contact_parameters.y ? delta / radial_distance
-                                                             : float3(1.0f, 0.0f, 0.0f);
-      float z_offset = point.z - constraint.geometry.z;
-      float3 axial = float3(0.0f, 0.0f, z_offset >= 0.0f ? 1.0f : -1.0f);
-      float radial_excess = radial_distance - constraint.geometry.w;
-      float axial_excess = fabs(z_offset) - constraint.parameters.x;
-      float signed_distance;
-      float3 outward;
-      if (radial_excess > 0.0f && axial_excess > 0.0f) {
-        signed_distance =
-            sqrt(radial_excess * radial_excess + axial_excess * axial_excess);
-        outward = (radial * radial_excess + axial * axial_excess) / signed_distance;
-      } else if (radial_excess > 0.0f) {
-        signed_distance = radial_excess;
-        outward = radial;
-      } else if (axial_excess > 0.0f) {
-        signed_distance = axial_excess;
-        outward = axial;
-      } else if (-radial_excess <= -axial_excess) {
-        signed_distance = radial_excess;
-        outward = radial;
-      } else {
-        signed_distance = axial_excess;
-        outward = axial;
-      }
-      if (constraint.allowed_region == 0) {
-        result.separations[endpoint] = signed_distance - cell.radius;
-        result.normals[endpoint] = -outward;
-      } else {
-        result.separations[endpoint] = -signed_distance - cell.radius;
-        result.normals[endpoint] = outward;
+      if (!segment_intersects_bounds(endpoints[0], endpoints[1], lower, upper)) {
+        return result;
       }
     }
-    result.active[endpoint] = result.separations[endpoint] < contact_parameters.x;
-    result.active_count += result.active[endpoint];
+
+    CenterlineMinimum minimum =
+        constraint.kind == 1
+            ? sphere_minimum(endpoints[0], endpoints[1], constraint, contact_parameters.y)
+            : minimize_surface_on_segment(endpoints[0], endpoints[1], constraint,
+                                          contact_parameters.y);
+    if (minimum.surface.signed_distance - cell.radius >= contact_parameters.x) {
+      return result;
+    }
+    for (uint endpoint = 0; endpoint < 2; ++endpoint) {
+      float separation = endpoint_surfaces[endpoint].signed_distance - cell.radius;
+      if (separation < contact_parameters.x &&
+          fabs(endpoint_surfaces[endpoint].signed_distance - minimum.surface.signed_distance) <=
+              contact_parameters.y) {
+        add_external_contact(result, endpoint, endpoints[endpoint], endpoint_surfaces[endpoint],
+                             cell.radius, true);
+      }
+    }
+    if (result.active_count == 0) {
+      add_external_contact(result, interior_location, minimum.point, minimum.surface, cell.radius,
+                           true);
+    }
+    return result;
+  }
+
+  bool outside = constraint.allowed_region == 0;
+  for (uint endpoint = 0; endpoint < 2; ++endpoint) {
+    float separation = (outside ? endpoint_surfaces[endpoint].signed_distance
+                                : -endpoint_surfaces[endpoint].signed_distance) -
+                       cell.radius;
+    if (separation < contact_parameters.x) {
+      add_external_contact(result, endpoint, endpoints[endpoint], endpoint_surfaces[endpoint],
+                           cell.radius, outside);
+    }
   }
   return result;
 }
@@ -397,7 +544,7 @@ kernel void fill_external_contacts(
     device const uint* counts [[buffer(5)]], device const uint* inclusive_counts [[buffer(6)]],
     device ulong* cell_ids [[buffer(7)]], device ulong* constraint_ids [[buffer(8)]],
     device uint* cell_slots [[buffer(9)]], device uint* constraint_kinds [[buffer(10)]],
-    device uint* endpoints [[buffer(11)]], device float4* points_on_cell [[buffer(12)]],
+    device uint* locations [[buffer(11)]], device float4* points_on_cell [[buffer(12)]],
     device float4* normals [[buffer(13)]], device float* separations [[buffer(14)]],
     device float* weights [[buffer(15)]], constant float2& parameters [[buffer(16)]],
     constant uint& cell_count [[buffer(17)]], constant uint& constraint_count [[buffer(18)]],
@@ -418,19 +565,16 @@ kernel void fill_external_contacts(
   ExternalEvaluation evaluation = evaluate_external_constraint(cell, constraint, parameters);
   float weight = constraint.parameters.w * (evaluation.active_count == 2 ? inverse_sqrt_two : 1.0f);
   uint output_index = inclusive_counts[pair_index] - pair_contact_count;
-  for (uint endpoint = 0; endpoint < 2; ++endpoint) {
-    if (!evaluation.active[endpoint]) {
-      continue;
-    }
+  for (uint contact = 0; contact < evaluation.active_count; ++contact) {
     cell_ids[output_index] = cell.id;
     constraint_ids[output_index] = constraint.id;
     cell_slots[output_index] = cell.slot;
     constraint_kinds[output_index] = constraint.kind;
-    endpoints[output_index] = endpoint;
+    locations[output_index] = evaluation.locations[contact];
     points_on_cell[output_index] = float4(
-        evaluation.centerline_points[endpoint] + evaluation.normals[endpoint] * cell.radius, 0.0f);
-    normals[output_index] = float4(evaluation.normals[endpoint], 0.0f);
-    separations[output_index] = evaluation.separations[endpoint];
+        evaluation.centerline_points[contact] + evaluation.normals[contact] * cell.radius, 0.0f);
+    normals[output_index] = float4(evaluation.normals[contact], 0.0f);
+    separations[output_index] = evaluation.separations[contact];
     weights[output_index] = weight;
     ++output_index;
   }

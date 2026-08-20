@@ -28,15 +28,15 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     ConstraintContactParameters,
     ContactParameters,
     ExternalConstraintKind,
-    RodEndpoint,
+    RodContactLocation,
 )
 from .checkpoint import CheckpointBundle, JSONValue, load_checkpoint_bundle
 from .scene import SceneFrame, SceneGridBoundary, SceneSignalGrid, capture_scene
 
 ANALYSIS_FORMAT = "microsimulator-analysis"
-ANALYSIS_VERSION = 2
+ANALYSIS_VERSION = 3
 MAX_ANALYSIS_MANIFEST_BYTES = 1 << 26
-_SUPPORTED_ANALYSIS_VERSIONS = frozenset({1, ANALYSIS_VERSION})
+_SUPPORTED_ANALYSIS_VERSIONS = frozenset({1, 2, ANALYSIS_VERSION})
 
 _TABLE_NAMES = frozenset(
     {
@@ -60,9 +60,10 @@ _CONSTRAINT_NAMES = {
     ExternalConstraintKind.BOX: "box",
     ExternalConstraintKind.CYLINDER: "cylinder",
 }
-_ENDPOINT_NAMES = {
-    RodEndpoint.NEGATIVE: "negative",
-    RodEndpoint.POSITIVE: "positive",
+_CONTACT_LOCATION_NAMES = {
+    RodContactLocation.NEGATIVE: "negative",
+    RodContactLocation.POSITIVE: "positive",
+    RodContactLocation.INTERIOR: "interior",
 }
 
 
@@ -569,7 +570,7 @@ _EXTERNAL_CONTACTS_SCHEMA = pa.schema(
         pa.field("cell_slot", pa.uint32(), nullable=False),
         pa.field("constraint_id", pa.uint64(), nullable=False),
         pa.field("constraint_kind", pa.string(), nullable=False),
-        pa.field("endpoint", pa.string(), nullable=False),
+        pa.field("location", pa.string(), nullable=False),
         pa.field("point_x", pa.float32(), nullable=False),
         pa.field("point_y", pa.float32(), nullable=False),
         pa.field("point_z", pa.float32(), nullable=False),
@@ -709,7 +710,7 @@ def export_dataset(
                         "cell_slot": contact.cell_slot,
                         "constraint_id": contact.constraint_id,
                         "constraint_kind": _CONSTRAINT_NAMES[contact.constraint_kind],
-                        "endpoint": _ENDPOINT_NAMES[contact.endpoint],
+                        "location": _CONTACT_LOCATION_NAMES[contact.location],
                         "point_x": contact.point_on_cell.x,
                         "point_y": contact.point_on_cell.y,
                         "point_z": contact.point_on_cell.z,

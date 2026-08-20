@@ -67,9 +67,12 @@ class ExternalConstraintKind(Enum):
     BOX: ExternalConstraintKind
     CYLINDER: ExternalConstraintKind
 
-class RodEndpoint(Enum):
-    NEGATIVE: RodEndpoint
-    POSITIVE: RodEndpoint
+class RodContactLocation(Enum):
+    NEGATIVE: RodContactLocation
+    POSITIVE: RodContactLocation
+    INTERIOR: RodContactLocation
+
+RodEndpoint = RodContactLocation
 
 class SolverStatus(Enum):
     CONVERGED: SolverStatus
@@ -415,7 +418,9 @@ class ExternalContact:
     @property
     def constraint_kind(self) -> ExternalConstraintKind: ...
     @property
-    def endpoint(self) -> RodEndpoint: ...
+    def location(self) -> RodContactLocation: ...
+    @property
+    def endpoint(self) -> RodContactLocation: ...
     @property
     def point_on_cell(self) -> Vec3: ...
     @property

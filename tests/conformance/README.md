@@ -48,7 +48,7 @@ The contact scenario compares each contact-capable backend with the CPU geometry
 
 ## External constraints
 
-The external-constraint scenario compares every typed field and per-cell incidence index with the CPU oracle for mixed planes, outside spheres, inside spheres, empty inputs, stable IDs across constraint kinds, and deterministic sphere-center degeneracy. Geometry fields use absolute and relative tolerances of `2e-5`; identities, kinds, endpoints, graph sizes, and incidence are exact.
+The external-constraint scenario compares every typed field and per-cell incidence index with the CPU oracle for mixed planes, spheres, boxes, and cylinders; inside and outside regions; empty inputs; stable IDs across constraint kinds; deterministic degeneracies; and finite obstacles intersected only by a capsule mid-span. Geometry fields use absolute and relative tolerances of `2e-5`; identities, kinds, centerline-location tags, graph sizes, and incidence are exact.
 
 ## Mechanics
 
@@ -56,4 +56,4 @@ The CPU mechanics fixtures probe the declared regularizer, operator symmetry and
 
 ## Constraint mechanics
 
-The external-constraint scenario compares correction vectors and integrated cell geometry with the CPU reference for plane, outside-sphere, and inside-sphere boundaries. It uses the mechanics tolerances above and requires an available backend without external-constraint support to reject a nonempty constraint set explicitly. The same executable is the native Metal and CUDA hardware acceptance gate.
+The external-constraint mechanics scenario compares correction vectors and integrated cell geometry with the CPU reference for plane, sphere, box, and cylinder boundaries, including outside finite obstacles whose only contact lies at the rod mid-span. It uses the mechanics tolerances above and requires an available backend without external-constraint support to reject a nonempty constraint set explicitly. The same executable is the native Metal and CUDA hardware acceptance gate.

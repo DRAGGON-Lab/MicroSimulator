@@ -57,7 +57,7 @@ void launch_external_contact_fill(
     const std::uint64_t* ids, const float4* centers, const float4* axes, const float4* geometry,
     const ExternalConstraintGpu* constraints, const std::uint32_t* counts,
     const std::uint32_t* inclusive_counts, std::uint64_t* cell_ids, std::uint64_t* constraint_ids,
-    std::uint32_t* cell_slots, std::uint32_t* constraint_kinds, std::uint32_t* endpoints,
+    std::uint32_t* cell_slots, std::uint32_t* constraint_kinds, std::uint32_t* locations,
     float4* points_on_cell, float4* normals, float* separations, float* weights,
     ConstraintContactParametersGpu parameters, std::uint32_t cell_count,
     std::uint32_t constraint_count, cudaStream_t stream);

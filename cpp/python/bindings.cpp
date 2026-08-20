@@ -80,9 +80,11 @@ NB_MODULE(_core, module) {
       .value("BOX", cm::ExternalConstraintKind::box)
       .value("CYLINDER", cm::ExternalConstraintKind::cylinder);
 
-  nb::enum_<cm::RodEndpoint>(module, "RodEndpoint")
-      .value("NEGATIVE", cm::RodEndpoint::negative)
-      .value("POSITIVE", cm::RodEndpoint::positive);
+  nb::enum_<cm::RodContactLocation>(module, "RodContactLocation")
+      .value("NEGATIVE", cm::RodContactLocation::negative)
+      .value("POSITIVE", cm::RodContactLocation::positive)
+      .value("INTERIOR", cm::RodContactLocation::interior);
+  module.attr("RodEndpoint") = module.attr("RodContactLocation");
 
   nb::enum_<cm::SolverStatus>(module, "SolverStatus")
       .value("CONVERGED", cm::SolverStatus::converged)
@@ -391,7 +393,8 @@ NB_MODULE(_core, module) {
       .def_ro("cell_slot", &cm::ExternalContact::cell_slot)
       .def_ro("constraint_id", &cm::ExternalContact::constraint_id)
       .def_ro("constraint_kind", &cm::ExternalContact::constraint_kind)
-      .def_ro("endpoint", &cm::ExternalContact::endpoint)
+      .def_ro("location", &cm::ExternalContact::location)
+      .def_prop_ro("endpoint", [](const cm::ExternalContact& contact) { return contact.location; })
       .def_ro("point_on_cell", &cm::ExternalContact::point_on_cell)
       .def_ro("normal", &cm::ExternalContact::normal)
       .def_ro("signed_separation", &cm::ExternalContact::signed_separation)

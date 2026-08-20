@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 
-from cellmodeller2 import (
+from microsimulator import (
     CellInit,
     ConstraintRegion,
     ControllerStep,
@@ -22,7 +22,7 @@ from cellmodeller2 import (
     UniformLengthDivision,
     Vec3,
 )
-from cellmodeller2.checkpoint import CheckpointBundle, JSONValue
+from microsimulator.checkpoint import CheckpointBundle, JSONValue
 
 MODEL_ID = "examples.culture-dish"
 MODEL_VERSION = 1

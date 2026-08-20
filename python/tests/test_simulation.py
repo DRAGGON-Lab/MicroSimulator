@@ -17,6 +17,7 @@ from microsimulator import (
     PlaneConstraintInit,
     RateInstruction,
     RateOp,
+    RodContactLocation,
     RodEndpoint,
     Simulation,
     SolverBreakdown,
@@ -315,6 +316,11 @@ def test_plane_constraint_graph_is_typed_and_incident(backend: BackendKind) -> N
     assert all(
         contact.constraint_kind == ExternalConstraintKind.PLANE for contact in graph.contacts
     )
+    assert [contact.location for contact in graph.contacts] == [
+        RodContactLocation.NEGATIVE,
+        RodContactLocation.POSITIVE,
+    ]
+    assert RodEndpoint is RodContactLocation
     assert [contact.endpoint for contact in graph.contacts] == [
         RodEndpoint.NEGATIVE,
         RodEndpoint.POSITIVE,
@@ -385,6 +391,41 @@ def test_box_constraints_participate_in_mechanical_relaxation(backend: BackendKi
     assert result.report.status == SolverStatus.CONVERGED
     assert result.corrections[0].translation.x > 0.0
     assert simulation.cell(cell_id).position.x > 1.4
+
+
+@pytest.mark.parametrize("backend", list(BackendKind))
+def test_finite_wall_detects_midspan_capsule_contact(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip("native backend is not built")
+    simulation = Simulation(backend)
+    if not simulation.supports(BackendFeature.EXTERNAL_CONSTRAINTS):
+        pytest.skip("backend does not implement external constraints")
+    cell = CellInit()
+    cell.position = Vec3(0.0, 0.75, 0.0)
+    cell.direction = Vec3(1.0, 0.0, 0.0)
+    cell.length = 3.5
+    cell.radius = 0.5
+    cell_id = simulation.add_cell(cell)
+
+    wall = BoxConstraintInit()
+    wall.half_extents = Vec3(1.0, 1.0, 5.0)
+    constraint_id = simulation.add_box_constraint(wall)
+
+    graph = simulation.find_external_contacts()
+    assert len(graph) == 1
+    contact = graph.contacts[0]
+    assert contact.constraint_id == constraint_id
+    assert contact.constraint_kind == ExternalConstraintKind.BOX
+    assert contact.location == RodContactLocation.INTERIOR
+    assert math.isclose(contact.point_on_cell.x, 0.0, abs_tol=2.0e-5)
+    assert math.isclose(contact.point_on_cell.y, 0.25, abs_tol=2.0e-5)
+    assert math.isclose(contact.normal.y, -1.0, abs_tol=2.0e-5)
+    assert math.isclose(contact.signed_separation, -0.75, abs_tol=2.0e-5)
+
+    result = simulation.relax_cell_mechanics()
+    assert result.report.status == SolverStatus.CONVERGED
+    assert result.corrections[0].translation.y > 0.0
+    assert simulation.cell(cell_id).position.y > 0.75
 
 
 def test_cpu_mechanics_relaxation_updates_geometry() -> None:
