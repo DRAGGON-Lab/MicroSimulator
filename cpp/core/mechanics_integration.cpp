@@ -20,6 +20,8 @@ bool finite(const Vec3& value) {
   return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
 
+}  // namespace
+
 Vec3 rotate_axis_angle(Vec3 direction, Vec3 rotation, float max_rotation) {
   const auto magnitude = norm(rotation);
   if (magnitude <= 1.0e-12F || max_rotation == 0.0F) {
@@ -32,8 +34,6 @@ Vec3 rotate_axis_angle(Vec3 direction, Vec3 rotation, float max_rotation) {
   return normalized(direction * cosine + cross(axis, direction) * sine +
                     axis * (dot(axis, direction) * (1.0F - cosine)));
 }
-
-}  // namespace
 
 void validate_mechanics_integration_parameters(const MechanicsIntegrationParameters& parameters) {
   if (!std::isfinite(parameters.max_rotation_radians) || parameters.max_rotation_radians < 0.0F) {

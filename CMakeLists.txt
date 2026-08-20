@@ -97,11 +97,12 @@ if(CM_ENABLE_METAL)
   add_custom_command(
     OUTPUT "${CM_METAL_COUPLED_RATES_HEADER}"
     COMMAND "${CMAKE_COMMAND}"
-      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/coupled_rates.metal"
+      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/grid_transport.metal;${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/coupled_rates.metal"
       "-DOUTPUT=${CM_METAL_COUPLED_RATES_HEADER}"
       "-DSYMBOL=coupled_rates_source"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedMetalSource.cmake"
     DEPENDS
+      cpp/metal/kernels/grid_transport.metal
       cpp/metal/kernels/coupled_rates.metal
       cmake/EmbedMetalSource.cmake
     VERBATIM
@@ -121,11 +122,12 @@ if(CM_ENABLE_METAL)
   add_custom_command(
     OUTPUT "${CM_METAL_SIGNALS_HEADER}"
     COMMAND "${CMAKE_COMMAND}"
-      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/signals.metal"
+      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/grid_transport.metal;${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/signals.metal"
       "-DOUTPUT=${CM_METAL_SIGNALS_HEADER}"
       "-DSYMBOL=signals_source"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedMetalSource.cmake"
     DEPENDS
+      cpp/metal/kernels/grid_transport.metal
       cpp/metal/kernels/signals.metal
       cmake/EmbedMetalSource.cmake
     VERBATIM

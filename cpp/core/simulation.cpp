@@ -1,5 +1,6 @@
 #include "cm/simulation.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -102,6 +103,63 @@ CellId Simulation::add_cell(const CellInit& cell) { return state_.add_cell(cell)
 
 void Simulation::remove_cell(CellId id) { state_.remove_cell(id); }
 
+void Simulation::apply_flow_drift(float dt, const MechanicsIntegrationParameters& parameters) {
+  if (!std::isfinite(dt) || dt < 0.0F) {
+    throw std::invalid_argument("time step must be finite and non-negative");
+  }
+  validate_mechanics_integration_parameters(parameters);
+  if (!signal_grid_.has_value() || !signal_grid_->spec().velocity_field.has_value()) {
+    throw std::logic_error("flow drift requires a signal grid with a velocity field");
+  }
+  if (dt == 0.0F || state_.empty()) {
+    return;
+  }
+  constexpr float degeneracy_epsilon = 1.0e-6F;
+  const auto geometry = state_.geometry_state();
+  const auto attributes = state_.cell_attributes();
+  struct DriftUpdate {
+    Slot slot;
+    Vec3 position;
+    Vec3 direction;
+    float length;
+  };
+  std::vector<DriftUpdate> updates;
+  updates.reserve(geometry.size());
+  for (std::size_t slot = 0; slot < geometry.size(); ++slot) {
+    if (attributes.fixed[slot] != 0) {
+      continue;
+    }
+    const Vec3 center{geometry.position_x[slot], geometry.position_y[slot],
+                      geometry.position_z[slot]};
+    const Vec3 axis{geometry.direction_x[slot], geometry.direction_y[slot],
+                    geometry.direction_z[slot]};
+    const auto half_length = geometry.lengths[slot] * 0.5F;
+    // Rod endpoints may poke past the lattice of site centers (the mechanics
+    // walls, not the lattice edge, bound cells), so drift samples the nearest
+    // in-lattice point instead of erroring.
+    const auto first_velocity =
+        signal_grid_->sample_velocity(center - axis * half_length, GridSampleBound::clamped);
+    const auto second_velocity =
+        signal_grid_->sample_velocity(center + axis * half_length, GridSampleBound::clamped);
+    const auto mean_velocity = (first_velocity + second_velocity) * 0.5F;
+    const auto position = center + mean_velocity * dt;
+    auto direction = axis;
+    if (geometry.lengths[slot] > degeneracy_epsilon) {
+      const auto rotation =
+          cross(axis, (second_velocity - first_velocity) * (dt / geometry.lengths[slot]));
+      direction = rotate_axis_angle(axis, rotation, parameters.max_rotation_radians);
+    }
+    if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
+        !std::isfinite(direction.x) || !std::isfinite(direction.y) || !std::isfinite(direction.z)) {
+      throw std::runtime_error("flow drift produced non-finite geometry");
+    }
+    updates.push_back({static_cast<Slot>(slot), position, direction, geometry.lengths[slot]});
+  }
+  for (const auto& update : updates) {
+    state_.set_cell_geometry(update.slot, update.position, update.direction, update.length);
+  }
+}
+
 ConstraintId Simulation::add_plane_constraint(const PlaneConstraintInit& plane) {
   return constraints_.add_plane(plane);
 }
@@ -176,6 +234,13 @@ void Simulation::set_velocity_field(std::optional<SignalGridVelocityField> field
     throw std::logic_error("simulation does not have a signal grid");
   }
   signal_grid_->set_velocity_field(std::move(field));
+}
+
+void Simulation::set_signal_reaction(std::optional<SignalGridAffineReaction> reaction) {
+  if (!signal_grid_.has_value()) {
+    throw std::logic_error("simulation does not have a signal grid");
+  }
+  signal_grid_->set_reaction(std::move(reaction));
 }
 
 std::pair<CellId, CellId> Simulation::divide(CellId parent_id, float first_fraction) {

@@ -108,9 +108,12 @@ void validate_coupled_step(const WorldState& state, const SignalGrid& grid,
   }
   const auto geometry = state.geometry_state();
   for (std::size_t cell = 0; cell < state.size(); ++cell) {
-    static_cast<void>(signal_grid_stencil(
+    const auto stencil = signal_grid_stencil(
         grid.spec(),
-        {geometry.position_x[cell], geometry.position_y[cell], geometry.position_z[cell]}));
+        {geometry.position_x[cell], geometry.position_y[cell], geometry.position_z[cell]});
+    if (stencil.entirely_solid) {
+      throw std::invalid_argument("signal sample position is inside a grid obstacle");
+    }
   }
 }
 

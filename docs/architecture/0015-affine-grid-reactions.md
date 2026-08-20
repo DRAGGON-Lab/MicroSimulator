@@ -27,6 +27,19 @@ CPU, Metal, and CUDA implement the same fixed operation. Device implementations 
 
 This is a generic data representation for one focused numerical operation, not a general voxel-program extension point. It does not support arbitrary functions of position or time, cross-signal reactions, nonlinear local kinetics, mutable masks, or runtime coefficient callbacks. A demonstrated need for one of those behaviors requires another named numerical contract with an explicit integration and checkpoint design.
 
+## Runtime replacement
+
+A reaction field is data, so a model may replace it while a simulation runs:
+`Simulation.set_signal_reaction` validates a candidate against the full grid
+specification and swaps it atomically, exactly as a velocity field is swapped.
+This is what lets a first-order loss that depends on cell state - an enzyme the
+cells carry, degrading a signal in proportion to how much of it is there - be
+carried by transport rather than scattered from the cells. Transport takes a
+loss into its implicit diagonal, where a step stays positive while the loss
+times the step is under two, whereas a cell-scattered source of the same
+strength is explicit and needs half that step. Model code chooses the cadence,
+and the field remains exact checkpoint state.
+
 ## Consequences
 
 - Spatial reservoirs and first-order sinks remain inspectable and portable.
