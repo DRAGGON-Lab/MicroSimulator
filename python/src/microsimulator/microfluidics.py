@@ -16,8 +16,6 @@ staircase accuracy of any mask at the grid resolution.
 
 from __future__ import annotations
 
-import os
-from collections import Counter
 from dataclasses import dataclass
 
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
@@ -30,7 +28,6 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     Vec3,
 )
 from .flow import gap_mobility, solve_flow_field
-from .masks import MaskError, extract_rectangles, load_mask_polylines
 
 # A voxel edge that lands on a wall plane belongs to the wall, so the voxel
 # tests admit a rounding margin: without it a wall drawn exactly on a lattice
@@ -231,13 +228,17 @@ class BiopixelTrapDevice(_ChannelDevice):
     toward the channel, ``trap_width`` in y, and only ``trap_height`` in z, so
     the colony grows as a monolayer under the cavity ceiling. The flow channel
     runs along y between ``-channel_width`` and ``0`` at the full
-    ``channel_height``. The device floor is ``z = 0``. An array device repeats
-    this trap along its channels; every trap sees the same fresh-media flow, so
-    one simulated trap is representative of each biopixel in the array when
-    inter-trap coupling is not modeled.
+    ``channel_height``. The device floor is ``z = 0``.
+
+    The default trap dimensions are the 100 by 85 by 1.65 micrometer trapping
+    region reported by Prindle et al. (Nature 481, 39-44, 2012;
+    doi:10.1038/nature10722). Channel dimensions, numerical wall thickness, and
+    flow speed are modeling inputs rather than measurements from that study. A
+    single instance makes no claim that every trap in an array has identical
+    local flow or concentration boundary conditions.
     """
 
-    trap_depth: float = 95.0
+    trap_depth: float = 85.0
     trap_width: float = 100.0
     trap_height: float = 1.65
     channel_width: float = 100.0
@@ -245,42 +246,6 @@ class BiopixelTrapDevice(_ChannelDevice):
     channel_half_length: float = 150.0
     wall_thickness: float = 10.0
     mean_flow_speed: float = 0.0
-
-    @classmethod
-    def from_mask(
-        cls,
-        path: str | os.PathLike[str],
-        *,
-        layer: str = "Layer-2",
-        wall_inset: float = 5.0,
-        unit_scale: float = 1000.0,
-        mean_flow_speed: float = 0.0,
-    ) -> BiopixelTrapDevice:
-        """Derive the trap footprint from a photomask drawing.
-
-        The mask draws each trap's outer wall outline. The cavity is the
-        outline minus ``wall_inset`` per wall: two side walls across the long
-        dimension and one back wall across the short dimension, whose remaining
-        side is the open face toward the channel. The drawing must contain one
-        uniform trap population on the layer.
-        """
-
-        polylines = load_mask_polylines(path)
-        rectangles = extract_rectangles(polylines, layer=layer, unit_scale=unit_scale)
-        if not rectangles:
-            raise MaskError(f"mask layer {layer!r} contains no rectangles")
-        sizes = Counter(
-            (round(max(r.width, r.height), 3), round(min(r.width, r.height), 3))
-            for r in rectangles
-        )
-        (long_side, short_side), count = sizes.most_common(1)[0]
-        if count < 2:
-            raise MaskError(f"mask layer {layer!r} has no repeated trap outline")
-        width = long_side - 2.0 * wall_inset
-        depth = short_side - wall_inset
-        if width <= 0.0 or depth <= 0.0:
-            raise MaskError("wall inset leaves no cavity")
-        return cls(trap_width=width, trap_depth=depth, mean_flow_speed=mean_flow_speed)
 
     def add_constraints(self, simulation: Simulation) -> None:
         """Add the device's wall constraints to a simulation."""
