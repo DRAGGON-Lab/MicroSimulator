@@ -18,9 +18,13 @@ from microsimulator import (
     ControllerStep,
     DivisionEvent,
     DivisionRequest,
+    GridBoundaryKind,
+    GridShape,
     MechanicsConfig,
     ModelContext,
     NativeController,
+    SignalGridSpec,
+    SignalGridVelocityField,
     Simulation,
     SimulationController,
     StepPlan,
@@ -49,6 +53,37 @@ def _one_cell(backend: BackendKind = BackendKind.CPU) -> Simulation:
 def _simulation_payload(path: Path) -> object:
     document = cast(dict[str, object], json.loads(path.read_text(encoding="utf-8")))
     return document["simulation"]
+
+
+def _one_cell_in_uniform_flow() -> Simulation:
+    sites = 9
+    shape = GridShape()
+    shape.x, shape.y, shape.z = sites, 1, 1
+    grid = SignalGridSpec()
+    grid.signal_count = 1
+    grid.shape = shape
+    grid.spacing = Vec3(1.0, 1.0, 1.0)
+    grid.diffusion = [0.0]
+    grid.advection = [Vec3()]
+    grid.x_lower.kind = GridBoundaryKind.FIXED
+    grid.x_lower.values = [0.0]
+    grid.x_upper.kind = GridBoundaryKind.FIXED
+    grid.x_upper.values = [0.0]
+    velocity = SignalGridVelocityField()
+    velocity.x_faces = [0.5] * (sites + 1)
+    velocity.y_faces = [0.0] * (2 * sites)
+    velocity.z_faces = [0.0] * (2 * sites)
+    grid.velocity_field = velocity
+
+    simulation = Simulation(BackendKind.CPU)
+    simulation.configure_signal_grid(grid)
+    cell = CellInit()
+    cell.position = Vec3(3.0, 0.0, 0.0)
+    cell.direction = Vec3(1.0, 0.0, 0.0)
+    cell.length = 1.0
+    cell.radius = 0.25
+    simulation.add_cell(cell)
+    return simulation
 
 
 def test_random_stream_round_trip_preserves_uniform_and_gaussian_draws() -> None:
@@ -92,6 +127,61 @@ def test_random_stream_rejects_malformed_state() -> None:
         mutation(value)
         with pytest.raises(ControllerStateError, match="random state"):
             restore_random_state(value)
+
+
+def test_mechanics_config_round_trip_preserves_flow_drift() -> None:
+    configuration = MechanicsConfig(passes=2, flow_drift=True)
+
+    assert MechanicsConfig.from_json(configuration.to_json()) == configuration
+
+    invalid = configuration.to_json()
+    invalid["flow_drift"] = 1
+    with pytest.raises(
+        ControllerStateError,
+        match=r"mechanics\.flow_drift must be Boolean",
+    ):
+        MechanicsConfig.from_json(invalid)
+
+
+def test_native_controller_resume_preserves_flow_drift_trajectory(tmp_path: Path) -> None:
+    def build() -> NativeController:
+        return NativeController(
+            _one_cell_in_uniform_flow(),
+            model_id="flow-drift-resume-test",
+            model_version=1,
+            rng=random.Random(7),
+            mechanics=MechanicsConfig(flow_drift=True),
+        )
+
+    uninterrupted = build()
+    for _ in range(4):
+        uninterrupted.step(0.25)
+
+    split = build()
+    for _ in range(2):
+        split.step(0.25)
+    midpoint = tmp_path / "flow-midpoint.cm2.json"
+    save_checkpoint(split.simulation, midpoint, controller=split.controller_state())
+    resumed = NativeController.from_checkpoint(
+        load_checkpoint_bundle(midpoint),
+        model_id="flow-drift-resume-test",
+        model_version=1,
+    )
+    for _ in range(2):
+        resumed.step(0.25)
+
+    expected = tmp_path / "flow-expected.cm2.json"
+    actual = tmp_path / "flow-actual.cm2.json"
+    save_checkpoint(
+        uninterrupted.simulation,
+        expected,
+        controller=uninterrupted.controller_state(),
+    )
+    save_checkpoint(resumed.simulation, actual, controller=resumed.controller_state())
+
+    assert _simulation_payload(actual) == _simulation_payload(expected)
+    assert resumed.controller_state() == uninterrupted.controller_state()
+    assert math.isclose(resumed.simulation.cell(1).position.x, 3.5, abs_tol=1.0e-6)
 
 
 @pytest.mark.parametrize("backend", list(BackendKind))

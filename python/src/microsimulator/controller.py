@@ -265,6 +265,9 @@ class MechanicsConfig:
         require_convergence = value["require_convergence"]
         if not isinstance(require_convergence, bool):
             raise ControllerStateError("mechanics.require_convergence must be Boolean")
+        flow_drift = value["flow_drift"]
+        if not isinstance(flow_drift, bool):
+            raise ControllerStateError("mechanics.flow_drift must be Boolean")
         return cls(
             passes=_integer(value["passes"], "mechanics.passes", 1, _UINT32_MAX),
             mu_a=_finite_number(value["mu_a"], "mechanics.mu_a"),
@@ -299,6 +302,7 @@ class MechanicsConfig:
                 value["constraint_degeneracy_epsilon"],
                 "mechanics.constraint_degeneracy_epsilon",
             ),
+            flow_drift=flow_drift,
         )
 
 
