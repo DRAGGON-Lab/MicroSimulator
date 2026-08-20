@@ -6,10 +6,9 @@ CAD. The reader is deliberately minimal and closed: it parses axis-aligned
 closed `LWPOLYLINE` outlines from the model-space `ENTITIES` section of an
 ASCII DXF, ignoring block definitions (orphaned array remnants in mask files),
 paper space, and every other entity kind. Files are size-bounded and nothing is
-executed.
-
-Mask drawings conventionally use one drawing unit per millimeter; pass
-``unit_scale=1000.0`` to obtain micrometer coordinates.
+executed. Coordinates remain in drawing units unless the caller supplies a
+source-specific ``unit_scale`` to ``extract_rectangles``; the reader does not
+infer physical units from a DXF header or file convention.
 """
 
 from __future__ import annotations
@@ -50,9 +49,10 @@ def load_mask_polylines(
     """Read the polylines of an ASCII DXF mask drawing.
 
     Model-space entities always load. With ``include_blocks``, polylines inside
-    block definitions load as well, tagged with their block name; mask files
-    from array-based CAD workflows often keep real geometry only in otherwise
-    orphaned blocks, in world coordinates.
+    block definitions load as authored and are tagged with their block name.
+    INSERT transforms are not applied, so callers may interpret block geometry
+    only when the relevant definitions are known to use the desired coordinate
+    system directly.
     """
 
     source = Path(path)
