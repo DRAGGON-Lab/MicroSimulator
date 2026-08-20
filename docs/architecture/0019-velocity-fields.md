@@ -46,7 +46,7 @@ maximized over sites.
 The runtime does not check discrete divergence. A divergence-free field conserves mass; model
 code that authors a field with local divergence gets the corresponding local sources and
 sinks, and remains subject to the finite, non-negative level invariant. The
-`cellmodeller2.microfluidics` authoring helpers construct divergence-free channel profiles.
+`microsimulator.microfluidics` authoring helpers construct divergence-free channel profiles.
 
 Velocity fields are exact checkpoint state in the version 8 signal grid specification as a
 `velocity_field` object or `null`; versions 1 through 7 migrate to no field. CPU, Metal, and

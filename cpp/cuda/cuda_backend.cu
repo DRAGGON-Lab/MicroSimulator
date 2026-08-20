@@ -1113,7 +1113,7 @@ class CudaBackend final : public ComputeBackend {
     std::vector<std::uint64_t> constraint_ids(contact_count);
     std::vector<std::uint32_t> cell_slots(contact_count);
     std::vector<std::uint32_t> constraint_kinds(contact_count);
-    std::vector<std::uint32_t> endpoints(contact_count);
+    std::vector<std::uint32_t> locations(contact_count);
     std::vector<float4> points(contact_count);
     std::vector<float4> normals(contact_count);
     std::vector<float> separations(contact_count);
@@ -1125,7 +1125,7 @@ class CudaBackend final : public ComputeBackend {
     copy_to_host(cell_slots, contact_first_slots_, "failed to download CUDA external cell slots");
     copy_to_host(constraint_kinds, contact_second_slots_,
                  "failed to download CUDA external constraint kinds");
-    copy_to_host(endpoints, contact_ordinals_, "failed to download CUDA external endpoints");
+    copy_to_host(locations, contact_ordinals_, "failed to download CUDA external locations");
     copy_to_host(points, contact_points_, "failed to download CUDA external contact points");
     copy_to_host(normals, contact_normals_, "failed to download CUDA external contact normals");
     copy_to_host(separations, contact_separations_,
@@ -1138,7 +1138,7 @@ class CudaBackend final : public ComputeBackend {
     for (std::uint32_t index = 0; index < contact_count; ++index) {
       if (constraint_kinds[index] >
               static_cast<std::uint32_t>(ExternalConstraintKind::cylinder) ||
-          endpoints[index] > static_cast<std::uint32_t>(RodEndpoint::positive)) {
+          locations[index] > static_cast<std::uint32_t>(RodContactLocation::interior)) {
         throw std::runtime_error("CUDA external-contact kernel produced an invalid tag");
       }
       contacts.push_back({
@@ -1146,7 +1146,7 @@ class CudaBackend final : public ComputeBackend {
           .cell_slot = cell_slots[index],
           .constraint_id = constraint_ids[index],
           .constraint_kind = static_cast<ExternalConstraintKind>(constraint_kinds[index]),
-          .endpoint = static_cast<RodEndpoint>(endpoints[index]),
+          .location = static_cast<RodContactLocation>(locations[index]),
           .point_on_cell = {points[index].x, points[index].y, points[index].z},
           .normal = {normals[index].x, normals[index].y, normals[index].z},
           .signed_separation = separations[index],
@@ -1154,7 +1154,7 @@ class CudaBackend final : public ComputeBackend {
       });
     }
     std::ranges::sort(contacts, {}, [](const ExternalContact& contact) {
-      return std::tuple{contact.cell_id, contact.constraint_id, contact.endpoint};
+      return std::tuple{contact.cell_id, contact.constraint_id, contact.location};
     });
     return ExternalContactGraph(cell_count, std::move(contacts));
   }

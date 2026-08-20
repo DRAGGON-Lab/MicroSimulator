@@ -127,6 +127,45 @@ void populate_inside_cylinder(cm::Simulation& simulation) {
   simulation.add_cylinder_constraint(cylinder);
 }
 
+void populate_midspan_sphere(cm::Simulation& simulation) {
+  cm::CellInit cell;
+  cell.position = {0.0F, 0.75F, 0.0F};
+  cell.direction = {1.0F, 0.0F, 0.0F};
+  cell.length = 3.5F;
+  cell.radius = 0.5F;
+  simulation.add_cell(cell);
+
+  cm::SphereConstraintInit sphere;
+  simulation.add_sphere_constraint(sphere);
+}
+
+void populate_midspan_box(cm::Simulation& simulation) {
+  cm::CellInit cell;
+  cell.position = {0.0F, 0.75F, 0.0F};
+  cell.direction = {1.0F, 0.0F, 0.0F};
+  cell.length = 3.5F;
+  cell.radius = 0.5F;
+  simulation.add_cell(cell);
+
+  cm::BoxConstraintInit box;
+  box.half_extents = {1.0F, 1.0F, 5.0F};
+  simulation.add_box_constraint(box);
+}
+
+void populate_midspan_cylinder(cm::Simulation& simulation) {
+  cm::CellInit cell;
+  cell.position = {0.0F, 0.75F, 0.0F};
+  cell.direction = {1.0F, 0.0F, 0.0F};
+  cell.length = 3.5F;
+  cell.radius = 0.5F;
+  simulation.add_cell(cell);
+
+  cm::CylinderConstraintInit cylinder;
+  cylinder.center = {0.4F, 0.0F, 0.0F};
+  cylinder.half_height = 5.0F;
+  simulation.add_cylinder_constraint(cylinder);
+}
+
 void compare_results(const cm::MechanicsSolveResult& actual,
                      const cm::MechanicsSolveResult& expected) {
   assert(actual.report.status == expected.report.status);
@@ -207,6 +246,9 @@ int main() {
     run_fixture(backend, device_index, populate_inside_box);
     run_fixture(backend, device_index, populate_outside_cylinder);
     run_fixture(backend, device_index, populate_inside_cylinder);
+    run_fixture(backend, device_index, populate_midspan_sphere);
+    run_fixture(backend, device_index, populate_midspan_box);
+    run_fixture(backend, device_index, populate_midspan_cylinder);
   });
   return 0;
 }

@@ -1711,7 +1711,7 @@ class MetalBackend final : public ComputeBackend {
     const auto* cell_slots = static_cast<const std::uint32_t*>(contact_first_slots_.contents);
     const auto* constraint_kinds =
         static_cast<const std::uint32_t*>(contact_second_slots_.contents);
-    const auto* endpoints = static_cast<const std::uint32_t*>(contact_ordinals_.contents);
+    const auto* locations = static_cast<const std::uint32_t*>(contact_ordinals_.contents);
     const auto* points = static_cast<const MetalFloat4*>(contact_points_.contents);
     const auto* normals = static_cast<const MetalFloat4*>(contact_normals_.contents);
     const auto* separations = static_cast<const float*>(contact_separations_.contents);
@@ -1722,7 +1722,7 @@ class MetalBackend final : public ComputeBackend {
     for (std::uint32_t index = 0; index < contact_count; ++index) {
       if (constraint_kinds[index] >
               static_cast<std::uint32_t>(ExternalConstraintKind::cylinder) ||
-          endpoints[index] > static_cast<std::uint32_t>(RodEndpoint::positive)) {
+          locations[index] > static_cast<std::uint32_t>(RodContactLocation::interior)) {
         throw std::runtime_error("Metal external-contact kernel produced an invalid tag");
       }
       contacts.push_back({
@@ -1730,7 +1730,7 @@ class MetalBackend final : public ComputeBackend {
           .cell_slot = cell_slots[index],
           .constraint_id = constraint_ids[index],
           .constraint_kind = static_cast<ExternalConstraintKind>(constraint_kinds[index]),
-          .endpoint = static_cast<RodEndpoint>(endpoints[index]),
+          .location = static_cast<RodContactLocation>(locations[index]),
           .point_on_cell = {points[index].x, points[index].y, points[index].z},
           .normal = {normals[index].x, normals[index].y, normals[index].z},
           .signed_separation = separations[index],
@@ -1738,7 +1738,7 @@ class MetalBackend final : public ComputeBackend {
       });
     }
     std::ranges::sort(contacts, {}, [](const ExternalContact& contact) {
-      return std::tuple{contact.cell_id, contact.constraint_id, contact.endpoint};
+      return std::tuple{contact.cell_id, contact.constraint_id, contact.location};
     });
     return ExternalContactGraph(cell_count, std::move(contacts));
   }

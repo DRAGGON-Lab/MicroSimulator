@@ -108,6 +108,34 @@ void populate_degenerate_box(cm::Simulation& simulation) {
   simulation.add_box_constraint(box);
 }
 
+void populate_midspan_sphere(cm::Simulation& simulation) {
+  add_cell(simulation, {0.0F, 0.75F, 0.0F}, {1.0F, 0.0F, 0.0F}, 3.5F);
+  cm::SphereConstraintInit sphere;
+  simulation.add_sphere_constraint(sphere);
+}
+
+void populate_midspan_box(cm::Simulation& simulation) {
+  add_cell(simulation, {0.0F, 0.75F, 0.0F}, {1.0F, 0.0F, 0.0F}, 3.5F);
+  cm::BoxConstraintInit box;
+  box.half_extents = {1.0F, 1.0F, 5.0F};
+  simulation.add_box_constraint(box);
+}
+
+void populate_centered_wall_crossing(cm::Simulation& simulation) {
+  add_cell(simulation, {}, {1.0F, 0.0F, 0.0F}, 3.5F);
+  cm::BoxConstraintInit wall;
+  wall.half_extents = {1.0F, 5.0F, 5.0F};
+  simulation.add_box_constraint(wall);
+}
+
+void populate_midspan_cylinder(cm::Simulation& simulation) {
+  add_cell(simulation, {0.0F, 0.75F, 0.0F}, {1.0F, 0.0F, 0.0F}, 3.5F);
+  cm::CylinderConstraintInit cylinder;
+  cylinder.center = {0.4F, 0.0F, 0.0F};
+  cylinder.half_height = 5.0F;
+  simulation.add_cylinder_constraint(cylinder);
+}
+
 void compare_graphs(const cm::ExternalContactGraph& actual,
                     const cm::ExternalContactGraph& expected) {
   assert(actual.cell_count() == expected.cell_count());
@@ -121,7 +149,7 @@ void compare_graphs(const cm::ExternalContactGraph& actual,
     assert(left.cell_slot == right.cell_slot);
     assert(left.constraint_id == right.constraint_id);
     assert(left.constraint_kind == right.constraint_kind);
-    assert(left.endpoint == right.endpoint);
+    assert(left.location == right.location);
     assert(close(left.point_on_cell.x, right.point_on_cell.x));
     assert(close(left.point_on_cell.y, right.point_on_cell.y));
     assert(close(left.point_on_cell.z, right.point_on_cell.z));
@@ -177,6 +205,10 @@ int main() {
     run_fixture(backend, device_index, populate_cylinder_regions);
     run_fixture(backend, device_index, populate_degenerate_sphere);
     run_fixture(backend, device_index, populate_degenerate_box);
+    run_fixture(backend, device_index, populate_midspan_sphere);
+    run_fixture(backend, device_index, populate_midspan_box);
+    run_fixture(backend, device_index, populate_centered_wall_crossing);
+    run_fixture(backend, device_index, populate_midspan_cylinder);
   });
   return 0;
 }

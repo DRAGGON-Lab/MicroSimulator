@@ -155,6 +155,10 @@ void validate_contact(const ExternalContact& contact, std::size_t cell_count) {
   if (contact.cell_slot >= cell_count) {
     throw std::invalid_argument("external contact cell slot is invalid");
   }
+  if (contact.constraint_kind > ExternalConstraintKind::cylinder ||
+      contact.location > RodContactLocation::interior) {
+    throw std::invalid_argument("external contact contains an invalid tag");
+  }
   if (!finite(contact.point_on_cell) || !finite(contact.normal) ||
       !std::isfinite(contact.signed_separation) || !std::isfinite(contact.weight) ||
       contact.weight <= 0.0F) {

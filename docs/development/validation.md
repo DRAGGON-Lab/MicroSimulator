@@ -37,7 +37,7 @@ The native gate performs a fresh Metal-enabled build, constructs every enumerate
 Together, these gates cover:
 
 - growth, equal and asymmetric division, stable identity, and lineage;
-- cell contacts, plane and sphere constraints, fixed cells, and mechanics relaxation;
+- cell contacts, plane, sphere, box, and cylinder constraints, full-capsule finite-obstacle contact, fixed cells, and mechanics relaxation;
 - species, signal transport, Forward Euler, Crank-Nicolson, and coupled rates;
 - checkpoint migration, exact controller resume, and deterministic runtime random state;
 - batch execution, stopping rules, output collision handling, and run manifests;

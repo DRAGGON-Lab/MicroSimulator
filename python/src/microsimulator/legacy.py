@@ -584,7 +584,7 @@ class LegacyModelAdapter:
                     contact.cell_id,
                     contact.constraint_id,
                     contact.constraint_kind,
-                    contact.endpoint,
+                    contact.location,
                 )
                 for contact in external_contacts
             )

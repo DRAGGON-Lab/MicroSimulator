@@ -15,6 +15,7 @@ import pytest
 import zarr
 from microsimulator import (
     BackendKind,
+    BoxConstraintInit,
     CellInit,
     GridShape,
     PlaneConstraintInit,
@@ -204,7 +205,7 @@ def test_export_dataset_preserves_typed_state_contacts_and_signals(tmp_path: Pat
     assert all(row["overlap"] == max(0.0, -row["signed_separation"]) for row in contacts)
     external = pq.read_table(output / "external_contacts.parquet").to_pylist()
     assert {row["constraint_kind"] for row in external} == {"plane"}
-    assert {row["endpoint"] for row in external} == {"negative", "positive"}
+    assert {row["location"] for row in external} == {"negative", "positive"}
 
     signals = zarr.open_group(output / "signals.zarr", mode="r")
     epoch = signals["epoch-0000"]
@@ -242,6 +243,29 @@ def test_export_dataset_preserves_typed_state_contacts_and_signals(tmp_path: Pat
     )
     assert repeated_summary.dataset_id == summary.dataset_id
     assert _manifest(repeated) == manifest
+
+
+def test_external_contact_export_records_interior_centerline_location(tmp_path: Path) -> None:
+    simulation = Simulation()
+    cell = CellInit()
+    cell.position = Vec3(0.0, 0.75, 0.0)
+    cell.direction = Vec3(1.0, 0.0, 0.0)
+    cell.length = 3.5
+    cell.radius = 0.5
+    simulation.add_cell(cell)
+    wall = BoxConstraintInit()
+    wall.half_extents = Vec3(1.0, 1.0, 5.0)
+    simulation.add_box_constraint(wall)
+
+    checkpoint = tmp_path / "midspan.cm2.json"
+    output = tmp_path / "midspan.cm2.dataset"
+    save_checkpoint(simulation, checkpoint)
+    export_dataset([checkpoint], output, include_external_contacts=True)
+
+    table = pq.read_table(output / "external_contacts.parquet")
+    assert "location" in table.column_names
+    assert "endpoint" not in table.column_names
+    assert table.to_pylist()[0]["location"] == "interior"
 
 
 def test_export_dataset_rejects_existing_output_and_reverse_time(tmp_path: Path) -> None:

@@ -9,7 +9,7 @@ Rod contact and mechanical relaxation are the first CellModeller feature that re
 
 ## Decision
 
-MicroSimulator represents a contact as a typed record with stable cell IDs, current compact slots, contact ordinal, surface point, unit normal, signed separation, and row weight. External constraints use tagged plane or sphere references rather than sentinel cell IDs.
+MicroSimulator represents a contact as a typed record with stable cell IDs, current compact slots, contact ordinal or centerline location, surface point, unit normal, signed separation, and row weight. External constraints use tagged plane, sphere, box, or cylinder references rather than sentinel cell IDs.
 
 The CPU reference performs an exhaustive pair search. It is intentionally simple and is the geometry oracle for small conformance scenarios.
 
@@ -35,13 +35,17 @@ The reference solver starts from zero and uses unpreconditioned conjugate gradie
 
 Integration is a separate backend-neutral operation over a solver result. It requires convergence by default, applies translation directly, interprets the rotation vector as axis-angle and caps it at five degrees, and computes the length increment as `max(0, desired_increment + delta_l)`. This preserves the legacy rule that mechanics may suppress requested elongation but may not directly shorten a cell. All updates are validated before any world-state array is mutated. `Simulation.step` remains the growth-only primitive; `relax_cell_mechanics` is the explicit contact-relaxation operation.
 
-Planes and spheres are stored in a simulation-owned constraint set with stable IDs shared across constraint kinds. A plane declares a point and a normalized inward normal; its permitted half-space lies in the inward direction. A sphere explicitly declares whether cells are permitted inside or outside. Constraint contact generation examines both capsule centerline endpoints and emits a typed row when its signed surface separation is below the activation margin. Negative separation means penetration in every case.
+Planes, spheres, boxes, and cylinders are stored in a simulation-owned constraint set with stable IDs shared across constraint kinds. A plane declares a point and a normalized inward normal; its permitted half-space lies in the inward direction. Each finite constraint explicitly declares whether cells are permitted inside or outside. Negative separation means penetration in every case.
 
-An external contact normal points from the permitted region toward the constraint boundary: opposite a plane's inward normal, toward the center of an outside sphere, and away from the center of an inside sphere. `point_on_cell` is the capsule surface point reached from the centerline endpoint along that normal, not the endpoint itself. When both rod endpoints are active, each row has weight `coefficient / sqrt(2)`; otherwise the single row has the full coefficient. A sphere-center degeneracy uses the positive x-axis as its deterministic radial direction before applying the inside/outside orientation. External rows use the same seven-DOF cell Jacobian as pair contacts, but have no second cell term. They therefore enter the declared system as `B_external^T B_external` and `B_external^T b_external` alongside the pair rows. A simulation with constraints must execute both geometry and mechanics on a backend that advertises external-constraint support; unsupported native backends fail explicitly instead of dropping the boundary rows.
+Plane half-spaces and inside regions of convex finite constraints are endpoint-extremal, so their contact generation examines both capsule centerline endpoints. Outside regions of finite convex constraints instead minimize the obstacle signed-distance function over the complete centerline and subtract the capsule radius. Sphere minimization uses exact projection onto the segment. Box and cylinder minimization use a deterministic 40-iteration ternary bracket over their convex signed-distance functions; equal sampled distances retain the middle third, selecting a stable central representative on a flat minimum. Cylinder evaluation also includes the analytic radial-axis and axial-center projections, avoiding iterative location error in the barrel and cap cases. Expanded axis-aligned obstacle bounds provide a conservative early rejection for boxes and cylinders.
 
-The Metal and CUDA implementations upload stable-ID-sorted tagged constraints and run native count/scan/fill pipelines over cell-constraint pairs. Each pair emits zero, one, or two endpoint rows into dynamic storage. Pair and external rows are then combined in the native solver buffers; a reserved invalid second slot marks the one-sided row inside each private operator without reintroducing a sentinel into the public contact model.
+When a finite outside constraint is closest at the rod mid-span, contact generation emits one row tagged `interior` at that centerline location. When both endpoints attain the global minimum, the established two-row representation is retained and each row has weight `coefficient / sqrt(2)`; otherwise the single row has the full coefficient. An external contact normal points from the permitted region toward the constraint boundary. `point_on_cell` is the capsule surface point reached from the selected centerline location along that normal. Sphere-center, box-face-tie, and cylinder-axis degeneracies use documented deterministic directions before applying the inside/outside orientation. External rows use the same seven-DOF cell Jacobian as pair contacts, but have no second cell term. They therefore enter the declared system as `B_external^T B_external` and `B_external^T b_external` alongside the pair rows. A simulation with constraints must execute both geometry and mechanics on a backend that advertises external-constraint support; unsupported native backends fail explicitly instead of dropping the boundary rows.
 
-CPU, Metal, and CUDA own separate implementations. They share contact fixtures, operator probes, tolerances, and exact endpoint invariants. Metal uses Metal compute pipelines and MSL; CUDA uses CUDA C++ and the CUDA Runtime API.
+The public location type is `RodContactLocation`, and `ExternalContact.location` distinguishes `negative`, `positive`, and `interior`. `RodEndpoint` remains a C++ and Python type alias, and the Python `ExternalContact.endpoint` accessor remains a compatibility alias for existing plane and sphere consumers. The C++ record field is intentionally named `location` because not every contact lies at an endpoint.
+
+The Metal and CUDA implementations upload stable-ID-sorted tagged constraints and run native count/scan/fill pipelines over cell-constraint pairs. Each pair emits zero, one, or two location-tagged rows into dynamic storage. Pair and external rows are then combined in the native solver buffers; a reserved invalid second slot marks the one-sided row inside each private operator without reintroducing a sentinel into the public contact model.
+
+CPU, Metal, and CUDA own separate implementations. They share contact fixtures, operator probes, tolerances, and exact location-tag invariants. Metal uses Metal compute pipelines and MSL; CUDA uses CUDA C++ and the CUDA Runtime API.
 
 ### Neighbor reporting
 
@@ -55,10 +59,11 @@ CPU, Metal, and CUDA own separate implementations. They share contact fixtures, 
 4. Native Metal and CUDA count/scan/fill pipelines.
 5. CPU matrix-free operator and diagnosed conjugate-gradient solver.
 6. Native Metal and CUDA operator, reductions, and solver loops.
-7. Typed plane and sphere constraint geometry.
-8. CPU external-constraint mechanics rows.
-9. Native Metal external-constraint conformance.
-10. Native CUDA external-constraint conformance.
+7. Typed plane, sphere, box, and cylinder constraint geometry.
+8. Full-centerline finite-obstacle contact fixtures, including clear endpoints with penetrating mid-spans.
+9. CPU external-constraint mechanics rows.
+10. Native Metal external-constraint conformance.
+11. Native CUDA external-constraint conformance.
 
 This sequence isolates geometry disagreements before solver behavior can hide them. Backend support requires the corresponding shared scenario to pass on real hardware.
 

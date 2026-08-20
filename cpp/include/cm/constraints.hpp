@@ -27,10 +27,13 @@ enum class ExternalConstraintKind : std::uint8_t {
   cylinder,
 };
 
-enum class RodEndpoint : std::uint8_t {
+enum class RodContactLocation : std::uint8_t {
   negative,
   positive,
+  interior,
 };
+
+using RodEndpoint = RodContactLocation;
 
 struct PlaneConstraintInit {
   Vec3 point{};
@@ -145,7 +148,7 @@ struct ExternalContact {
   Slot cell_slot{invalid_slot};
   ConstraintId constraint_id{invalid_constraint_id};
   ExternalConstraintKind constraint_kind{ExternalConstraintKind::plane};
-  RodEndpoint endpoint{RodEndpoint::negative};
+  RodContactLocation location{RodContactLocation::negative};
   Vec3 point_on_cell{};
   Vec3 normal{};
   float signed_separation{0.0F};
