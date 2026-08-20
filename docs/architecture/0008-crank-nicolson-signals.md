@@ -29,10 +29,15 @@ The linear system is solved by matrix-free Jacobi iteration over the local trans
 Convergence uses the RMS residual of the declared equation:
 
 ```text
-residual_rms <= absolute_tolerance + relative_tolerance * rms(right_hand_side)
+residual_rms <= max(absolute_tolerance, epsilon * rms(right_hand_side))
+                  + relative_tolerance * initial_residual_rms
 ```
 
-The grid specification records the integration kind, maximum iteration count, and both tolerances. These fields are exact checkpoint state. A solver that reaches the iteration limit or produces a non-finite residual fails the step; it never commits an unconverged field. A successful step exposes its iteration count and final residual. Final concentrations retain the engine-wide finite, non-negative invariant. Crank-Nicolson is stable for large diffusion steps but is not positivity preserving, so an oscillatory negative result is rejected.
+The relative term scales the residual the step begins with, not the field it begins from. A field's magnitude says nothing about how much of it one step has to change, so scaling by the field makes the threshold grow with the background: a cell's exchange with a well-stocked field then falls under it and the solve returns the old field, discarding the source. Scaling by the initial residual instead asks for a fixed reduction of whatever this step actually has to resolve, so the accuracy a model gets is the accuracy it asked for, independent of concentration scale.
+
+The absolute term is raised to the residual floor of the field, `epsilon * rms(right_hand_side)` in float32. The right-hand side carries both the field and the step's operator terms, so this tracks stiffness as well as magnitude. A tolerance below the floor is unreachable, and clamping it up converges rather than iterating to the limit on rounding noise. The floor is also the resolution limit of an implicit step: a source that moves the field by less than its own float32 resolution leaves no residual to detect, and the step converges without it. A model whose exchange is that small next to its background belongs on forward Euler, which applies sources unconditionally, or on a concentration scale that resolves it.
+
+The grid specification records the integration kind, maximum iteration count, and both tolerances. These fields are exact checkpoint state, so a checkpoint written before this rule resumes with the tolerances it recorded and the current interpretation of them. A solver that reaches the iteration limit or produces a non-finite residual fails the step; it never commits an unconverged field. A successful step exposes its iteration count and final residual. Final concentrations retain the engine-wide finite, non-negative invariant. Crank-Nicolson is stable for large diffusion steps but is not positivity preserving, so an oscillatory negative result is rejected.
 
 ## Backend staging
 

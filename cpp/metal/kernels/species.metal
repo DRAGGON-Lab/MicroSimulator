@@ -84,36 +84,29 @@ float evaluate_instruction(const RateInstruction instruction,
       return workspace[instruction.first] == workspace[instruction.second] ? 1.0f : 0.0f;
     case 26:
       return workspace[instruction.first] != 0.0f ? workspace[instruction.second]
-                                                   : workspace[instruction.third];
+                                                  : workspace[instruction.third];
     default:
       return NAN;
   }
 }
 
 kernel void advance_species(
-    device float* levels [[buffer(0)]],
-    device const float* previous_lengths [[buffer(1)]],
-    device const float4* centers [[buffer(2)]],
-    device const float4* geometry [[buffer(3)]],
-    device const float* growth_rates [[buffer(4)]],
-    device const int* cell_types [[buffer(5)]],
+    device float* levels [[buffer(0)]], device const float* previous_lengths [[buffer(1)]],
+    device const float4* centers [[buffer(2)]], device const float4* geometry [[buffer(3)]],
+    device const float* growth_rates [[buffer(4)]], device const int* cell_types [[buffer(5)]],
     device const RateInstruction* instructions [[buffer(6)]],
-    device const uint* outputs [[buffer(7)]],
-    device float* workspace [[buffer(8)]],
-    device atomic_uint* error [[buffer(9)]],
-    constant float& dt [[buffer(10)]],
-    constant uint& species_count [[buffer(11)]],
-    constant uint& instruction_count [[buffer(12)]],
-    constant uint& cell_count [[buffer(13)]],
-    uint cell [[thread_position_in_grid]]) {
+    device const uint* outputs [[buffer(7)]], device float* workspace [[buffer(8)]],
+    device atomic_uint* error [[buffer(9)]], constant float& dt [[buffer(10)]],
+    constant uint& species_count [[buffer(11)]], constant uint& instruction_count [[buffer(12)]],
+    constant uint& cell_count [[buffer(13)]], uint cell [[thread_position_in_grid]]) {
   if (cell >= cell_count) {
     return;
   }
 
   uint species_offset = cell * species_count;
   float radius = geometry[cell].y;
-  float dilution = effective_volume(previous_lengths[cell], radius) /
-                   effective_volume(geometry[cell].x, radius);
+  float dilution =
+      effective_volume(previous_lengths[cell], radius) / effective_volume(geometry[cell].x, radius);
   for (uint species = 0; species < species_count; ++species) {
     levels[species_offset + species] *= dilution;
   }

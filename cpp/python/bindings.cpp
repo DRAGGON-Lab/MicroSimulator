@@ -514,6 +514,8 @@ NB_MODULE(_core, module) {
       .def_prop_ro("has_coupled_rate_plan", &cm::Simulation::has_coupled_rate_plan)
       .def("add_cell", &cm::Simulation::add_cell, "cell"_a)
       .def("remove_cell", &cm::Simulation::remove_cell, "id"_a)
+      .def("apply_flow_drift", &cm::Simulation::apply_flow_drift, "dt"_a,
+           "integration"_a = cm::MechanicsIntegrationParameters{})
       .def("add_plane_constraint", &cm::Simulation::add_plane_constraint, "plane"_a)
       .def("add_sphere_constraint", &cm::Simulation::add_sphere_constraint, "sphere"_a)
       .def("add_box_constraint", &cm::Simulation::add_box_constraint, "box"_a)
@@ -541,6 +543,7 @@ NB_MODULE(_core, module) {
           },
           "levels"_a)
       .def("set_velocity_field", &cm::Simulation::set_velocity_field, "field"_a.none())
+      .def("set_signal_reaction", &cm::Simulation::set_signal_reaction, "reaction"_a.none())
       .def("divide", &cm::Simulation::divide, "parent_id"_a, "first_fraction"_a)
       .def("divide_equal", &cm::Simulation::divide_equal, "parent_id"_a)
       .def("step", &cm::Simulation::step, "dt"_a)

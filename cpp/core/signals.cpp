@@ -39,7 +39,7 @@ struct AxisWeights {
 };
 
 AxisWeights interpolation_axis(float position, float origin, float spacing, std::uint32_t dimension,
-                               const char* axis) {
+                               const char* axis, GridSampleBound bound) {
   if (!std::isfinite(position)) {
     throw std::invalid_argument("signal sample position must be finite");
   }
@@ -47,10 +47,14 @@ AxisWeights interpolation_axis(float position, float origin, float spacing, std:
     return {};
   }
 
-  const auto coordinate =
+  auto coordinate =
       (static_cast<double>(position) - static_cast<double>(origin)) / static_cast<double>(spacing);
   const auto upper_bound = static_cast<double>(dimension - 1);
-  if (coordinate < 0.0 || coordinate > upper_bound) {
+  if (bound == GridSampleBound::clamped) {
+    // Clamping happens in lattice coordinates, the same space the bound is
+    // tested in, so a clamped position always lands inside the lattice.
+    coordinate = std::clamp(coordinate, 0.0, upper_bound);
+  } else if (coordinate < 0.0 || coordinate > upper_bound) {
     throw std::out_of_range(std::string("signal sample is outside the ") + axis + " grid bound");
   }
   const auto lower = static_cast<std::uint32_t>(std::floor(coordinate));
@@ -260,11 +264,15 @@ float rms(std::span<const float> values) {
 
 }  // namespace
 
-SignalGridStencil signal_grid_stencil(const SignalGridSpec& spec, Vec3 position) {
-  spec.validate();
-  const auto x = interpolation_axis(position.x, spec.origin.x, spec.spacing.x, spec.shape.x, "x");
-  const auto y = interpolation_axis(position.y, spec.origin.y, spec.spacing.y, spec.shape.y, "y");
-  const auto z = interpolation_axis(position.z, spec.origin.z, spec.spacing.z, spec.shape.z, "z");
+SignalGridStencil signal_grid_stencil(const SignalGridSpec& spec, Vec3 position,
+                                      GridSampleBound bound) {
+  spec.validate_lattice();
+  const auto x =
+      interpolation_axis(position.x, spec.origin.x, spec.spacing.x, spec.shape.x, "x", bound);
+  const auto y =
+      interpolation_axis(position.y, spec.origin.y, spec.spacing.y, spec.shape.y, "y", bound);
+  const auto z =
+      interpolation_axis(position.z, spec.origin.z, spec.spacing.z, spec.shape.z, "z", bound);
   SignalGridStencil result;
   std::array<std::array<std::uint32_t, 3>, 8> coordinates{};
   for (std::size_t xi = 0; xi < x.count; ++xi) {
@@ -289,7 +297,8 @@ SignalGridStencil signal_grid_stencil(const SignalGridSpec& spec, Vec3 position)
         seed = i;
     }
     if (seed == result.count) {
-      throw std::invalid_argument("signal sample position is inside a grid obstacle");
+      result.entirely_solid = true;
+      return result;
     }
     std::array<bool, 8> connected{};
     connected[seed] = true;
@@ -400,7 +409,7 @@ bool SignalGridSpec::solid_site(std::size_t site) const noexcept {
   return !obstacles.empty() && obstacles[site] != 0;
 }
 
-void SignalGridSpec::validate() const {
+void SignalGridSpec::validate_lattice() const {
   if (signal_count == 0) {
     throw std::invalid_argument("signal grid must contain at least one signal");
   }
@@ -413,6 +422,20 @@ void SignalGridSpec::validate() const {
   if (!finite(spacing) || spacing.x <= 0.0F || spacing.y <= 0.0F || spacing.z <= 0.0F) {
     throw std::invalid_argument("signal grid spacing must be finite and positive");
   }
+  if (!obstacles.empty() && obstacles.size() != site_count()) {
+    throw std::invalid_argument("signal grid obstacle mask must cover every site");
+  }
+  if (velocity_field.has_value()) {
+    const auto& field = *velocity_field;
+    if (field.x_faces.size() != x_face_count() || field.y_faces.size() != y_face_count() ||
+        field.z_faces.size() != z_face_count()) {
+      throw std::invalid_argument("signal grid velocity field must cover every lattice face");
+    }
+  }
+}
+
+void SignalGridSpec::validate() const {
+  validate_lattice();
   if (diffusion.size() != signal_count || advection.size() != signal_count) {
     throw std::invalid_argument("signal grid transport arrays must match signal count");
   }
@@ -430,9 +453,6 @@ void SignalGridSpec::validate() const {
     reaction->validate(level_count());
   }
   if (!obstacles.empty()) {
-    if (obstacles.size() != site_count()) {
-      throw std::invalid_argument("signal grid obstacle mask must cover every site");
-    }
     for (const auto value : obstacles) {
       if (value > 1) {
         throw std::invalid_argument("signal grid obstacle mask values must be 0 or 1");
@@ -453,10 +473,6 @@ void SignalGridSpec::validate() const {
   }
   if (velocity_field.has_value()) {
     const auto& field = *velocity_field;
-    if (field.x_faces.size() != x_face_count() || field.y_faces.size() != y_face_count() ||
-        field.z_faces.size() != z_face_count()) {
-      throw std::invalid_argument("signal grid velocity field must cover every lattice face");
-    }
     for (const auto* faces : {&field.x_faces, &field.y_faces, &field.z_faces}) {
       for (const auto value : *faces) {
         if (!std::isfinite(value)) {
@@ -587,12 +603,51 @@ std::span<const float> SignalGrid::levels() const& noexcept { return levels_; }
 
 std::vector<float> SignalGrid::sample(Vec3 position) const {
   const auto stencil = signal_grid_stencil(spec_, position);
+  if (stencil.entirely_solid) {
+    result.entirely_solid = true;
+      return result;
+  }
   const auto sites = spec_.site_count();
   std::vector<float> result(spec_.signal_count, 0.0F);
   for (std::size_t entry = 0; entry < stencil.count; ++entry) {
     for (std::size_t signal = 0; signal < spec_.signal_count; ++signal) {
       result[signal] += stencil.weights[entry] * levels_[(signal * sites) + stencil.sites[entry]];
     }
+  }
+  return result;
+}
+
+Vec3 SignalGrid::sample_velocity(Vec3 position, GridSampleBound bound) const {
+  if (!spec_.velocity_field.has_value()) {
+    throw std::logic_error("signal grid does not declare a velocity field");
+  }
+  const auto stencil = signal_grid_stencil(spec_, position, bound);
+  // The field is zero on every face of a solid site, so a stencil with no
+  // fluid in it samples zero: a cell that mechanics has pressed into a wall
+  // does not drift.
+  const auto& field = *spec_.velocity_field;
+  Vec3 result{};
+  for (std::size_t entry = 0; entry < stencil.count; ++entry) {
+    const auto site = stencil.sites[entry];
+    const auto weight = stencil.weights[entry];
+    if (weight == 0.0F) {
+      continue;
+    }
+    const auto z = site % spec_.shape.z;
+    const auto y = (site / spec_.shape.z) % spec_.shape.y;
+    const auto x = site / (static_cast<std::size_t>(spec_.shape.y) * spec_.shape.z);
+    const auto fx = static_cast<std::uint32_t>(x);
+    const auto fy = static_cast<std::uint32_t>(y);
+    const auto fz = static_cast<std::uint32_t>(z);
+    result.x += weight * 0.5F *
+                (field.x_faces[x_face_index(spec_.shape, fx, fy, fz)] +
+                 field.x_faces[x_face_index(spec_.shape, fx + 1, fy, fz)]);
+    result.y += weight * 0.5F *
+                (field.y_faces[y_face_index(spec_.shape, fx, fy, fz)] +
+                 field.y_faces[y_face_index(spec_.shape, fx, fy + 1, fz)]);
+    result.z += weight * 0.5F *
+                (field.z_faces[z_face_index(spec_.shape, fx, fy, fz)] +
+                 field.z_faces[z_face_index(spec_.shape, fx, fy, fz + 1)]);
   }
   return result;
 }
@@ -615,6 +670,13 @@ void SignalGrid::replace_levels(std::vector<float> levels) {
 void SignalGrid::set_velocity_field(std::optional<SignalGridVelocityField> field) {
   SignalGridCheckpoint candidate{.spec = spec_, .levels = levels_};
   candidate.spec.velocity_field = std::move(field);
+  candidate.validate();
+  spec_ = std::move(candidate.spec);
+}
+
+void SignalGrid::set_reaction(std::optional<SignalGridAffineReaction> reaction) {
+  SignalGridCheckpoint candidate{.spec = spec_, .levels = levels_};
+  candidate.spec.reaction = std::move(reaction);
   candidate.validate();
   spec_ = std::move(candidate.spec);
 }
@@ -806,8 +868,19 @@ SignalSolveResult signal_grid_crank_nicolson_candidate(const SignalGrid& grid, f
     const auto source = source_rates.empty() ? 0.0F : source_rates[index];
     right_hand_side[index] = old[index] + (half_dt * old_rates[index]) + (dt * source);
   }
-  const auto threshold =
-      spec.solver.absolute_tolerance + (spec.solver.relative_tolerance * rms(right_hand_side));
+  // The relative term scales the residual the step starts with, not the field
+  // it starts from. A field's own magnitude says nothing about how much of it
+  // this step has to change, so scaling by the field lets a small source fall
+  // under the threshold and be discarded; scaling by the initial residual asks
+  // for a fixed reduction of whatever this step actually has to resolve.
+  //
+  // A residual cannot fall below what float32 can represent for a field of
+  // this magnitude, and the right-hand side carries both the field and the
+  // operator terms of the step, so it sets that floor. An absolute tolerance
+  // asking for less than the floor is raised to it rather than making the
+  // solve unreachable.
+  auto threshold = std::max(spec.solver.absolute_tolerance,
+                            std::numeric_limits<float>::epsilon() * rms(right_hand_side));
   std::vector<float> current(old.begin(), old.end());
   std::vector<float> residual(old.size());
   auto residual_rms = std::numeric_limits<float>::infinity();
@@ -821,6 +894,9 @@ SignalSolveResult signal_grid_crank_nicolson_candidate(const SignalGrid& grid, f
     residual_rms = rms(residual);
     if (!std::isfinite(residual_rms)) {
       break;
+    }
+    if (iterations == 0) {
+      threshold += spec.solver.relative_tolerance * residual_rms;
     }
     if (residual_rms <= threshold) {
       return {

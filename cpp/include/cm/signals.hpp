@@ -94,6 +94,7 @@ struct SignalGridSpec {
   [[nodiscard]] std::size_t x_face_count() const;
   [[nodiscard]] std::size_t y_face_count() const;
   [[nodiscard]] std::size_t z_face_count() const;
+  void validate_lattice() const;
   void validate() const;
 };
 
@@ -108,9 +109,18 @@ struct SignalGridStencil {
   std::array<std::uint32_t, 8> sites{};
   std::array<float, 8> weights{};
   std::uint32_t count{0};
+  // Every site of the stencil is solid, so it carries no fluid to interpolate
+  // and every weight is zero. Concentration there is undefined and sampling it
+  // is a model error; velocity there is zero by the field's own validation.
+  bool entirely_solid{false};
 };
 
-[[nodiscard]] SignalGridStencil signal_grid_stencil(const SignalGridSpec& spec, Vec3 position);
+// Whether a sample position outside the lattice of site centers is an error or
+// is drawn in to the nearest in-lattice point.
+enum class GridSampleBound : std::uint8_t { inside, clamped };
+
+[[nodiscard]] SignalGridStencil signal_grid_stencil(
+    const SignalGridSpec& spec, Vec3 position, GridSampleBound bound = GridSampleBound::inside);
 
 class SignalGrid {
  public:
@@ -121,10 +131,13 @@ class SignalGrid {
   [[nodiscard]] std::span<const float> levels() const& noexcept;
   [[nodiscard]] std::span<const float> levels() && = delete;
   [[nodiscard]] std::vector<float> sample(Vec3 position) const;
+  [[nodiscard]] Vec3 sample_velocity(Vec3 position,
+                                     GridSampleBound bound = GridSampleBound::inside) const;
   [[nodiscard]] SignalGridCheckpoint checkpoint() const;
   void set_levels(std::span<const float> levels);
   void replace_levels(std::vector<float> levels);
   void set_velocity_field(std::optional<SignalGridVelocityField> field);
+  void set_reaction(std::optional<SignalGridAffineReaction> reaction);
   void validate_step(float dt) const;
   void validate() const;
 
