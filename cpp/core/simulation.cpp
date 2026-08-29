@@ -265,6 +265,24 @@ MechanicsSolveResult Simulation::relax_cell_mechanics(
   return result;
 }
 
+DepthAveragedFlowResult Simulation::solve_depth_averaged_flow(
+    const SignalGridSpec& spec, std::span<const float> mobility,
+    const DepthAveragedFlowParameters& parameters) {
+  if (!backend_->supports(BackendFeature::depth_averaged_flow)) {
+    throw std::runtime_error("selected backend does not implement depth-averaged flow");
+  }
+  return backend_->solve_depth_averaged_flow(spec, mobility, parameters);
+}
+
+ResolvedFlowResult Simulation::solve_resolved_flow(const SignalGridSpec& spec,
+                                                   std::span<const float> drag,
+                                                   const ResolvedFlowParameters& parameters) {
+  if (!backend_->supports(BackendFeature::resolved_flow)) {
+    throw std::runtime_error("selected backend does not implement resolved flow");
+  }
+  return backend_->solve_resolved_flow(spec, drag, parameters);
+}
+
 CellSnapshot Simulation::cell(CellId id) const { return state_.cell(id); }
 
 std::vector<CellSnapshot> Simulation::cells() const { return state_.cells(); }

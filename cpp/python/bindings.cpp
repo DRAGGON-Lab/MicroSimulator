@@ -27,7 +27,14 @@ NB_MODULE(_core, module) {
       .value("CELL_MECHANICS", cm::BackendFeature::cell_mechanics)
       .value("EXTERNAL_CONSTRAINTS", cm::BackendFeature::external_constraints)
       .value("SIGNALS", cm::BackendFeature::signals)
-      .value("COUPLED_RATES", cm::BackendFeature::coupled_rates);
+      .value("COUPLED_RATES", cm::BackendFeature::coupled_rates)
+      .value("DEPTH_AVERAGED_FLOW", cm::BackendFeature::depth_averaged_flow)
+      .value("RESOLVED_FLOW", cm::BackendFeature::resolved_flow);
+
+  nb::enum_<cm::FlowAxis>(module, "FlowAxis")
+      .value("X", cm::FlowAxis::x)
+      .value("Y", cm::FlowAxis::y)
+      .value("Z", cm::FlowAxis::z);
 
   nb::enum_<cm::GridBoundaryKind>(module, "GridBoundaryKind")
       .value("NO_FLUX", cm::GridBoundaryKind::no_flux)
@@ -145,6 +152,49 @@ NB_MODULE(_core, module) {
       .def_rw("x_faces", &cm::SignalGridVelocityField::x_faces)
       .def_rw("y_faces", &cm::SignalGridVelocityField::y_faces)
       .def_rw("z_faces", &cm::SignalGridVelocityField::z_faces);
+
+  nb::class_<cm::DepthAveragedFlowParameters>(module, "DepthAveragedFlowParameters")
+      .def(nb::init<>())
+      .def_rw("mean_inlet_speed", &cm::DepthAveragedFlowParameters::mean_inlet_speed)
+      .def_rw("axis", &cm::DepthAveragedFlowParameters::axis)
+      .def_rw("relative_tolerance", &cm::DepthAveragedFlowParameters::relative_tolerance)
+      .def_rw("max_iterations", &cm::DepthAveragedFlowParameters::max_iterations)
+      .def("validate", &cm::DepthAveragedFlowParameters::validate);
+
+  nb::class_<cm::DepthAveragedFlowReport>(module, "DepthAveragedFlowReport")
+      .def_ro("iterations", &cm::DepthAveragedFlowReport::iterations)
+      .def_prop_ro(
+          "residual",
+          [](const cm::DepthAveragedFlowReport& report) { return report.relative_residual; })
+      .def_ro("relative_residual", &cm::DepthAveragedFlowReport::relative_residual)
+      .def_ro("mean_inlet_speed", &cm::DepthAveragedFlowReport::mean_inlet_speed)
+      .def_ro("max_speed", &cm::DepthAveragedFlowReport::max_speed);
+
+  nb::class_<cm::DepthAveragedFlowResult>(module, "DepthAveragedFlowResult")
+      .def_ro("field", &cm::DepthAveragedFlowResult::field)
+      .def_ro("report", &cm::DepthAveragedFlowResult::report);
+
+  nb::class_<cm::ResolvedFlowParameters>(module, "ResolvedFlowParameters")
+      .def(nb::init<>())
+      .def_rw("mean_inlet_speed", &cm::ResolvedFlowParameters::mean_inlet_speed)
+      .def_rw("axis", &cm::ResolvedFlowParameters::axis)
+      .def_rw("relative_tolerance", &cm::ResolvedFlowParameters::relative_tolerance)
+      .def_rw("max_outer_iterations", &cm::ResolvedFlowParameters::max_outer_iterations)
+      .def_rw("inner_relative_tolerance", &cm::ResolvedFlowParameters::inner_relative_tolerance)
+      .def_rw("max_inner_iterations", &cm::ResolvedFlowParameters::max_inner_iterations)
+      .def("validate", &cm::ResolvedFlowParameters::validate);
+
+  nb::class_<cm::ResolvedFlowReport>(module, "ResolvedFlowReport")
+      .def_ro("outer_iterations", &cm::ResolvedFlowReport::outer_iterations)
+      .def_ro("inner_iterations", &cm::ResolvedFlowReport::inner_iterations)
+      .def_ro("divergence_rms", &cm::ResolvedFlowReport::divergence_rms)
+      .def_ro("mean_inlet_speed", &cm::ResolvedFlowReport::mean_inlet_speed)
+      .def_ro("max_speed", &cm::ResolvedFlowReport::max_speed)
+      .def_ro("min_gap_voxels", &cm::ResolvedFlowReport::min_gap_voxels);
+
+  nb::class_<cm::ResolvedFlowResult>(module, "ResolvedFlowResult")
+      .def_ro("field", &cm::ResolvedFlowResult::field)
+      .def_ro("report", &cm::ResolvedFlowResult::report);
 
   nb::class_<cm::SignalGridSpec>(module, "SignalGridSpec")
       .def(nb::init<>())
@@ -505,6 +555,22 @@ NB_MODULE(_core, module) {
            "contact_parameters"_a = cm::ContactParameters{},
            "integration_parameters"_a = cm::MechanicsIntegrationParameters{},
            "constraint_parameters"_a = cm::ConstraintContactParameters{})
+      .def(
+          "solve_depth_averaged_flow",
+          [](cm::Simulation& simulation, const cm::SignalGridSpec& spec,
+             const std::vector<float>& mobility,
+             const cm::DepthAveragedFlowParameters& parameters) {
+            return simulation.solve_depth_averaged_flow(spec, mobility, parameters);
+          },
+          "spec"_a, "mobility"_a = std::vector<float>{},
+          "parameters"_a = cm::DepthAveragedFlowParameters{})
+      .def(
+          "solve_resolved_flow",
+          [](cm::Simulation& simulation, const cm::SignalGridSpec& spec,
+             const std::vector<float>& drag, const cm::ResolvedFlowParameters& parameters) {
+            return simulation.solve_resolved_flow(spec, drag, parameters);
+          },
+          "spec"_a, "drag"_a = std::vector<float>{}, "parameters"_a = cm::ResolvedFlowParameters{})
       .def("cell", &cm::Simulation::cell, "id"_a)
       .def("cells", &cm::Simulation::cells)
       .def("lineage_parent", &cm::Simulation::lineage_parent, "id"_a)

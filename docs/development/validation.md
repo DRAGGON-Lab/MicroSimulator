@@ -19,7 +19,7 @@ Passing compilation is necessary but not sufficient. GPU conformance always mean
 
 ## Backend contract
 
-Every test-enabled build runs the shared scenarios against every enumerated device compiled into that build. `backend_contract_conformance` requires each constructed device to advertise growth, species, contacts, mechanics, constraints, signals, and coupled rates. Capability guards in individual tests may help diagnose partial development builds, but they cannot turn a missing capability into a green complete-backend result.
+Every test-enabled build runs the shared scenarios against every enumerated device compiled into that build. `backend_contract_conformance` requires each constructed device to advertise growth, species, contacts, mechanics, constraints, signals, coupled rates, depth-averaged flow, and resolved flow. Capability guards in individual tests may help diagnose partial development builds, but they cannot turn a missing capability into a green complete-backend result.
 
 `trajectory_conformance` composes coupled rates and transport, contact and constraint geometry, fixed-cell mechanics, integration, and division over three steps. It catches cross-feature errors that isolated one-step tests cannot expose. The exact scenarios, problem sizes, and numerical tolerances are maintained in the [conformance test reference](../../tests/conformance/README.md).
 
@@ -39,6 +39,7 @@ Together, these gates cover:
 - growth, equal and asymmetric division, stable identity, and lineage;
 - cell contacts, plane, sphere, box, and cylinder constraints, full-capsule finite-obstacle contact, fixed cells, and mechanics relaxation;
 - species, signal transport, Forward Euler, Crank-Nicolson, and coupled rates;
+- depth-averaged Darcy-Brinkman flow and resolved MAC Stokes-Brinkman flow;
 - checkpoint migration, exact controller resume, and deterministic runtime random state;
 - batch execution, stopping rules, output collision handling, and run manifests;
 - scene capture, live-viewer reset and checkpoint behavior, and protocol validation;

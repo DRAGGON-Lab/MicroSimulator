@@ -4,7 +4,9 @@ import math
 from dataclasses import dataclass
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
+    BackendFeature,
+    BackendKind,
     GridBoundaryKind,
     GridShape,
     SignalGridSpec,
@@ -12,9 +14,10 @@ from cellmodeller2 import (
     SignalIntegrationKind,
     Simulation,
     Vec3,
+    backend_available,
 )
-from cellmodeller2.flow import FlowError, colony_mobility, gap_mobility, solve_flow_field
-from cellmodeller2.microfluidics import TrapChannelDevice
+from microsimulator.flow import FlowError, colony_mobility, gap_mobility, solve_flow_field
+from microsimulator.microfluidics import TrapChannelDevice
 
 
 def _duct(nx: int = 4, ny: int = 8, nz: int = 3) -> SignalGridSpec:
@@ -56,12 +59,28 @@ def _cross_section_fluxes(spec: SignalGridSpec, field: SignalGridVelocityField) 
 def test_uniform_duct_is_exact_plug_flow() -> None:
     spec = _duct()
     field, report = solve_flow_field(spec, mean_inlet_speed=5.0)
-    assert all(math.isclose(value, 5.0, abs_tol=1.0e-8) for value in field.y_faces)
-    assert all(abs(value) < 1.0e-8 for value in field.x_faces)
-    assert all(abs(value) < 1.0e-8 for value in field.z_faces)
-    assert math.isclose(report.max_speed, 5.0, rel_tol=1.0e-9)
+    assert all(math.isclose(value, 5.0, abs_tol=5.0e-5) for value in field.y_faces)
+    assert all(abs(value) < 2.0e-5 for value in field.x_faces)
+    assert all(abs(value) < 2.0e-5 for value in field.z_faces)
+    assert math.isclose(report.max_speed, 5.0, rel_tol=1.0e-5)
     spec.velocity_field = field
     spec.validate()
+
+
+@pytest.mark.parametrize("backend", list(BackendKind))
+def test_depth_averaged_flow_uses_the_selected_native_backend(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip(f"{backend.name} backend is unavailable")
+    spec = _duct(nx=3, ny=5, nz=1)
+    expected, _ = solve_flow_field(spec, mean_inlet_speed=2.0)
+    simulation = Simulation(backend)
+    assert simulation.supports(BackendFeature.DEPTH_AVERAGED_FLOW)
+    actual, report = solve_flow_field(spec, mean_inlet_speed=2.0, simulation=simulation)
+    assert report.residual <= 1.0e-6
+    assert all(
+        math.isclose(observed, reference, abs_tol=5.0e-4, rel_tol=5.0e-4)
+        for observed, reference in zip(actual.y_faces, expected.y_faces, strict=True)
+    )
 
 
 def test_parallel_channels_split_flux_in_the_mobility_ratio() -> None:
@@ -70,9 +89,9 @@ def test_parallel_channels_split_flux_in_the_mobility_ratio() -> None:
     field, _ = solve_flow_field(spec, mean_inlet_speed=4.0, mobility=mobility)
     slow = field.y_faces[_y_face(spec, 0, 3, 0)]
     fast = field.y_faces[_y_face(spec, 1, 3, 0)]
-    assert math.isclose(fast / slow, 3.0, rel_tol=1.0e-6)
-    assert math.isclose((slow + fast) / 2.0, 4.0, rel_tol=1.0e-9)
-    assert all(abs(value) < 1.0e-8 for value in field.x_faces)
+    assert math.isclose(fast / slow, 3.0, rel_tol=1.0e-5)
+    assert math.isclose((slow + fast) / 2.0, 4.0, rel_tol=1.0e-6)
+    assert all(abs(value) < 2.0e-5 for value in field.x_faces)
 
 
 def test_a_pillar_routes_flow_around_itself_conservatively() -> None:
@@ -302,7 +321,7 @@ def test_anisotropic_spacing_scales_the_solved_speeds() -> None:
     field, _ = solve_flow_field(spec, mean_inlet_speed=7.0)
     spec.velocity_field = field
     spec.validate()
-    assert all(math.isclose(value, 7.0, rel_tol=1.0e-8) for value in field.y_faces)
+    assert all(math.isclose(value, 7.0, rel_tol=1.0e-5) for value in field.y_faces)
 
 
 def test_reversed_and_transverse_flow_axes_solve() -> None:
@@ -310,7 +329,7 @@ def test_reversed_and_transverse_flow_axes_solve() -> None:
     field, _ = solve_flow_field(spec, mean_inlet_speed=-3.0)
     spec.velocity_field = field
     spec.validate()
-    assert all(math.isclose(value, -3.0, abs_tol=1.0e-8) for value in field.y_faces)
+    assert all(math.isclose(value, -3.0, abs_tol=2.0e-5) for value in field.y_faces)
 
     across = _duct()
     for name in ("y_lower", "y_upper"):
@@ -326,7 +345,7 @@ def test_reversed_and_transverse_flow_axes_solve() -> None:
     sideways, _ = solve_flow_field(across, mean_inlet_speed=2.0, axis="x")
     across.velocity_field = sideways
     across.validate()
-    assert all(math.isclose(value, 2.0, abs_tol=1.0e-8) for value in sideways.x_faces)
+    assert all(math.isclose(value, 2.0, abs_tol=2.0e-5) for value in sideways.x_faces)
 
 
 def test_partly_blocked_inlets_and_walled_off_pockets_solve() -> None:

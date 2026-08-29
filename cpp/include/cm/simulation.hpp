@@ -62,6 +62,12 @@ class Simulation {
       const MechanicsIntegrationParameters& integration_parameters =
           MechanicsIntegrationParameters{},
       const ConstraintContactParameters& constraint_parameters = ConstraintContactParameters{});
+  [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(
+      const SignalGridSpec& spec, std::span<const float> mobility = {},
+      const DepthAveragedFlowParameters& parameters = DepthAveragedFlowParameters{});
+  [[nodiscard]] ResolvedFlowResult solve_resolved_flow(
+      const SignalGridSpec& spec, std::span<const float> drag = {},
+      const ResolvedFlowParameters& parameters = ResolvedFlowParameters{});
 
   [[nodiscard]] CellSnapshot cell(CellId id) const;
   [[nodiscard]] std::vector<CellSnapshot> cells() const;

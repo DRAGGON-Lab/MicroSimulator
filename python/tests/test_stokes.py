@@ -4,9 +4,16 @@ import math
 
 import numpy as np
 import pytest
-from cellmodeller2 import GridBoundaryKind, Vec3
-from cellmodeller2.flow import FlowError, gap_mobility, solve_flow_field
-from cellmodeller2.flow_reference import (
+from microsimulator import (
+    BackendFeature,
+    BackendKind,
+    GridBoundaryKind,
+    Simulation,
+    Vec3,
+    backend_available,
+)
+from microsimulator.flow import FlowError, gap_mobility, solve_flow_field
+from microsimulator.flow_reference import (
     SQUARE_DUCT_PEAK_TO_MEAN,
     centerline_value,
     duct_grid,
@@ -14,12 +21,12 @@ from cellmodeller2.flow_reference import (
     site_index,
     two_layer_brinkman,
 )
-from cellmodeller2.stokes import colony_drag, solve_stokes_field
+from microsimulator.stokes import colony_drag, solve_stokes_field
 
 
 def _plane_poiseuille_error(nx: int) -> float:
     spec = duct_grid(nx, 6, 1, (1.0 / nx, 0.25, 1.0))
-    field, _ = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-10)
+    field, _ = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-6)
     profile = np.asarray(field.y_faces).reshape(nx, 7, 1)[:, 3, 0]
     positions = (np.arange(nx) + 0.5) / nx
     exact = plane_poiseuille(positions)
@@ -34,15 +41,31 @@ def test_plane_poiseuille_profile_converges_at_second_order() -> None:
     assert 3.0 < coarse / fine < 5.0
 
 
+@pytest.mark.parametrize("backend", list(BackendKind))
+def test_resolved_flow_uses_the_selected_native_backend(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip(f"{backend.name} backend is unavailable")
+    spec = duct_grid(6, 5, 1, (1.0 / 6.0, 0.25, 1.0))
+    expected, _ = solve_stokes_field(spec, mean_inlet_speed=1.0)
+    simulation = Simulation(backend)
+    assert simulation.supports(BackendFeature.RESOLVED_FLOW)
+    actual, report = solve_stokes_field(spec, mean_inlet_speed=1.0, simulation=simulation)
+    assert report.divergence_rms < 2.0e-5
+    assert all(
+        math.isclose(observed, reference, abs_tol=8.0e-4, rel_tol=8.0e-4)
+        for observed, reference in zip(actual.y_faces, expected.y_faces, strict=True)
+    )
+
+
 def test_square_duct_peak_to_mean_matches_shah_and_london() -> None:
     # u_max / u_mean = 2.0962 for a square duct (Shah & London 1978).
     n = 16
     spec = duct_grid(n, 6, n, (1.0 / n, 0.25, 1.0 / n))
-    field, report = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-9)
+    field, report = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-6)
     cross = np.asarray(field.y_faces).reshape(n, 7, n)[:, 3, :]
     ratio = centerline_value(cross) / float(cross.mean())
     assert abs(ratio - SQUARE_DUCT_PEAK_TO_MEAN) / SQUARE_DUCT_PEAK_TO_MEAN < 0.015
-    assert report.divergence_rms < 1.0e-6
+    assert report.divergence_rms < 2.0e-5
 
 
 def test_two_layer_brinkman_channel_matches_the_exact_solution() -> None:
@@ -55,7 +78,7 @@ def test_two_layer_brinkman_channel_matches_the_exact_solution() -> None:
         for _ in range(6)
         for z in range(nz)
     ]
-    field, _ = solve_stokes_field(spec, mean_inlet_speed=1.0, drag=drag, tolerance=1.0e-9)
+    field, _ = solve_stokes_field(spec, mean_inlet_speed=1.0, drag=drag, tolerance=1.0e-6)
     profile = np.asarray(field.y_faces).reshape(1, 7, nz)[0, 3, :]
     positions = (np.arange(nz) + 0.5) / nz
     # The solve rescales to the requested mean speed, so both profiles are
@@ -84,10 +107,10 @@ def test_stokes_field_is_engine_valid_and_conservative_around_a_pillar() -> None
         for x in (4, 5):
             obstacles[site_index(spec, x, y, 0)] = 1
     spec.obstacles = obstacles
-    field, report = solve_stokes_field(spec, mean_inlet_speed=6.0, tolerance=1.0e-9)
+    field, report = solve_stokes_field(spec, mean_inlet_speed=6.0, tolerance=1.0e-6)
     spec.velocity_field = field
     spec.validate()
-    assert report.divergence_rms < 1.0e-6
+    assert report.divergence_rms < 2.0e-5
 
     def y_face(x: int, fy: int) -> float:
         return field.y_faces[x * 13 + fy]
@@ -111,7 +134,7 @@ def test_thin_gap_stokes_depth_averages_to_the_hele_shaw_solution() -> None:
                 obstacles[site_index(spec, x, y, z)] = 1
     spec.obstacles = obstacles
 
-    stokes_field, _ = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-9)
+    stokes_field, _ = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-6)
     hele_shaw_field, _ = solve_flow_field(
         spec, mean_inlet_speed=1.0, mobility=gap_mobility(spec)
     )
@@ -196,7 +219,7 @@ def test_thin_gaps_over_predict_flux_until_they_are_resolved() -> None:
         for y in range(8):
             obstacles[site_index(spec, 0, y, thin)] = 1
         spec.obstacles = obstacles
-        field, report = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-9)
+        field, report = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-6)
         profile = np.asarray(field.y_faces).reshape(1, 9, nz)[0, 4, :]
         ratio = float(profile[:thin].mean() / profile[thin + 1 :].mean())
         errors.append(ratio / lubrication)
@@ -242,14 +265,14 @@ def test_partly_blocked_inlets_and_walled_off_pockets_solve() -> None:
     for y in range(6):
         obstacles[site_index(spec, 0, y, 0)] = 1
     spec.obstacles = obstacles
-    field, report = solve_stokes_field(spec, mean_inlet_speed=2.0, tolerance=1.0e-9)
+    field, report = solve_stokes_field(spec, mean_inlet_speed=2.0, tolerance=1.0e-6)
     spec.velocity_field = field
     spec.validate()
     inlet = np.asarray(field.y_faces).reshape(4, 7, 1)[:, 0, 0]
     # The mean is taken over open inlet faces, and the blocked column is still.
     assert math.isclose(float(inlet[1:].mean()), 2.0, rel_tol=1.0e-6)
     assert inlet[0] == 0.0
-    assert report.divergence_rms < 1.0e-6
+    assert report.divergence_rms < 2.0e-5
 
     # A fluid site sealed off from the flow leaves the solve well posed.
     pocket = duct_grid(5, 6, 1, (1.0, 1.0, 1.0))
@@ -264,5 +287,5 @@ def test_partly_blocked_inlets_and_walled_off_pockets_solve() -> None:
     sealed_field, sealed_report = solve_stokes_field(pocket, mean_inlet_speed=1.0)
     pocket.velocity_field = sealed_field
     pocket.validate()
-    assert sealed_report.divergence_rms < 1.0e-6
+    assert sealed_report.divergence_rms < 2.0e-5
     assert sealed_field.y_faces[(3 * 7) + 3] == 0.0

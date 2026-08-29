@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-18
+- Amended: 2026-08-29
 
 ## Context
 
@@ -13,7 +14,7 @@ solver whose only approximation is the mesh.
 
 ## Decision
 
-`cellmodeller2.stokes` solves the inertia-free Stokes-Brinkman momentum
+`microsimulator.stokes` solves the inertia-free Stokes-Brinkman momentum
 balance with incompressibility,
 
 ```text
@@ -34,19 +35,15 @@ drops out; the Brinkman drag field is an inverse permeability
 (`colony_drag` builds it from the colony's volume fraction). Collapsed axes
 are invariant directions, matching engine transport semantics.
 
-The saddle-point system is solved through the pressure Schur complement
-`S = D A^-1 D^T`, symmetric positive definite, by outer conjugate gradient
-with three independent inner component-Laplacian conjugate gradient solves per
-application - matrix-free NumPy throughout, no new dependency. The cost sits
-well above the Hele-Shaw solve, which remains the default for device authoring
-and the in-model re-solve cadence; the MAC solver is for resolved studies and
-for anchoring the closure.
+Write the discrete momentum equation as `A v + G p = f` and incompressibility as `D v = 0`, where `G = -D^T` under the declared face and cell inner products. Eliminating velocity gives the positive pressure Schur system `(-D A^-1 G) p = -D A^-1 f`. An outer Jacobi-preconditioned conjugate-gradient solve applies this operator matrix-free; each application invokes an inner Jacobi-preconditioned conjugate-gradient solve for the block-diagonal face momentum operator. The three component blocks are stored in one concatenated face vector, which preserves their mathematical independence while allowing one backend-native Krylov operation.
+
+Resolved flow is a `ComputeBackend` domain operation. The CPU implementation evaluates the same operators in C++, while Metal and CUDA keep pressure, velocity, Krylov work vectors, gradients, and divergences in device memory and execute independent MSL and CUDA kernels. The host controls the iteration from reduced scalar data and downloads the final velocity and divergence report. Neither accelerator implementation calls the CPU solver. The portable field contract is binary32 and both outer and inner relative tolerances default to `1e-6`.
+
+The cost remains above the depth-averaged solve, but it is no longer restricted to a Python build-time calculation. Models can execute either solver on their selected backend, including a resolved re-solve when that cost is justified.
 
 ## Validation
 
-`scripts/run_flow_benchmarks.py` runs both solvers against literature and
-exact references and fails nonzero on any tolerance miss; `test_stokes.py`
-enforces the same physics at test sizes.
+`scripts/run_flow_benchmarks.py` runs both solvers through an explicitly selected backend against literature and exact references and fails nonzero on any tolerance miss; `test_stokes.py` enforces the same physics at test sizes. The shared C++ `flow_conformance` scenario separately compares every available native backend with the CPU reference for heterogeneous mobility and Brinkman drag.
 
 - Plane Poiseuille: exact parabola, observed convergence order 2. The duct
   peak is interpolated to the centerline, since cell centers straddle the axis
@@ -69,8 +66,7 @@ enforces the same physics at test sizes.
 
 ## Consequences
 
-- Resolved wall shear and cross-channel profiles are available where a study
-  needs them, at build-time cost.
+- Resolved wall shear and cross-channel profiles are available where a study needs them on CPU, Metal, and CUDA.
 - The Hele-Shaw closure's domain of validity is now measured, not asserted.
 - Resolution bounds the MAC solve as the closure bounds the depth-averaged
   one. Every solve reports `min_gap_voxels`, the fluid voxels across its

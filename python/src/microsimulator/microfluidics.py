@@ -3,7 +3,7 @@
 A device is described once in physical coordinates and then projected into the
 engine's typed inputs: box wall constraints for mechanics, a solid mask for the
 signal grid, and a numerically solved face-staggered flow field for advection
-(the steady Hele-Shaw solve of `cellmodeller2.flow`, so mass is conserved per
+(the steady Hele-Shaw solve of `microsimulator.flow`, so mass is conserved per
 voxel through any mask geometry). The runtime receives only materialized data;
 every predicate here is authoring-time.
 
@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
+    BackendKind,
     BoxConstraintInit,
     ConstraintRegion,
     GridBoundaryKind,
@@ -89,8 +90,16 @@ class _ChannelDevice:
         spec: SignalGridSpec,
         inlet_values: list[float],
         outlet_values: list[float],
+        *,
+        simulation: Simulation | None = None,
+        backend: BackendKind = BackendKind.CPU,
+        device_index: int = 0,
     ) -> None:
-        """Materialize the device's solid mask, solved flow field, and y inlet and outlet."""
+        """Materialize the device's mask, boundaries, and backend-solved flow field.
+
+        If a simulation is supplied, its native backend executes the flow solve.
+        Otherwise a temporary simulation uses ``backend`` and ``device_index``.
+        """
 
         shape = spec.shape
         origin = spec.origin
@@ -123,6 +132,9 @@ class _ChannelDevice:
                 mean_inlet_speed=self.mean_flow_speed,
                 axis="y",
                 mobility=gap_mobility(spec),
+                simulation=simulation,
+                backend=backend,
+                device_index=device_index,
             )
             spec.velocity_field = field
 

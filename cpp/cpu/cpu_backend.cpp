@@ -22,7 +22,9 @@ class CpuBackend final : public ComputeBackend {
     return feature == BackendFeature::growth || feature == BackendFeature::species ||
            feature == BackendFeature::cell_contacts || feature == BackendFeature::cell_mechanics ||
            feature == BackendFeature::external_constraints || feature == BackendFeature::signals ||
-           feature == BackendFeature::coupled_rates;
+           feature == BackendFeature::coupled_rates ||
+           feature == BackendFeature::depth_averaged_flow ||
+           feature == BackendFeature::resolved_flow;
   }
 
   void advance_growth(WorldState& state, float dt) override { state.advance_growth(dt); }
@@ -58,6 +60,18 @@ class CpuBackend final : public ComputeBackend {
       const ExternalContactGraph& external_contacts,
       const MechanicsParameters& parameters) override {
     return solve_cell_mechanics_cpu(state, contacts, external_contacts, parameters);
+  }
+
+  [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(
+      const SignalGridSpec& spec, std::span<const float> mobility,
+      const DepthAveragedFlowParameters& parameters) override {
+    return solve_depth_averaged_flow_cpu(spec, mobility, parameters);
+  }
+
+  [[nodiscard]] ResolvedFlowResult solve_resolved_flow(
+      const SignalGridSpec& spec, std::span<const float> drag,
+      const ResolvedFlowParameters& parameters) override {
+    return solve_resolved_flow_cpu(spec, drag, parameters);
   }
 };
 

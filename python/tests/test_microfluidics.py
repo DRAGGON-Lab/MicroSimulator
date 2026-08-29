@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import math
 
-from cellmodeller2 import GridShape, SignalGridSpec, Vec3
-from cellmodeller2.microfluidics import BiopixelTrapDevice, TrapChannelDevice
+from microsimulator import GridShape, SignalGridSpec, Vec3
+from microsimulator.microfluidics import BiopixelTrapDevice, TrapChannelDevice
 
 
 def _grid() -> SignalGridSpec:
