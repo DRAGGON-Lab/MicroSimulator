@@ -68,6 +68,8 @@ enum class BackendFeature : std::uint8_t {
   external_constraints,
   signals,
   coupled_rates,
+  depth_averaged_flow,
+  resolved_flow,
 };
 
 struct BackendInfo {

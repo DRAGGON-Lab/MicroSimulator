@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "cm/backend.hpp"
+#include "cuda_flow.cuh"
 #include "kernels/contacts.cuh"
 #include "kernels/coupled_rates.cuh"
 #include "kernels/growth.cuh"
@@ -120,7 +121,9 @@ class CudaBackend final : public ComputeBackend {
            feature == BackendFeature::cell_contacts ||
            feature == BackendFeature::external_constraints ||
            feature == BackendFeature::cell_mechanics || feature == BackendFeature::signals ||
-           feature == BackendFeature::coupled_rates;
+           feature == BackendFeature::coupled_rates ||
+           feature == BackendFeature::depth_averaged_flow ||
+           feature == BackendFeature::resolved_flow;
   }
 
   void advance_growth(WorldState& state, float dt) override {
@@ -830,6 +833,20 @@ class CudaBackend final : public ComputeBackend {
     }
     result.corrections = download_mechanics_solution(geometry.size());
     return result;
+  }
+
+  [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(
+      const SignalGridSpec& spec, std::span<const float> mobility,
+      const DepthAveragedFlowParameters& parameters) override {
+    activate_device();
+    return cuda::solve_depth_averaged_flow(spec, mobility, parameters, stream_);
+  }
+
+  [[nodiscard]] ResolvedFlowResult solve_resolved_flow(
+      const SignalGridSpec& spec, std::span<const float> drag,
+      const ResolvedFlowParameters& parameters) override {
+    activate_device();
+    return cuda::solve_resolved_flow(spec, drag, parameters, stream_);
   }
 
  private:

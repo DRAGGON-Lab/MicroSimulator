@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 
 import pytest
-from cellmodeller2.masks import (
+from microsimulator.masks import (
     MaskError,
     MaskPolyline,
     extract_rectangles,

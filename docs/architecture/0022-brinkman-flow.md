@@ -2,19 +2,15 @@
 
 - Status: accepted
 - Date: 2026-08-16
+- Amended: 2026-08-29
 
 ## Context
 
-Device flow fields are authored analytically, which is exact only for straight channels. A
-junction, bend, pillar array, or partially blocking colony needs a numerical solve. At
-microfluidic scale the Reynolds number is around `1e-4`, so the governing momentum balance is
-inertia-free and linear, and for a fixed geometry the flow is steady: it can be computed once
-in the authoring layer and handed to the engine as the existing face-staggered velocity
-field, with no fluid solver in the simulation loop.
+Analytic velocity profiles are exact only for simple channels. A junction, bend, pillar array, imported mask, or partially blocking colony requires a numerical solve over the authored device geometry. At microfluidic scales the governing momentum balance is commonly inertia-free and linear, so the flow for a fixed geometry is steady. The simulation nevertheless needs to select the implementation: initial device assembly and any later colony-coupled re-solve must execute through the same CPU, Metal, or CUDA backend chosen for the rest of the model.
 
 ## Decision
 
-`cellmodeller2.flow` solves the steady depth-averaged Darcy-Brinkman problem
+`microsimulator.flow` solves the steady depth-averaged Darcy-Brinkman problem
 
 ```text
 div(m(x) grad p) = 0        v_face = -m_face * dp/dn
@@ -30,24 +26,13 @@ the model and its validation gate. The in-plane viscous term is deliberately dro
 wall boundary layers, whose thickness is on the order of the gap height, are not resolved. A
 full staggered-grid Stokes solve is the named refinement if a study needs them.
 
-Pressure is fixed on the fluid boundary faces of one axis - inlet one, outlet zero - and
-every other exterior face carries no flux. The discrete operator is symmetric positive
-definite and is solved matrix-free by Jacobi-preconditioned conjugate gradient in NumPy; no
-new dependency is added. The face velocities are the discrete fluxes of the solved pressure,
-so per-voxel mass conservation and zero velocity on closed faces hold by construction, and
-the result passes the engine's velocity-field validation unchanged. Because the problem is
-linear, the solved field is rescaled to a requested mean inlet speed, so callers never handle
-pressure or viscosity units. A grid whose inlet is entirely blocked, or which declares
-periodic boundaries, is an error.
+Pressure is fixed on the fluid boundary faces of one axis, with inlet pressure one and outlet pressure zero, while every other exterior face carries no flux. For neighboring fluid sites `i` and `j`, the face coefficient is the harmonic mean `m_ij = 2 m_i m_j / (m_i + m_j)` divided by the squared center spacing. Fixed pressure boundaries use the corresponding half-cell coefficient `2 m_i / h^2`. Summing these coefficients gives the Jacobi diagonal and the inlet contribution gives the right-hand side. The resulting symmetric positive-definite system is solved matrix-free by Jacobi-preconditioned conjugate gradient.
 
-`colony_mobility` builds the Brinkman drag field from cell state: each cell's volume
-accumulates into its center voxel, the resulting volume fraction sets a Kozeny-Carman style
-drag `phi^2 / (1 - phi)^3` scaled by a model-chosen coefficient, and resistances add to the
-base mobility. The closure coefficient is a modeling choice, not a measured constant, and is
-documented as such. Binning a whole capsule into its center voxel is a nearest-voxel
-rasterization: a cell longer than a voxel contributes entirely to one of the voxels it
-spans, so the volume fraction, and the drag field with it, is noisier than the colony at
-spacings comparable to a cell.
+The solve is a domain operation on `ComputeBackend` and `Simulation`. C++ implements the readable CPU reference, MSL implements the Metal operator, Krylov vector updates, and reductions, and CUDA C++ implements the CUDA equivalents. Device vectors remain on the selected accelerator throughout each solve; the host receives reduction partials needed for convergence control and the final face field. No accelerator backend calls the CPU reference. The portable field and solver contract is binary32, with a default relative residual tolerance of `1e-6`.
+
+The reconstructed face velocities are the discrete fluxes of the solved pressure, so per-voxel mass conservation and zero velocity on closed faces hold by construction. Because the problem is linear, the field is rescaled to a requested mean inlet speed. A grid whose inlet is entirely blocked, whose outlet is unreachable, or which declares periodic boundaries is rejected.
+
+Python remains the device-authoring surface. `gap_mobility` converts a solid mask into a gap-height mobility and `colony_mobility` rasterizes cell volume into a Kozeny-Carman-style resistance field. These helpers construct backend-neutral dense input arrays; they do not solve the pressure system. The closure coefficient is a modeling choice, not a measured constant. Binning a whole capsule into its center voxel is a nearest-voxel approximation, so mobility becomes noisy when the grid spacing approaches a cell length.
 
 For colony feedback the field must change mid-run, so the engine adds one mutation:
 `Simulation.set_velocity_field` validates a replacement field against the full grid
@@ -66,10 +51,9 @@ uses whichever field is current. Model code chooses the re-solve cadence.
 
 ## Consequences
 
-- Arbitrary mask geometry, including CAD-derived layouts, gets a conservative flow field
-  from one build-time solve.
-- Colony blockage feeds back on flow at a model-chosen cadence without any native fluid
-  solver.
+- Arbitrary mask geometry, including CAD-derived layouts, gets a conservative flow field from a native backend solve.
+- Colony blockage feeds back on flow at a model-chosen cadence through the already selected backend.
+- The solver, not only downstream transport, can therefore use CUDA or Metal acceleration.
 - In-plane boundary layers are the stated accuracy limit of the closure.
 - The solved field is a depth-averaged velocity: every voxel in a column carries the
   column's mean. Advection of signals stays conservative, but a cell drifting near a floor

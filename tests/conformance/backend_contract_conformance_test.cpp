@@ -15,6 +15,8 @@ constexpr std::array required_features{
     cm::BackendFeature::external_constraints,
     cm::BackendFeature::signals,
     cm::BackendFeature::coupled_rates,
+    cm::BackendFeature::depth_averaged_flow,
+    cm::BackendFeature::resolved_flow,
 };
 
 void require_complete_backend(cm::BackendKind backend, std::uint32_t device_index) {

@@ -4,7 +4,7 @@
 
 MicroSimulator is a framework for individual-based multicellular modeling. It combines a Python modeling interface with a C++23 engine and independent CPU, Apple Metal, and NVIDIA CUDA implementations.
 
-Models can combine rod-shaped growth and division, lineage, contact mechanics and constraints, intracellular dynamics, and cell-grid signaling. Versioned checkpoints, batch manifests, data-only scenes, and Parquet/Zarr exports support reproducible research workflows.
+Models can combine rod-shaped growth and division, lineage, contact mechanics and constraints, intracellular dynamics, cell-grid signaling, and steady fluid flow through voxelized microfluidic device geometries. Both depth-averaged Darcy-Brinkman flow and resolved staggered-grid Stokes-Brinkman flow execute through the selected CPU, Metal, or CUDA backend. Versioned checkpoints, batch manifests, data-only scenes, and Parquet/Zarr exports support reproducible research workflows.
 
 ## Backend status
 

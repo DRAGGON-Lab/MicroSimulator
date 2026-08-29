@@ -2,16 +2,17 @@
 """Validate the flow solvers against literature and exact solutions.
 
 Runs the benchmark suite for both flow solvers - the Hele-Shaw closure
-(`cellmodeller2.flow`) and the staggered MAC Stokes-Brinkman solver
-(`cellmodeller2.stokes`) - and prints a table of computed values against their
+(`microsimulator.flow`) and the staggered MAC Stokes-Brinkman solver
+(`microsimulator.stokes`) - and prints a table of computed values against their
 references. Exits nonzero if any benchmark exceeds its tolerance, so the
 script doubles as a CI gate.
 
 The reference solutions and their citations live in
-`cellmodeller2.flow_reference`, so this script and the test suite measure the
+`microsimulator.flow_reference`, so this script and the test suite measure the
 same physics.
 
-Usage: uv run python scripts/run_flow_benchmarks.py [--fine]
+Usage: uv run python scripts/run_flow_benchmarks.py
+       [--backend cpu|metal|cuda] [--device-index N] [--fine]
 `--fine` doubles every benchmark's resolution to demonstrate mesh convergence.
 """
 
@@ -24,8 +25,9 @@ import time
 from dataclasses import dataclass
 
 import numpy as np
-from cellmodeller2.flow import gap_mobility, solve_flow_field
-from cellmodeller2.flow_reference import (
+from microsimulator import BackendKind, Simulation, backend_available
+from microsimulator.flow import gap_mobility, solve_flow_field
+from microsimulator.flow_reference import (
     SQUARE_DUCT_PEAK_TO_MEAN,
     centerline_value,
     duct_grid,
@@ -33,7 +35,7 @@ from cellmodeller2.flow_reference import (
     site_index,
     two_layer_brinkman,
 )
-from cellmodeller2.stokes import solve_stokes_field
+from microsimulator.stokes import solve_stokes_field
 
 
 @dataclass(frozen=True)
@@ -59,13 +61,15 @@ class Result:
         return self.error <= self.tolerance
 
 
-def bench_plane_poiseuille_order(coarse: int) -> list[Result]:
+def bench_plane_poiseuille_order(coarse: int, simulation: Simulation) -> list[Result]:
     results: list[Result] = []
     errors: list[float] = []
     for n in (coarse, coarse * 2):
         start = time.perf_counter()
         spec = duct_grid(n, 6, 1, (1.0 / n, 0.25, 1.0))
-        field, _ = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-10)
+        field, _ = solve_stokes_field(
+            spec, mean_inlet_speed=1.0, tolerance=1.0e-6, simulation=simulation
+        )
         profile = np.asarray(field.y_faces).reshape(n, 7, 1)[:, 3, 0]
         positions = (np.arange(n) + 0.5) / n
         exact = plane_poiseuille(positions)
@@ -97,10 +101,12 @@ def bench_plane_poiseuille_order(coarse: int) -> list[Result]:
     return results
 
 
-def bench_square_duct(n: int) -> Result:
+def bench_square_duct(n: int, simulation: Simulation) -> Result:
     start = time.perf_counter()
     spec = duct_grid(n, 6, n, (1.0 / n, 0.25, 1.0 / n))
-    field, _ = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-9)
+    field, _ = solve_stokes_field(
+        spec, mean_inlet_speed=1.0, tolerance=1.0e-6, simulation=simulation
+    )
     cross = np.asarray(field.y_faces).reshape(n, 7, n)[:, 3, :]
     # Cell centers straddle the duct axis, so the peak is interpolated rather
     # than taken from the largest sample, which would understate it.
@@ -116,7 +122,7 @@ def bench_square_duct(n: int) -> Result:
     )
 
 
-def bench_two_layer_brinkman(coarse: int) -> list[Result]:
+def bench_two_layer_brinkman(coarse: int, simulation: Simulation) -> list[Result]:
     drag_value = 200.0
     results: list[Result] = []
     errors: list[float] = []
@@ -129,7 +135,11 @@ def bench_two_layer_brinkman(coarse: int) -> list[Result]:
             for z in range(nz)
         ]
         field, _ = solve_stokes_field(
-            spec, mean_inlet_speed=1.0, drag=drag, tolerance=1.0e-9
+            spec,
+            mean_inlet_speed=1.0,
+            drag=drag,
+            tolerance=1.0e-6,
+            simulation=simulation,
         )
         profile = np.asarray(field.y_faces).reshape(1, 7, nz)[0, 3, :]
         positions = (np.arange(nz) + 0.5) / nz
@@ -164,10 +174,10 @@ def bench_two_layer_brinkman(coarse: int) -> list[Result]:
     return results
 
 
-def bench_hele_shaw_duct(scale: int) -> Result:
+def bench_hele_shaw_duct(scale: int, simulation: Simulation) -> Result:
     start = time.perf_counter()
     spec = duct_grid(4 * scale, 8 * scale, 3 * scale, (1.0, 1.0, 1.0))
-    field, _ = solve_flow_field(spec, mean_inlet_speed=5.0)
+    field, _ = solve_flow_field(spec, mean_inlet_speed=5.0, simulation=simulation)
     error = float(max(abs(v - 5.0) for v in field.y_faces))
     return Result(
         "hele-shaw",
@@ -175,19 +185,21 @@ def bench_hele_shaw_duct(scale: int) -> Result:
         "max |u - mean| (exact plug flow)",
         error,
         0.0,
-        1.0e-6,
+        5.0e-5,
         time.perf_counter() - start,
     )
 
 
-def bench_hele_shaw_mobility_split(scale: int) -> Result:
+def bench_hele_shaw_mobility_split(scale: int, simulation: Simulation) -> Result:
     start = time.perf_counter()
     columns, rows = 2 * scale, 6 * scale
     spec = duct_grid(columns, rows, 1, (1.0, 1.0, 1.0))
     mobility = [
         1.0 if x < columns // 2 else 3.0 for x in range(columns) for _ in range(rows)
     ]
-    field, _ = solve_flow_field(spec, mean_inlet_speed=4.0, mobility=mobility)
+    field, _ = solve_flow_field(
+        spec, mean_inlet_speed=4.0, mobility=mobility, simulation=simulation
+    )
     middle = rows // 2
     slow = field.y_faces[0 * (rows + 1) + middle]
     fast = field.y_faces[(columns - 1) * (rows + 1) + middle]
@@ -202,7 +214,7 @@ def bench_hele_shaw_mobility_split(scale: int) -> Result:
     )
 
 
-def bench_cross_solver_consistency(scale: int) -> Result:
+def bench_cross_solver_consistency(scale: int, simulation: Simulation) -> Result:
     start = time.perf_counter()
     nx, ny, nz = 6 * scale, 10 * scale, 6 * scale
     spec = duct_grid(nx, ny, nz, (1.0 / scale, 1.0 / scale, 0.05 / scale))
@@ -212,9 +224,11 @@ def bench_cross_solver_consistency(scale: int) -> Result:
             for z in range(nz):
                 obstacles[site_index(spec, x, y, z)] = 1
     spec.obstacles = obstacles
-    stokes_field, _ = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-9)
+    stokes_field, _ = solve_stokes_field(
+        spec, mean_inlet_speed=1.0, tolerance=1.0e-6, simulation=simulation
+    )
     hele_shaw_field, _ = solve_flow_field(
-        spec, mean_inlet_speed=1.0, mobility=gap_mobility(spec)
+        spec, mean_inlet_speed=1.0, mobility=gap_mobility(spec), simulation=simulation
     )
 
     def column_flux(values: list[float], x: int, fy: int) -> float:
@@ -244,18 +258,38 @@ def main() -> int:
     parser.add_argument(
         "--fine", action="store_true", help="double the benchmark resolutions"
     )
+    parser.add_argument(
+        "--backend",
+        choices=("cpu", "metal", "cuda"),
+        default="cpu",
+        help="native backend used for every flow solve",
+    )
+    parser.add_argument("--device-index", type=int, default=0)
     arguments = parser.parse_args()
+    backends = {
+        "cpu": BackendKind.CPU,
+        "metal": BackendKind.METAL,
+        "cuda": BackendKind.CUDA,
+    }
+    backend = backends[arguments.backend]
+    if arguments.device_index < 0 or not backend_available(backend, arguments.device_index):
+        parser.error(
+            f"backend {arguments.backend!r} has no device at index {arguments.device_index}"
+        )
+    simulation = Simulation(backend, device_index=arguments.device_index)
     scale = 2 if arguments.fine else 1
 
     results: list[Result] = []
-    results.extend(bench_plane_poiseuille_order(8 * scale))
-    results.append(bench_square_duct(16 * scale))
-    results.extend(bench_two_layer_brinkman(32 * scale))
-    results.append(bench_hele_shaw_duct(scale))
-    results.append(bench_hele_shaw_mobility_split(scale))
-    results.append(bench_cross_solver_consistency(scale))
+    results.extend(bench_plane_poiseuille_order(8 * scale, simulation))
+    results.append(bench_square_duct(16 * scale, simulation))
+    results.extend(bench_two_layer_brinkman(32 * scale, simulation))
+    results.append(bench_hele_shaw_duct(scale, simulation))
+    results.append(bench_hele_shaw_mobility_split(scale, simulation))
+    results.append(bench_cross_solver_consistency(scale, simulation))
 
     width = max(len(r.benchmark) for r in results)
+    info = simulation.backend_info
+    print(f"backend: {info.name} ({info.device}), device index {info.device_index}")
     print(f"{'solver':<11} {'benchmark':<{width}}  {'computed':>10} {'reference':>10} "
           f"{'error':>9} {'tol':>7} {'time':>7}  status")
     failures = 0
