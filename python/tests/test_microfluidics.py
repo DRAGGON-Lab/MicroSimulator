@@ -13,6 +13,7 @@ from microsimulator import (
     SignalGridSpec,
     SimulationController,
     Vec3,
+    backend_available,
 )
 from microsimulator.microfluidics import BiopixelTrapDevice, TrapChannelDevice
 from microsimulator.runner import build_model
@@ -168,6 +169,23 @@ def test_trap_example_builds_steps_and_transports_nutrient() -> None:
     with pytest.raises(ValueError, match="inside a grid obstacle"):
         simulation.sample_signals(Vec3(0.0, 100.0, 0.0))
     assert len(simulation.cells()) >= 1
+
+
+@pytest.mark.parametrize("backend", [BackendKind.METAL, BackendKind.CUDA])
+def test_trap_example_builds_its_initial_flow_on_the_selected_backend(
+    backend: BackendKind,
+) -> None:
+    if not backend_available(backend):
+        pytest.skip(f"{backend.name} backend is unavailable")
+    model, _ = build_model(
+        _EXAMPLES / "microfluidic_trap.py",
+        ModelContext(backend, 0, seed=13),
+    )
+    assert isinstance(model, SimulationController)
+    assert model.simulation.backend_info.kind == backend
+    checkpoint = model.simulation._checkpoint()
+    assert checkpoint.signal_grid is not None
+    assert checkpoint.signal_grid.spec.velocity_field is not None
 
 
 def test_biopixel_model_uses_reported_cavity_dimensions() -> None:

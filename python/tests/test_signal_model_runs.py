@@ -13,13 +13,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     ModelContext,
     SimulationController,
     build_model,
 )
-from cellmodeller2.checkpoint import JSONValue
+from microsimulator.checkpoint import JSONValue
 
 _ROOT = Path(__file__).resolve().parents[2]
 

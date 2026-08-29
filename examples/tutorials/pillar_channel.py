@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 
-from cellmodeller2 import (
+from microsimulator import (
     BoxConstraintInit,
     CellInit,
     CellUpdate,
@@ -37,8 +37,8 @@ from cellmodeller2 import (
     UniformLengthDivision,
     Vec3,
 )
-from cellmodeller2.checkpoint import CheckpointBundle, JSONValue
-from cellmodeller2.flow import colony_mobility, gap_mobility, solve_flow_field
+from microsimulator.checkpoint import CheckpointBundle, JSONValue
+from microsimulator.flow import colony_mobility, gap_mobility, solve_flow_field
 
 MODEL_ID = "tutorials.pillar-channel"
 MODEL_VERSION = 2
@@ -90,7 +90,7 @@ def _in_pillar_core(px: float, py: float, margin: float) -> bool:
     )
 
 
-def _grid() -> SignalGridSpec:
+def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
     shape = GridShape()
     shape.x, shape.y, shape.z = 22, 60, 4
     grid = SignalGridSpec()
@@ -122,10 +122,14 @@ def _grid() -> SignalGridSpec:
         boundary.kind = GridBoundaryKind.FIXED
         boundary.values = [NUTRIENT_INLET if name == "y_lower" else 0.0]
         setattr(grid, name, boundary)
-    field, _ = solve_flow_field(
-        grid, mean_inlet_speed=FLOW_SPEED, mobility=gap_mobility(grid)
-    )
-    grid.velocity_field = field
+    if simulation is not None:
+        field, _ = solve_flow_field(
+            grid,
+            mean_inlet_speed=FLOW_SPEED,
+            mobility=gap_mobility(grid),
+            simulation=simulation,
+        )
+        grid.velocity_field = field
     return grid
 
 
@@ -173,7 +177,12 @@ def _regulate(step: ControllerStep) -> StepPlan:
         mobility = colony_mobility(
             GRID, step.cells, base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT
         )
-        field, _ = solve_flow_field(GRID, mean_inlet_speed=FLOW_SPEED, mobility=mobility)
+        field, _ = solve_flow_field(
+            GRID,
+            mean_inlet_speed=FLOW_SPEED,
+            mobility=mobility,
+            simulation=step.simulation,
+        )
         step.simulation.set_velocity_field(field)
     divisions = DIVISION.requests(step)
     washed = tuple(cell.id for cell in step.cells if abs(cell.position.y) > WASHOUT_Y)
@@ -213,7 +222,8 @@ def _divided(step: ControllerStep, event: DivisionEvent) -> None:
 
 def build(context: ModelContext) -> NativeController:
     simulation = context.simulation(reserved_capacity=10_000)
-    simulation.configure_signal_grid(GRID, _primed_levels(GRID))
+    grid = _grid(simulation)
+    simulation.configure_signal_grid(grid, _primed_levels(grid))
     simulation.set_coupled_rate_plan(_rate_plan())
     _add_walls(simulation)
 

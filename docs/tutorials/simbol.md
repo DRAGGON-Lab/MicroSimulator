@@ -129,7 +129,7 @@ The example includes:
 - a flow-fed channel that delivers nutrient, carries secreted AHL downstream, and washes out escaped cells;
 - nutrient-limited growth from the sampled local field;
 - stochastic daughter perturbations; and
-- the device geometry, flow field, obstacle mask, and inlet/outlet built from one `TrapChannelDevice` description in `cellmodeller2.microfluidics`.
+- the device geometry, flow field, obstacle mask, and inlet/outlet built from one `TrapChannelDevice` description in `microsimulator.microfluidics`.
 
 The biological motif is based on Danino et al., “A synchronized quorum of genetic clocks,” Nature 463, 326–330 (2010), as cited by the SimBOL model. The example equations and constants are a tutorial realization, not a reproduction of the paper’s experimental parameter inference.
 
@@ -150,7 +150,7 @@ A run at seed 42 measures the result: the trap is quiet through the colony's gro
 ### Device flow and washout
 
 `CM_Danino.py` subclasses the legacy grid to fake the channel with an x-dependent AHL sink and
-nutrient source field. The CellModeller2 model expresses the channel physically: a
+nutrient source field. The MicroSimulator model expresses the channel physically: a
 `TrapChannelDevice` projects one geometry description into box wall constraints, a signal-grid
 obstacle mask, a numerically solved steady flow field along the channel, and fixed inlet
 and outlet boundaries; as the colony packs the trap, the model re-solves the flow with the

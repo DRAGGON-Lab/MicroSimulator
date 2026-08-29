@@ -13,7 +13,7 @@ chemistry, and carries media. Four examples cover the range:
 Run any of them live:
 
 ```console
-uv run cm view --model examples/microfluidic_trap.py --seed 42 --dt 0.02 --backend metal --open
+uv run microsimulator view --model examples/microfluidic_trap.py --seed 42 --dt 0.02 --backend metal --open
 ```
 
 ## Walls that cells and chemistry both respect
@@ -38,18 +38,23 @@ constraints is an authoring concern, which the device helpers handle.
 
 ## Devices from one description
 
-`cellmodeller2.microfluidics.TrapChannelDevice` describes an open-sided trap fed by a
+`microsimulator.microfluidics.TrapChannelDevice` describes an open-sided trap fed by a
 straight channel and projects that one description into every engine input:
 
 ```python
-from cellmodeller2.microfluidics import TrapChannelDevice
+from microsimulator.microfluidics import TrapChannelDevice
 
 DEVICE = TrapChannelDevice(mean_flow_speed=20.0)
 DEVICE.add_constraints(simulation)                     # box walls for mechanics
-DEVICE.apply_to_grid(grid, inlet_values=[10.0], outlet_values=[0.0])
+DEVICE.apply_to_grid(
+    grid,
+    inlet_values=[10.0],
+    outlet_values=[0.0],
+    simulation=simulation,
+)
 ```
 
-`apply_to_grid` materializes the solid mask, fixed inlet and outlet boundaries on the y axis, and the numerically solved steady device flow on the grid's face-staggered velocity field (see the next section). Flow runs through the channel, circulates weakly at the open trap face, and the dead-end trap exchanges with the channel chiefly by diffusion in this model.
+`apply_to_grid` materializes the solid mask, fixed inlet and outlet boundaries on the y axis, and the numerically solved steady device flow on the grid's face-staggered velocity field (see the next section). Passing the model's `Simulation` makes the solve execute through the backend selected by the runner. Flow runs through the channel, circulates weakly at the open trap face, and the dead-end trap exchanges with the channel chiefly by diffusion in this model.
 
 ## Flow on signals and on cells
 
@@ -79,25 +84,24 @@ and trace removed cells' ancestry from checkpoints.
 
 ## Numerical flow: arbitrary geometry and colony feedback
 
-Device flow fields are solved, not authored: `cellmodeller2.flow` computes the steady
+Device flow fields are solved, not authored: `microsimulator.flow` computes the steady
 Hele-Shaw–Brinkman problem over the grid's fluid voxels and returns the same face-staggered
 field the engine consumes. `apply_to_grid` runs this solve for every device, and it works
 for any mask geometry — junctions, bends, pillars, a CAD-derived layout — not just straight
 channels. The solver is also available directly for grids built without a device helper:
 
 ```python
-from cellmodeller2.flow import colony_mobility, solve_flow_field
+from microsimulator.flow import colony_mobility, solve_flow_field
 
-field, report = solve_flow_field(grid, mean_inlet_speed=20.0)   # Stokes limit
+field, report = solve_flow_field(
+    grid,
+    mean_inlet_speed=20.0,
+    simulation=simulation,
+)  # Stokes limit
 grid.velocity_field = field
 ```
 
-The solve is a variable-coefficient pressure problem (`div(m grad p) = 0`), so the returned
-fluxes conserve mass per voxel and vanish on wall faces by construction; the flow-axis
-boundaries must be `FIXED` to act as inlet and outlet, and the linear solution is rescaled to
-the requested mean inlet speed. With uniform mobility this is the Stokes limit of the
-depth-averaged closure — correct routing through any mask, plug profile across the channel
-width (side-wall boundary layers, of order the gap height, are outside the closure).
+The solve is a variable-coefficient pressure problem (`div(m grad p) = 0`), so the returned fluxes conserve mass per voxel and vanish on wall faces by construction; the flow-axis boundaries must be `FIXED` to act as inlet and outlet, and the linear solution is rescaled to the requested mean inlet speed. With uniform mobility this is the Stokes limit of the depth-averaged closure: correct routing through any mask and a plug profile across the channel width, with side-wall boundary layers outside the closure. The CPU implementation is C++, while Metal and CUDA execute independent MSL and CUDA kernels for the matrix-free operator and Krylov iterations; neither accelerator calls the CPU solver.
 
 The mobility field is where Brinkman feedback enters: `colony_mobility` rasterizes the
 colony's volume fraction and adds Kozeny–Carman style drag, so media diverts around a packed
@@ -109,7 +113,12 @@ the colony grows and swaps it into the running simulation — the trap models do
 def _regulate(step: ControllerStep) -> StepPlan:
     if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
         mobility = colony_mobility(GRID, step.cells, drag_coefficient=DRAG_COEFFICIENT)
-        field, _ = solve_flow_field(GRID, mean_inlet_speed=FLOW_SPEED, mobility=mobility)
+        field, _ = solve_flow_field(
+            GRID,
+            mean_inlet_speed=FLOW_SPEED,
+            mobility=mobility,
+            simulation=step.simulation,
+        )
         step.simulation.set_velocity_field(field)
     ...
 ```
@@ -126,16 +135,19 @@ channel), not a measured constant.
 ### Resolved flow: the MAC Stokes–Brinkman solver
 
 When a study needs the flow the closure cannot express — viscous boundary layers on side
-walls, the true cross-channel profile, resolved wall shear — `cellmodeller2.stokes` solves
+walls, the true cross-channel profile, resolved wall shear — `microsimulator.stokes` solves
 the full staggered-grid Stokes–Brinkman problem with the same call shape and returns the
 same engine-ready field:
 
 ```python
-from cellmodeller2.stokes import colony_drag, solve_stokes_field
+from microsimulator.stokes import colony_drag, solve_stokes_field
 
-field, report = solve_stokes_field(grid, mean_inlet_speed=20.0)
+field, report = solve_stokes_field(grid, mean_inlet_speed=20.0, simulation=simulation)
 field, report = solve_stokes_field(
-    grid, mean_inlet_speed=20.0, drag=colony_drag(grid, cells, drag_coefficient=0.4)
+    grid,
+    mean_inlet_speed=20.0,
+    drag=colony_drag(grid, cells, drag_coefficient=0.4),
+    simulation=simulation,
 )
 ```
 
@@ -151,8 +163,9 @@ thin-gap cross-check in which the depth-averaged MAC solution reproduces the Hel
 split around a pillar:
 
 ```console
-uv run python scripts/run_flow_benchmarks.py          # CI-gating benchmark table
-uv run python scripts/run_flow_benchmarks.py --fine   # doubled resolutions
+uv run python scripts/run_flow_benchmarks.py --backend cpu
+uv run python scripts/run_flow_benchmarks.py --backend metal
+uv run python scripts/run_flow_benchmarks.py --backend cpu --fine
 ```
 
 The next tutorial, [Solved flow](flow-solvers.md), exercises all of this machinery on a
@@ -173,17 +186,17 @@ The example deliberately separates three kinds of information:
 The trapping-region dimensions and spacing come from the [published supplementary methods](https://media.springernature.com/original/springer-static/esm/art%3A10.1038%2Fnature10722/MediaObjects/41586_2012_BFnature10722_MOESM313_ESM.pdf), not from subtracting a guessed wall inset from the CAD. `BiopixelTrapDevice` therefore defaults to a 100 x 85 x 1.65 micrometer cavity. Its channel dimensions, wall thickness, and flow speed remain ordinary constructor parameters:
 
 ```python
-from cellmodeller2.microfluidics import BiopixelTrapDevice
+from microsimulator.microfluidics import BiopixelTrapDevice
 
 DEVICE = BiopixelTrapDevice(mean_flow_speed=20.0)
 ```
 
 ### Reading the supplied CAD layout
 
-`cellmodeller2.masks` is a bounded, data-only reader for model-space `LWPOLYLINE` geometry. It returns drawing coordinates unchanged unless the caller provides an explicit, source-specific `unit_scale`:
+`microsimulator.masks` is a bounded, data-only reader for model-space `LWPOLYLINE` geometry. It returns drawing coordinates unchanged unless the caller provides an explicit, source-specific `unit_scale`:
 
 ```python
-from cellmodeller2.masks import extract_rectangles, load_mask_polylines, match_rectangles
+from microsimulator.masks import extract_rectangles, load_mask_polylines, match_rectangles
 
 polylines = load_mask_polylines("docs/tutorials/devices/prindle.dxf")
 raw_rectangles = extract_rectangles(polylines, layer="Layer-2")
@@ -202,7 +215,7 @@ With `include_blocks=True`, the reader also exposes geometry in unplaced block d
 The executable example loads and checks this layout, then simulates one cavity using the independently published dimensions. That single-trap reduction assumes one selected local inlet condition; it does not assert uniform flow across the array, reproduce the array manifold, or include inter-trap coupling. Run it live:
 
 ```console
-uv run cm view --model examples/tutorials/biopixel_trap.py --seed 5 --dt 0.02 --backend metal --open
+uv run microsimulator view --model examples/tutorials/biopixel_trap.py --seed 5 --dt 0.02 --backend metal --open
 ```
 
 ## Units and timescales
