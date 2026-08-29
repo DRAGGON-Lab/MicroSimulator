@@ -10,6 +10,7 @@ the flow, and swaps the field into the running simulation.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 
 import numpy as np
 from microsimulator import (
@@ -100,7 +101,7 @@ REMOVAL_INTERVAL = 10
 DRAG_COEFFICIENT = 100.0
 
 
-def _grid() -> SignalGridSpec:
+def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
     shape = GridShape()
     shape.x, shape.y, shape.z = 64, 72, 6
     grid = SignalGridSpec()
@@ -116,10 +117,12 @@ def _grid() -> SignalGridSpec:
     grid.diffusion = [AHL_DIFFUSION, 20.0]
     grid.advection = [Vec3(), Vec3()]
     grid.integration = SignalIntegrationKind.CRANK_NICOLSON
-    DEVICE.apply_to_grid(
+    device = DEVICE if simulation is not None else replace(DEVICE, mean_flow_speed=0.0)
+    device.apply_to_grid(
         grid,
         inlet_values=[0.0, NUTRIENT_INLET],
         outlet_values=[0.0, 0.0],
+        simulation=simulation,
     )
     return grid
 
@@ -198,7 +201,12 @@ def _regulate(step: ControllerStep) -> StepPlan:
         mobility = colony_mobility(
             GRID, step.cells, base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT
         )
-        field, _ = solve_flow_field(GRID, mean_inlet_speed=FLOW_SPEED, mobility=mobility)
+        field, _ = solve_flow_field(
+            GRID,
+            mean_inlet_speed=FLOW_SPEED,
+            mobility=mobility,
+            simulation=step.simulation,
+        )
         step.simulation.set_velocity_field(field)
     divisions = DIVISION.requests(step)
     washed = tuple(cell.id for cell in step.cells if abs(cell.position.y) > WASHOUT_Y)
@@ -227,7 +235,8 @@ def _divided(step: ControllerStep, event: DivisionEvent) -> None:
 
 def build(context: ModelContext) -> NativeController:
     simulation = context.simulation(reserved_capacity=5_000, species_count=3)
-    simulation.configure_signal_grid(GRID, _primed_levels(GRID))
+    grid = _grid(simulation)
+    simulation.configure_signal_grid(grid, _primed_levels(grid))
     simulation.set_coupled_rate_plan(_rate_plan())
     DEVICE.add_constraints(simulation)
 

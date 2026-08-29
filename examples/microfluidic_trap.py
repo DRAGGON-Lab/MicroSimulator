@@ -13,7 +13,9 @@ already there.
 
 from __future__ import annotations
 
-from cellmodeller2 import (
+from dataclasses import replace
+
+from microsimulator import (
     CellInit,
     CellUpdate,
     ControllerStep,
@@ -31,9 +33,9 @@ from cellmodeller2 import (
     UniformLengthDivision,
     Vec3,
 )
-from cellmodeller2.checkpoint import CheckpointBundle, JSONValue
-from cellmodeller2.flow import colony_mobility, gap_mobility, solve_flow_field
-from cellmodeller2.microfluidics import TrapChannelDevice
+from microsimulator.checkpoint import CheckpointBundle, JSONValue
+from microsimulator.flow import colony_mobility, gap_mobility, solve_flow_field
+from microsimulator.microfluidics import TrapChannelDevice
 
 MODEL_ID = "examples.microfluidic-trap"
 MODEL_VERSION = 3
@@ -61,7 +63,7 @@ RESOLVE_INTERVAL = 100
 DRAG_COEFFICIENT = 100.0
 
 
-def _grid() -> SignalGridSpec:
+def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
     shape = GridShape()
     shape.x, shape.y, shape.z = 64, 72, 6
     grid = SignalGridSpec()
@@ -77,7 +79,13 @@ def _grid() -> SignalGridSpec:
     grid.diffusion = [40.0]
     grid.advection = [Vec3()]
     grid.integration = SignalIntegrationKind.CRANK_NICOLSON
-    DEVICE.apply_to_grid(grid, inlet_values=[NUTRIENT_INLET], outlet_values=[0.0])
+    device = DEVICE if simulation is not None else replace(DEVICE, mean_flow_speed=0.0)
+    device.apply_to_grid(
+        grid,
+        inlet_values=[NUTRIENT_INLET],
+        outlet_values=[0.0],
+        simulation=simulation,
+    )
     return grid
 
 
@@ -109,7 +117,12 @@ def _regulate(step: ControllerStep) -> StepPlan:
         mobility = colony_mobility(
             GRID, step.cells, base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT
         )
-        field, _ = solve_flow_field(GRID, mean_inlet_speed=FLOW_SPEED, mobility=mobility)
+        field, _ = solve_flow_field(
+            GRID,
+            mean_inlet_speed=FLOW_SPEED,
+            mobility=mobility,
+            simulation=step.simulation,
+        )
         step.simulation.set_velocity_field(field)
     divisions = DIVISION.requests(step)
     washed = tuple(cell.id for cell in step.cells if abs(cell.position.y) > WASHOUT_Y)
@@ -133,7 +146,8 @@ def _divided(step: ControllerStep, event: DivisionEvent) -> None:
 
 def build(context: ModelContext) -> NativeController:
     simulation = context.simulation(reserved_capacity=10_000)
-    simulation.configure_signal_grid(GRID, _primed_levels(GRID))
+    grid = _grid(simulation)
+    simulation.configure_signal_grid(grid, _primed_levels(grid))
     simulation.set_coupled_rate_plan(_rate_plan())
     DEVICE.add_constraints(simulation)
 

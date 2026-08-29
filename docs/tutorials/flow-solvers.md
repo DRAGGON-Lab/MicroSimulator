@@ -7,7 +7,7 @@ staggered array of cylindrical pillars, with colonies adhered in the pillar wake
 daughters into the stream. Everything lives in one model:
 
 ```console
-uv run cm view --model examples/tutorials/pillar_channel.py --seed 7 --dt 0.01 --backend metal --open
+uv run microsimulator view --model examples/tutorials/pillar_channel.py --seed 7 --dt 0.01 --backend metal --open
 ```
 
 [`examples/tutorials/pillar_channel.py`](../../examples/tutorials/pillar_channel.py)
@@ -51,15 +51,16 @@ An analytic profile for a pillar array does not exist; the field comes from the 
 solve, exactly as in the device helpers:
 
 ```python
-field, report = solve_flow_field(grid, mean_inlet_speed=FLOW_SPEED, mobility=gap_mobility(grid))
+field, report = solve_flow_field(
+    grid,
+    mean_inlet_speed=FLOW_SPEED,
+    mobility=gap_mobility(grid),
+    simulation=simulation,
+)
 grid.velocity_field = field
 ```
 
-The solved field is conservative per voxel and routes around every pillar. At a mean inlet
-speed of 20 the plug away from the array runs at 20 as requested — the solve normalizes over
-the open inlet faces, so blocked columns cannot inflate it — and the gaps beside the center
-pillar carry ≈31, because the pillars take cross-section and the same flux has to fit
-through what is left. Flow speeds up exactly where the physical device would.
+The solved field is conservative per voxel and routes around every pillar. Passing `simulation` selects its native CPU, Metal, or CUDA implementation; accelerator solves retain their pressure and Krylov vectors on the selected device. At a mean inlet speed of 20 the plug away from the array runs at 20 as requested; the solve normalizes over the open inlet faces, so blocked columns cannot inflate it. The gaps beside the center pillar carry approximately 31 because the pillars reduce the open cross-section and the same flux has to pass through what remains.
 
 `report.max_speed` gives the number the `dt` bound needs. Drift is an explicit step, so a
 cell must not cross more than about its own radius per step: keep `max_speed * dt` below
@@ -101,7 +102,12 @@ colony rasterized into Brinkman drag and swaps the field into the running simula
 ```python
 if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
     mobility = colony_mobility(GRID, step.cells, base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT)
-    field, _ = solve_flow_field(GRID, mean_inlet_speed=FLOW_SPEED, mobility=mobility)
+    field, _ = solve_flow_field(
+        GRID,
+        mean_inlet_speed=FLOW_SPEED,
+        mobility=mobility,
+        simulation=step.simulation,
+    )
     step.simulation.set_velocity_field(field)
 ```
 
@@ -116,9 +122,13 @@ solver resolves the same problem with viscous boundary layers on every wall, and
 identical grid:
 
 ```python
-from cellmodeller2.stokes import solve_stokes_field
+from microsimulator.stokes import solve_stokes_field
 
-resolved, report = solve_stokes_field(GRID, mean_inlet_speed=FLOW_SPEED)
+resolved, report = solve_stokes_field(
+    GRID,
+    mean_inlet_speed=FLOW_SPEED,
+    simulation=simulation,
+)
 ```
 
 Depth-averaging the resolved field reproduces the closure's flux split around obstacles to
@@ -129,8 +139,9 @@ measured second-order convergence, the Shah–London square-duct peak-to-mean ra
 and the cross-solver thin-gap check):
 
 ```console
-uv run python scripts/run_flow_benchmarks.py          # CI-gating benchmark table
-uv run python scripts/run_flow_benchmarks.py --fine   # doubled resolutions
+uv run python scripts/run_flow_benchmarks.py --backend cpu
+uv run python scripts/run_flow_benchmarks.py --backend metal
+uv run python scripts/run_flow_benchmarks.py --backend cpu --fine
 ```
 
 ### Which solver a grid deserves
