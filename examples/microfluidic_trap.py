@@ -2,9 +2,8 @@
 
 Fresh nutrient enters at the channel inlet, is carried past the trap mouth by
 the numerically solved steady device flow, and reaches the colony by diffusion
-through the open trap face. The colony feeds back on the flow: at a fixed
-cadence the model rasterizes the packed cells into a Brinkman drag field,
-re-solves the flow, and swaps the field into the running simulation. Cell
+through the open trap face. Only explicitly fixed cells contribute stationary
+flow resistance; this freely moving trap population is not a porous matrix. Cell
 growth follows Monod kinetics on the local nutrient level and consumes
 nutrient at a fixed yield, so the colony's growth pattern reflects the balance
 between flow supply, diffusion into the trap, and consumption by the cells
@@ -38,7 +37,7 @@ from microsimulator.flow import colony_mobility, gap_mobility, solve_flow_field
 from microsimulator.microfluidics import TrapChannelDevice
 
 MODEL_ID = "examples.microfluidic-trap"
-MODEL_VERSION = 3
+MODEL_VERSION = 4
 DIVISION = UniformLengthDivision(3.2, 3.8, jitter_z=False)
 
 FLOW_SPEED = 20.0
@@ -47,18 +46,14 @@ CELL_RADIUS = 0.5
 NUTRIENT_INLET = 10.0
 BASE_GROWTH_RATE = 1.0
 NUTRIENT_K = 5.0
-# Nutrient is one limiting substrate in arbitrary concentration units, fed at
-# NUTRIENT_INLET. Uptake is tied to realized growth: a cell consumes
-# growth_rate * volume / NUTRIENT_YIELD per unit time, so Monod-limited growth
-# and consumption stay consistent. The yield sets the coupling strength, and
-# this value makes a packed trap's uptake comparable to the diffusive supply
-# through its mouth, so nutrient penetrates a few tens of micrometers and the
-# colony behind that front grows more slowly.
+# Nutrient uses arbitrary concentration units. Each accepted step consumes
+# the actual increase of B = pi*r^2*(length + 2*r), divided by this yield.
+# The value is illustrative; penetration and growth require refinement checks.
 NUTRIENT_YIELD = 0.5
 WASHOUT_Y = DEVICE.channel_half_length - 10.0
 
-# Brinkman feedback: how often the colony's drag re-solves the device flow,
-# and how strongly a packed voxel resists through-flow.
+# Resistance feedback uses only fixed (attached) cells, with a physical
+# smoothing radius independent of the grid. Free cells do not form a matrix.
 RESOLVE_INTERVAL = 100
 DRAG_COEFFICIENT = 100.0
 
@@ -78,7 +73,7 @@ def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
     grid.spacing = Vec3(4.0, 4.0, 3.0)
     grid.diffusion = [40.0]
     grid.advection = [Vec3()]
-    grid.integration = SignalIntegrationKind.CRANK_NICOLSON
+    grid.integration = SignalIntegrationKind.BACKWARD_EULER
     device = DEVICE if simulation is not None else replace(DEVICE, mean_flow_speed=0.0)
     device.apply_to_grid(
         grid,
@@ -95,7 +90,7 @@ GAP_MOBILITY = gap_mobility(GRID)
 
 def _rate_plan() -> CoupledRatePlan:
     rates = RatePlanBuilder()
-    uptake = -(rates.growth_rate() * rates.cell_volume()) / NUTRIENT_YIELD
+    uptake = -rates.cell_volume_change_rate() / NUTRIENT_YIELD
     return rates.coupled_plan(0, 1, (), (uptake,))
 
 
@@ -115,7 +110,8 @@ def _nutrient_growth(simulation: Simulation, position: Vec3) -> float:
 def _regulate(step: ControllerStep) -> StepPlan:
     if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
         mobility = colony_mobility(
-            GRID, step.cells, base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT
+            GRID, (cell for cell in step.cells if cell.fixed),
+            base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT
         )
         field, _ = solve_flow_field(
             GRID,

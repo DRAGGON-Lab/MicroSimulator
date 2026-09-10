@@ -23,3 +23,5 @@ Teaching models are under [`examples/tutorials`](../../examples/tutorials). Scen
 The tutorials state numerical assumptions where they affect interpretation, including the meaning of cell length and volume, concentration dilution, time-step-dependent probabilities, signal units, and boundary conditions. For quantitative studies, follow the convergence and comparison guidance in each lesson rather than relying on viewer appearance alone.
 
 Readers comparing these models with the CellModeller wiki, legacy examples, or SimBOL sources can consult [tutorial sources and model translations](../compatibility/tutorial-source-provenance.md).
+
+The [nutrient validation study](nutrient-validation.md) supplies quantitative spatial-growth, conservation, and refinement evidence for the microfluidic stack.
