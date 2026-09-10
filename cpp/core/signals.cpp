@@ -546,6 +546,7 @@ void SignalGridSpec::validate() const {
   switch (integration) {
     case SignalIntegrationKind::forward_euler:
     case SignalIntegrationKind::crank_nicolson:
+    case SignalIntegrationKind::backward_euler:
       break;
     default:
       throw std::invalid_argument("unknown signal integration kind");
@@ -604,8 +605,7 @@ std::span<const float> SignalGrid::levels() const& noexcept { return levels_; }
 std::vector<float> SignalGrid::sample(Vec3 position) const {
   const auto stencil = signal_grid_stencil(spec_, position);
   if (stencil.entirely_solid) {
-    result.entirely_solid = true;
-      return result;
+    throw std::invalid_argument("signal sample position is inside a grid obstacle");
   }
   const auto sites = spec_.site_count();
   std::vector<float> result(spec_.signal_count, 0.0F);
@@ -685,7 +685,7 @@ void SignalGrid::validate_step(float dt) const {
   if (!std::isfinite(dt) || dt < 0.0F) {
     throw std::invalid_argument("time step must be finite and non-negative");
   }
-  if (spec_.integration == SignalIntegrationKind::crank_nicolson) {
+  if (spec_.integration != SignalIntegrationKind::forward_euler) {
     return;
   }
   const std::array<std::uint32_t, 3> dimensions{spec_.shape.x, spec_.shape.y, spec_.shape.z};
@@ -862,11 +862,13 @@ SignalSolveResult signal_grid_crank_nicolson_candidate(const SignalGrid& grid, f
   }
 
   const auto old_rates = signal_grid_operator_rates(grid, old);
-  const auto half_dt = 0.5F * dt;
+  const bool backward = spec.integration == SignalIntegrationKind::backward_euler;
+  const auto half_dt = (backward ? 1.0F : 0.5F) * dt;
+  const auto explicit_dt = backward ? 0.0F : half_dt;
   std::vector<float> right_hand_side(old.size());
   for (std::size_t index = 0; index < old.size(); ++index) {
     const auto source = source_rates.empty() ? 0.0F : source_rates[index];
-    right_hand_side[index] = old[index] + (half_dt * old_rates[index]) + (dt * source);
+    right_hand_side[index] = old[index] + (explicit_dt * old_rates[index]) + (dt * source);
   }
   // The relative term scales the residual the step starts with, not the field
   // it starts from. A field's own magnitude says nothing about how much of it
@@ -938,7 +940,7 @@ SignalSolveReport advance_signal_grid_cpu(SignalGrid& grid, float dt) {
   }
   auto result = signal_grid_crank_nicolson_candidate(grid, dt);
   if (!result.report.converged) {
-    throw std::runtime_error("Crank-Nicolson signal solve did not converge after " +
+    throw std::runtime_error("Implicit signal solve did not converge after " +
                              std::to_string(result.report.iterations) + " iterations");
   }
   grid.replace_levels(std::move(result.levels));

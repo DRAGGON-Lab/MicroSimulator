@@ -113,7 +113,7 @@ void launch_advance_signal_grid(
     const std::uint8_t* obstacles, const float* x_faces, const float* y_faces, const float* z_faces,
     std::uint32_t has_velocity_field, std::uint32_t* error, SignalGridBoundariesGpu boundaries,
     SignalGridShapeGpu shape, float4 spacing, float dt, std::uint32_t signal_count,
-    std::uint32_t level_count, bool crank_nicolson, cudaStream_t stream);
+    std::uint32_t level_count, std::uint32_t crank_nicolson, cudaStream_t stream);
 
 void launch_signal_square_terms(const float* input, float* terms, std::uint32_t level_count,
                                 cudaStream_t stream);

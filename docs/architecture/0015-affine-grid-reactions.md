@@ -19,7 +19,7 @@ reaction_rate[i] = source_rates[i] - loss_rates[i] * levels[i].
 
 Both arrays must match the complete grid level count and contain only finite, non-negative values. A target relaxation `k(target - c)` compiles to source `k*target` and loss `k`. Model code may use coordinates, boxes, half-spaces, or other predicates while constructing the arrays, but the runtime receives only the materialized coefficients.
 
-The affine reaction is part of the signal operator. Forward Euler evaluates it from the old field and adds the largest per-signal loss coefficient to the preflight stability bound. Crank–Nicolson includes loss in the matrix diagonal and the constant source on both trapezoidal halves. Cell-scattered sources stay explicit and retain their amount-per-time convention.
+The affine reaction is part of the signal operator. Forward Euler evaluates it from the old field and adds the largest per-signal loss coefficient to the preflight stability bound. Crank-Nicolson includes loss in the matrix diagonal and the constant source on both trapezoidal halves. Backward Euler includes the complete affine reaction implicitly and preserves positivity for nonnegative explicit input at arbitrary reaction stiffness. Cell-scattered sources stay explicit and retain their amount-per-time convention.
 
 CPU, Metal, and CUDA implement the same fixed operation. Device implementations receive source and loss buffers; they do not compile a model callback or branch on biological region names. Coefficients are exact checkpoint state. Version 7 checkpoints record an object or `null`; versions 1 through 6 migrate to no affine field reaction.
 
@@ -32,13 +32,7 @@ This is a generic data representation for one focused numerical operation, not a
 A reaction field is data, so a model may replace it while a simulation runs:
 `Simulation.set_signal_reaction` validates a candidate against the full grid
 specification and swaps it atomically, exactly as a velocity field is swapped.
-This is what lets a first-order loss that depends on cell state - an enzyme the
-cells carry, degrading a signal in proportion to how much of it is there - be
-carried by transport rather than scattered from the cells. Transport takes a
-loss into its implicit diagonal, where a step stays positive while the loss
-times the step is under two, whereas a cell-scattered source of the same
-strength is explicit and needs half that step. Model code chooses the cadence,
-and the field remains exact checkpoint state.
+A cell-state-dependent first-order loss can therefore use an implicit field coefficient rather than an explicit cell sink. Backward Euler is the positivity-preserving baseline for stiff loss; Crank-Nicolson can oscillate even though it is linearly stable. Coefficients are frozen during each biological step, so their refresh interval contributes splitting error. Model code chooses and convergence-tests that interval, and the field remains exact checkpoint state.
 
 ## Consequences
 

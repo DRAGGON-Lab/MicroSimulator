@@ -30,6 +30,7 @@ class GridBoundaryKind(Enum):
 class SignalIntegrationKind(Enum):
     FORWARD_EULER: SignalIntegrationKind
     CRANK_NICOLSON: SignalIntegrationKind
+    BACKWARD_EULER: SignalIntegrationKind
 
 class RateOp(Enum):
     CONSTANT: RateOp

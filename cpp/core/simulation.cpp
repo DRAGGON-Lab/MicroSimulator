@@ -1,8 +1,10 @@
 #include "cm/simulation.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <stdexcept>
+#include <tuple>
 
 namespace cm {
 namespace {
@@ -114,9 +116,13 @@ void Simulation::apply_flow_drift(float dt, const MechanicsIntegrationParameters
   if (dt == 0.0F || state_.empty()) {
     return;
   }
-  constexpr float degeneracy_epsilon = 1.0e-6F;
   const auto geometry = state_.geometry_state();
   const auto attributes = state_.cell_attributes();
+  const auto spacing = signal_grid_->spec().spacing;
+  const std::array<float, 3> h{spacing.x, spacing.y, spacing.z};
+  const std::array<std::uint32_t, 3> dims{
+      signal_grid_->spec().shape.x, signal_grid_->spec().shape.y, signal_grid_->spec().shape.z};
+  const float spatial_step = 0.25F * *std::min_element(h.begin(), h.end());
   struct DriftUpdate {
     Slot slot;
     Vec3 position;
@@ -126,33 +132,66 @@ void Simulation::apply_flow_drift(float dt, const MechanicsIntegrationParameters
   std::vector<DriftUpdate> updates;
   updates.reserve(geometry.size());
   for (std::size_t slot = 0; slot < geometry.size(); ++slot) {
-    if (attributes.fixed[slot] != 0) {
-      continue;
+    if (attributes.fixed[slot] != 0) continue;
+    Vec3 position{geometry.position_x[slot], geometry.position_y[slot], geometry.position_z[slot]};
+    Vec3 direction{geometry.direction_x[slot], geometry.direction_y[slot],
+                   geometry.direction_z[slot]};
+    const float aspect =
+        (geometry.lengths[slot] + 2 * geometry.radii[slot]) / (2 * geometry.radii[slot]);
+    const float lambda = (aspect * aspect - 1) / (aspect * aspect + 1);
+    const auto sample = [&](Vec3 point) {
+      return signal_grid_->sample_velocity(point, GridSampleBound::clamped);
+    };
+    const auto derivative = [&](Vec3 point, Vec3 axis) {
+      // Central differences of the interpolated fluid velocity. This is an
+      // equivalent-spheroid Jeffery closure, not cell-resolved hydrodynamics.
+      std::array<Vec3, 3> gradient{};
+      for (std::size_t k = 0; k < 3; ++k) {
+        if (dims[k] == 1) continue;
+        Vec3 offset{};
+        if (k == 0) offset.x = h[k] * 0.5F;
+        if (k == 1) offset.y = h[k] * 0.5F;
+        if (k == 2) offset.z = h[k] * 0.5F;
+        gradient[k] = (sample(point + offset) - sample(point - offset)) * (1 / h[k]);
+      }
+      const Vec3 ap = gradient[0] * axis.x + gradient[1] * axis.y + gradient[2] * axis.z;
+      const Vec3 atp{dot(gradient[0], axis), dot(gradient[1], axis), dot(gradient[2], axis)};
+      const Vec3 strain = (ap + atp) * 0.5F;
+      const Vec3 spin = (ap - atp) * 0.5F;
+      const auto orientation = parameters.max_rotation_radians == 0
+                                   ? Vec3{}
+                                   : spin + (strain - axis * dot(axis, strain)) * lambda;
+      return std::pair{sample(point), orientation};
+    };
+    double remaining = dt;
+    std::uint32_t steps = 0;
+    while (remaining > 0) {
+      if (++steps > 100000)
+        throw std::runtime_error("flow drift needs too many substeps; reduce dt");
+      const auto [velocity, orientation] = derivative(position, direction);
+      float step = static_cast<float>(remaining);
+      if (norm(velocity) > 0) step = std::min(step, spatial_step / norm(velocity));
+      if (norm(orientation) > 0)
+        step = std::min(step, parameters.max_rotation_radians / norm(orientation));
+      Vec3 mid_velocity, mid_orientation;
+      while (true) {
+        const auto midpoint = position + velocity * (step * 0.5F);
+        const auto mid_direction = normalized(direction + orientation * (step * 0.5F));
+        std::tie(mid_velocity, mid_orientation) = derivative(midpoint, mid_direction);
+        if (step * norm(mid_velocity) <= spatial_step * 1.001F &&
+            (parameters.max_rotation_radians == 0 ||
+             step * norm(mid_orientation) <= parameters.max_rotation_radians * 1.001F))
+          break;
+        step *= 0.5F;
+        if (step <= 0) throw std::runtime_error("flow drift substep underflow");
+      }
+      if (!std::isfinite(step) || step <= 0) throw std::runtime_error("invalid flow drift substep");
+      position = position + mid_velocity * step;
+      direction = normalized(direction + mid_orientation * step);
+      remaining = std::max(0.0, remaining - step);
     }
-    const Vec3 center{geometry.position_x[slot], geometry.position_y[slot],
-                      geometry.position_z[slot]};
-    const Vec3 axis{geometry.direction_x[slot], geometry.direction_y[slot],
-                    geometry.direction_z[slot]};
-    const auto half_length = geometry.lengths[slot] * 0.5F;
-    // Rod endpoints may poke past the lattice of site centers (the mechanics
-    // walls, not the lattice edge, bound cells), so drift samples the nearest
-    // in-lattice point instead of erroring.
-    const auto first_velocity =
-        signal_grid_->sample_velocity(center - axis * half_length, GridSampleBound::clamped);
-    const auto second_velocity =
-        signal_grid_->sample_velocity(center + axis * half_length, GridSampleBound::clamped);
-    const auto mean_velocity = (first_velocity + second_velocity) * 0.5F;
-    const auto position = center + mean_velocity * dt;
-    auto direction = axis;
-    if (geometry.lengths[slot] > degeneracy_epsilon) {
-      const auto rotation =
-          cross(axis, (second_velocity - first_velocity) * (dt / geometry.lengths[slot]));
-      direction = rotate_axis_angle(axis, rotation, parameters.max_rotation_radians);
-    }
-    if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
-        !std::isfinite(direction.x) || !std::isfinite(direction.y) || !std::isfinite(direction.z)) {
+    if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
       throw std::runtime_error("flow drift produced non-finite geometry");
-    }
     updates.push_back({static_cast<Slot>(slot), position, direction, geometry.lengths[slot]});
   }
   for (const auto& update : updates) {
@@ -273,18 +312,28 @@ void Simulation::step(float dt) {
     }
     signal_grid_->validate_step(dt);
   }
-  backend_->advance_growth(state_, dt);
-  last_signal_solve_report_.reset();
-  if (coupled_rate_plan_.has_value()) {
-    last_signal_solve_report_ =
-        backend_->advance_coupled(state_, *signal_grid_, *coupled_rate_plan_, previous_lengths, dt);
-  } else {
-    if (state_.species_count() != 0) {
-      backend_->advance_species(state_, species_rate_plan_, previous_lengths, dt);
+  auto saved_state = state_;
+  const auto saved_levels = signal_grid_.has_value() ? signal_levels() : std::vector<float>{};
+  const auto saved_report = last_signal_solve_report_;
+  try {
+    backend_->advance_growth(state_, dt);
+    last_signal_solve_report_.reset();
+    if (coupled_rate_plan_.has_value()) {
+      last_signal_solve_report_ = backend_->advance_coupled(
+          state_, *signal_grid_, *coupled_rate_plan_, previous_lengths, dt);
+    } else {
+      if (state_.species_count() != 0) {
+        backend_->advance_species(state_, species_rate_plan_, previous_lengths, dt);
+      }
+      if (signal_grid_.has_value()) {
+        last_signal_solve_report_ = backend_->advance_signal_grid(*signal_grid_, dt);
+      }
     }
-    if (signal_grid_.has_value()) {
-      last_signal_solve_report_ = backend_->advance_signal_grid(*signal_grid_, dt);
-    }
+  } catch (...) {
+    state_ = std::move(saved_state);
+    if (signal_grid_.has_value()) signal_grid_->set_levels(saved_levels);
+    last_signal_solve_report_ = saved_report;
+    throw;
   }
   time_ += static_cast<double>(dt);
 }

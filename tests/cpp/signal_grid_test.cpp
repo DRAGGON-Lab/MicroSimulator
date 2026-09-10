@@ -1,5 +1,7 @@
 #include <cassert>
 #include <cmath>
+#include <cstdio>
+#include <source_location>
 #include <stdexcept>
 #include <vector>
 
@@ -28,7 +30,12 @@ void assert_throws(Function&& function) {
   assert(rejected);
 }
 
-void assert_close(float actual, float expected) { assert(std::abs(actual - expected) <= 1.0e-6F); }
+void assert_close(float actual, float expected,
+                  const std::source_location location = std::source_location::current()) {
+  if (std::abs(actual - expected) > 1.0e-6F)
+    std::fprintf(stderr, "line %u: actual %.9g, expected %.9g\n", location.line(), actual, expected);
+  assert(std::abs(actual - expected) <= 1.0e-6F);
+}
 
 }  // namespace
 
@@ -526,8 +533,7 @@ int main() {
   }
 
   {
-    // A rod spanning a shear gradient rotates toward the flow, capped by the
-    // caller's mechanics rotation limit.
+    // The angular limit controls internal substeps, not the total motion.
     cm::SignalGridSpec spec;
     spec.signal_count = 1;
     spec.shape = {.x = 3, .y = 3, .z = 1};
@@ -560,8 +566,8 @@ int main() {
     const auto capped_id = capped.add_cell(rod);
     capped.apply_flow_drift(1.0F);
     const auto limit = cm::MechanicsIntegrationParameters{}.max_rotation_radians;
-    assert_close(capped.cell(capped_id).direction.x, std::sin(limit));
-    assert_close(capped.cell(capped_id).direction.y, std::cos(limit));
+    assert(capped.cell(capped_id).direction.x > 3 * std::sin(limit));
+    assert_close(cm::norm(capped.cell(capped_id).direction), 1.0F);
 
     cm::Simulation frozen;
     frozen.configure_signal_grid(spec);

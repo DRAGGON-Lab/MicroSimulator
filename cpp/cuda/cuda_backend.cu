@@ -358,7 +358,7 @@ class CudaBackend final : public ComputeBackend {
         .z = spec.shape.z,
         .sites = static_cast<std::uint32_t>(spec.site_count()),
     };
-    const auto crank_nicolson = spec.integration == SignalIntegrationKind::crank_nicolson;
+    const auto crank_nicolson = static_cast<std::uint32_t>(spec.integration);
     cuda::launch_advance_signal_grid(
         signal_levels_.data(), signal_output_.data(), signal_diffusion_.data(),
         signal_advection_.data(), signal_fixed_values_.data(), signal_reaction_source_.data(),
@@ -385,12 +385,12 @@ class CudaBackend final : public ComputeBackend {
           signal_advection_.data(), signal_fixed_values_.data(), signal_reaction_source_.data(),
           signal_reaction_loss_.data(), signal_obstacles_.data(), signal_x_faces_.data(),
           signal_y_faces_.data(), signal_z_faces_.data(), has_velocity_field, signal_error_.data(),
-          boundaries, shape, make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F), dt,
-          signal_count, level_count, spec.solver);
+          boundaries, shape, make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F),
+          (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count, level_count, spec.solver);
       result_device = solve.first;
       report = solve.second;
       if (!report.converged) {
-        throw std::runtime_error("CUDA Crank-Nicolson signal solve did not converge after " +
+        throw std::runtime_error("CUDA Implicit signal solve did not converge after " +
                                  std::to_string(report.iterations) + " iterations");
       }
     }
@@ -577,7 +577,7 @@ class CudaBackend final : public ComputeBackend {
         .z = spec.shape.z,
         .sites = static_cast<std::uint32_t>(spec.site_count()),
     };
-    const auto crank_nicolson = spec.integration == SignalIntegrationKind::crank_nicolson;
+    const auto crank_nicolson = static_cast<std::uint32_t>(spec.integration);
     check_cuda(
         cuda::launch_advance_coupled(
             coupled_species_levels_.data(), coupled_previous_lengths_.data(),
@@ -617,14 +617,14 @@ class CudaBackend final : public ComputeBackend {
           coupled_reaction_loss_.data(), coupled_obstacles_.data(), coupled_x_faces_.data(),
           coupled_y_faces_.data(), coupled_z_faces_.data(), has_velocity_field,
           coupled_error_.data(), boundaries, shape,
-          make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F), dt,
-          static_cast<std::uint32_t>(signal_count_size),
+          make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F),
+          (crank_nicolson == 2 ? dt : 0.5F * dt), static_cast<std::uint32_t>(signal_count_size),
           static_cast<std::uint32_t>(grid_level_count), spec.solver);
       result_device = solve.first;
       report = solve.second;
       if (!report.converged) {
         throw std::runtime_error(
-            "CUDA Crank-Nicolson coupled signal solve did not converge after " +
+            "CUDA Implicit coupled signal solve did not converge after " +
             std::to_string(report.iterations) + " iterations");
       }
     }
@@ -1375,7 +1375,7 @@ class CudaBackend final : public ComputeBackend {
       cuda::SignalGridShapeGpu shape, float4 spacing, float dt, std::uint32_t signal_count,
       std::uint32_t level_count, const SignalSolveParameters& parameters) {
     ensure_signal_solve_capacity(level_count);
-    const auto half_dt = 0.5F * dt;
+    const auto half_dt = dt;
     SignalSolveReport report;
     report.residual_rms = signal_residual_rms(
         initial, right_hand_side, diffusion, advection, fixed_values, reaction_source,

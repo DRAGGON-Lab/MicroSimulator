@@ -197,11 +197,11 @@ SignalSolveReport advance_coupled_cpu(WorldState& state, SignalGrid& grid,
 
   SignalSolveReport signal_report;
   std::vector<float> next_grid;
-  if (grid_spec.integration == SignalIntegrationKind::crank_nicolson) {
+  if (grid_spec.integration != SignalIntegrationKind::forward_euler) {
     auto result = signal_grid_crank_nicolson_candidate(grid, dt, signal_sources);
     signal_report = result.report;
     if (!signal_report.converged) {
-      throw std::runtime_error("Crank-Nicolson coupled signal solve did not converge after " +
+      throw std::runtime_error("Implicit coupled signal solve did not converge after " +
                                std::to_string(signal_report.iterations) + " iterations");
     }
     next_grid = std::move(result.levels);

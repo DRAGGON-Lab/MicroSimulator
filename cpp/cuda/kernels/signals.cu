@@ -112,7 +112,7 @@ __global__ void advance_signal_grid(const float* levels, float* output, const fl
                                     std::uint32_t has_velocity_field, std::uint32_t* error,
                                     SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
                                     float4 spacing, float dt, std::uint32_t signal_count,
-                                    std::uint32_t level_count, bool crank_nicolson) {
+                                    std::uint32_t level_count, std::uint32_t crank_nicolson) {
   const auto index = (blockIdx.x * blockDim.x) + threadIdx.x;
   if (index >= level_count) {
     return;
@@ -122,7 +122,7 @@ __global__ void advance_signal_grid(const float* levels, float* output, const fl
       transport_point(levels, diffusion, advection, fixed_values, reaction_source, reaction_loss,
                       obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundaries, shape,
                       spacing, signal_count, index);
-  const auto scale = crank_nicolson ? 0.5F * dt : dt;
+  const auto scale = crank_nicolson == 0 ? dt : (crank_nicolson == 1 ? 0.5F * dt : 0.0F);
   const auto candidate = levels[index] + scale * transport.rate;
   output[index] = candidate;
   if (!isfinite(candidate) || (!crank_nicolson && candidate < 0.0F)) {
@@ -188,7 +188,7 @@ void launch_advance_signal_grid(
     const std::uint8_t* obstacles, const float* x_faces, const float* y_faces, const float* z_faces,
     std::uint32_t has_velocity_field, std::uint32_t* error, SignalGridBoundariesGpu boundaries,
     SignalGridShapeGpu shape, float4 spacing, float dt, std::uint32_t signal_count,
-    std::uint32_t level_count, bool crank_nicolson, cudaStream_t stream) {
+    std::uint32_t level_count, std::uint32_t crank_nicolson, cudaStream_t stream) {
   constexpr std::uint32_t threads_per_block = 256;
   const auto block_count = ((level_count - 1) / threads_per_block) + 1;
   advance_signal_grid<<<block_count, threads_per_block, 0, stream>>>(
