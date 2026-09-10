@@ -11,6 +11,8 @@ These tutorials introduce the MicroSimulator modeling interface through runnable
 5. [Plasmid segregation, contacts, and conjugation](discrete-state-and-contacts.md)
 6. [Checkpoints, contact graphs, and quantitative analysis](analysis.md)
 7. [SimBOL circuit examples](simbol.md)
+8. [Microfluidic devices: walls, flow, and washout](microfluidics.md)
+9. [Solved flow: a pillar channel, Brinkman feedback, and the benchmarks](flow-solvers.md)
 
 The examples use `uv`, the `microsimulator` command, data-only checkpoints, and the standalone viewer. Each model selects its backend explicitly and can be run headlessly for batch experiments.
 
@@ -21,3 +23,5 @@ Teaching models are under [`examples/tutorials`](../../examples/tutorials). Scen
 The tutorials state numerical assumptions where they affect interpretation, including the meaning of cell length and volume, concentration dilution, time-step-dependent probabilities, signal units, and boundary conditions. For quantitative studies, follow the convergence and comparison guidance in each lesson rather than relying on viewer appearance alone.
 
 Readers comparing these models with the CellModeller wiki, legacy examples, or SimBOL sources can consult [tutorial sources and model translations](../compatibility/tutorial-source-provenance.md).
+
+The [nutrient validation study](nutrient-validation.md) supplies quantitative spatial-growth, conservation, and refinement evidence for the microfluidic stack.
