@@ -171,6 +171,13 @@ void Simulation::set_signal_levels(std::span<const float> levels) {
   signal_grid_->set_levels(levels);
 }
 
+void Simulation::set_velocity_field(std::optional<SignalGridVelocityField> field) {
+  if (!signal_grid_.has_value()) {
+    throw std::logic_error("simulation does not have a signal grid");
+  }
+  signal_grid_->set_velocity_field(std::move(field));
+}
+
 std::pair<CellId, CellId> Simulation::divide(CellId parent_id, float first_fraction) {
   return state_.divide(parent_id, first_fraction);
 }
@@ -256,6 +263,24 @@ MechanicsSolveResult Simulation::relax_cell_mechanics(
       solve_cell_mechanics(mechanics_parameters, contact_parameters, constraint_parameters);
   integrate_mechanics_result(state_, result, integration_parameters);
   return result;
+}
+
+DepthAveragedFlowResult Simulation::solve_depth_averaged_flow(
+    const SignalGridSpec& spec, std::span<const float> mobility,
+    const DepthAveragedFlowParameters& parameters) {
+  if (!backend_->supports(BackendFeature::depth_averaged_flow)) {
+    throw std::runtime_error("selected backend does not implement depth-averaged flow");
+  }
+  return backend_->solve_depth_averaged_flow(spec, mobility, parameters);
+}
+
+ResolvedFlowResult Simulation::solve_resolved_flow(const SignalGridSpec& spec,
+                                                   std::span<const float> drag,
+                                                   const ResolvedFlowParameters& parameters) {
+  if (!backend_->supports(BackendFeature::resolved_flow)) {
+    throw std::runtime_error("selected backend does not implement resolved flow");
+  }
+  return backend_->solve_resolved_flow(spec, drag, parameters);
 }
 
 CellSnapshot Simulation::cell(CellId id) const { return state_.cell(id); }

@@ -15,6 +15,8 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 - [Axis-aligned box constraints](0016-box-constraints.md)
 - [Axis-aligned cylinder constraints](0018-cylinder-constraints.md)
 - [Cell removal](0020-cell-removal.md)
+- [Steady Hele-Shaw-Brinkman flow solve](0022-brinkman-flow.md)
+- [Staggered MAC Stokes-Brinkman solve and flow benchmarks](0023-mac-stokes.md)
 
 ## Biological dynamics and signaling
 

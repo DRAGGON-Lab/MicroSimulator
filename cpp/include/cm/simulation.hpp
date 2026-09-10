@@ -44,6 +44,7 @@ class Simulation {
   void clear_coupled_rate_plan() noexcept;
   void configure_signal_grid(const SignalGridSpec& spec, std::vector<float> levels = {});
   void set_signal_levels(std::span<const float> levels);
+  void set_velocity_field(std::optional<SignalGridVelocityField> field);
   std::pair<CellId, CellId> divide(CellId parent_id, float first_fraction);
   std::pair<CellId, CellId> divide_equal(CellId parent_id);
   void step(float dt);
@@ -61,6 +62,12 @@ class Simulation {
       const MechanicsIntegrationParameters& integration_parameters =
           MechanicsIntegrationParameters{},
       const ConstraintContactParameters& constraint_parameters = ConstraintContactParameters{});
+  [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(
+      const SignalGridSpec& spec, std::span<const float> mobility = {},
+      const DepthAveragedFlowParameters& parameters = DepthAveragedFlowParameters{});
+  [[nodiscard]] ResolvedFlowResult solve_resolved_flow(
+      const SignalGridSpec& spec, std::span<const float> drag = {},
+      const ResolvedFlowParameters& parameters = ResolvedFlowParameters{});
 
   [[nodiscard]] CellSnapshot cell(CellId id) const;
   [[nodiscard]] std::vector<CellSnapshot> cells() const;

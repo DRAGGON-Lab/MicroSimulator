@@ -367,4 +367,40 @@ int main() {
     invalid.advection = {{0.5F, 0.0F, 0.0F}};
     assert_throws<std::invalid_argument>([&] { invalid.validate(); });
   }
+
+  {
+    auto spec = line_spec(3);
+    spec.diffusion = {0.0F};
+    spec.x_lower.kind = cm::GridBoundaryKind::fixed;
+    spec.x_lower.values = {0.0F};
+    spec.x_upper.kind = cm::GridBoundaryKind::fixed;
+    spec.x_upper.values = {0.0F};
+
+    cm::SignalGrid grid(spec);
+    grid.set_velocity_field(cm::SignalGridVelocityField{
+        .x_faces = std::vector<float>(4, 2.0F),
+        .y_faces = std::vector<float>(6, 0.0F),
+        .z_faces = std::vector<float>(6, 0.0F),
+    });
+    assert_throws<std::invalid_argument>([&grid] {
+      grid.set_velocity_field(cm::SignalGridVelocityField{
+          .x_faces = std::vector<float>(5, 0.0F),
+          .y_faces = std::vector<float>(6, 0.0F),
+          .z_faces = std::vector<float>(6, 0.0F),
+      });
+    });
+    grid.set_velocity_field(std::nullopt);
+
+    cm::Simulation simulation;
+    simulation.configure_signal_grid(spec);
+    simulation.set_velocity_field(cm::SignalGridVelocityField{
+        .x_faces = std::vector<float>(4, 2.0F),
+        .y_faces = std::vector<float>(6, 0.0F),
+        .z_faces = std::vector<float>(6, 0.0F),
+    });
+    simulation.set_velocity_field(std::nullopt);
+
+    cm::Simulation bare;
+    assert_throws<std::logic_error>([&bare] { bare.set_velocity_field(std::nullopt); });
+  }
 }
