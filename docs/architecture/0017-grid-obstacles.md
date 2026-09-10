@@ -64,3 +64,9 @@ walls.
 - Renormalized weights make near-wall sampling exact for conservation but slightly reweight
   the interpolation toward fluid sites; models comparing against unmasked runs should expect
   differences only within one voxel of a wall.
+
+## Sampling across disconnected fluid regions
+
+Interpolation and cell source deposition use only the face-connected fluid component containing the largest positive trilinear weight. Ties use the first site in x/y/z iteration order. Weights within this component are renormalized to sum to one. Fluid voxels touching only at an edge or corner cannot exchange material through a cell stencil; a sample with no positive fluid weight is rejected. CPU, Metal, and CUDA apply the same eight-site connectivity rule.
+
+`python/tests/test_transport_accuracy.py` checks both sampling and deposition across a disconnected diagonal, and verifies mass conservation, nonnegative concentrations, and refinement toward an analytic periodic advection-diffusion solution on each available backend. The conservative upwind scheme remains first order in space for advection; biological observables require grid refinement because conservation alone does not control numerical diffusion.

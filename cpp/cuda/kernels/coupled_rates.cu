@@ -62,6 +62,36 @@ __device__ float cell_site_weight(float4 center, SignalGridShapeGpu shape, float
          axis_site_weight(coordinate_z, shape.z, z);
 }
 
+__device__ unsigned stencil_component(float4 center, SignalGridShapeGpu shape, float4 origin,
+                                      float4 spacing, const std::uint8_t* obstacles) {
+  float cx = axis_coordinate(center.x, origin.x, spacing.x, shape.x);
+  float cy = axis_coordinate(center.y, origin.y, spacing.y, shape.y);
+  float cz = axis_coordinate(center.z, origin.z, spacing.z, shape.z);
+  unsigned lx = (unsigned)floor(cx), ly = (unsigned)floor(cy), lz = (unsigned)floor(cz);
+  unsigned fluid = 0, seed = 0;
+  float best = 0;
+  for (unsigned bit = 0; bit < 8; ++bit) {
+    unsigned x = lx + (bit >> 2), y = ly + ((bit >> 1) & 1u), z = lz + (bit & 1u);
+    if (x >= shape.x || y >= shape.y || z >= shape.z) continue;
+    float w = axis_site_weight(cx, shape.x, x) * axis_site_weight(cy, shape.y, y) *
+              axis_site_weight(cz, shape.z, z);
+    if (w <= 0 || obstacles[site_index(shape, x, y, z)] != 0) continue;
+    fluid |= 1u << bit;
+    if (w > best) {
+      best = w;
+      seed = 1u << bit;
+    }
+  }
+  unsigned connected = seed;
+  for (unsigned pass = 0; pass < 8; ++pass) {
+    for (unsigned bit = 0; bit < 8; ++bit) {
+      if ((connected & (1u << bit)) == 0) continue;
+      connected |= fluid & ((1u << (bit ^ 1u)) | (1u << (bit ^ 2u)) | (1u << (bit ^ 4u)));
+    }
+  }
+  return connected;
+}
+
 __device__ float sample_signal(const float* levels, SignalGridShapeGpu shape, float4 origin,
                                float4 spacing, const std::uint8_t* obstacles, float4 center,
                                std::uint32_t signal) {
@@ -75,6 +105,7 @@ __device__ float sample_signal(const float* levels, SignalGridShapeGpu shape, fl
   const auto count_y = shape.y == 1 || lower_y == shape.y - 1 ? 1U : 2U;
   const auto count_z = shape.z == 1 || lower_z == shape.z - 1 ? 1U : 2U;
   float result = 0.0F;
+  const auto component = stencil_component(center, shape, origin, spacing, obstacles);
   float fluid_weight = 0.0F;
   bool dropped = false;
   for (std::uint32_t dx = 0; dx < count_x; ++dx) {
@@ -87,7 +118,7 @@ __device__ float sample_signal(const float* levels, SignalGridShapeGpu shape, fl
         const auto z = lower_z + dz;
         const auto weight_z = axis_site_weight(coordinate_z, shape.z, z);
         const auto weight = weight_x * weight_y * weight_z;
-        if (obstacles[site_index(shape, x, y, z)] != 0) {
+        if ((component & (1u << ((dx << 2) | (dy << 1) | dz))) == 0u) {
           if (weight != 0.0F) {
             dropped = true;
           }
@@ -120,7 +151,11 @@ __device__ float cell_scatter_weight(float4 center, SignalGridShapeGpu shape, fl
   const auto count_x = shape.x == 1 || lower_x == shape.x - 1 ? 1U : 2U;
   const auto count_y = shape.y == 1 || lower_y == shape.y - 1 ? 1U : 2U;
   const auto count_z = shape.z == 1 || lower_z == shape.z - 1 ? 1U : 2U;
+  const auto component = stencil_component(center, shape, origin, spacing, obstacles);
   float fluid_weight = 0.0F;
+  if (raw == 0.0f) return 0.0f;
+  unsigned target_bit = ((x - lower_x) << 2) | ((y - lower_y) << 1) | (z - lower_z);
+  if ((component & (1u << target_bit)) == 0u) return 0.0f;
   bool dropped = false;
   for (std::uint32_t dx = 0; dx < count_x; ++dx) {
     const auto sx = lower_x + dx;
@@ -132,7 +167,7 @@ __device__ float cell_scatter_weight(float4 center, SignalGridShapeGpu shape, fl
         const auto sz = lower_z + dz;
         const auto weight_z = axis_site_weight(coordinate_z, shape.z, sz);
         const auto weight = weight_x * weight_y * weight_z;
-        if (obstacles[site_index(shape, sx, sy, sz)] != 0) {
+        if ((component & (1u << ((dx << 2) | (dy << 1) | dz))) == 0u) {
           if (weight != 0.0F) {
             dropped = true;
           }
@@ -220,9 +255,8 @@ __global__ void advance_coupled_cells(
     const RateInstructionGpu* instructions, const std::uint32_t* species_outputs,
     const std::uint32_t* signal_outputs, float* workspace, const float* grid_levels,
     float* cell_signal_rates, const std::uint8_t* obstacles, std::uint32_t* error,
-    SignalGridShapeGpu shape, float4 origin, float4 spacing, float dt,
-    std::uint32_t species_count, std::uint32_t signal_count, std::uint32_t instruction_count,
-    std::uint32_t cell_count) {
+    SignalGridShapeGpu shape, float4 origin, float4 spacing, float dt, std::uint32_t species_count,
+    std::uint32_t signal_count, std::uint32_t instruction_count, std::uint32_t cell_count) {
   const auto cell = (blockIdx.x * blockDim.x) + threadIdx.x;
   if (cell >= cell_count) {
     return;
@@ -284,17 +318,14 @@ __device__ float exterior_value(std::uint32_t kind, const float* fixed_values, s
   return fixed_values[face * signal_count + signal];
 }
 
-__global__ void advance_coupled_grid(const float* levels, float* output, const float* diffusion,
-                                     const float4* advection, const float* fixed_values,
-                                     const float* reaction_source, const float* reaction_loss,
-                                     const float4* centers, const float* cell_signal_rates,
-                                     const std::uint8_t* obstacles, const float* x_faces,
-                                     const float* y_faces, const float* z_faces,
-                                     std::uint32_t has_velocity_field, std::uint32_t* error,
-                                     SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
-                                     float4 origin, float4 spacing, float dt,
-                                     std::uint32_t signal_count, std::uint32_t cell_count,
-                                     std::uint32_t level_count, bool crank_nicolson) {
+__global__ void advance_coupled_grid(
+    const float* levels, float* output, const float* diffusion, const float4* advection,
+    const float* fixed_values, const float* reaction_source, const float* reaction_loss,
+    const float4* centers, const float* cell_signal_rates, const std::uint8_t* obstacles,
+    const float* x_faces, const float* y_faces, const float* z_faces,
+    std::uint32_t has_velocity_field, std::uint32_t* error, SignalGridBoundariesGpu boundaries,
+    SignalGridShapeGpu shape, float4 origin, float4 spacing, float dt, std::uint32_t signal_count,
+    std::uint32_t cell_count, std::uint32_t level_count, bool crank_nicolson) {
   const auto index = (blockIdx.x * blockDim.x) + threadIdx.x;
   if (index >= level_count) {
     return;
@@ -343,29 +374,26 @@ __global__ void advance_coupled_grid(const float* levels, float* output, const f
       x == 0 ? (boundaries.x_lower == 0 ||
                 (boundaries.x_lower == 1 && obstacles[site_index(shape, shape.x - 1, y, z)] != 0))
              : obstacles[site_index(shape, x - 1, y, z)] != 0;
-  closed_upper[0] =
-      x + 1 == shape.x
-          ? (boundaries.x_upper == 0 ||
-             (boundaries.x_upper == 1 && obstacles[site_index(shape, 0, y, z)] != 0))
-          : obstacles[site_index(shape, x + 1, y, z)] != 0;
+  closed_upper[0] = x + 1 == shape.x
+                        ? (boundaries.x_upper == 0 ||
+                           (boundaries.x_upper == 1 && obstacles[site_index(shape, 0, y, z)] != 0))
+                        : obstacles[site_index(shape, x + 1, y, z)] != 0;
   closed_lower[1] =
       y == 0 ? (boundaries.y_lower == 0 ||
                 (boundaries.y_lower == 1 && obstacles[site_index(shape, x, shape.y - 1, z)] != 0))
              : obstacles[site_index(shape, x, y - 1, z)] != 0;
-  closed_upper[1] =
-      y + 1 == shape.y
-          ? (boundaries.y_upper == 0 ||
-             (boundaries.y_upper == 1 && obstacles[site_index(shape, x, 0, z)] != 0))
-          : obstacles[site_index(shape, x, y + 1, z)] != 0;
+  closed_upper[1] = y + 1 == shape.y
+                        ? (boundaries.y_upper == 0 ||
+                           (boundaries.y_upper == 1 && obstacles[site_index(shape, x, 0, z)] != 0))
+                        : obstacles[site_index(shape, x, y + 1, z)] != 0;
   closed_lower[2] =
       z == 0 ? (boundaries.z_lower == 0 ||
                 (boundaries.z_lower == 1 && obstacles[site_index(shape, x, y, shape.z - 1)] != 0))
              : obstacles[site_index(shape, x, y, z - 1)] != 0;
-  closed_upper[2] =
-      z + 1 == shape.z
-          ? (boundaries.z_upper == 0 ||
-             (boundaries.z_upper == 1 && obstacles[site_index(shape, x, y, 0)] != 0))
-          : obstacles[site_index(shape, x, y, z + 1)] != 0;
+  closed_upper[2] = z + 1 == shape.z
+                        ? (boundaries.z_upper == 0 ||
+                           (boundaries.z_upper == 1 && obstacles[site_index(shape, x, y, 0)] != 0))
+                        : obstacles[site_index(shape, x, y, z + 1)] != 0;
   float face_lower[3];
   float face_upper[3];
   if (has_velocity_field != 0) {
@@ -397,10 +425,10 @@ __global__ void advance_coupled_grid(const float* levels, float* output, const f
     const auto inverse_spacing = 1.0F / grid_spacing[axis];
     rate += diffusion[signal] * (lower[axis] - 2.0F * current + upper[axis]) * inverse_spacing *
             inverse_spacing;
-    auto lower_flux = face_lower[axis] >= 0.0F ? face_lower[axis] * lower[axis]
-                                               : face_lower[axis] * current;
-    auto upper_flux = face_upper[axis] >= 0.0F ? face_upper[axis] * current
-                                               : face_upper[axis] * upper[axis];
+    auto lower_flux =
+        face_lower[axis] >= 0.0F ? face_lower[axis] * lower[axis] : face_lower[axis] * current;
+    auto upper_flux =
+        face_upper[axis] >= 0.0F ? face_upper[axis] * current : face_upper[axis] * upper[axis];
     if (closed_lower[axis]) {
       lower_flux = 0.0F;
     }
@@ -414,7 +442,8 @@ __global__ void advance_coupled_grid(const float* levels, float* output, const f
   float source = 0.0F;
   const auto inverse_voxel_volume = 1.0F / (spacing.x * spacing.y * spacing.z);
   for (std::uint32_t cell = 0; cell < cell_count; ++cell) {
-    const auto weight = cell_scatter_weight(centers[cell], shape, origin, spacing, obstacles, x, y, z);
+    const auto weight =
+        cell_scatter_weight(centers[cell], shape, origin, spacing, obstacles, x, y, z);
     source += weight * cell_signal_rates[cell * signal_count + signal] * inverse_voxel_volume;
   }
   const auto transport_scale = crank_nicolson ? 0.5F * dt : dt;

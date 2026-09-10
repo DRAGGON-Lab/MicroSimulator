@@ -69,6 +69,31 @@ float cell_site_weight(float4 center, GridShape shape, float4 origin, float4 spa
          axis_site_weight(coordinate_z, shape.z, z);
 }
 
+uint stencil_component(float4 center, GridShape shape, float4 origin, float4 spacing, device const uchar* obstacles) {
+  float cx = axis_coordinate(center.x, origin.x, spacing.x, shape.x);
+  float cy = axis_coordinate(center.y, origin.y, spacing.y, shape.y);
+  float cz = axis_coordinate(center.z, origin.z, spacing.z, shape.z);
+  unsigned lx = (unsigned)floor(cx), ly = (unsigned)floor(cy), lz = (unsigned)floor(cz);
+  unsigned fluid = 0, seed = 0;
+  float best = 0;
+  for (unsigned bit = 0; bit < 8; ++bit) {
+    unsigned x = lx + (bit >> 2), y = ly + ((bit >> 1) & 1u), z = lz + (bit & 1u);
+    if (x >= shape.x || y >= shape.y || z >= shape.z) continue;
+    float w = axis_site_weight(cx, shape.x, x) * axis_site_weight(cy, shape.y, y) * axis_site_weight(cz, shape.z, z);
+    if (w <= 0 || obstacles[site_index(shape, x, y, z)] != 0) continue;
+    fluid |= 1u << bit;
+    if (w > best) { best = w; seed = 1u << bit; }
+  }
+  unsigned connected = seed;
+  for (unsigned pass = 0; pass < 8; ++pass) {
+    for (unsigned bit = 0; bit < 8; ++bit) {
+      if ((connected & (1u << bit)) == 0) continue;
+      connected |= fluid & ((1u << (bit ^ 1u)) | (1u << (bit ^ 2u)) | (1u << (bit ^ 4u)));
+    }
+  }
+  return connected;
+}
+
 float sample_signal(device const float* levels, GridShape shape, float4 origin, float4 spacing,
                     device const uchar* obstacles, float4 center, uint signal) {
   float coordinate_x = axis_coordinate(center.x, origin.x, spacing.x, shape.x);
@@ -81,6 +106,7 @@ float sample_signal(device const float* levels, GridShape shape, float4 origin, 
   uint count_y = shape.y == 1u || lower_y == shape.y - 1u ? 1u : 2u;
   uint count_z = shape.z == 1u || lower_z == shape.z - 1u ? 1u : 2u;
   float result = 0.0f;
+  const auto component = stencil_component(center, shape, origin, spacing, obstacles);
   float fluid_weight = 0.0f;
   bool dropped = false;
   for (uint dx = 0; dx < count_x; ++dx) {
@@ -93,7 +119,7 @@ float sample_signal(device const float* levels, GridShape shape, float4 origin, 
         uint z = lower_z + dz;
         float wz = axis_site_weight(coordinate_z, shape.z, z);
         float weight = wx * wy * wz;
-        if (obstacles[site_index(shape, x, y, z)] != 0u) {
+        if ((component & (1u << ((dx << 2) | (dy << 1) | dz))) == 0u) {
           if (weight != 0.0f) {
             dropped = true;
           }
@@ -112,7 +138,7 @@ float sample_signal(device const float* levels, GridShape shape, float4 origin, 
 
 float cell_scatter_weight(float4 center, GridShape shape, float4 origin, float4 spacing,
                           device const uchar* obstacles, uint x, uint y, uint z) {
-  if (obstacles[site_index(shape, x, y, z)] != 0u) {
+  if (obstacles[site_index(shape, x, y, z)] != 0) {
     return 0.0f;
   }
   float raw = cell_site_weight(center, shape, origin, spacing, x, y, z);
@@ -125,7 +151,11 @@ float cell_scatter_weight(float4 center, GridShape shape, float4 origin, float4 
   uint count_x = shape.x == 1u || lower_x == shape.x - 1u ? 1u : 2u;
   uint count_y = shape.y == 1u || lower_y == shape.y - 1u ? 1u : 2u;
   uint count_z = shape.z == 1u || lower_z == shape.z - 1u ? 1u : 2u;
+  const auto component = stencil_component(center, shape, origin, spacing, obstacles);
   float fluid_weight = 0.0f;
+  if (raw == 0.0f) return 0.0f;
+  unsigned target_bit = ((x - lower_x) << 2) | ((y - lower_y) << 1) | (z - lower_z);
+  if ((component & (1u << target_bit)) == 0u) return 0.0f;
   bool dropped = false;
   for (uint dx = 0; dx < count_x; ++dx) {
     uint sx = lower_x + dx;
@@ -137,7 +167,7 @@ float cell_scatter_weight(float4 center, GridShape shape, float4 origin, float4 
         uint sz = lower_z + dz;
         float wz = axis_site_weight(coordinate_z, shape.z, sz);
         float weight = wx * wy * wz;
-        if (obstacles[site_index(shape, sx, sy, sz)] != 0u) {
+        if ((component & (1u << ((dx << 2) | (dy << 1) | dz))) == 0u) {
           if (weight != 0.0f) {
             dropped = true;
           }
