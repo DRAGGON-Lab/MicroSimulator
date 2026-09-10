@@ -16,7 +16,8 @@ __device__ float effective_surface_area(float length, float radius) {
 
 __device__ float evaluate_instruction(const RateInstructionGpu& instruction, const float* workspace,
                                       const float* species, float4 center, float4 geometry,
-                                      float growth_rate, std::int32_t cell_type) {
+                                      float growth_rate, std::int32_t cell_type,
+                                      float volume_change_rate) {
   switch (instruction.operation) {
     case 0:
       return instruction.value;
@@ -36,6 +37,8 @@ __device__ float evaluate_instruction(const RateInstructionGpu& instruction, con
       return growth_rate;
     case 8:
       return static_cast<float>(cell_type);
+    case 28:
+      return volume_change_rate;
     case 9:
       return effective_volume(geometry.x, geometry.y);
     case 10:
@@ -104,7 +107,11 @@ __global__ void advance_species(float* levels, const float* previous_lengths, co
   for (std::uint32_t index = 0; index < instruction_count; ++index) {
     const auto value =
         evaluate_instruction(instructions[index], cell_workspace, cell_species, centers[cell],
-                             geometry[cell], growth_rates[cell], cell_types[cell]);
+                             geometry[cell], growth_rates[cell], cell_types[cell],
+                             dt == 0.0f ? 0.0f
+                                        : (effective_volume(geometry[cell].x, radius) -
+                                           effective_volume(previous_lengths[cell], radius)) /
+                                              dt);
     cell_workspace[index] = value;
     if (!isfinite(value)) {
       atomicOr(error, 1U);

@@ -85,6 +85,7 @@ void SpeciesRatePlan::validate() const {
       case RateOp::growth_rate:
       case RateOp::cell_type:
       case RateOp::cell_volume:
+      case RateOp::cell_volume_change_rate:
       case RateOp::cell_surface_area:
         break;
       case RateOp::negate:
@@ -125,6 +126,8 @@ void SpeciesRatePlan::validate() const {
 }
 
 float effective_cell_volume(float length, float radius) noexcept {
+  // Conserved biomass volume for the endpoint-preserving division rule.
+  // This is a biochemical measure, not the geometric capsule volume.
   constexpr float pi = 3.14159265358979323846F;
   return pi * radius * radius * (length + 2.0F * radius);
 }
