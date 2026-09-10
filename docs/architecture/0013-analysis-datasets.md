@@ -35,7 +35,9 @@ Parquet tables use an explicit Arrow schema and deterministic row ordering:
 - `species`: frame index, stable cell ID, channel index, and level; and
 - `contacts`: frame index plus every typed `CellContact` field. Multiple rows for parallel capsules are preserved. Unique neighbor edges are a dataframe grouping, not a lossy storage replacement.
 
-External constraint contacts use a separate typed table because their endpoint and constraint-kind semantics differ from cell pairs.
+External constraint contacts use a separate typed table because their centerline-location and constraint-kind semantics differ from cell pairs. The location is encoded as `negative`, `positive`, or `interior`, so a finite-obstacle contact at the rod mid-span is not mislabeled as an endpoint.
+
+Analysis format v3 renames the external-contact `endpoint` column to `location`. The reader continues to authenticate v1 and v2 datasets; the versioned schema makes the incompatible column rename explicit rather than silently changing an existing field's meaning.
 
 Stable cell and constraint IDs are Arrow `uint64`; slots and channel indices are `uint32`; cell types are `int32`; engine state values are `float32`; and physical time is `float64`. Nullable parent IDs stay typed `uint64` rather than sentinel values. Derived quantities are named as derivations and never replace their source columns.
 

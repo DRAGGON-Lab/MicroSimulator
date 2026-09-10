@@ -15,7 +15,7 @@ cm::RateInstruction operation(cm::RateOp op, std::uint32_t first = 0, std::uint3
   return {.operation = op, .first = first, .second = second, .value = value};
 }
 
-cm::Simulation make_reference(cm::SignalIntegrationKind integration) {
+cm::Simulation make_reference(cm::SignalIntegrationKind integration, bool masked = false) {
   cm::Simulation simulation(cm::BackendKind::cpu, 513, 3);
   cm::SignalGridSpec grid;
   grid.signal_count = 2;
@@ -39,9 +39,29 @@ cm::Simulation make_reference(cm::SignalIntegrationKind integration) {
     reaction.loss_rates[index] = 0.003F * static_cast<float>(index % 11);
   }
   grid.reaction = std::move(reaction);
+  if (masked) {
+    std::vector<std::uint8_t> obstacles(grid.site_count(), 0);
+    const auto solid_site = [&](std::uint32_t x, std::uint32_t y, std::uint32_t z) {
+      return (static_cast<std::size_t>(x) * grid.shape.y * grid.shape.z) +
+             (static_cast<std::size_t>(y) * grid.shape.z) + z;
+    };
+    obstacles[solid_site(4, 3, 2)] = 1;
+    obstacles[solid_site(2, 1, 1)] = 1;
+    for (std::size_t signal = 0; signal < grid.signal_count; ++signal) {
+      for (std::size_t site = 0; site < grid.site_count(); ++site) {
+        if (obstacles[site] != 0) {
+          grid.reaction->source_rates[(signal * grid.site_count()) + site] = 0.0F;
+          grid.reaction->loss_rates[(signal * grid.site_count()) + site] = 0.0F;
+        }
+      }
+    }
+    grid.obstacles = std::move(obstacles);
+  }
   std::vector<float> levels(grid.level_count());
   for (std::size_t index = 0; index < levels.size(); ++index) {
-    levels[index] = 1.0F + (0.002F * static_cast<float>(index % 113));
+    levels[index] = grid.solid_site(index % grid.site_count())
+                        ? 0.0F
+                        : 1.0F + (0.002F * static_cast<float>(index % 113));
   }
   simulation.configure_signal_grid(grid, std::move(levels));
 
@@ -108,8 +128,8 @@ void assert_close(const cm::Simulation& actual, const cm::Simulation& expected) 
   }
 }
 
-void run_case(cm::SignalIntegrationKind integration, float dt) {
-  auto source = make_reference(integration);
+void run_case(cm::SignalIntegrationKind integration, float dt, bool masked = false) {
+  auto source = make_reference(integration, masked);
   const auto checkpoint = source.checkpoint();
   cm::Simulation expected(cm::BackendKind::cpu, checkpoint);
   expected.step(dt);
@@ -133,5 +153,7 @@ void run_case(cm::SignalIntegrationKind integration, float dt) {
 int main() {
   run_case(cm::SignalIntegrationKind::forward_euler, 0.01F);
   run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F);
+  run_case(cm::SignalIntegrationKind::forward_euler, 0.01F, true);
+  run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F, true);
   return 0;
 }

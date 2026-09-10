@@ -55,17 +55,24 @@ class RateOp(Enum):
     SELECT: RateOp
     SIGNAL: RateOp
 
-class SphereRegion(Enum):
-    OUTSIDE: SphereRegion
-    INSIDE: SphereRegion
+class ConstraintRegion(Enum):
+    OUTSIDE: ConstraintRegion
+    INSIDE: ConstraintRegion
+
+SphereRegion = ConstraintRegion
 
 class ExternalConstraintKind(Enum):
     PLANE: ExternalConstraintKind
     SPHERE: ExternalConstraintKind
+    BOX: ExternalConstraintKind
+    CYLINDER: ExternalConstraintKind
 
-class RodEndpoint(Enum):
-    NEGATIVE: RodEndpoint
-    POSITIVE: RodEndpoint
+class RodContactLocation(Enum):
+    NEGATIVE: RodContactLocation
+    POSITIVE: RodContactLocation
+    INTERIOR: RodContactLocation
+
+RodEndpoint = RodContactLocation
 
 class SolverStatus(Enum):
     CONVERGED: SolverStatus
@@ -137,6 +144,13 @@ class SignalGridAffineReaction:
     def __init__(self) -> None: ...
     def validate(self, level_count: int) -> None: ...
 
+class SignalGridVelocityField:
+    x_faces: list[float]
+    y_faces: list[float]
+    z_faces: list[float]
+
+    def __init__(self) -> None: ...
+
 class SignalGridSpec:
     signal_count: int
     shape: GridShape
@@ -145,6 +159,8 @@ class SignalGridSpec:
     diffusion: list[float]
     advection: list[Vec3]
     reaction: SignalGridAffineReaction | None
+    obstacles: list[int]
+    velocity_field: SignalGridVelocityField | None
     integration: SignalIntegrationKind
     solver: SignalSolveParameters
     x_lower: GridBoundary
@@ -311,6 +327,23 @@ class SphereConstraintInit:
 
     def __init__(self) -> None: ...
 
+class BoxConstraintInit:
+    center: Vec3
+    half_extents: Vec3
+    coefficient: float
+    allowed_region: ConstraintRegion
+
+    def __init__(self) -> None: ...
+
+class CylinderConstraintInit:
+    center: Vec3
+    radius: float
+    half_height: float
+    coefficient: float
+    allowed_region: ConstraintRegion
+
+    def __init__(self) -> None: ...
+
 class _PlaneConstraint:
     id: int
     point: Vec3
@@ -328,10 +361,31 @@ class _SphereConstraint:
 
     def __init__(self) -> None: ...
 
+class _BoxConstraint:
+    id: int
+    center: Vec3
+    half_extents: Vec3
+    coefficient: float
+    allowed_region: ConstraintRegion
+
+    def __init__(self) -> None: ...
+
+class _CylinderConstraint:
+    id: int
+    center: Vec3
+    radius: float
+    half_height: float
+    coefficient: float
+    allowed_region: ConstraintRegion
+
+    def __init__(self) -> None: ...
+
 class _ConstraintSetCheckpoint:
     next_id: int
     planes: list[_PlaneConstraint]
     spheres: list[_SphereConstraint]
+    boxes: list[_BoxConstraint]
+    cylinders: list[_CylinderConstraint]
 
     def __init__(self) -> None: ...
     def validate(self) -> None: ...
@@ -364,7 +418,9 @@ class ExternalContact:
     @property
     def constraint_kind(self) -> ExternalConstraintKind: ...
     @property
-    def endpoint(self) -> RodEndpoint: ...
+    def location(self) -> RodContactLocation: ...
+    @property
+    def endpoint(self) -> RodContactLocation: ...
     @property
     def point_on_cell(self) -> Vec3: ...
     @property
@@ -458,8 +514,11 @@ class Simulation:
     @property
     def has_coupled_rate_plan(self) -> bool: ...
     def add_cell(self, cell: CellInit) -> int: ...
+    def remove_cell(self, id: int) -> None: ...
     def add_plane_constraint(self, plane: PlaneConstraintInit) -> int: ...
     def add_sphere_constraint(self, sphere: SphereConstraintInit) -> int: ...
+    def add_box_constraint(self, box: BoxConstraintInit) -> int: ...
+    def add_cylinder_constraint(self, cylinder: CylinderConstraintInit) -> int: ...
     def set_cell_geometry(
         self, id: int, position: Vec3, direction: Vec3, length: float
     ) -> None: ...

@@ -51,6 +51,48 @@ void populate_mixed_constraints(cm::Simulation& simulation) {
   second_plane.point = {6.0F, 0.0F, 0.0F};
   second_plane.inward_normal = {-1.0F, 0.0F, 0.0F};
   assert(simulation.add_plane_constraint(second_plane) == 4);
+
+  cm::BoxConstraintInit wall;
+  wall.center = {0.0F, 1.3F, 0.0F};
+  wall.half_extents = {3.0F, 0.5F, 1.0F};
+  wall.coefficient = 0.9F;
+  assert(simulation.add_box_constraint(wall) == 5);
+}
+
+void populate_box_regions(cm::Simulation& simulation) {
+  add_cell(simulation, {1.4F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F}, 2.0F);
+  add_cell(simulation, {1.3F, 1.3F, 0.0F}, {0.0F, 0.0F, 1.0F}, 0.0F);
+  add_cell(simulation, {0.5F, 0.6F, 0.0F}, {1.0F, 0.0F, 0.0F}, 0.0F);
+  add_cell(simulation, {4.8F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F}, 0.0F);
+
+  cm::BoxConstraintInit outside;
+  outside.half_extents = {2.0F, 1.0F, 3.0F};
+  outside.coefficient = 1.25F;
+  assert(simulation.add_box_constraint(outside) == 1);
+
+  cm::BoxConstraintInit chamber;
+  chamber.half_extents = {5.0F, 5.0F, 5.0F};
+  chamber.coefficient = 0.5F;
+  chamber.allowed_region = cm::ConstraintRegion::inside;
+  assert(simulation.add_box_constraint(chamber) == 2);
+}
+
+void populate_cylinder_regions(cm::Simulation& simulation) {
+  add_cell(simulation, {1.4F, 0.0F, 0.0F}, {0.0F, 0.0F, 1.0F}, 2.0F);
+  add_cell(simulation, {1.3F, 0.0F, 1.3F}, {0.0F, 1.0F, 0.0F}, 0.0F);
+  add_cell(simulation, {0.5F, 0.0F, 1.4F}, {1.0F, 0.0F, 0.0F}, 0.0F);
+  add_cell(simulation, {4.8F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F}, 0.0F);
+
+  cm::CylinderConstraintInit pillar;
+  pillar.coefficient = 1.25F;
+  assert(simulation.add_cylinder_constraint(pillar) == 1);
+
+  cm::CylinderConstraintInit dish;
+  dish.radius = 5.0F;
+  dish.half_height = 5.0F;
+  dish.coefficient = 0.5F;
+  dish.allowed_region = cm::ConstraintRegion::inside;
+  assert(simulation.add_cylinder_constraint(dish) == 2);
 }
 
 void populate_degenerate_sphere(cm::Simulation& simulation) {
@@ -58,6 +100,40 @@ void populate_degenerate_sphere(cm::Simulation& simulation) {
   cm::SphereConstraintInit sphere;
   sphere.radius = 2.0F;
   simulation.add_sphere_constraint(sphere);
+}
+
+void populate_degenerate_box(cm::Simulation& simulation) {
+  add_cell(simulation, {}, {0.0F, 1.0F, 0.0F}, 0.0F);
+  cm::BoxConstraintInit box;
+  simulation.add_box_constraint(box);
+}
+
+void populate_midspan_sphere(cm::Simulation& simulation) {
+  add_cell(simulation, {0.0F, 0.75F, 0.0F}, {1.0F, 0.0F, 0.0F}, 3.5F);
+  cm::SphereConstraintInit sphere;
+  simulation.add_sphere_constraint(sphere);
+}
+
+void populate_midspan_box(cm::Simulation& simulation) {
+  add_cell(simulation, {0.0F, 0.75F, 0.0F}, {1.0F, 0.0F, 0.0F}, 3.5F);
+  cm::BoxConstraintInit box;
+  box.half_extents = {1.0F, 1.0F, 5.0F};
+  simulation.add_box_constraint(box);
+}
+
+void populate_centered_wall_crossing(cm::Simulation& simulation) {
+  add_cell(simulation, {}, {1.0F, 0.0F, 0.0F}, 3.5F);
+  cm::BoxConstraintInit wall;
+  wall.half_extents = {1.0F, 5.0F, 5.0F};
+  simulation.add_box_constraint(wall);
+}
+
+void populate_midspan_cylinder(cm::Simulation& simulation) {
+  add_cell(simulation, {0.0F, 0.75F, 0.0F}, {1.0F, 0.0F, 0.0F}, 3.5F);
+  cm::CylinderConstraintInit cylinder;
+  cylinder.center = {0.4F, 0.0F, 0.0F};
+  cylinder.half_height = 5.0F;
+  simulation.add_cylinder_constraint(cylinder);
 }
 
 void compare_graphs(const cm::ExternalContactGraph& actual,
@@ -73,7 +149,7 @@ void compare_graphs(const cm::ExternalContactGraph& actual,
     assert(left.cell_slot == right.cell_slot);
     assert(left.constraint_id == right.constraint_id);
     assert(left.constraint_kind == right.constraint_kind);
-    assert(left.endpoint == right.endpoint);
+    assert(left.location == right.location);
     assert(close(left.point_on_cell.x, right.point_on_cell.x));
     assert(close(left.point_on_cell.y, right.point_on_cell.y));
     assert(close(left.point_on_cell.z, right.point_on_cell.z));
@@ -125,7 +201,14 @@ int main() {
     }
     run_empty_inputs(backend, device_index);
     run_fixture(backend, device_index, populate_mixed_constraints);
+    run_fixture(backend, device_index, populate_box_regions);
+    run_fixture(backend, device_index, populate_cylinder_regions);
     run_fixture(backend, device_index, populate_degenerate_sphere);
+    run_fixture(backend, device_index, populate_degenerate_box);
+    run_fixture(backend, device_index, populate_midspan_sphere);
+    run_fixture(backend, device_index, populate_midspan_box);
+    run_fixture(backend, device_index, populate_centered_wall_crossing);
+    run_fixture(backend, device_index, populate_midspan_cylinder);
   });
   return 0;
 }

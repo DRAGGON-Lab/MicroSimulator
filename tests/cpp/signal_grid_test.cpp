@@ -205,4 +205,166 @@ int main() {
     restored.add_cell(cell);
     assert_throws<std::logic_error>([&] { restored.configure_signal_grid(spec); });
   }
+
+  {
+    auto spec = line_spec(3);
+    spec.advection = {{0.5F, 0.0F, 0.0F}};
+    spec.obstacles = {0, 1, 0};
+    cm::SignalGrid grid(spec, {1.0F, 0.0F, 0.5F});
+    static_cast<void>(cm::advance_signal_grid_cpu(grid, 0.25F));
+    assert_close(grid.levels()[0], 1.0F);
+    assert_close(grid.levels()[1], 0.0F);
+    assert_close(grid.levels()[2], 0.5F);
+  }
+
+  {
+    auto spec = line_spec(4);
+    spec.obstacles = {0, 0, 1, 0};
+    cm::SignalGrid grid(spec, {2.0F, 0.0F, 0.0F, 5.0F});
+    static_cast<void>(cm::advance_signal_grid_cpu(grid, 0.25F));
+    assert_close(grid.levels()[0], 1.5F);
+    assert_close(grid.levels()[1], 0.5F);
+    assert_close(grid.levels()[2], 0.0F);
+    assert_close(grid.levels()[3], 5.0F);
+    assert_close(grid.levels()[0] + grid.levels()[1], 2.0F);
+  }
+
+  {
+    auto spec = line_spec(4);
+    spec.integration = cm::SignalIntegrationKind::crank_nicolson;
+    spec.obstacles = {0, 0, 1, 0};
+    cm::SignalGrid grid(spec, {2.0F, 0.0F, 0.0F, 5.0F});
+    const auto report = cm::advance_signal_grid_cpu(grid, 1.0F);
+    assert(report.converged);
+    assert(std::abs(grid.levels()[0] + grid.levels()[1] - 2.0F) <= 1.0e-4F);
+    assert(grid.levels()[2] == 0.0F);
+    assert(std::abs(grid.levels()[3] - 5.0F) <= 1.0e-4F);
+  }
+
+  {
+    auto spec = line_spec(2);
+    spec.obstacles = {0, 1};
+    cm::SignalGrid grid(spec, {3.0F, 0.0F});
+    assert_close(grid.sample({0.5F, 0.0F, 0.0F})[0], 3.0F);
+    assert_throws<std::invalid_argument>(
+        [&] { static_cast<void>(grid.sample({1.0F, 0.0F, 0.0F})); });
+  }
+
+  {
+    auto invalid = line_spec(2);
+    invalid.obstacles = {1};
+    assert_throws<std::invalid_argument>([&] { invalid.validate(); });
+    invalid.obstacles = {0, 2};
+    assert_throws<std::invalid_argument>([&] { invalid.validate(); });
+    invalid.obstacles = {0, 1};
+    invalid.validate();
+    assert_throws<std::invalid_argument>(
+        [&] { cm::SignalGrid grid(invalid, {0.0F, 1.0F}); });
+    invalid.reaction = cm::SignalGridAffineReaction{
+        .source_rates = {0.0F, 1.0F},
+        .loss_rates = {0.0F, 0.0F},
+    };
+    assert_throws<std::invalid_argument>([&] { invalid.validate(); });
+  }
+
+  {
+    auto spec = line_spec(3);
+    spec.diffusion = {0.0F};
+    spec.x_lower.kind = cm::GridBoundaryKind::fixed;
+    spec.x_lower.values = {2.0F};
+    spec.x_upper.kind = cm::GridBoundaryKind::fixed;
+    spec.x_upper.values = {0.0F};
+    spec.velocity_field = cm::SignalGridVelocityField{
+        .x_faces = {1.0F, 1.0F, 1.0F, 1.0F},
+        .y_faces = std::vector<float>(6, 0.0F),
+        .z_faces = std::vector<float>(6, 0.0F),
+    };
+    cm::SignalGrid grid(spec, {0.0F, 0.0F, 0.0F});
+    static_cast<void>(cm::advance_signal_grid_cpu(grid, 0.5F));
+    assert_close(grid.levels()[0], 1.0F);
+    assert_close(grid.levels()[1], 0.0F);
+    static_cast<void>(cm::advance_signal_grid_cpu(grid, 0.5F));
+    assert_close(grid.levels()[0], 1.5F);
+    assert_close(grid.levels()[1], 0.5F);
+    assert_close(grid.levels()[2], 0.0F);
+  }
+
+  {
+    cm::SignalGridSpec spec;
+    spec.signal_count = 1;
+    spec.shape = {.x = 3, .y = 3, .z = 1};
+    spec.diffusion = {0.1F};
+    spec.advection = {{0.0F, 0.0F, 0.0F}};
+    spec.y_lower.kind = cm::GridBoundaryKind::periodic;
+    spec.y_upper.kind = cm::GridBoundaryKind::periodic;
+    std::vector<float> y_faces(12, 0.0F);
+    for (std::uint32_t x = 0; x < 3; ++x) {
+      for (std::uint32_t fy = 0; fy < 4; ++fy) {
+        y_faces[(x * 4) + fy] = 0.5F * static_cast<float>(x + 1);
+      }
+    }
+    spec.velocity_field = cm::SignalGridVelocityField{
+        .x_faces = std::vector<float>(12, 0.0F),
+        .y_faces = y_faces,
+        .z_faces = std::vector<float>(18, 0.0F),
+    };
+    std::vector<float> levels(9);
+    float total_before = 0.0F;
+    for (std::size_t index = 0; index < levels.size(); ++index) {
+      levels[index] = 0.5F + 0.1F * static_cast<float>(index);
+      total_before += levels[index];
+    }
+    cm::SignalGrid grid(spec, levels);
+    static_cast<void>(cm::advance_signal_grid_cpu(grid, 0.2F));
+    float total_after = 0.0F;
+    for (const auto level : grid.levels()) {
+      total_after += level;
+    }
+    assert(std::abs(total_after - total_before) <= 1.0e-4F);
+  }
+
+  {
+    auto spec = line_spec(3);
+    spec.integration = cm::SignalIntegrationKind::crank_nicolson;
+    spec.x_lower.kind = cm::GridBoundaryKind::fixed;
+    spec.x_lower.values = {2.0F};
+    spec.x_upper.kind = cm::GridBoundaryKind::fixed;
+    spec.x_upper.values = {0.0F};
+    spec.velocity_field = cm::SignalGridVelocityField{
+        .x_faces = {1.0F, 1.0F, 1.0F, 1.0F},
+        .y_faces = std::vector<float>(6, 0.0F),
+        .z_faces = std::vector<float>(6, 0.0F),
+    };
+    cm::SignalGrid grid(spec, {0.0F, 0.0F, 0.0F});
+    const auto report = cm::advance_signal_grid_cpu(grid, 1.0F);
+    assert(report.converged);
+    assert(grid.levels()[0] > grid.levels()[1]);
+    assert(grid.levels()[1] > grid.levels()[2]);
+  }
+
+  {
+    auto invalid = line_spec(3);
+    invalid.velocity_field = cm::SignalGridVelocityField{
+        .x_faces = {1.0F},
+        .y_faces = std::vector<float>(6, 0.0F),
+        .z_faces = std::vector<float>(6, 0.0F),
+    };
+    assert_throws<std::invalid_argument>([&] { invalid.validate(); });
+
+    invalid.velocity_field = cm::SignalGridVelocityField{
+        .x_faces = {1.0F, 1.0F, 1.0F, 1.0F},
+        .y_faces = std::vector<float>(6, 0.0F),
+        .z_faces = std::vector<float>(6, 0.0F),
+    };
+    assert_throws<std::invalid_argument>([&] { invalid.validate(); });
+
+    invalid.x_lower.kind = cm::GridBoundaryKind::fixed;
+    invalid.x_lower.values = {0.0F};
+    invalid.x_upper.kind = cm::GridBoundaryKind::fixed;
+    invalid.x_upper.values = {0.0F};
+    invalid.validate();
+
+    invalid.advection = {{0.5F, 0.0F, 0.0F}};
+    assert_throws<std::invalid_argument>([&] { invalid.validate(); });
+  }
 }

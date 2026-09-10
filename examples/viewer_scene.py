@@ -8,6 +8,8 @@ from pathlib import Path
 
 from microsimulator import (
     CellInit,
+    ConstraintRegion,
+    CylinderConstraintInit,
     GridShape,
     SignalGridSpec,
     Simulation,
@@ -40,6 +42,20 @@ def build_scene() -> Simulation:
             first_signal.append(math.exp(-((x + 3.0) ** 2 + (y - 1.5) ** 2) / 28.0))
             second_signal.append(math.exp(-((x - 4.0) ** 2 + (y + 2.0) ** 2) / 20.0))
     simulation.configure_signal_grid(grid, first_signal + second_signal)
+
+    dish = CylinderConstraintInit()
+    dish.center = Vec3(0.0, 0.0, 1.5)
+    dish.radius = 12.0
+    dish.half_height = 2.5
+    dish.allowed_region = ConstraintRegion.INSIDE
+    simulation.add_cylinder_constraint(dish)
+
+    pillar = CylinderConstraintInit()
+    pillar.center = Vec3(8.2, 5.8, 1.0)
+    pillar.radius = 0.9
+    pillar.half_height = 2.0
+    pillar.allowed_region = ConstraintRegion.OUTSIDE
+    simulation.add_cylinder_constraint(pillar)
 
     for row in range(-4, 5):
         for column in range(-5, 6):

@@ -8,7 +8,7 @@ MicroSimulator separates exact state semantics from floating-point agreement.
 - The number and type of lifecycle events for deterministic scenarios.
 - Array shapes, active-cell counts, and checkpoint schema versions.
 - Failure on capacity, invalid state, or unsupported capability.
-- Contact endpoints when the fixture does not contain geometric degeneracy.
+- Contact ordinals and centerline-location tags when the fixture does not contain geometric degeneracy.
 
 ## Compared by tolerance
 
