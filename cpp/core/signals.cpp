@@ -242,10 +242,9 @@ double max_reaction_loss(const SignalGridSpec& spec, std::size_t signal) {
     return 0.0;
   }
   const auto sites = spec.site_count();
-  const auto begin = spec.reaction->loss_rates.begin() +
-                     static_cast<std::ptrdiff_t>(signal * sites);
-  return static_cast<double>(
-      *std::max_element(begin, begin + static_cast<std::ptrdiff_t>(sites)));
+  const auto begin =
+      spec.reaction->loss_rates.begin() + static_cast<std::ptrdiff_t>(signal * sites);
+  return static_cast<double>(*std::max_element(begin, begin + static_cast<std::ptrdiff_t>(sites)));
 }
 
 float rms(std::span<const float> values) {
@@ -267,9 +266,11 @@ SignalGridStencil signal_grid_stencil(const SignalGridSpec& spec, Vec3 position)
   const auto y = interpolation_axis(position.y, spec.origin.y, spec.spacing.y, spec.shape.y, "y");
   const auto z = interpolation_axis(position.z, spec.origin.z, spec.spacing.z, spec.shape.z, "z");
   SignalGridStencil result;
+  std::array<std::array<std::uint32_t, 3>, 8> coordinates{};
   for (std::size_t xi = 0; xi < x.count; ++xi) {
     for (std::size_t yi = 0; yi < y.count; ++yi) {
       for (std::size_t zi = 0; zi < z.count; ++zi) {
+        coordinates[result.count] = {x.indices[xi], y.indices[yi], z.indices[zi]};
         result.sites[result.count] = static_cast<std::uint32_t>(
             flat_site(spec.shape, x.indices[xi], y.indices[yi], z.indices[zi]));
         result.weights[result.count] = x.weights[xi] * y.weights[yi] * z.weights[zi];
@@ -278,24 +279,39 @@ SignalGridStencil signal_grid_stencil(const SignalGridSpec& spec, Vec3 position)
     }
   }
   if (spec.has_obstacles()) {
-    float fluid_weight = 0.0F;
-    bool dropped = false;
-    for (std::size_t entry = 0; entry < result.count; ++entry) {
-      if (spec.solid_site(result.sites[entry]) && result.weights[entry] != 0.0F) {
-        result.weights[entry] = 0.0F;
-        dropped = true;
-      } else {
-        fluid_weight += result.weights[entry];
+    // Only the face-connected fluid component of the strongest interpolation
+    // weight may exchange material with this cell. Corner contact is not flow.
+    std::size_t seed = result.count;
+    for (std::size_t i = 0; i < result.count; ++i) {
+      if (spec.solid_site(result.sites[i])) result.weights[i] = 0.0F;
+      if (result.weights[i] > 0.0F &&
+          (seed == result.count || result.weights[i] > result.weights[seed]))
+        seed = i;
+    }
+    if (seed == result.count) {
+      throw std::invalid_argument("signal sample position is inside a grid obstacle");
+    }
+    std::array<bool, 8> connected{};
+    connected[seed] = true;
+    for (std::size_t pass = 0; pass < result.count; ++pass) {
+      for (std::size_t i = 0; i < result.count; ++i) {
+        if (result.weights[i] <= 0.0F) continue;
+        for (std::size_t j = 0; j < result.count; ++j) {
+          unsigned distance = 0;
+          for (std::size_t axis = 0; axis < 3; ++axis) {
+            distance += static_cast<unsigned>(std::abs(static_cast<int>(coordinates[i][axis]) -
+                                                       static_cast<int>(coordinates[j][axis])));
+          }
+          if (connected[j] && distance == 1) connected[i] = true;
+        }
       }
     }
-    if (dropped) {
-      if (fluid_weight <= 0.0F) {
-        throw std::invalid_argument("signal sample position is inside a grid obstacle");
-      }
-      for (std::size_t entry = 0; entry < result.count; ++entry) {
-        result.weights[entry] /= fluid_weight;
-      }
+    float total = 0.0F;
+    for (std::size_t i = 0; i < result.count; ++i) {
+      if (!connected[i]) result.weights[i] = 0.0F;
+      total += result.weights[i];
     }
+    for (std::size_t i = 0; i < result.count; ++i) result.weights[i] /= total;
   }
   return result;
 }
@@ -426,9 +442,8 @@ void SignalGridSpec::validate() const {
       const auto sites = site_count();
       for (std::size_t signal = 0; signal < signal_count; ++signal) {
         for (std::size_t site = 0; site < sites; ++site) {
-          if (obstacles[site] != 0 &&
-              (reaction->source_rates[(signal * sites) + site] != 0.0F ||
-               reaction->loss_rates[(signal * sites) + site] != 0.0F)) {
+          if (obstacles[site] != 0 && (reaction->source_rates[(signal * sites) + site] != 0.0F ||
+                                       reaction->loss_rates[(signal * sites) + site] != 0.0F)) {
             throw std::invalid_argument(
                 "signal grid affine reaction must be zero at obstacle sites");
           }
@@ -640,10 +655,9 @@ void SignalGrid::validate_step(float dt) const {
       inverse_square_sum += inverse_spacing * inverse_spacing;
       courant_sum += std::abs(static_cast<double>(velocity[axis])) * inverse_spacing;
     }
-    const auto factor =
-        static_cast<double>(dt) *
-        ((2.0 * static_cast<double>(spec_.diffusion[signal]) * inverse_square_sum) + courant_sum +
-         max_reaction_loss(spec_, signal));
+    const auto factor = static_cast<double>(dt) *
+                        ((2.0 * static_cast<double>(spec_.diffusion[signal]) * inverse_square_sum) +
+                         courant_sum + max_reaction_loss(spec_, signal));
     if (!std::isfinite(factor) || factor > 1.0) {
       throw std::invalid_argument("signal grid time step violates the explicit stability bound");
     }
