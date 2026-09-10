@@ -7,7 +7,7 @@
 
 The CellModeller SBML importer parses a small part of kinetic-law MathML, emits Python source, and executes that source as a new module. It ignores several SBML semantics and silently replaces unknown identifiers with one. A detailed comparison is recorded in `docs/compatibility/legacy-sbml-import-audit.md`.
 
-CellModeller2 already has a data-only `SpeciesRatePlan` instruction graph that executes independently on CPU, Metal, and CUDA and survives checkpoints. An SBML importer should be a compiler into that IR, not another runtime.
+MicroSimulator already has a data-only `SpeciesRatePlan` instruction graph that executes independently on CPU, Metal, and CUDA and survives checkpoints. An SBML importer should be a compiler into that IR, not another runtime.
 
 ## Decision
 
@@ -28,7 +28,7 @@ The compiler orders species by SBML model order. For reaction `r` with kinetic l
 d c_i / dt = sum_r nu[i, r] * v_r.
 ```
 
-The unit compartment avoids an implicit amount-to-concentration conversion. CellModeller2 then applies its documented post-growth concentration dilution before evaluating this rate plan.
+The unit compartment avoids an implicit amount-to-concentration conversion. MicroSimulator then applies its documented post-growth concentration dilution before evaluating this rate plan.
 
 The importer rejects malformed documents, error-severity libSBML diagnostics, multiple or non-unit compartments, non-constant parameters or compartments, conversion factors, rules, events, constraints, initial assignments, function definitions, dynamic stoichiometry, missing kinetic laws, unsupported MathML, and unresolved identifiers. It does not guess defaults that affect dynamics.
 
@@ -36,5 +36,5 @@ The importer rejects malformed documents, error-severity libSBML diagnostics, mu
 
 - Imported dynamics use the same native interpreter and checkpoint format as hand-built rate plans.
 - Backend parity depends on typed-plan conformance, not a backend-specific SBML parser.
-- The subset is smaller than SBML Core but each accepted construct has an explicit CellModeller2 meaning.
+- The subset is smaller than SBML Core but each accepted construct has an explicit MicroSimulator meaning.
 - Expanding the subset requires fixtures that demonstrate the SBML semantic mapping, not merely successful parsing.

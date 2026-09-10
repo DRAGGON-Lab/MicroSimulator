@@ -1,8 +1,8 @@
-"""Typed CellModeller2 migration of Tutorial_2/Tutorial_2b.py."""
+"""Typed MicroSimulator migration of Tutorial_2/Tutorial_2b.py."""
 
 from __future__ import annotations
 
-from cellmodeller2 import (
+from microsimulator import (
     CellInit,
     CellUpdate,
     ControllerStep,
@@ -14,7 +14,7 @@ from cellmodeller2 import (
     StepPlan,
     UniformLengthDivision,
 )
-from cellmodeller2.checkpoint import CheckpointBundle, JSONValue
+from microsimulator.checkpoint import CheckpointBundle, JSONValue
 
 MODEL_ID = "legacy.Tutorial_2.Tutorial_2b"
 MODEL_VERSION = 1

@@ -1,4 +1,4 @@
-"""Command-line entry point for CellModeller2 batch work."""
+"""Command-line entry point for MicroSimulator batch work."""
 
 from __future__ import annotations
 
@@ -43,7 +43,9 @@ _BACKENDS = {
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="cm", description="CellModeller2 batch runner")
+    parser = argparse.ArgumentParser(
+        prog="microsimulator", description="MicroSimulator batch runner"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     devices = commands.add_parser("devices", help="list available native compute devices")
@@ -127,7 +129,7 @@ def _add_source_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     source.add_argument("--legacy-model", type=Path, help="CellModeller 1 growth/mechanics model")
-    parser.add_argument("--resume", type=Path, help="CellModeller2 checkpoint to resume")
+    parser.add_argument("--resume", type=Path, help="MicroSimulator checkpoint to resume")
     parser.add_argument("--backend", choices=tuple(_BACKENDS), default="cpu")
     parser.add_argument("--device-index", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0, help="model-construction seed")
@@ -402,7 +404,7 @@ def _view(arguments: argparse.Namespace) -> int:
         from .viewer_server import LiveSession, serve_live
     except ModuleNotFoundError as error:
         if error.name == "aiohttp":
-            raise BatchError("live viewer requires `cellmodeller2[viewer]`") from error
+            raise BatchError("live viewer requires `microsimulator[viewer]`") from error
         raise
 
     viewer_dist = _viewer_distribution(cast(Path | None, arguments.viewer_dist))
@@ -448,7 +450,7 @@ def _export_analysis(arguments: argparse.Namespace) -> int:
         from .analysis import export_dataset
     except ModuleNotFoundError as error:
         if error.name in {"pyarrow", "zarr"}:
-            raise BatchError("analysis export requires `cellmodeller2[analysis]`") from error
+            raise BatchError("analysis export requires `microsimulator[analysis]`") from error
         raise
 
     backend_name = cast(str, arguments.backend)
@@ -497,7 +499,7 @@ def _run_manifest(arguments: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the ``cm`` command and return its process status."""
+    """Run the ``microsimulator`` command and return its process status."""
 
     arguments = _parser().parse_args(argv)
     try:
@@ -520,5 +522,5 @@ def main(argv: Sequence[str] | None = None) -> int:
         ValueError,
         RuntimeError,
     ) as error:
-        print(f"cm: {error}", file=sys.stderr)
+        print(f"microsimulator: {error}", file=sys.stderr)
         return 2

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     CellInit,
     CellUpdate,
@@ -32,7 +32,7 @@ from cellmodeller2 import (
     run_simulation,
     save_checkpoint,
 )
-from cellmodeller2.checkpoint import JSONValue
+from microsimulator.checkpoint import JSONValue
 
 
 def _one_cell(backend: BackendKind = BackendKind.CPU) -> Simulation:
@@ -147,7 +147,12 @@ def test_native_controller_composes_regulation_division_and_mechanics(
         assert math.isclose(daughter.growth_rate, 0.2, rel_tol=1.0e-6)
 
 
-def test_native_controller_resumes_model_state_rng_and_mechanics(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "controller_kind", ["microsimulator-native-controller", "cellmodeller2-native-controller"]
+)
+def test_native_controller_resumes_model_state_rng_and_mechanics(
+    tmp_path: Path, controller_kind: str
+) -> None:
     def regulate(step: ControllerStep) -> StepPlan:
         draws = step.state.get("draws", 0)
         if not isinstance(draws, int):
@@ -182,10 +187,12 @@ def test_native_controller_resumes_model_state_rng_and_mechanics(tmp_path: Path)
     for _ in range(2):
         split.step(0.125)
     midpoint = tmp_path / "midpoint.cm2.json"
+    controller_state = split.controller_state()
+    controller_state["kind"] = controller_kind
     save_checkpoint(
         split.simulation,
         midpoint,
-        controller=split.controller_state(),
+        controller=controller_state,
     )
     resumed = NativeController.from_checkpoint(
         load_checkpoint_bundle(midpoint),

@@ -1,6 +1,8 @@
-# CellModeller2
+<p align="center">
+  <img src="docs/assets/microsimulator-logo.png" alt="MicroSimulator" width="640">
+</p>
 
-CellModeller2 is an accelerator-native successor to [CellModeller](https://github.com/cellmodeller/CellModeller) for individual-based multicellular modeling. It combines a Python modeling interface with a C++23 engine and independent CPU, Apple Metal, and NVIDIA CUDA implementations.
+MicroSimulator is an accelerator-native successor to [CellModeller](https://github.com/cellmodeller/CellModeller) for individual-based multicellular modeling. It combines a Python modeling interface with a C++23 engine and independent CPU, Apple Metal, and NVIDIA CUDA implementations.
 
 Models can combine rod-shaped growth and division, lineage, contact mechanics and constraints, intracellular dynamics, and cell-grid signaling. Versioned checkpoints, batch manifests, data-only scenes, and Parquet/Zarr exports support reproducible research workflows.
 
@@ -16,12 +18,14 @@ CPU and Metal implement the complete current modeling workflow. CUDA is develope
 
 ## Quick start
 
-CellModeller2 requires Python 3.12, CMake 3.25 or newer, Ninja, a C++23 compiler, and [uv](https://docs.astral.sh/uv/).
+MicroSimulator requires Python 3.12, CMake 3.25 or newer, Ninja, a C++23 compiler, and [uv](https://docs.astral.sh/uv/).
 
 ```console
+git clone git@github.com:DRAGGON-Lab/MicroSimulator.git
+cd MicroSimulator
 uv sync --group dev
-uv run cm devices
-uv run cm run \
+uv run microsimulator devices
+uv run microsimulator run \
   --model examples/batch_model.py \
   --backend cpu \
   --seed 42 \
@@ -32,6 +36,8 @@ uv run cm run \
 ```
 
 Continue with the [tutorial suite](docs/tutorials/README.md), or inspect [`examples/native_controller.py`](examples/native_controller.py) for a complete restartable model.
+
+Existing users should follow the [MicroSimulator rename guide](docs/compatibility/microsimulator-rename.md) to update imports and commands.
 
 ## Documentation
 
@@ -48,4 +54,4 @@ The complete documentation index is available at [`docs/README.md`](docs/README.
 
 ## License
 
-CellModeller2 is available under the [MIT License](LICENSE).
+MicroSimulator is available under the [MIT License](LICENSE).

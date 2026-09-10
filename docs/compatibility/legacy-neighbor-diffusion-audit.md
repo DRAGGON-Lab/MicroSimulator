@@ -29,8 +29,8 @@ The checked-in module is not a working reference implementation:
 
 Division and deletion semantics, stability constraints, units, and checkpoint behavior are also unspecified.
 
-## CellModeller2 behavior
+## MicroSimulator behavior
 
 The file provides evidence of an experiment, not an operational CellModeller feature whose numerical behavior can be reproduced. Porting the visible loop would freeze known omissions and give an unweighted neighbor count a physical meaning it never established.
 
-CellModeller2 does not expose this module as a compatibility feature. Contact-mediated transport requires a typed, conservative graph-flux model with declared units, division behavior, stability limits, and checkpoint semantics.
+MicroSimulator does not expose this module as a compatibility feature. Contact-mediated transport requires a typed, conservative graph-flux model with declared units, division behavior, stability limits, and checkpoint semantics.

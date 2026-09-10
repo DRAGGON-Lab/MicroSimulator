@@ -6,7 +6,7 @@ requires = [
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "cellmodeller2"
+name = "microsimulator"
 version = "0.1.0"
 description = "Native Metal and CUDA multicellular simulation engine"
 readme = "README.md"
@@ -25,6 +25,10 @@ dependencies = [
     "rfc8785>=0.1.4,<0.2",
 ]
 
+[project.urls]
+Repository = "https://github.com/DRAGGON-Lab/MicroSimulator"
+Issues = "https://github.com/DRAGGON-Lab/MicroSimulator/issues"
+
 [project.optional-dependencies]
 analysis = [
   "polars>=1.43,<2",
@@ -39,7 +43,7 @@ viewer = [
 ]
 
 [project.scripts]
-cm = "cellmodeller2.cli:main"
+microsimulator = "microsimulator.cli:main"
 
 [dependency-groups]
 dev = [
@@ -55,7 +59,7 @@ dev = [
 
 [tool.scikit-build]
 cmake.build-type = "Release"
-wheel.packages = ["python/src/cellmodeller2"]
+wheel.packages = ["python/src/microsimulator"]
 build-dir = "build/python/{wheel_tag}"
 
 [tool.pytest.ini_options]

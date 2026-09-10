@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     CheckpointBundle,
     ModelContext,
@@ -17,9 +17,9 @@ from cellmodeller2 import (
     load_checkpoint_bundle,
     run_simulation,
 )
-from cellmodeller2.analysis import export_dataset, open_dataset
-from cellmodeller2.checkpoint import JSONValue
-from cellmodeller2.viewer_server import LiveSession
+from microsimulator.analysis import export_dataset, open_dataset
+from microsimulator.checkpoint import JSONValue
+from microsimulator.viewer_server import LiveSession
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _MODEL = _PROJECT_ROOT / "examples" / "native_controller.py"

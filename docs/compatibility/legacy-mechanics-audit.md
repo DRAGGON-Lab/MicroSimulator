@@ -1,6 +1,6 @@
-# Rod mechanics in CellModeller and CellModeller2
+# Rod mechanics in CellModeller and MicroSimulator
 
-This reference describes the CellModeller rod-mechanics model, the parts retained by CellModeller2, and the numerical differences that matter when comparing results.
+This reference describes the CellModeller rod-mechanics model, the parts retained by MicroSimulator, and the numerical differences that matter when comparing results.
 
 ## Source model
 
@@ -41,7 +41,7 @@ b_k = w_k d_k
 
 where each contact arm is measured from the cell center. Plane and sphere rows have only the cell-side entry and multiply `w_k` by their configured coefficient.
 
-The legacy external-contact record stores a centerline endpoint even though the mechanics row is a surface-contact constraint. CellModeller2 records the corresponding capsule surface point and represents plane, outside-sphere, and inside-sphere orientation explicitly. These choices remove an ambiguous legacy comment and the need to infer constraint type from a negative integer.
+The legacy external-contact record stores a centerline endpoint even though the mechanics row is a surface-contact constraint. MicroSimulator records the corresponding capsule surface point and represents plane, outside-sphere, and inside-sphere orientation explicitly. These choices remove an ambiguous legacy comment and the need to infer constraint type from a negative integer.
 
 The implementation solves the regularized normal equations
 
@@ -67,7 +67,7 @@ The following are storage artifacts, not scientific semantics:
 
 ## Defects and ambiguities
 
-CellModeller2 does not reproduce these behaviors:
+MicroSimulator does not reproduce these behaviors:
 
 1. Contact insertion does not bounds-check `max_contacts`, so dense colonies can write past a cell's contact row.
 2. Plane and sphere contacts reuse the same negative endpoint encoding and can be mistaken for one another.
@@ -79,7 +79,7 @@ CellModeller2 does not reproduce these behaviors:
 8. `ct_overlap` is written but never consumed by mechanics.
 9. Solver parameters named `dt` and `alpha` are passed through but unused.
 
-CellModeller2 resolves item 6 with a finite-radius, full-rank rotational inertia tensor. This is a deliberate departure from numerically defined legacy output, not an accidental consequence of a backend port.
+MicroSimulator resolves item 6 with a finite-radius, full-rank rotational inertia tensor. This is a deliberate departure from numerically defined legacy output, not an accidental consequence of a backend port.
 
 Correction integration retains the five-degree angular cap and the `max(0, desired elongation + length correction)` non-shortening rule. It makes solver convergence a checked precondition and validates the entire update before mutating geometry, neither of which the legacy path enforced.
 

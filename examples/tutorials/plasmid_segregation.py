@@ -7,14 +7,14 @@ import random
 from collections.abc import Mapping
 from typing import cast
 
-from cellmodeller2 import (
+from microsimulator import (
     CellInit,
     ModelContext,
     Simulation,
     capture_random_state,
     restore_random_state,
 )
-from cellmodeller2.checkpoint import CheckpointBundle, JSONValue
+from microsimulator.checkpoint import CheckpointBundle, JSONValue
 
 MODEL_ID = "tutorials.plasmid-segregation"
 MODEL_VERSION = 1

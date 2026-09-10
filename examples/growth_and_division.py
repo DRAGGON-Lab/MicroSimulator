@@ -1,4 +1,4 @@
-from cellmodeller2 import CellInit, Simulation, Vec3
+from microsimulator import CellInit, Simulation, Vec3
 
 simulation = Simulation()
 cell = CellInit()

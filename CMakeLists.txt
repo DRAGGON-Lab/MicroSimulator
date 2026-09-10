@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(
-  CellModeller2
+  MicroSimulator
   VERSION 0.1.0
   DESCRIPTION "Native Metal and CUDA multicellular simulation engine"
   LANGUAGES CXX
@@ -188,7 +188,7 @@ if(CM_BUILD_PYTHON)
 
   nanobind_add_module(_core cpp/python/bindings.cpp)
   target_link_libraries(_core PRIVATE cm::core)
-  install(TARGETS _core LIBRARY DESTINATION cellmodeller2)
+  install(TARGETS _core LIBRARY DESTINATION microsimulator)
 endif()
 
 if(CM_BUILD_TESTS)

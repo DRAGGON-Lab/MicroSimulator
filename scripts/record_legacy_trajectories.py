@@ -280,7 +280,7 @@ def main() -> int:
         for scenario in _SCENARIOS
     ]
     document = {
-        "format": "cellmodeller2-recorded-legacy-trajectories",
+        "format": "microsimulator-recorded-legacy-trajectories",
         "version": 1,
         "legacy_repository": "https://github.com/CellModeller/CellModeller",
         "legacy_commit": actual_commit,

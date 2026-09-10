@@ -1,8 +1,8 @@
-"""Typed CellModeller2 migration of ex4_simpleCellCellSignaling.py."""
+"""Typed MicroSimulator migration of ex4_simpleCellCellSignaling.py."""
 
 from __future__ import annotations
 
-from cellmodeller2 import (
+from microsimulator import (
     CellInit,
     CellUpdate,
     ControllerStep,
@@ -20,7 +20,7 @@ from cellmodeller2 import (
     UniformLengthDivision,
     Vec3,
 )
-from cellmodeller2.checkpoint import CheckpointBundle, JSONValue
+from microsimulator.checkpoint import CheckpointBundle, JSONValue
 
 MODEL_ID = "legacy.ex4_simpleCellCellSignaling"
 MODEL_VERSION = 1

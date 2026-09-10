@@ -5,7 +5,7 @@ from shutil import copyfile
 from typing import cast
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     LegacyCompatibilityError,
     ModelContext,
@@ -15,8 +15,8 @@ from cellmodeller2 import (
     resume_legacy_model,
     run_simulation,
 )
-from cellmodeller2.checkpoint import JSONValue
-from cellmodeller2.cli import main
+from microsimulator.checkpoint import JSONValue
+from microsimulator.cli import main
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 

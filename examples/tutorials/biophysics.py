@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
-from cellmodeller2 import (
+from microsimulator import (
     CellInit,
     CellUpdate,
     ControllerStep,
@@ -24,7 +24,7 @@ from cellmodeller2 import (
     StepPlan,
     Vec3,
 )
-from cellmodeller2.checkpoint import CheckpointBundle, JSONValue
+from microsimulator.checkpoint import CheckpointBundle, JSONValue
 
 MODEL_ID = "tutorials.biophysics"
 MODEL_VERSION = 1

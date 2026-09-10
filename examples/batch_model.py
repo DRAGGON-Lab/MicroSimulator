@@ -1,8 +1,8 @@
-from cellmodeller2 import CellInit, Vec3
+from microsimulator import CellInit, Vec3
 
 
 def build(context):
-    """Construct a reproducible colony for ``cm run``."""
+    """Construct a reproducible colony for ``microsimulator run``."""
 
     simulation = context.simulation()
     cell = CellInit()

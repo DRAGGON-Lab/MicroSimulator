@@ -19,7 +19,7 @@ from .checkpoint import JSONValue
 from .legacy_loader import build_legacy_model
 from .runner import ModelContext, build_model, native_simulation
 
-LEGACY_EXAMPLE_MATRIX_FORMAT = "cellmodeller2-legacy-example-matrix"
+LEGACY_EXAMPLE_MATRIX_FORMAT = "microsimulator-legacy-example-matrix"
 LEGACY_EXAMPLE_MATRIX_VERSION = 1
 MAX_LEGACY_EXAMPLE_MATRIX_BYTES = 256 * 1024
 
@@ -131,7 +131,7 @@ def load_legacy_example_matrix(path: str | Path) -> LegacyExampleMatrix:
         "examples",
     }:
         raise LegacyExampleMatrixError("compatibility matrix has unexpected fields")
-    if root["format"] != LEGACY_EXAMPLE_MATRIX_FORMAT:
+    if root["format"] not in (LEGACY_EXAMPLE_MATRIX_FORMAT, "cellmodeller2-legacy-example-matrix"):
         raise LegacyExampleMatrixError("compatibility matrix format is unsupported")
     if root["version"] != LEGACY_EXAMPLE_MATRIX_VERSION:
         raise LegacyExampleMatrixError("compatibility matrix version is unsupported")
@@ -335,7 +335,7 @@ def run_legacy_example_matrix(
         rows.append(row)
 
     return {
-        "format": "cellmodeller2-legacy-example-matrix-report",
+        "format": "microsimulator-legacy-example-matrix-report",
         "version": 1,
         "result": "pass" if passed else "fail",
         "legacy_repository": matrix.legacy_repository,

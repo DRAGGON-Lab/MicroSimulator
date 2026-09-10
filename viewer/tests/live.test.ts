@@ -27,9 +27,9 @@ async function scene(): Promise<Record<string, unknown>> {
     new TextEncoder().encode(canonical),
   );
   return {
-    format: "cellmodeller2-scene",
+    format: "microsimulator-scene",
     version: 1,
-    producer: { name: "cellmodeller2", version: "0.1.0" },
+    producer: { name: "microsimulator", version: "0.1.0" },
     integrity: {
       algorithm: "sha256",
       frame: [...new Uint8Array(digest)]

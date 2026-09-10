@@ -1,16 +1,16 @@
 # Plasmid segregation, contacts, and conjugation
 
-This tutorial uses plasmid segregation and conjugation to show how discrete biological state, stochastic events, and contact-dependent behavior fit into a CellModeller2 model.
+This tutorial uses plasmid segregation and conjugation to show how discrete biological state, stochastic events, and contact-dependent behavior fit into a MicroSimulator model.
 
 ## 1. Incompatible plasmid segregation
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/plasmid_segregation.py \
   --parameter copies_per_cell=10 \
   --seed 42 \
   --dt 0.02 \
-  --checkpoint-output results/plasmids.cm2.json \
+  --checkpoint-output results/plasmids.json \
   --open
 ```
 
@@ -45,12 +45,12 @@ Use cell-type coloring to see sectors. A rendered sector is a stochastic realiza
 The checkpoint is ordinary JSON, so exact counts can be inspected without executing the model:
 
 ```console
-jq '.controller.state.plasmids' results/plasmids.cm2.json
+jq '.controller.state.plasmids' results/plasmids.json
 ```
 
 ## 2. Contact graphs
 
-CellModeller2 derives a typed contact graph from current capsule geometry:
+MicroSimulator derives a typed contact graph from current capsule geometry:
 
 ```python
 graph = simulation.find_cell_contacts()
@@ -67,7 +67,7 @@ Contact graphs are derived on demand and have no fixed scientific contact cap; a
 ## 3. Contact-dependent conjugation
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/conjugation.py \
   --parameter transfer_probability=0.1 \
   --seed 42 \

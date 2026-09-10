@@ -7,7 +7,7 @@
 
 The legacy PyQt/OpenGL application owns the OpenCL device, simulator lifetime, model imports, simulation clock, pickle persistence, selection, and rendering. Models install renderers into the simulation itself. This prevents headless execution, makes renderer behavior depend on mutable implementation details, and would force CUDA and Metal concerns into the UI.
 
-CellModeller2 needs interactive inspection on Apple and NVIDIA systems without creating a fourth simulation implementation or weakening the native backend contract.
+MicroSimulator needs interactive inspection on Apple and NVIDIA systems without creating a fourth simulation implementation or weakening the native backend contract.
 
 ## Decision
 

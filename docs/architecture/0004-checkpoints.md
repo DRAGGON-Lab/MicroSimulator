@@ -7,11 +7,11 @@
 
 Legacy CellModeller writes Python pickle files containing live `CellState` objects, model source text, lineage, selected integrator arrays, and a step number. Loading a pickle can execute arbitrary Python. The legacy resume path also reconstructs the next cell identifier from active cells, which loses the true allocation frontier when the largest allocated cells are no longer active. The saved fields vary with the configured integrator and signaling model.
 
-CellModeller2 needs reproducible restart files that can cross CPU, Metal, and CUDA hosts without serializing device resources or executable model code.
+MicroSimulator needs reproducible restart files that can cross CPU, Metal, and CUDA hosts without serializing device resources or executable model code.
 
 ## Decision
 
-The public checkpoint is UTF-8 JSON with the format identifier `cellmodeller2-checkpoint` and an integer schema version. Version 1 records:
+The public checkpoint is UTF-8 JSON with the format identifier `microsimulator-checkpoint` and an integer schema version. Version 1 records:
 
 - simulation time;
 - every active cell in compact slot order, including its stable identifier, geometry, attributes, and fixed-schema species levels;

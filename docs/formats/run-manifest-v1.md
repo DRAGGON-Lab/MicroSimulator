@@ -1,12 +1,12 @@
 # Run manifest v1
 
-A run manifest is strict, data-only JSON that names reproducible batch jobs. Parsing it does not import or execute model code. Execution remains explicit: one `cm run-manifest --job` invocation runs exactly one job, so a local shell, CI system, or cluster scheduler retains ownership of parallelism and retries.
+A run manifest is strict, data-only JSON that names reproducible batch jobs. Parsing it does not import or execute model code. Execution remains explicit: one `microsimulator run-manifest --job` invocation runs exactly one job, so a local shell, CI system, or cluster scheduler retains ownership of parallelism and retries.
 
 ## Document shape
 
 ```json
 {
-  "format": "cellmodeller2-run-manifest",
+  "format": "microsimulator-run-manifest",
   "version": 1,
   "jobs": [
     {
@@ -40,8 +40,8 @@ The model digest is over the exact source bytes. It is checked before those byte
 ## Execution
 
 ```console
-uv run cm run-manifest experiments/gamma.runs.json \
+uv run microsimulator run-manifest experiments/gamma.runs.json \
   --job gamma-0.10-replicate-001
 ```
 
-Use `--quiet` or `--progress-every` as with `cm run`. Existing outputs require the explicit `--overwrite` execution flag. The manifest intentionally contains no worker count, queue, cloud, or cluster configuration.
+Use `--quiet` or `--progress-every` as with `microsimulator run`. Existing outputs require the explicit `--overwrite` execution flag. The manifest intentionally contains no worker count, queue, cloud, or cluster configuration.

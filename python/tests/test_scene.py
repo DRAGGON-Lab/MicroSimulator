@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 import rfc8785
-from cellmodeller2 import (
+from microsimulator import (
     SCENE_FORMAT,
     SCENE_VERSION,
     BackendFeature,
@@ -129,7 +129,10 @@ def test_capture_scene_is_backend_neutral_and_complete() -> None:
         assert _semantic_frame(capture_scene(_simulation(backend))) == _semantic_frame(reference)
 
 
-def test_scene_round_trip_is_exact_and_uses_decimal_identifiers(tmp_path: Path) -> None:
+@pytest.mark.parametrize("format_name", [SCENE_FORMAT, "cellmodeller2-scene"])
+def test_scene_round_trip_is_exact_and_uses_decimal_identifiers(
+    tmp_path: Path, format_name: str
+) -> None:
     frame = capture_scene(_simulation())
     encoded = dumps_scene(frame)
     document = cast(dict[str, Any], json.loads(encoded))
@@ -137,7 +140,11 @@ def test_scene_round_trip_is_exact_and_uses_decimal_identifiers(tmp_path: Path) 
     assert document["version"] == SCENE_VERSION
     assert [cell["id"] for cell in document["frame"]["cells"]] == ["3", "2", "4"]
     assert document["frame"]["cells"][0]["parent_id"] == "1"
-    assert parse_scene(encoded) == frame
+    document["format"] = format_name
+    assert parse_scene(json.dumps(document)) == frame
+    document["frame"]["time"] += 1.0
+    with pytest.raises(SceneError, match="digest"):
+        parse_scene(json.dumps(document))
 
     path = tmp_path / "colony.cm2.scene.json"
     save_scene(frame, path)

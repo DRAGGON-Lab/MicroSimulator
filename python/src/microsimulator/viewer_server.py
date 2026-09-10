@@ -172,7 +172,7 @@ class LiveController:
         self._sockets: set[web.WebSocketResponse] = set()
         self._play_task: asyncio.Task[None] | None = None
         self._play_wakeup = asyncio.Event()
-        self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cm-live")
+        self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="microsimulator-live")
         self._operation_lock = asyncio.Lock()
 
     async def _run(self, operation: Callable[..., Any], *arguments: object) -> Any:
@@ -225,7 +225,7 @@ class LiveController:
             return
         self.playing = True
         self._play_wakeup.clear()
-        self._play_task = asyncio.create_task(self._play(), name="cellmodeller2-live-play")
+        self._play_task = asyncio.create_task(self._play(), name="microsimulator-live-play")
         await self.broadcast_frame()
 
     async def pause(self, *, broadcast: bool = True) -> None:
@@ -275,8 +275,8 @@ class LiveController:
         self._worker.shutdown(wait=True, cancel_futures=True)
 
 
-_CONTROLLER_KEY = web.AppKey("cellmodeller2.controller", LiveController)
-_TOKEN_KEY = web.AppKey("cellmodeller2.token", str)
+_CONTROLLER_KEY = web.AppKey("microsimulator.controller", LiveController)
+_TOKEN_KEY = web.AppKey("microsimulator.token", str)
 
 
 def _authorized(request: web.Request) -> bool:
@@ -395,7 +395,7 @@ def serve_live(
                 raise LiveViewerError(
                     f"could not bind live viewer to {host}:{port}: {error}"
                 ) from error
-            print(f"CellModeller2 live viewer: {url}", flush=True)
+            print(f"MicroSimulator live viewer: {url}", flush=True)
             if open_browser:
                 webbrowser.open(url)
             await asyncio.Event().wait()

@@ -1,8 +1,8 @@
 # Typed translations of legacy equation models
 
-Nine bundled CellModeller examples define their species or signaling equations as OpenCL source and therefore cannot run through the Python callback adapter. Each has a self-contained CellModeller2 translation with typed rate equations and restartable orchestration. The table maps source models to those translations; numerical comparisons are documented separately in the recorded trajectory reference.
+Nine bundled CellModeller examples define their species or signaling equations as OpenCL source and therefore cannot run through the Python callback adapter. Each has a self-contained MicroSimulator translation with typed rate equations and restartable orchestration. The table maps source models to those translations; numerical comparisons are documented separately in the recorded trajectory reference.
 
-| CellModeller example | Equation family | CellModeller2 model |
+| CellModeller example | Equation family | MicroSimulator model |
 | --- | --- | --- |
 | `ACS2012/EdgeDetectorChamber.py` | five species, one diffusive signal | `examples/legacy/ACS2012/EdgeDetectorChamber.py` |
 | `Tutorial_2/Tutorial_2a.py` | one constitutively produced species | `examples/legacy/Tutorial_2/Tutorial_2a.py` |
@@ -24,7 +24,7 @@ Every translated model requests one exact mechanics pass per biological step. Th
 
 ## Coupled-rate translation
 
-The legacy signaling callbacks expose extracellular derivatives as concentration rates and divide cell exchange by the `4 * 4 * 4 = 64` voxel volume before returning them. CellModeller2 coupled plans expose extracellular _amount_ rates; the native scatter operation performs the voxel-volume division. The migrated signal outputs therefore return the unscaled exchange amount. Intracellular equations that explicitly used `area / gridVolume` retain their division by 64.
+The legacy signaling callbacks expose extracellular derivatives as concentration rates and divide cell exchange by the `4 * 4 * 4 = 64` voxel volume before returning them. MicroSimulator coupled plans expose extracellular _amount_ rates; the native scatter operation performs the voxel-volume division. The migrated signal outputs therefore return the unscaled exchange amount. Intracellular equations that explicitly used `area / gridVolume` retain their division by 64.
 
 The migrations use conventional diffusion coefficients rather than preserving the legacy implementation's accidental extra factor of one sixth. They retain the declared no-flux boundary behavior and integration choice: forward Euler for `ex3_simpleSignal.py`, and Crank-Nicolson for the other three models. The Crank-Nicolson ports set an absolute residual tolerance of `1e-12`; the engine default would accept a zero field while these models' initially small signal sources remained below its absolute threshold.
 

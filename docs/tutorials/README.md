@@ -1,6 +1,6 @@
-# CellModeller2 tutorials
+# MicroSimulator tutorials
 
-These tutorials introduce the CellModeller2 modeling interface through runnable biological examples. Read them in order for a guided path, or use any example independently.
+These tutorials introduce the MicroSimulator modeling interface through runnable biological examples. Read them in order for a guided path, or use any example independently.
 
 ## Start here
 
@@ -12,7 +12,7 @@ These tutorials introduce the CellModeller2 modeling interface through runnable 
 6. [Checkpoints, contact graphs, and quantitative analysis](analysis.md)
 7. [SimBOL circuit examples](simbol.md)
 
-The examples use `uv`, the `cm` command, data-only checkpoints, and the standalone viewer. Each model selects its backend explicitly and can be run headlessly for batch experiments.
+The examples use `uv`, the `microsimulator` command, data-only checkpoints, and the standalone viewer. Each model selects its backend explicitly and can be run headlessly for batch experiments.
 
 ## Working with the examples
 

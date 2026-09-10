@@ -1,4 +1,4 @@
-"""Typed CellModeller2 ports of SimBOL's six BioBrick circuit examples.
+"""Typed MicroSimulator ports of SimBOL's six BioBrick circuit examples.
 
 Choose ``bba_0001`` through ``bba_0005`` or ``bba_i5200`` with the
 ``circuit`` model parameter.  Circuit 3 also accepts ``precursor_concentration``;
@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 
-from cellmodeller2 import (
+from microsimulator import (
     CellInit,
     CellUpdate,
     ControllerStep,
@@ -28,7 +28,7 @@ from cellmodeller2 import (
     UniformLengthDivision,
     Vec3,
 )
-from cellmodeller2.checkpoint import CheckpointBundle, JSONValue
+from microsimulator.checkpoint import CheckpointBundle, JSONValue
 
 MODEL_ID = "tutorials.simbol-circuits"
 MODEL_VERSION = 1

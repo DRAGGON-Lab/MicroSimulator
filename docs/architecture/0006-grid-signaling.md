@@ -7,7 +7,7 @@
 
 Diffusible signals connect the intracellular rate model to a spatial transport model. This is one numerical system: independently updating a host grid and a device cell model would change sampling time, conservation, and reproducibility. The CellModeller comparison documents ambiguous historical coefficient scaling and unit conventions.
 
-CellModeller2 needs a portable state model and one stage contract that can be implemented independently with native CPU, Metal, and CUDA APIs.
+MicroSimulator needs a portable state model and one stage contract that can be implemented independently with native CPU, Metal, and CUDA APIs.
 
 ## Grid state
 

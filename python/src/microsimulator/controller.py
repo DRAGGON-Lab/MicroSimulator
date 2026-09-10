@@ -29,7 +29,7 @@ _INT32_MIN = -(1 << 31)
 _INT32_MAX = (1 << 31) - 1
 _FLOAT32_MAX = 3.4028234663852886e38
 _MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
-_NATIVE_CONTROLLER_KIND = "cellmodeller2-native-controller"
+_NATIVE_CONTROLLER_KIND = "microsimulator-native-controller"
 _NATIVE_CONTROLLER_VERSION = 1
 
 
@@ -492,7 +492,7 @@ class NativeController:
         }:
             raise ControllerStateError("native controller state is invalid")
         if (
-            value["kind"] != _NATIVE_CONTROLLER_KIND
+            value["kind"] not in (_NATIVE_CONTROLLER_KIND, "cellmodeller2-native-controller")
             or value["version"] != _NATIVE_CONTROLLER_VERSION
         ):
             raise ControllerStateError("native controller kind or version is unsupported")

@@ -1,6 +1,6 @@
 # Checkpoints, contact graphs, and quantitative analysis
 
-CellModeller2 separates simulation output into three artifacts:
+MicroSimulator separates simulation output into three artifacts:
 
 - a checkpoint is an exact, integrity-checked restart artifact;
 - a scene is an immutable presentation snapshot; and
@@ -11,14 +11,14 @@ Use checkpoints for resuming, scenes for viewing, and datasets for statistics.
 ## 1. Generate a time series
 
 ```console
-uv run cm run \
+uv run microsimulator run \
   --model examples/tutorials/biophysics.py \
   --parameter scenario='"basics"' \
   --seed 42 \
   --steps 200 \
   --dt 0.02 \
   --checkpoint-every 20 \
-  --output results/growth.cm2.json
+  --output results/growth.json
 ```
 
 Periodic filenames contain their run-local completed step. Physical time is stored independently and is the appropriate axis when `dt` differs.
@@ -26,8 +26,8 @@ Periodic filenames contain their run-local completed step. Physical time is stor
 ## 2. Export typed tables
 
 ```console
-uv run cm export-analysis \
-  results/growth.step-*.cm2.json \
+uv run microsimulator export-analysis \
+  results/growth.step-*.json \
   --output results/growth.dataset \
   --contacts
 ```
@@ -47,8 +47,8 @@ The manifest authenticates every source and output. Existing datasets are not re
 Use the typed recipes to compute radial XY position and a full-capsule length histogram:
 
 ```python
-from cellmodeller2.analysis import open_dataset
-from cellmodeller2.analysis_recipes import (
+from microsimulator.analysis import open_dataset
+from microsimulator.analysis_recipes import (
     cells_with_radial_position,
     length_histogram,
 )
@@ -66,8 +66,8 @@ The source table keeps both `cylinder_length` and derived `capsule_length`. The 
 ## 4. Unique contact edges
 
 ```python
-from cellmodeller2.analysis import open_dataset
-from cellmodeller2.analysis_recipes import unique_neighbor_edges
+from microsimulator.analysis import open_dataset
+from microsimulator.analysis_recipes import unique_neighbor_edges
 
 dataset = open_dataset("results/growth.dataset")
 edges = unique_neighbor_edges(dataset).collect()
@@ -75,7 +75,7 @@ edges = unique_neighbor_edges(dataset).collect()
 
 The raw contact table preserves every mechanics row. The recipe groups an unordered stable-ID pair and reports geometric row count, minimum signed separation, maximum derived overlap, and total contact weight. Negative signed separation means penetration; `overlap = max(0, -signed_separation)` is a derivation and does not replace the signed quantity.
 
-This edge table can be passed to NetworkX or another graph library, but graph construction is a downstream choice. CellModeller2 does not serialize live Python graph objects.
+This edge table can be passed to NetworkX or another graph library, but graph construction is a downstream choice. MicroSimulator does not serialize live Python graph objects.
 
 ## 5. Species and signals
 

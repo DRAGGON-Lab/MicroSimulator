@@ -1,6 +1,6 @@
 # Testing and validation
 
-CellModeller2 tests observable scientific behavior at several levels, from individual numerical operations to complete application workflows. CPU is the readable numerical reference, Metal is the supported Apple GPU backend, and CUDA is the native NVIDIA backend under active development. A backend is supported only when its own implementation passes the same contracts without silently falling back to another backend.
+MicroSimulator tests observable scientific behavior at several levels, from individual numerical operations to complete application workflows. CPU is the readable numerical reference, Metal is the supported Apple GPU backend, and CUDA is the native NVIDIA backend under active development. A backend is supported only when its own implementation passes the same contracts without silently falling back to another backend.
 
 ## Validation layers
 

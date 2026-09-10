@@ -7,7 +7,7 @@
 
 The legacy `CLFixedPosition` module is an alternate point-volume biophysics model. It stores cell centers and scalar volumes, advances volume with explicit Euler growth, and never changes position. It does not expose a per-cell fixed flag and does not use the capsule geometry or mechanics operator of the main rod model.
 
-CellModeller2 needs the useful behavior without introducing a second, incompatible geometry representation. Fixedness also needs to survive division and checkpoint restore and to behave identically on every backend.
+MicroSimulator needs the useful behavior without introducing a second, incompatible geometry representation. Fixedness also needs to survive division and checkpoint restore and to behave identically on every backend.
 
 ## Decision
 

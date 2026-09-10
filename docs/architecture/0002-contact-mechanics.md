@@ -9,7 +9,7 @@ Rod contact and mechanical relaxation are the first CellModeller feature that re
 
 ## Decision
 
-CellModeller2 represents a contact as a typed record with stable cell IDs, current compact slots, contact ordinal, surface point, unit normal, signed separation, and row weight. External constraints use tagged plane or sphere references rather than sentinel cell IDs.
+MicroSimulator represents a contact as a typed record with stable cell IDs, current compact slots, contact ordinal, surface point, unit normal, signed separation, and row weight. External constraints use tagged plane or sphere references rather than sentinel cell IDs.
 
 The CPU reference performs an exhaustive pair search. It is intentionally simple and is the geometry oracle for small conformance scenarios.
 

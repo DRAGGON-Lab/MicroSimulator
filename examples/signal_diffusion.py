@@ -1,4 +1,4 @@
-from cellmodeller2 import GridShape, SignalGridSpec, Simulation, Vec3
+from microsimulator import GridShape, SignalGridSpec, Simulation, Vec3
 
 simulation = Simulation()
 shape = GridShape()

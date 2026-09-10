@@ -8,14 +8,14 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     LegacyPickleError,
     import_legacy_pickle,
     load_checkpoint_bundle,
     save_checkpoint,
 )
-from cellmodeller2.checkpoint import JSONValue
-from cellmodeller2.cli import main
+from microsimulator.checkpoint import JSONValue
+from microsimulator.cli import main
 
 
 def _snapshot_bytes(

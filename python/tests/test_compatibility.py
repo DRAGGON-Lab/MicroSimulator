@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from cellmodeller2.compatibility import (
+from microsimulator.compatibility import (
     LEGACY_EXAMPLE_MATRIX_FORMAT,
     LegacyExampleMatrixError,
     load_legacy_example_matrix,

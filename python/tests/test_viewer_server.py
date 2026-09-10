@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 from aiohttp import WSServerHandshakeError
 from aiohttp.test_utils import TestClient, TestServer
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     CellInit,
     Simulation,
@@ -16,9 +16,9 @@ from cellmodeller2 import (
     load_checkpoint_bundle,
     viewer_server,
 )
-from cellmodeller2.checkpoint import JSONValue
-from cellmodeller2.cli import main
-from cellmodeller2.viewer_server import (
+from microsimulator.checkpoint import JSONValue
+from microsimulator.cli import main
+from microsimulator.viewer_server import (
     LiveSession,
     LiveViewerError,
     create_live_app,
@@ -188,7 +188,7 @@ def test_cli_constructs_a_resettable_live_model(
 ) -> None:
     model = tmp_path / "model.py"
     model.write_text(
-        """from cellmodeller2 import CellInit
+        """from microsimulator import CellInit
 
 def build(context):
     simulation = context.simulation()

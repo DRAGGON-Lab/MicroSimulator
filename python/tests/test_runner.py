@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     BatchError,
     ModelContext,
@@ -18,12 +18,12 @@ from cellmodeller2 import (
     load_checkpoint_bundle,
     run_simulation,
 )
-from cellmodeller2.cli import main
+from microsimulator.cli import main
 
 
 def _write_model(path: Path) -> None:
     path.write_text(
-        """from cellmodeller2 import CellInit, Vec3
+        """from microsimulator import CellInit, Vec3
 
 def build(context):
     simulation = context.simulation()
@@ -41,7 +41,7 @@ def build(context):
 
 def _write_controller_model(path: Path) -> None:
     path.write_text(
-        """from cellmodeller2 import (
+        """from microsimulator import (
     CellInit,
     capture_random_state,
     restore_random_state,

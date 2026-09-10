@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     CellInit,
     GridShape,

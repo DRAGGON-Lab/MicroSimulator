@@ -1,6 +1,6 @@
 # Architecture
 
-CellModeller2 separates model authoring, backend-neutral simulation state, accelerator implementations, storage formats, and presentation. The CPU backend serves as the readable numerical reference; Metal and CUDA implement the same observable contracts with their native programming models.
+MicroSimulator separates model authoring, backend-neutral simulation state, accelerator implementations, storage formats, and presentation. The CPU backend serves as the readable numerical reference; Metal and CUDA implement the same observable contracts with their native programming models.
 
 The [numerical contract](numerical-contract.md) is the best starting point for work that affects results across backends. The architecture decision records below explain why each major interface has its present shape.
 

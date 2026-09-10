@@ -306,7 +306,7 @@ def build_model(
         raise BatchError(f"model digest does not match manifest: {source_path}")
     if checkpoint is not None:
         _checkpoint_model_context(source_path, digest, context, checkpoint)
-    module_name = f"_cellmodeller2_model_{digest[:16]}"
+    module_name = f"_microsimulator_model_{digest[:16]}"
     module = ModuleType(module_name)
     module.__file__ = str(source_path)
     module.__package__ = ""

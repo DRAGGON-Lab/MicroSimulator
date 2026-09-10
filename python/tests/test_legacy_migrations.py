@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     ModelContext,
     NativeController,

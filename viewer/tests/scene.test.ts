@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { parseScene, SceneFormatError } from "../src/scene";
 
 const PYTHON_SCENE = `{
-  "format": "cellmodeller2-scene",
+  "format": "microsimulator-scene",
   "frame": {
     "backend": {
       "device": "host",
@@ -36,7 +36,7 @@ const PYTHON_SCENE = `{
     "algorithm": "sha256",
     "frame": "a10da18274e64b7c33d19f9cf8e84560f200254e8b7931a753890c431bc5af04"
   },
-  "producer": {"name": "cellmodeller2", "version": "0.1.0"},
+  "producer": {"name": "microsimulator", "version": "0.1.0"},
   "version": 1
 }`;
 
@@ -62,6 +62,21 @@ describe("scene reader", () => {
     expect(frame.cells[0]?.id).toBe("9223372036854775815");
     expect(frame.cells[0]?.position).toEqual([1, 2.5, -3]);
     expect(frame.cells[0]?.species).toEqual([7.25]);
+  });
+
+  it("reads the previous scene format and still rejects tampering", async () => {
+    const document = JSON.parse(PYTHON_SCENE) as {
+      format: string;
+      frame: { time: number };
+    };
+    document.format = "cellmodeller2-scene";
+    expect(await parseScene(JSON.stringify(document))).toEqual(
+      await parseScene(PYTHON_SCENE),
+    );
+    document.frame.time = 2;
+    await expect(parseScene(JSON.stringify(document))).rejects.toThrow(
+      "frame digest does not match",
+    );
   });
 
   it("rejects a modified frame", async () => {

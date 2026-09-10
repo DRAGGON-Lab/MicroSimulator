@@ -1,6 +1,6 @@
-# CellModeller2 documentation
+# MicroSimulator documentation
 
-These guides explain how to build, run, inspect, and analyze CellModeller2 models. Design decisions and historical CellModeller comparisons are available as reference material, but the main documentation is organized around the work researchers and developers perform.
+These guides explain how to build, run, inspect, and analyze MicroSimulator models. Design decisions and historical CellModeller comparisons are available as reference material, but the main documentation is organized around the work researchers and developers perform.
 
 ## Start here
 

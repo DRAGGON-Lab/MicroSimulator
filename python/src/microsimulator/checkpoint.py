@@ -1,4 +1,4 @@
-"""Versioned, non-executable CellModeller2 checkpoints."""
+"""Versioned, non-executable MicroSimulator checkpoints."""
 
 # pyright: reportPrivateUsage=false
 
@@ -41,7 +41,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     _WorldStateCheckpoint,
 )
 
-CHECKPOINT_FORMAT = "cellmodeller2-checkpoint"
+CHECKPOINT_FORMAT = "microsimulator-checkpoint"
 CHECKPOINT_VERSION = 7
 MAX_CHECKPOINT_BYTES = 1 << 30
 _NATIVE_CHECKPOINT_VERSION = 4
@@ -138,7 +138,7 @@ _SIGNAL_INTEGRATIONS = {name: kind for kind, name in _SIGNAL_INTEGRATION_NAMES.i
 
 def _installed_version() -> str:
     try:
-        return version("cellmodeller2")
+        return version("microsimulator")
     except PackageNotFoundError:
         return "0+unknown"
 
@@ -310,7 +310,7 @@ def save_checkpoint(
     document: dict[str, JSONValue] = {
         "format": CHECKPOINT_FORMAT,
         "version": CHECKPOINT_VERSION,
-        "producer": {"name": "cellmodeller2", "version": _installed_version()},
+        "producer": {"name": "microsimulator", "version": _installed_version()},
         "source_backend": {
             "kind": _BACKEND_NAMES[backend.kind],
             "name": backend.name,
@@ -857,8 +857,8 @@ def load_checkpoint_bundle(
         "$",
         required,
     )
-    if _string(root["format"], "$.format") != CHECKPOINT_FORMAT:
-        _fail("$.format", "not a CellModeller2 checkpoint")
+    if _string(root["format"], "$.format") not in (CHECKPOINT_FORMAT, "cellmodeller2-checkpoint"):
+        _fail("$.format", "not a MicroSimulator checkpoint")
     _object(root["producer"], "$.producer")
     source_backend_data = _object(root["source_backend"], "$.source_backend")
     _keys(

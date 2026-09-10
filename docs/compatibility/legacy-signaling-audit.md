@@ -1,6 +1,6 @@
 # Grid signaling compatibility
 
-This reference compares CellModeller's grid-signaling behavior with the numerical model used by CellModeller2. The relevant sources are `Signalling/GridDiffusion.py`, `Integration/CLEulerSigIntegrator.py`, `Integration/CLEulerSigIntegrator.cl`, and the signaling examples.
+This reference compares CellModeller's grid-signaling behavior with the numerical model used by MicroSimulator. The relevant sources are `Signalling/GridDiffusion.py`, `Integration/CLEulerSigIntegrator.py`, `Integration/CLEulerSigIntegrator.cl`, and the signaling examples.
 
 ## State and geometry
 
@@ -14,7 +14,7 @@ Initial levels are homogeneous per signal. The selected integrator owns the fiel
 
 `CLCrankNicIntegrator` constructs the intended operator `I - dt/2 T`, uses SciPy GMRES to approximate a central Green's function, and forms the right-hand side `(I + dt/2 T)c_n + dt f(c_n)`. The final call to `scipy.ndimage.convolve`, however, neither assigns its return value nor supplies an output array. The inverse application is therefore discarded in shipped code. Observable execution leaves only the explicit right-hand side in the signal field.
 
-CellModeller2 treats the comments and operator construction as the recoverable scientific intent and implements the full semi-implicit equation. It does not reproduce the discarded-convolution behavior, truncated Green's function, or legacy coefficient scaling.
+MicroSimulator treats the comments and operator construction as the recoverable scientific intent and implements the full semi-implicit equation. It does not reproduce the discarded-convolution behavior, truncated Green's function, or legacy coefficient scaling.
 
 ## Transport
 
@@ -40,8 +40,8 @@ Rate evaluation is parallel, but grid transport runs through SciPy on the host a
 
 The injected functions receive grid volume, cell surface area, effective cell volume, cell type, species, and sampled signals. Units are not enforced. The examples divide both intracellular and extracellular exchange expressions by grid volume inside user source. There is no typed guarantee that the species and grid exchange terms conserve amount.
 
-## CellModeller2 behavior
+## MicroSimulator behavior
 
-CellModeller2 preserves the useful structure: signal-major fields, trilinear sample/scatter, pre-step signal sampling, post-growth species dilution, and a simultaneous Euler update. It does not preserve the extra one-sixth diffusion factor, x-only centered advection, implicit SciPy boundary strings, truncated edge weights, arbitrary OpenCL source injection, or host-side scatter.
+MicroSimulator preserves the useful structure: signal-major fields, trilinear sample/scatter, pre-step signal sampling, post-growth species dilution, and a simultaneous Euler update. It does not preserve the extra one-sixth diffusion factor, x-only centered advection, implicit SciPy boundary strings, truncated edge weights, arbitrary OpenCL source injection, or host-side scatter.
 
 Models using these APIs need an explicit translation of their intended coefficients and units. This cannot be automatic because the CellModeller API does not reveal whether a model compensated for the historical scaling choices.

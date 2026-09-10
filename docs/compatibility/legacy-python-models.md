@@ -1,15 +1,15 @@
 # Running CellModeller Python models
 
-Maintained CellModeller models commonly define four host-Python callbacks: `setup(sim)`, `init(cell)`, `update(cells)`, and `divide(parent, d1, d2)`. CellModeller2 can run models that use this callback lifecycle for growth, mechanics, regulation, constraints, neighbors, division, and host-side species state.
+Maintained CellModeller models commonly define four host-Python callbacks: `setup(sim)`, `init(cell)`, `update(cells)`, and `divide(parent, d1, d2)`. MicroSimulator can run models that use this callback lifecycle for growth, mechanics, regulation, constraints, neighbors, division, and host-side species state.
 
 ```console
-uv run cm run \
+uv run microsimulator run \
   --legacy-model ../CellModeller/Examples/ex1a_simpleGrowth2D.py \
   --backend cpu \
   --seed 42 \
   --steps 100 \
   --dt 0.05 \
-  --output results/legacy.cm2.json
+  --output results/legacy.json
 ```
 
 ## Supported callback behavior

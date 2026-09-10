@@ -33,7 +33,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
 from .checkpoint import CheckpointBundle, JSONValue, load_checkpoint_bundle
 from .scene import SceneFrame, SceneGridBoundary, SceneSignalGrid, capture_scene
 
-ANALYSIS_FORMAT = "cellmodeller2-analysis"
+ANALYSIS_FORMAT = "microsimulator-analysis"
 ANALYSIS_VERSION = 2
 MAX_ANALYSIS_MANIFEST_BYTES = 1 << 26
 _SUPPORTED_ANALYSIS_VERSIONS = frozenset({1, ANALYSIS_VERSION})
@@ -380,8 +380,8 @@ def open_dataset(
     manifest = _manifest_object(cast(object, decoded), "$")
     top_level_keys = {"format", "version", "dataset_id", "sources", "options", "tables", "signals"}
     _manifest_keys(manifest, "$", top_level_keys)
-    if manifest["format"] != ANALYSIS_FORMAT:
-        raise AnalysisError("$.format: not a CellModeller2 analysis dataset")
+    if manifest["format"] not in (ANALYSIS_FORMAT, "cellmodeller2-analysis"):
+        raise AnalysisError("$.format: not a MicroSimulator analysis dataset")
     schema_version = manifest["version"]
     if (
         isinstance(schema_version, bool)
@@ -396,7 +396,7 @@ def open_dataset(
         raise AnalysisError("$.sources: expected an array")
     _manifest_object(options, "$.options")
     identity: dict[str, object] = {
-        "format": ANALYSIS_FORMAT,
+        "format": manifest["format"],
         "version": schema_version,
         "sources": sources,
         "options": options,

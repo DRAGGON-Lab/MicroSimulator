@@ -7,7 +7,7 @@
 
 The legacy `CLCrankNicIntegrator` was intended to remove the explicit diffusion time-step restriction. Its comments and construction define a Crank-Nicolson transport stage, but the result of the final SciPy convolution was discarded. Observable legacy execution therefore stopped at the explicit right-hand side and did not apply the inverse operator.
 
-CellModeller2 needs a named, checkpointed integration choice with the same equation on CPU, Metal, and CUDA. It must also diagnose convergence rather than hide a fixed iteration count.
+MicroSimulator needs a named, checkpointed integration choice with the same equation on CPU, Metal, and CUDA. It must also diagnose convergence rather than hide a fixed iteration count.
 
 ## Equation
 

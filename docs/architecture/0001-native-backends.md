@@ -7,7 +7,7 @@
 
 Legacy CellModeller couples simulation modules through PyOpenCL contexts, queues, arrays, and raw buffer handles. A direct translation would reproduce those ownership boundaries and keep important spatial and reduction work on the host.
 
-CellModeller2 must run the same scientific model on Apple GPUs through Metal and on NVIDIA GPUs through CUDA while allowing each platform to use its native execution and memory model.
+MicroSimulator must run the same scientific model on Apple GPUs through Metal and on NVIDIA GPUs through CUDA while allowing each platform to use its native execution and memory model.
 
 ## Decision
 

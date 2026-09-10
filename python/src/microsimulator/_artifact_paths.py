@@ -1,4 +1,4 @@
-"""Shared path conventions for generated CellModeller artifacts."""
+"""Shared path conventions for generated MicroSimulator artifacts."""
 
 from __future__ import annotations
 

@@ -167,7 +167,7 @@ def _libsbml() -> _LibSBML:
         return cast(_LibSBML, import_module("libsbml"))
     except ImportError as error:
         raise SBMLImportError(
-            "SBML import requires the optional dependency; install cellmodeller2[sbml]"
+            "SBML import requires the optional dependency; install microsimulator[sbml]"
         ) from error
 
 

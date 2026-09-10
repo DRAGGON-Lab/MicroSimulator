@@ -1,6 +1,6 @@
 # Analysis dataset recipes
 
-CellModeller2 analysis starts from an immutable dataset, not executable model code or a simulation object's private buffers. Install the optional dependency set before using these APIs:
+MicroSimulator analysis starts from an immutable dataset, not executable model code or a simulation object's private buffers. Install the optional dependency set before using these APIs:
 
 ```console
 uv sync --extra analysis
@@ -9,8 +9,8 @@ uv sync --extra analysis
 Open and verify the dataset once, then reuse the resulting handle. The reader accepts the original v1 identity contract and the current v2 contract. Verification checks the dataset identity and every Parquet and Zarr digest before a recipe can scan data:
 
 ```python
-from cellmodeller2.analysis import open_dataset
-from cellmodeller2.analysis_recipes import radial_counts
+from microsimulator.analysis import open_dataset
+from microsimulator.analysis_recipes import radial_counts
 
 dataset = open_dataset("results/run.dataset")
 counts = radial_counts(dataset, edges=[0.0, 5.0, 10.0, 20.0]).collect()
@@ -27,7 +27,7 @@ Table recipes return `polars.LazyFrame`. A caller decides when to collect, filte
 `length_histogram(dataset, edges)` bins the exported `capsule_length` by default. Pass `length="cylinder_length"` to select the engine's cylinder length explicitly. This distinction preserves the legacy script's `length + 2 * radius` quantity without renaming the underlying state.
 
 ```python
-from cellmodeller2.analysis_recipes import length_histogram, radial_species_mean
+from microsimulator.analysis_recipes import length_histogram, radial_species_mean
 
 species = radial_species_mean(dataset, channel=0, edges=[0, 10, 20, 40])
 capsules = length_histogram(dataset, edges=[0, 1, 2, 3, 4, 5, 6])
@@ -42,7 +42,7 @@ Contact recipes require an export created with `--contacts`. `unique_neighbor_ed
 `sister_neighbor_counts(dataset)` counts unique active neighbors with the same non-null parent ID. Each edge contributes once to each endpoint. Founders with null parents are never classified as sisters merely because both parents are null.
 
 ```python
-from cellmodeller2.analysis_recipes import sister_neighbor_counts, unique_neighbor_edges
+from microsimulator.analysis_recipes import sister_neighbor_counts, unique_neighbor_edges
 
 edges = unique_neighbor_edges(dataset).collect()
 sister_counts = sister_neighbor_counts(dataset).collect()
@@ -53,7 +53,7 @@ sister_counts = sister_neighbor_counts(dataset).collect()
 Signal data keeps the named dimension order `(frame, channel, x, y, z)`. Geometry changes create separate epochs. `local_frame` indexes within one epoch, while `SignalSlice.frame_index` reports the dataset-wide frame index.
 
 ```python
-from cellmodeller2.analysis_recipes import signal_slice, signal_time_course
+from microsimulator.analysis_recipes import signal_slice, signal_time_course
 
 plane = signal_slice(
     dataset,

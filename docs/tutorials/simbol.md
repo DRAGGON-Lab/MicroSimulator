@@ -1,6 +1,6 @@
 # SimBOL circuit examples
 
-SimBOL connects an SBOL 3 design to simulator-specific code through a summarized JSON representation. This tutorial presents typed CellModeller2 versions of six BioBrick circuit examples and a spatial quorum-sensing clock.
+SimBOL connects an SBOL 3 design to simulator-specific code through a summarized JSON representation. This tutorial presents typed MicroSimulator versions of six BioBrick circuit examples and a spatial quorum-sensing clock.
 
 These are explicit example models, not a general SBOL-to-rate-plan import path. The [source reference](../compatibility/tutorial-source-provenance.md#simbol-source-workflow) describes how they relate to the SimBOL notebook, generated Python, and JSON fixtures.
 
@@ -9,7 +9,7 @@ These are explicit example models, not a general SBOL-to-rate-plan import path. 
 Use one model and select a circuit:
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/simbol_circuits.py \
   --parameter circuit='"bba_0001"' \
   --seed 42 \
@@ -31,14 +31,14 @@ Allowed names are `bba_0001`, `bba_0002`, `bba_0003`, `bba_0004`, `bba_0005`, an
 Parameters are JSON numbers:
 
 ```console
-uv run cm run \
+uv run microsimulator run \
   --model examples/tutorials/simbol_circuits.py \
   --parameter circuit='"bba_0004"' \
   --parameter inducer_concentration=4.0 \
   --seed 42 \
   --steps 500 \
   --dt 0.01 \
-  --output results/bba-0004.cm2.json
+  --output results/bba-0004.json
 ```
 
 ## Circuit equations
@@ -93,13 +93,13 @@ The membrane amount flux is
 J = 0.1 (complex_pool - extracellular_signal) cell_surface_area.
 ```
 
-The intracellular complex loses `J / cell_volume`; the grid receives `J` as an amount-per-time source and performs its own voxel-volume conversion. This uses CellModeller2’s declared conservation convention instead of embedding `gridVolume` divisions in generated source.
+The intracellular complex loses `J / cell_volume`; the grid receives `J` as an amount-per-time source and performs its own voxel-volume conversion. This uses MicroSimulator’s declared conservation convention instead of embedding `gridVolume` divisions in generated source.
 
 The SimBOL output declares a `400 x 400 x 3` grid at spacing one. The tutorial uses `80 x 80 x 3`, still centered on the founder, so ordinary runs remain bounded. Grid extent affects escape to boundaries and should be restored or convergence-tested for a large-colony study.
 
 ## Modeling conventions and source differences
 
-The generated non-signaling scripts update arbitrary Python attributes once per callback and then halve those attributes at division. They call the values “concentrations,” but halving a daughter concentration does not conserve amount when daughter volumes sum to the parent volume. The native ports use the CellModeller2 concentration contract instead:
+The generated non-signaling scripts update arbitrary Python attributes once per callback and then halve those attributes at division. They call the values “concentrations,” but halving a daughter concentration does not conserve amount when daughter volumes sum to the parent volume. The native ports use the MicroSimulator concentration contract instead:
 
 - rates are multiplied by the explicit simulation `dt`;
 - volume growth dilutes concentration;
@@ -113,7 +113,7 @@ These choices change trajectories relative to the generated callback scripts. A 
 ## Danino quorum-sensing clock
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/danino_clock.py \
   --seed 42 \
   --dt 0.01 \
@@ -134,7 +134,7 @@ The biological motif is based on Danino et al., “A synchronized quorum of gene
 
 ### Spatial field reactions
 
-`CM_Danino.py` subclasses the legacy grid to apply an x-dependent AHL sink and an x-dependent nutrient source/decay field. It then reads nutrient to regulate growth. CellModeller2 represents those terms with the optional affine reaction field on `SignalGridSpec`:
+`CM_Danino.py` subclasses the legacy grid to apply an x-dependent AHL sink and an x-dependent nutrient source/decay field. It then reads nutrient to regulate growth. MicroSimulator represents those terms with the optional affine reaction field on `SignalGridSpec`:
 
 ```text
 dc[channel, x, y, z] / dt += source_rate[channel, x, y, z]

@@ -6,7 +6,7 @@ import argparse
 import math
 from pathlib import Path
 
-from cellmodeller2 import (
+from microsimulator import (
     CellInit,
     GridShape,
     SignalGridSpec,

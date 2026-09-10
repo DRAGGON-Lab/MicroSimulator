@@ -4,9 +4,9 @@ The legacy `Scripts/` directory and `Scripts/Analysis.ipynb` illustrate how Cell
 
 ## Workflow map
 
-| Source | CellModeller workflow | CellModeller2 approach |
+| Source | CellModeller workflow | MicroSimulator approach |
 | --- | --- | --- |
-| `batch.py` | selects an OpenCL platform/device interactively, then runs until a fixed cell-capacity margin | `cm devices` lists devices, while `cm run` uses an explicit cell-count stopping criterion. |
+| `batch.py` | selects an OpenCL platform/device interactively, then runs until a fixed cell-capacity margin | `microsimulator devices` lists devices, while `microsimulator run` uses an explicit cell-count stopping criterion. |
 | `multi_batch.py` | repeats the same unseeded run three times | Run manifests declare replicate IDs, seeds, parameters, and outputs as reviewable data. |
 | `batch_iter.py` | hard-coded gamma sweep over eight values | A run manifest expresses the sweep; scheduler configuration remains outside the simulator. |
 | `batchFile.py` | cluster-specific model defaults, timestamped pickle directories, and private physics setup calls | Explicit output paths, checkpoints, and provenance cover the portable parts of this workflow. |
@@ -33,7 +33,7 @@ The legacy scripts imply a compact, useful analysis vocabulary:
 
 The old notebook's density example weights XY histogram bins by full capsule length. That is a declared line-density proxy, not cell area, volume, biomass, or packing fraction. Any replacement recipe must use that name. Likewise, negative signed separation is penetration; an `overlap` column may be derived as `max(0, -signed_separation)` but must not replace the signed value.
 
-The radial species script contains no trustworthy bin contract. Its plotted coordinates start at zero, while its text output uses half of each upper edge rather than the actual bin center. CellModeller2 defines bins through explicit edges and reports their left edge, right edge, and center.
+The radial species script contains no trustworthy bin contract. Its plotted coordinates start at zero, while its text output uses half of each upper edge rather than the actual bin center. MicroSimulator defines bins through explicit edges and reports their left edge, right edge, and center.
 
 ## Behavior not carried forward
 
@@ -47,6 +47,6 @@ The radial species script contains no trustworthy bin contract. Its plotted coor
 
 ## Supported workflows
 
-CellModeller2 converts an explicit, ordered checkpoint series into versioned Parquet cell/contact tables and Zarr signal arrays. The documented dataframe recipes reproduce the meaningful quantities above. CPU, Metal, and CUDA checkpoints use the same storage schema, and derived contact rows record the backend and contact parameters used.
+MicroSimulator converts an explicit, ordered checkpoint series into versioned Parquet cell/contact tables and Zarr signal arrays. The documented dataframe recipes reproduce the meaningful quantities above. CPU, Metal, and CUDA checkpoints use the same storage schema, and derived contact rows record the backend and contact parameters used.
 
 Offline publication rendering and video export are separately useful, but are not prerequisites for scientific analysis-table compatibility.

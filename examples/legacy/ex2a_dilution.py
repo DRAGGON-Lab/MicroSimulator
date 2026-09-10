@@ -1,8 +1,8 @@
-"""Typed CellModeller2 migration of ex2a_dilution.py."""
+"""Typed MicroSimulator migration of ex2a_dilution.py."""
 
 from __future__ import annotations
 
-from cellmodeller2 import (
+from microsimulator import (
     CellInit,
     CellUpdate,
     ControllerStep,
@@ -13,7 +13,7 @@ from cellmodeller2 import (
     StepPlan,
     UniformLengthDivision,
 )
-from cellmodeller2.checkpoint import CheckpointBundle, JSONValue
+from microsimulator.checkpoint import CheckpointBundle, JSONValue
 
 MODEL_ID = "legacy.ex2a_dilution"
 MODEL_VERSION = 1

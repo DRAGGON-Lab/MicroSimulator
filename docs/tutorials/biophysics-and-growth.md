@@ -7,7 +7,7 @@ This tutorial introduces cell geometry, growth, division, lineage, cell types, m
 Run the basic model:
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/biophysics.py \
   --parameter scenario='"basics"' \
   --seed 42 \
@@ -32,7 +32,7 @@ The controller stores one stochastic division target per stable cell ID. On each
 
 ### Length and volume
 
-The tutorial uses centerline length as its division threshold. CellModeller2 uses the effective capsule volume
+The tutorial uses centerline length as its division threshold. MicroSimulator uses the effective capsule volume
 
 ```text
 V = pi r^2 (length + 2r)
@@ -43,7 +43,7 @@ for concentration dilution and cell-grid exchange. If an experiment requires a v
 ## 2. Two founder types
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/biophysics.py \
   --parameter scenario='"two_types"' \
   --seed 42 \
@@ -56,7 +56,7 @@ The model places type 0 at `x = -10` and type 1 at `x = 10`. Both use the same g
 ## 3. Short, nearly round rods
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/biophysics.py \
   --parameter scenario='"short_cells"' \
   --seed 42 \
@@ -69,7 +69,7 @@ This scenario lowers the post-founder division length to produce short spherocyl
 ## 4. Type-dependent competition in a growth zone
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/biophysics.py \
   --parameter scenario='"competition"' \
   --seed 7 \
@@ -92,7 +92,7 @@ Use `Growth rate` coloring to see the active zone and `Cell type` coloring to se
 ## 5. A three-dimensional open box
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/biophysics.py \
   --parameter scenario='"box"' \
   --seed 42 \

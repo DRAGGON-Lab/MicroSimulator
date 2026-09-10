@@ -40,7 +40,7 @@ def test_every_legacy_renderer_has_a_closed_disposition() -> None:
         "source_sha256",
         "families",
     }
-    assert document["format"] == "cellmodeller2-legacy-renderer-dispositions"
+    assert document["format"] == "microsimulator-legacy-renderer-dispositions"
     assert document["version"] == 1
     assert document["legacy_commit"] == "4896f543c6250f053eea2312e628cc3a96bf7408"
     assert document["source"] == "CellModeller/GUI/Renderers.py"

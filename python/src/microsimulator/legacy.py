@@ -331,7 +331,7 @@ class LegacyModelAdapter:
             cells.append({"id": snapshot.id, "attributes": attributes})
         parameters = self._mechanics_parameters
         return {
-            "kind": "cellmodeller2-legacy-python",
+            "kind": "microsimulator-legacy-python",
             "version": 4,
             "options": {
                 "mechanics": self._mechanics,
@@ -378,7 +378,7 @@ class LegacyModelAdapter:
             raise LegacyCompatibilityError("legacy controller has unexpected fields")
         version = data["version"]
         if (
-            data["kind"] != "cellmodeller2-legacy-python"
+            data["kind"] not in ("microsimulator-legacy-python", "cellmodeller2-legacy-python")
             or not isinstance(version, int)
             or isinstance(version, bool)
             or version not in (2, 3, 4)

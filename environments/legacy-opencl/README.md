@@ -1,6 +1,6 @@
 # Legacy OpenCL trajectory environment
 
-This optional environment exists only to reproduce the recorded CellModeller reference trajectories. It is not a CellModeller2 runtime dependency.
+This optional environment exists only to reproduce the recorded CellModeller reference trajectories. It is not a MicroSimulator runtime dependency.
 
 On an Apple machine that still exposes an OpenCL device:
 

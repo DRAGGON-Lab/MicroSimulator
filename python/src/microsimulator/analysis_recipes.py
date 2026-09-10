@@ -1,4 +1,4 @@
-"""Lazy Polars recipes over versioned CellModeller2 analysis datasets."""
+"""Lazy Polars recipes over versioned MicroSimulator analysis datasets."""
 
 # pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false
 # pyright: reportUnknownVariableType=false

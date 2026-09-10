@@ -27,10 +27,10 @@ The executable matrix pins all 25 Python examples from CellModeller commit `4896
 | `ex4_simpleCellCellSignaling.py` | migrated | typed native model |
 | `ex5_colonySector.py` | runnable | callback adapter |
 | `ex5_colonySector_3d.py` | runnable | callback adapter |
-| `load.py` | migration-only | `cm import-legacy-pickle` |
+| `load.py` | migration-only | `microsimulator import-legacy-pickle` |
 | `sphere_constraints.py` | runnable | callback adapter |
 
-No example is silently omitted or presently classified as deliberately retired. The 15 runnable sources are executed unchanged through the adapter, the 9 OpenCL equation models execute their typed CellModeller2 migrations, and `load.py` is represented by the separately tested one-way trusted-pickle migration workflow.
+No example is silently omitted or presently classified as deliberately retired. The 15 runnable sources are executed unchanged through the adapter, the 9 OpenCL equation models execute their typed MicroSimulator migrations, and `load.py` is represented by the separately tested one-way trusted-pickle migration workflow.
 
 From a built development environment, run CPU and all enumerated Metal devices with:
 

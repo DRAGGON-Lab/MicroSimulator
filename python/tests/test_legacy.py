@@ -7,7 +7,7 @@ from typing import Protocol, cast
 
 import numpy as np
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     CellInit,
     LegacyCell,
@@ -313,7 +313,12 @@ def test_legacy_max_substeps_bounds_contact_frontier_relaxation() -> None:
         )
 
 
-def test_legacy_controller_state_resumes_attributes_and_random_stream(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "controller_kind", ["microsimulator-legacy-python", "cellmodeller2-legacy-python"]
+)
+def test_legacy_controller_state_resumes_attributes_and_random_stream(
+    tmp_path: Path, controller_kind: str
+) -> None:
     def initialize(cell: LegacyCell) -> None:
         cell.metadata = {"line": (1, 2), "weights": [0.25, 0.75]}
         cell.color = np.asarray([0.1, 0.2, 0.3], dtype=np.float32)
@@ -337,7 +342,9 @@ def test_legacy_controller_state_resumes_attributes_and_random_stream(tmp_path: 
     adapter.step(0.0)
 
     path = tmp_path / "legacy.cm2.json"
-    save_checkpoint(simulation, path, controller=adapter.controller_state())
+    controller_state = adapter.controller_state()
+    controller_state["kind"] = controller_kind
+    save_checkpoint(simulation, path, controller=controller_state)
     bundle = load_checkpoint_bundle(path)
     restored = LegacyModelAdapter.from_controller_state(
         bundle.simulation,

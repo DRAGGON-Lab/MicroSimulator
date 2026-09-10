@@ -10,7 +10,7 @@ namespace nb = nanobind;
 using namespace nb::literals;
 
 NB_MODULE(_core, module) {
-  module.doc() = "CellModeller2 native simulation core";
+  module.doc() = "MicroSimulator native simulation core";
 
   module.def("backend_device_count", &cm::backend_device_count, "backend"_a);
   module.def("backend_available", &cm::backend_available, "backend"_a, "device_index"_a = 0);

@@ -26,7 +26,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
 )
 from .checkpoint import JSONValue
 
-SCENE_FORMAT = "cellmodeller2-scene"
+SCENE_FORMAT = "microsimulator-scene"
 SCENE_VERSION = 1
 MAX_SCENE_BYTES = 1 << 30
 
@@ -113,7 +113,7 @@ class SceneFrame:
 
 def _installed_version() -> str:
     try:
-        return version("cellmodeller2")
+        return version("microsimulator")
     except PackageNotFoundError:
         return "0+unknown"
 
@@ -255,7 +255,7 @@ def dumps_scene(frame: SceneFrame) -> str:
     document: dict[str, JSONValue] = {
         "format": SCENE_FORMAT,
         "version": SCENE_VERSION,
-        "producer": {"name": "cellmodeller2", "version": _installed_version()},
+        "producer": {"name": "microsimulator", "version": _installed_version()},
         "integrity": {
             "algorithm": "sha256",
             "frame": hashlib.sha256(_canonical_json(payload)).hexdigest(),
@@ -647,8 +647,8 @@ def parse_scene(source: str | bytes) -> SceneFrame:
 
     root = _object(cast(object, decoded), "$")
     _keys(root, "$", {"format", "version", "producer", "integrity", "frame"})
-    if _string(root["format"], "$.format") != SCENE_FORMAT:
-        _fail("$.format", "not a CellModeller2 scene")
+    if _string(root["format"], "$.format") not in (SCENE_FORMAT, "cellmodeller2-scene"):
+        _fail("$.format", "not a MicroSimulator scene")
     schema_version = _integer(root["version"], "$.version", 0, _UINT32_MAX)
     if schema_version != SCENE_VERSION:
         _fail("$.version", f"unsupported scene version {schema_version}")

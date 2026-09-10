@@ -1,6 +1,6 @@
-# CellModeller2 scene viewer
+# MicroSimulator scene viewer
 
-This package is a TypeScript and Three.js consumer of `cellmodeller2-scene` documents. It has no Python bridge, model loader, simulation clock, checkpoint writer, CUDA context, or Metal device access. Standalone mode reads scene files; live mode sends a closed control vocabulary to the Python-owned engine session and verifies every returned scene document.
+This package is a TypeScript and Three.js consumer of `microsimulator-scene` documents. It has no Python bridge, model loader, simulation clock, checkpoint writer, CUDA context, or Metal device access. Standalone mode reads scene files; live mode sends a closed control vocabulary to the Python-owned engine session and verifies every returned scene document.
 
 ## Run locally
 
@@ -21,14 +21,14 @@ From the repository root:
 ```console
 uv sync --group dev --extra viewer
 pnpm --dir viewer build
-uv run cm view \
+uv run microsimulator view \
   --model examples/batch_model.py \
   --dt 0.05 \
   --checkpoint-output results/live.json \
   --open
 ```
 
-Without `--open`, open the tokenized loopback URL printed by `cm`. The live transport can play, pause, advance one step, rebuild the original model, and write to the configured checkpoint destination. Camera position, display mapping, grid slice, and selected-cell identity survive frame updates.
+Without `--open`, open the tokenized loopback URL printed by `microsimulator`. The live transport can play, pause, advance one step, rebuild the original model, and write to the configured checkpoint destination. Camera position, display mapping, grid slice, and selected-cell identity survive frame updates.
 
 ## Capabilities
 

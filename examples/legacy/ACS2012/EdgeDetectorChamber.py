@@ -1,8 +1,8 @@
-"""Typed CellModeller2 migration of ACS2012/EdgeDetectorChamber.py."""
+"""Typed MicroSimulator migration of ACS2012/EdgeDetectorChamber.py."""
 
 from __future__ import annotations
 
-from cellmodeller2 import (
+from microsimulator import (
     CellInit,
     CellUpdate,
     ControllerStep,
@@ -20,7 +20,7 @@ from cellmodeller2 import (
     UniformLengthDivision,
     Vec3,
 )
-from cellmodeller2.checkpoint import CheckpointBundle, JSONValue
+from microsimulator.checkpoint import CheckpointBundle, JSONValue
 
 MODEL_ID = "legacy.ACS2012.EdgeDetectorChamber"
 MODEL_VERSION = 1

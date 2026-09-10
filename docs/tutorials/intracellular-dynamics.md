@@ -6,7 +6,7 @@ This tutorial introduces intracellular concentrations, growth dilution, typed ra
 
 A simulation declares one immutable species count. Each cell contains exactly that many finite single-precision concentrations. A typed rate plan returns one concentration-per-time derivative for each channel.
 
-For a biological step, CellModeller2:
+For a biological step, MicroSimulator:
 
 1. advances capsule length;
 2. dilutes concentrations by `V_old / V_new`;
@@ -20,7 +20,7 @@ Equal division copies concentrations to both daughters. Since their effective vo
 ## 1. Constitutive production
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/gene_expression.py \
   --parameter scenario='"constitutive"' \
   --seed 42 \
@@ -50,7 +50,7 @@ The `legacy_constitutive` scenario provides an alternative parameterization with
 ## 2. Dilution without production
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/gene_expression.py \
   --parameter scenario='"dilution"' \
   --seed 42 \
@@ -63,7 +63,7 @@ The founder starts at `x = 10` and the explicit chemical rate is zero. Any decli
 ## 3. Derepression through dilution
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/gene_expression.py \
   --parameter scenario='"derepression"' \
   --seed 42 \
@@ -83,7 +83,7 @@ As growth dilutes `x0`, reporter production approaches one. Inspect both channel
 ## 4. Activator-inhibitor oscillator
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/gene_expression.py \
   --parameter scenario='"oscillator"' \
   --seed 42 \
@@ -107,17 +107,17 @@ Whether the model produces a sustained limit cycle depends on parameters, diluti
 Create periodic checkpoints, export them, and plot or inspect one stable cell lineage:
 
 ```console
-uv run cm run \
+uv run microsimulator run \
   --model examples/tutorials/gene_expression.py \
   --parameter scenario='"oscillator"' \
   --seed 42 \
   --steps 400 \
   --dt 0.005 \
   --checkpoint-every 20 \
-  --output results/oscillator.cm2.json
+  --output results/oscillator.json
 
-uv run cm export-analysis \
-  results/oscillator.step-*.cm2.json \
+uv run microsimulator export-analysis \
+  results/oscillator.step-*.json \
   --output results/oscillator.dataset
 ```
 

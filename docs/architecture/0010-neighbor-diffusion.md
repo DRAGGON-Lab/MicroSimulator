@@ -11,7 +11,7 @@ The visible loop resembles an unweighted graph Laplacian, but its comment says t
 
 ## Decision
 
-CellModeller2 does not provide `NeighbourDiffusion` as a compatibility feature. No CPU, Metal, or CUDA backend advertises it, and its absence is not a gap in native backend parity.
+MicroSimulator does not provide `NeighbourDiffusion` as a compatibility feature. No CPU, Metal, or CUDA backend advertises it, and its absence is not a gap in native backend parity.
 
 A cell-contact transport model must independently define:
 

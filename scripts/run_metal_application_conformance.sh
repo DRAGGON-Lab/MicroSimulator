@@ -81,11 +81,11 @@ xcodebuild -version >"${report_dir}/xcode.txt"
 system_profiler SPDisplaysDataType -json >"${report_dir}/displays.json"
 
 export CMAKE_ARGS="-DCM_ENABLE_METAL=ON -DCM_ENABLE_CUDA=OFF -DCM_BUILD_TESTS=OFF"
-uv sync --locked --all-extras --reinstall-package cellmodeller2 \
+uv sync --locked --all-extras --reinstall-package microsimulator \
   2>&1 | tee "${report_dir}/python-build.log"
-uv run cm devices --json >"${report_dir}/devices.json"
+uv run microsimulator devices --json >"${report_dir}/devices.json"
 uv run python -c \
-  'from cellmodeller2 import BackendKind, backend_device_count; assert backend_device_count(BackendKind.METAL) > 0' \
+  'from microsimulator import BackendKind, backend_device_count; assert backend_device_count(BackendKind.METAL) > 0' \
   2>&1 | tee "${report_dir}/metal-runtime.log"
 
 CM_LEGACY_ROOT="${legacy_root}" uv run pytest -q \

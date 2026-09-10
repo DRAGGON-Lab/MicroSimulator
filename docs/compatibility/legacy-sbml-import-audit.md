@@ -24,6 +24,6 @@ The checked-in importer is not a reliable executable reference:
 8. Species ordering is derived from reaction participation rather than the SBML species list. A species used only as a modifier can be referenced by a kinetic law without receiving a generated Python variable.
 9. Missing or non-positive initial values are collapsed to zero, so a declared negative concentration is silently changed.
 
-## CellModeller2 behavior
+## MicroSimulator behavior
 
-The reusable behavior is reaction-stoichiometry compilation, not source-code generation. CellModeller2 uses libSBML's document model and error log, then compiles a declared subset directly into the typed rate-plan IR. Unsupported or ambiguous constructs fail with a path-specific import error. No legacy network channel, temporary-file workaround, generated source, or `exec` path is retained.
+The reusable behavior is reaction-stoichiometry compilation, not source-code generation. MicroSimulator uses libSBML's document model and error log, then compiles a declared subset directly into the typed rate-plan IR. Unsupported or ambiguous constructs fail with a path-specific import error. No legacy network channel, temporary-file workaround, generated source, or `exec` path is retained.

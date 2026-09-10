@@ -1,5 +1,5 @@
 {
-  "format": "cellmodeller2-legacy-renderer-dispositions",
+  "format": "microsimulator-legacy-renderer-dispositions",
   "version": 1,
   "legacy_repository": "https://github.com/CellModeller/CellModeller",
   "legacy_commit": "4896f543c6250f053eea2312e628cc3a96bf7408",
@@ -15,7 +15,7 @@
       ],
       "bundled_example_call_sites": 25,
       "disposition": "replaced",
-      "replacement": "cellmodeller2-scene-v1 rods and the independent viewer",
+      "replacement": "microsimulator-scene-v1 rods and the independent viewer",
       "reason": "The typed scene preserves rod geometry, stable identity, lineage and scalar presentation fields without renderer-owned simulation state."
     },
     {
@@ -25,7 +25,7 @@
       ],
       "bundled_example_call_sites": 4,
       "disposition": "replaced",
-      "replacement": "cellmodeller2-scene-v1 signal grids and viewer slices",
+      "replacement": "microsimulator-scene-v1 signal grids and viewer slices",
       "reason": "The typed scene preserves complete channel-major signal fields and boundary geometry rather than exposing integrator arrays."
     },
     {
@@ -77,7 +77,7 @@
       "bundled_example_call_sites": 0,
       "disposition": "deliberately_retired",
       "replacement": null,
-      "reason": "The renderer requires external mesh and regulator object graphs that no bundled model constructs and no CellModeller2 checkpoint represents."
+      "reason": "The renderer requires external mesh and regulator object graphs that no bundled model constructs and no MicroSimulator checkpoint represents."
     }
   ]
 }

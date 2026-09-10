@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     ModelContext,
     SimulationController,
@@ -14,7 +14,7 @@ from cellmodeller2 import (
     load_checkpoint_bundle,
     run_simulation,
 )
-from cellmodeller2.checkpoint import JSONValue
+from microsimulator.checkpoint import JSONValue
 
 _ROOT = Path(__file__).resolve().parents[2]
 _TUTORIALS = _ROOT / "examples" / "tutorials"

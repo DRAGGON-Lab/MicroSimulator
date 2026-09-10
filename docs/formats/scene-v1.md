@@ -1,4 +1,4 @@
-# CellModeller2 scene format v1
+# MicroSimulator scene format v1
 
 The scene format is an immutable presentation snapshot. It is safe data for a viewer, not a simulation checkpoint: it has no equations, solver settings, controller state, Python source, or resume authority.
 
@@ -8,9 +8,9 @@ A document is UTF-8 JSON with these root fields:
 
 ```json
 {
-  "format": "cellmodeller2-scene",
+  "format": "microsimulator-scene",
   "version": 1,
-  "producer": { "name": "cellmodeller2", "version": "0.1.0" },
+  "producer": { "name": "microsimulator", "version": "0.1.0" },
   "integrity": { "algorithm": "sha256", "frame": "..." },
   "frame": {}
 }

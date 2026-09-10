@@ -1,6 +1,6 @@
 # Comparing with recorded CellModeller trajectories
 
-CellModeller2 keeps a raw, source-controlled trajectory set from the original OpenCL implementation at `compatibility/legacy-trajectories-v1.json`. The recording uses CellModeller commit `4896f543c6250f053eea2312e628cc3a96bf7408` and authenticates every model source against the 25-example matrix before execution.
+MicroSimulator keeps a raw, source-controlled trajectory set from the original OpenCL implementation at `compatibility/legacy-trajectories-v1.json`. The recording uses CellModeller commit `4896f543c6250f053eea2312e628cc3a96bf7408` and authenticates every model source against the 25-example matrix before execution.
 
 ## Recording environment
 
@@ -36,7 +36,7 @@ The CPU and Metal implementations pass these five contracts. This is not bitwise
 
 ## Reproduction
 
-The recorder intentionally runs under an environment containing the original OpenCL dependencies, not the CellModeller2 environment:
+The recorder intentionally runs under an environment containing the original OpenCL dependencies, not the MicroSimulator environment:
 
 ```console
 python scripts/record_legacy_trajectories.py \

@@ -1,6 +1,6 @@
 # Tutorial sources and model translations
 
-The CellModeller2 tutorials draw from the maintained CellModeller wiki, bundled CellModeller examples, and SimBOL examples. This page records those relationships for readers who need to compare equations or reproduce an older workflow; the tutorials themselves focus on using the current modeling interface.
+The MicroSimulator tutorials draw from the maintained CellModeller wiki, bundled CellModeller examples, and SimBOL examples. This page records those relationships for readers who need to compare equations or reproduce an older workflow; the tutorials themselves focus on using the current modeling interface.
 
 ## Source revisions
 
@@ -10,7 +10,7 @@ The CellModeller2 tutorials draw from the maintained CellModeller wiki, bundled 
 
 ## Tutorial relationships
 
-| Source material | CellModeller2 model or guide |
+| Source material | MicroSimulator model or guide |
 | --- | --- |
 | Wiki Tutorial 1a | `biophysics.py`, `basics` |
 | Wiki Tutorial 1b | `biophysics.py`, `competition` |
@@ -57,6 +57,6 @@ SBOL 3 document
   -> CellModeller-specific generated Python
 ```
 
-The checked-in `notebooks/CellModeller.ipynb` stops after environment setup, SBOL upload, JSON conversion, and parameter-form display. The generated `test/CM_*.py` files and matching JSON fixtures are therefore the concrete sources used for the CellModeller2 examples.
+The checked-in `notebooks/CellModeller.ipynb` stops after environment setup, SBOL upload, JSON conversion, and parameter-form display. The generated `test/CM_*.py` files and matching JSON fixtures are therefore the concrete sources used for the MicroSimulator examples.
 
-These examples are explicit translations, not a general SBOL-to-rate-plan import path. CellModeller2 does not accept arbitrary SimBOL output without a versioned intermediate schema, declared parameter units, explicit handling of unsupported SBOL semantics, and source provenance.
+These examples are explicit translations, not a general SBOL-to-rate-plan import path. MicroSimulator does not accept arbitrary SimBOL output without a versioned intermediate schema, declared parameter units, explicit handling of unsupported SBOL semantics, and source provenance.

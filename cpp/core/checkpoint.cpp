@@ -7,7 +7,7 @@ namespace cm {
 
 void SimulationCheckpoint::validate() const {
   if (schema_version != checkpoint_schema_version) {
-    throw std::invalid_argument("unsupported CellModeller2 checkpoint schema version");
+    throw std::invalid_argument("unsupported MicroSimulator checkpoint schema version");
   }
   if (!std::isfinite(time) || time < 0.0) {
     throw std::invalid_argument("checkpoint time must be finite and non-negative");

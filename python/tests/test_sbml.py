@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     BackendFeature,
     BackendKind,
     CellInit,

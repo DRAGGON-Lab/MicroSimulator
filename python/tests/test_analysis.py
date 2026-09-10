@@ -13,7 +13,7 @@ from typing import Any, cast
 import pyarrow.parquet as pq
 import pytest
 import zarr
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     CellInit,
     GridShape,
@@ -24,14 +24,14 @@ from cellmodeller2 import (
     backend_device_count,
     save_checkpoint,
 )
-from cellmodeller2.analysis import (
+from microsimulator.analysis import (
     ANALYSIS_FORMAT,
     ANALYSIS_VERSION,
     AnalysisError,
     export_dataset,
     open_dataset,
 )
-from cellmodeller2.analysis_recipes import (
+from microsimulator.analysis_recipes import (
     cells_with_radial_position,
     length_histogram,
     line_density_xy,
@@ -42,7 +42,7 @@ from cellmodeller2.analysis_recipes import (
     sister_neighbor_counts,
     unique_neighbor_edges,
 )
-from cellmodeller2.cli import main
+from microsimulator.cli import main
 
 
 def _simulation() -> tuple[Simulation, int]:
@@ -99,6 +99,39 @@ def _recipe_simulation() -> Simulation:
         cell.species = [level]
         simulation.add_cell(cell)
     return simulation
+
+
+@pytest.mark.parametrize("schema_version", [1, ANALYSIS_VERSION])
+def test_previous_dataset_format_preserves_identity_and_verification(
+    tmp_path: Path, schema_version: int
+) -> None:
+    simulation, _ = _simulation()
+    checkpoint = tmp_path / "frame.json"
+    save_checkpoint(simulation, checkpoint)
+    output = tmp_path / "dataset"
+    export_dataset([checkpoint], output)
+    manifest = _manifest(output)
+    manifest["format"] = "cellmodeller2-analysis"
+    manifest["version"] = schema_version
+    identity_keys = ["format", "version", "sources", "options"]
+    if schema_version >= 2:
+        identity_keys.extend(["tables", "signals"])
+    identity = {key: manifest[key] for key in identity_keys}
+    manifest["dataset_id"] = hashlib.sha256(
+        json.dumps(
+            identity, allow_nan=False, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+    ).hexdigest()
+    manifest_path = output / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest))
+    assert open_dataset(output).verified
+    assert _manifest(output)["dataset_id"] == manifest["dataset_id"]
+
+    # Changing the envelope must not silently replace the authenticated identity.
+    manifest["format"] = ANALYSIS_FORMAT
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(AnalysisError, match="dataset identity digest"):
+        open_dataset(output)
 
 
 def test_export_dataset_preserves_typed_state_contacts_and_signals(tmp_path: Path) -> None:

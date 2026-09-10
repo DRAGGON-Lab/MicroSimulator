@@ -1,5 +1,5 @@
 {
-  "format": "cellmodeller2-legacy-example-matrix",
+  "format": "microsimulator-legacy-example-matrix",
   "version": 1,
   "legacy_repository": "https://github.com/CellModeller/CellModeller",
   "legacy_commit": "4896f543c6250f053eea2312e628cc3a96bf7408",
@@ -9,7 +9,7 @@
       "sha256": "436c6e93e32c221dd0fe23d240c8b64bf24e5157bfdd80f64c5e468dbdfc1805",
       "status": "migrated",
       "implementation": "examples/legacy/ACS2012/EdgeDetectorChamber.py",
-      "implementation_sha256": "00739103da76b908ca658b36e78b2384a5b458522b0cf0079c76c6cd2c048aa6",
+      "implementation_sha256": "03e4571705c732968cf86347b5950784a75be8deb6c2167814315120103d4c5d",
       "steps": 3,
       "dt": 0.01,
       "note": "OpenCL coupled rates replaced by a typed native controller."
@@ -69,7 +69,7 @@
       "sha256": "70334d9029a3908bfc5604c29bf7847ab0d8abcc41e17f9f845cd4c5649adc23",
       "status": "migrated",
       "implementation": "examples/legacy/Tutorial_2/Tutorial_2a.py",
-      "implementation_sha256": "9279980f5c8d678f1a4f94cdc03c2f8e15f7b7c06f31bb39a18d12a343676a62",
+      "implementation_sha256": "2b0a7e15c4072fc0301cb32b6c35cb342d1a63196b21297f23a143aac29d6277",
       "steps": 3,
       "dt": 0.01,
       "note": "OpenCL species rates replaced by a typed native controller."
@@ -79,7 +79,7 @@
       "sha256": "27f6414acd9fc98f079a44e2d5a577d322243f94a46ea75f6e823a247d3e8390",
       "status": "migrated",
       "implementation": "examples/legacy/Tutorial_2/Tutorial_2b.py",
-      "implementation_sha256": "0eb563b25f1f981d9d4305eeb8e788a9c1147f62b90462ef196f6c991c9af5f5",
+      "implementation_sha256": "870b6e7c9df167b5ef335f693bcbc7cdce609d43c1d6a7bb9830ca26b6cb1bb8",
       "steps": 3,
       "dt": 0.01,
       "note": "OpenCL feedback rates replaced by a typed native controller."
@@ -89,7 +89,7 @@
       "sha256": "50cadae5ffac5ae7bb8bad8dfbd952461640514ac099d6a56d868a2704771693",
       "status": "migrated",
       "implementation": "examples/legacy/Tutorial_3/Tutorial_3.py",
-      "implementation_sha256": "695e2779a139293fe7a2a056df48bae524577029546d81f58e8f88ff23ee3462",
+      "implementation_sha256": "4abc0fc71e74ae547e5bb14af4ced1299e0e6f63193e51f49fef67b2c8e5467b",
       "steps": 3,
       "dt": 0.01,
       "note": "OpenCL two-signal coupling replaced by a typed native controller."
@@ -169,7 +169,7 @@
       "sha256": "84fa75c1916552ec8c7ad5d5775473f8263df4ea6bb98d9926a8bf79dd319f12",
       "status": "migrated",
       "implementation": "examples/legacy/ex2_constGene.py",
-      "implementation_sha256": "e8b4d2dbfb6c973eaecbec3f926856715d92fc381aa03a1520c6b44d82bcf4e3",
+      "implementation_sha256": "4f91fca1fd26c9c79b3ea1b631daba9c6244e2e178ccd556ac65f53cf269834c",
       "steps": 3,
       "dt": 0.01,
       "note": "OpenCL species rates replaced by a typed native controller."
@@ -179,7 +179,7 @@
       "sha256": "fc07c001efbf68c27730882de16e1e3b2c13142b8d1b719e807515863eb60896",
       "status": "migrated",
       "implementation": "examples/legacy/ex2a_dilution.py",
-      "implementation_sha256": "dc3752e4311ee00a210dfd3309659cf9b1ad0bacdce476778d341d466b5e6221",
+      "implementation_sha256": "df0518f40f09fa5ecaaf6925c492d072c5e7e12d4ade75429b3af76d48b7c805",
       "steps": 3,
       "dt": 0.01,
       "note": "OpenCL dilution rates replaced by a typed native controller."
@@ -189,7 +189,7 @@
       "sha256": "2e81fe593e826fa4aff976d4bd430919a79d5648634c0d70071c6b6aa962f0d3",
       "status": "migrated",
       "implementation": "examples/legacy/ex2b_diluteRepression.py",
-      "implementation_sha256": "53daaaf0fcd91c2cc9febfee3ce7ffedcc12244dcf7c38a6f1e061fda2475342",
+      "implementation_sha256": "83d2a0792b164863bfa6015fcbeedf479b7b643cd482d95b2dbeeb530224e89f",
       "steps": 3,
       "dt": 0.01,
       "note": "OpenCL repression rates replaced by a typed native controller."
@@ -199,7 +199,7 @@
       "sha256": "4ec9482c00c844b2c0bc5ed9374b959d11a4199a4b6f8b7ea75a932a214560e8",
       "status": "migrated",
       "implementation": "examples/legacy/ex3_simpleSignal.py",
-      "implementation_sha256": "7e1a81076cdc2baf3f246a7c18eddc750728929896acaf91cc66ceae988025c3",
+      "implementation_sha256": "af21befe179fb3c9c29822078c9c2464197a5969a88ce2114867ef94165df802",
       "steps": 3,
       "dt": 0.01,
       "note": "OpenCL signal coupling replaced by a typed native controller."
@@ -209,7 +209,7 @@
       "sha256": "d21325165f38a9f97f24c8d8c85d7f4d8f939322eb40cc27da7a2664ccc90f43",
       "status": "migrated",
       "implementation": "examples/legacy/ex4_simpleCellCellSignaling.py",
-      "implementation_sha256": "aed271c6aed06266a594664317ad5fd37a9119e92483d6f6c135b4e7d4a5c820",
+      "implementation_sha256": "e7be6ecd2d2d333d802c6f0909a07c6faa0e8601bf421ebedf07f7dc448dcd08",
       "steps": 3,
       "dt": 0.01,
       "note": "OpenCL cell-cell signaling replaced by a typed native controller."

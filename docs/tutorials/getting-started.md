@@ -2,11 +2,11 @@
 
 ## Prepare the workspace
 
-CellModeller2 requires Python 3.12, CMake, Ninja, a C++23 compiler, and `uv`. From the repository root:
+MicroSimulator requires Python 3.12, CMake, Ninja, a C++23 compiler, and `uv`. From the repository root:
 
 ```console
 uv sync --group dev --extra analysis --extra viewer
-uv run cm devices
+uv run microsimulator devices
 uv run pytest
 ```
 
@@ -24,7 +24,7 @@ pnpm --dir viewer build
 Tutorial options are JSON-valued model parameters. A string therefore needs JSON quotes inside the shell argument:
 
 ```console
-uv run cm run \
+uv run microsimulator run \
   --model examples/tutorials/biophysics.py \
   --parameter scenario='"basics"' \
   --backend cpu \
@@ -32,7 +32,7 @@ uv run cm run \
   --steps 100 \
   --dt 0.05 \
   --checkpoint-every 20 \
-  --output results/tutorial-basics.cm2.json
+  --output results/tutorial-basics.json
 ```
 
 The seed belongs to the model's dedicated random stream. It controls founder variation, daughter-axis jitter, stochastic plasmid partitioning, and conjugation events where applicable. The checkpoint records the model digest, seed, parameters, controller state, random state, native state, and run provenance.
@@ -40,7 +40,7 @@ The seed belongs to the model's dedicated random stream. It controls founder var
 Use `--stop-cell-count` for a bounded colony experiment:
 
 ```console
-uv run cm run \
+uv run microsimulator run \
   --model examples/tutorials/biophysics.py \
   --parameter scenario='"competition"' \
   --backend cpu \
@@ -48,7 +48,7 @@ uv run cm run \
   --steps 1000 \
   --dt 0.02 \
   --stop-cell-count 256 \
-  --output results/competition.cm2.json
+  --output results/competition.json
 ```
 
 The maximum step count is still required so a non-growing model always terminates.
@@ -56,13 +56,13 @@ The maximum step count is still required so a non-growing model always terminate
 ## Inspect a live simulation
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/gene_expression.py \
   --parameter scenario='"oscillator"' \
   --backend cpu \
   --seed 42 \
   --dt 0.01 \
-  --checkpoint-output results/oscillator-live.cm2.json \
+  --checkpoint-output results/oscillator-live.json \
   --open
 ```
 
@@ -72,18 +72,18 @@ The browser owns only presentation state. Python owns the clock, model, backend,
 
 ## Resume exactly
 
-Controller-backed checkpoints must be resumed with the same model source, seed, and parameters. CellModeller2 verifies the source digest before running the file:
+Controller-backed checkpoints must be resumed with the same model source, seed, and parameters. MicroSimulator verifies the source digest before running the file:
 
 ```console
-uv run cm run \
+uv run microsimulator run \
   --model examples/tutorials/gene_expression.py \
-  --resume results/oscillator-live.cm2.json \
+  --resume results/oscillator-live.json \
   --parameter scenario='"oscillator"' \
   --backend cpu \
   --seed 42 \
   --steps 100 \
   --dt 0.01 \
-  --output results/oscillator-resumed.cm2.json
+  --output results/oscillator-resumed.json
 ```
 
 Do not add `--overwrite` casually. Runs fail before mutation when a final or planned periodic output already exists.

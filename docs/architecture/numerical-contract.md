@@ -1,6 +1,6 @@
 # Numerical contract
 
-CellModeller2 separates exact state semantics from floating-point agreement.
+MicroSimulator separates exact state semantics from floating-point agreement.
 
 ## Exact across backends
 

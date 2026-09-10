@@ -5,7 +5,7 @@
 
 ## Context
 
-The legacy simulator passes `CellState.asymm` to the biophysics layer as two relative weights. The shipped `CLBacterium.divide` accepts those keyword arguments but drops them before `divide_cell`, so every maintained release still constructs equal daughters. CellModeller2 needs a defined asymmetric operation rather than preserving that accidental no-op.
+The legacy simulator passes `CellState.asymm` to the biophysics layer as two relative weights. The shipped `CLBacterium.divide` accepts those keyword arguments but drops them before `divide_cell`, so every maintained release still constructs equal daughters. MicroSimulator needs a defined asymmetric operation rather than preserving that accidental no-op.
 
 Cell geometry stores the capsule centerline length `l` and radius `r`. The legacy equal split creates two centerline lengths `l/2 - r`, places the daughter outer endpoints at the parent's outer endpoints, and leaves a `2r` centerline gap where the daughter caps touch.
 

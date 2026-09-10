@@ -1,4 +1,4 @@
-"""CellModeller2 public Python API."""
+"""MicroSimulator public Python API."""
 
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendFeature,

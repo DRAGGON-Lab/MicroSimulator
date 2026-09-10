@@ -26,7 +26,7 @@ Both coefficient arrays must be finite and non-negative. A relaxation toward a n
 ## 1. A signaling gene in a chamber
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/signaling.py \
   --parameter scenario='"single_gene"' \
   --seed 42 \
@@ -54,7 +54,7 @@ Two inward-facing planes at `y = -16` and `y = 16` confine cells. The signal gri
 ## 2. Sender-receiver communication
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/signaling.py \
   --parameter scenario='"communication"' \
   --seed 42 \
@@ -82,7 +82,7 @@ Use cell-type coloring to identify sender and receiver lineages, species channel
 ## 3. Two-strain mutualism
 
 ```console
-uv run cm view \
+uv run microsimulator view \
   --model examples/tutorials/signaling.py \
   --parameter scenario='"mutualism"' \
   --seed 42 \

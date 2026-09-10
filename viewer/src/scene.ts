@@ -1,6 +1,6 @@
 import canonicalize from "canonicalize";
 
-export const SCENE_FORMAT = "cellmodeller2-scene";
+export const SCENE_FORMAT = "microsimulator-scene";
 export const SCENE_VERSION = 1;
 export const MAX_SCENE_BYTES = 1 << 30;
 
@@ -459,8 +459,12 @@ export async function parseScene(source: string): Promise<SceneFrame> {
 
   const root = record(decoded, "$");
   exactKeys(root, "$", ["format", "version", "producer", "integrity", "frame"]);
-  if (string(root.format, "$.format") !== SCENE_FORMAT) {
-    return fail("$.format", "not a CellModeller2 scene");
+  if (
+    ![SCENE_FORMAT, "cellmodeller2-scene"].includes(
+      string(root.format, "$.format"),
+    )
+  ) {
+    return fail("$.format", "not a MicroSimulator scene");
   }
   if (integer(root.version, "$.version", 0, UINT32_MAX) !== SCENE_VERSION) {
     return fail(

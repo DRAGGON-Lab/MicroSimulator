@@ -424,7 +424,7 @@ def _load_legacy_model(
     digest = hashlib.sha256(source).hexdigest()
     if expected_digest is not None and digest != expected_digest:
         raise LegacyCompatibilityError("legacy model source digest does not match checkpoint")
-    module_name = f"_cellmodeller2_legacy_{digest[:16]}"
+    module_name = f"_microsimulator_legacy_{digest[:16]}"
     module = ModuleType(module_name)
     module.__file__ = str(source_path)
     module.__package__ = ""

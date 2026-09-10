@@ -4,7 +4,7 @@ import random
 from typing import cast
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     CellInit,
     ControllerStateError,
@@ -14,7 +14,7 @@ from cellmodeller2 import (
     StepPlan,
     UniformLengthDivision,
 )
-from cellmodeller2.checkpoint import JSONValue
+from microsimulator.checkpoint import JSONValue
 
 
 def test_uniform_length_division_tracks_native_identities() -> None:

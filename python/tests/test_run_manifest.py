@@ -7,21 +7,21 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     RUN_MANIFEST_FORMAT,
     RUN_MANIFEST_VERSION,
     RunManifestError,
     load_checkpoint_bundle,
     load_run_manifest,
 )
-from cellmodeller2.cli import main
+from microsimulator.cli import main
 
 
 def _write_model(path: Path, *, side_effect: Path | None = None) -> str:
     effect = f"Path({str(side_effect)!r}).write_text('executed')\n" if side_effect else ""
     path.write_text(
         "from pathlib import Path\n"
-        "from cellmodeller2 import CellInit\n"
+        "from microsimulator import CellInit\n"
         f"{effect}"
         "def build(context):\n"
         "    simulation = context.simulation()\n"
@@ -36,7 +36,7 @@ def _write_model(path: Path, *, side_effect: Path | None = None) -> str:
 
 def _write_controller_model(path: Path) -> str:
     path.write_text(
-        """from cellmodeller2 import CellInit
+        """from microsimulator import CellInit
 
 class Controller:
     def __init__(self, simulation):
@@ -116,8 +116,9 @@ def _invalid_id(job: dict[str, Any]) -> None:
     job["id"] = "spaces are not allowed"
 
 
+@pytest.mark.parametrize("format_name", [RUN_MANIFEST_FORMAT, "cellmodeller2-run-manifest"])
 def test_manifest_parsing_is_data_only_and_cli_executes_one_named_job(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], format_name: str
 ) -> None:
     model = tmp_path / "model.py"
     marker = tmp_path / "executed.txt"
@@ -131,6 +132,9 @@ def test_manifest_parsing_is_data_only_and_cli_executes_one_named_job(
         ],
     )
 
+    document = json.loads(manifest_path.read_text())
+    document["format"] = format_name
+    manifest_path.write_text(json.dumps(document))
     manifest = load_run_manifest(manifest_path)
 
     assert not marker.exists()

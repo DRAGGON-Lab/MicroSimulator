@@ -7,8 +7,8 @@ import argparse
 import json
 from pathlib import Path
 
-from cellmodeller2 import BackendKind
-from cellmodeller2.compatibility import (
+from microsimulator import BackendKind
+from microsimulator.compatibility import (
     LegacyExampleMatrixError,
     enumerate_backend_targets,
     load_legacy_example_matrix,

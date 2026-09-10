@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     CHECKPOINT_FORMAT,
     CHECKPOINT_VERSION,
     BackendKind,
@@ -31,7 +31,7 @@ from cellmodeller2 import (
     load_checkpoint_bundle,
     save_checkpoint,
 )
-from cellmodeller2.checkpoint import JSONValue
+from microsimulator.checkpoint import JSONValue
 
 
 def _instruction(
@@ -178,7 +178,8 @@ def _remove_affine_reaction(document: dict[str, Any]) -> None:
         del grid["spec"]["reaction"]
 
 
-def test_checkpoint_round_trip_resumes_exactly(tmp_path: Path) -> None:
+@pytest.mark.parametrize("format_name", [CHECKPOINT_FORMAT, "cellmodeller2-checkpoint"])
+def test_checkpoint_round_trip_resumes_exactly(tmp_path: Path, format_name: str) -> None:
     original, daughter_a, daughter_b = _make_simulation()
     path = tmp_path / "colony.cm2.json"
     save_checkpoint(
@@ -196,6 +197,8 @@ def test_checkpoint_round_trip_resumes_exactly(tmp_path: Path) -> None:
     assert "module_source" not in path.read_text(encoding="utf-8")
     assert list(tmp_path.glob(".*.tmp")) == []
 
+    document["format"] = format_name
+    path.write_text(json.dumps(document), encoding="utf-8")
     restored = load_checkpoint(path)
     _assert_cells_exact(restored, original)
     assert restored.lineage_parent(daughter_a) == 1
@@ -524,7 +527,7 @@ def test_checkpoint_rejects_executable_or_non_json_values(tmp_path: Path) -> Non
         save_checkpoint(simulation, path, provenance={"callback": object()})  # type: ignore[dict-item]
     assert not path.exists()
 
-    path.write_text('{"format":"cellmodeller2-checkpoint","value":NaN}', encoding="utf-8")
+    path.write_text('{"format":"microsimulator-checkpoint","value":NaN}', encoding="utf-8")
     with pytest.raises(CheckpointError, match="non-finite"):
         load_checkpoint(path)
 

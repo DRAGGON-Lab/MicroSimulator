@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from cellmodeller2 import (
+from microsimulator import (
     BackendKind,
     ModelContext,
     RunnableModel,
@@ -19,7 +19,7 @@ from cellmodeller2 import (
     build_legacy_model,
     build_model,
 )
-from cellmodeller2.runner import native_simulation
+from microsimulator.runner import native_simulation
 
 _ROOT = Path(__file__).resolve().parents[2]
 _REFERENCE = _ROOT / "compatibility" / "legacy-trajectories-v1.json"
@@ -83,7 +83,10 @@ def _document() -> dict[str, Any]:
 
 def _scenarios() -> list[dict[str, Any]]:
     document = _document()
-    assert document["format"] == "cellmodeller2-recorded-legacy-trajectories"
+    assert document["format"] in (
+        "microsimulator-recorded-legacy-trajectories",
+        "cellmodeller2-recorded-legacy-trajectories",
+    )
     assert document["version"] == 1
     assert document["legacy_commit"] == "4896f543c6250f053eea2312e628cc3a96bf7408"
     scenarios = cast(list[dict[str, Any]], document["scenarios"])

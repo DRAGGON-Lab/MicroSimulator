@@ -7,7 +7,7 @@
 
 Some spatial models apply a reaction throughout a physical region rather than at cell locations. The SimBOL Danino tutorial, for example, removes AHL in a flow channel, replenishes nutrient toward a target inside a trap, and decays nutrient outside it. Legacy CellModeller implements these terms by overriding a Python grid class and mutating its rate array.
 
-CellModeller2 cannot admit arbitrary host callbacks or injected device source without losing its typed, data-only checkpoint contract and independent CPU, Metal, and CUDA implementations. A biological special case named for AHL, nutrient, or trap geometry would instead put model vocabulary into the numerical engine.
+MicroSimulator cannot admit arbitrary host callbacks or injected device source without losing its typed, data-only checkpoint contract and independent CPU, Metal, and CUDA implementations. A biological special case named for AHL, nutrient, or trap geometry would instead put model vocabulary into the numerical engine.
 
 ## Decision
 
