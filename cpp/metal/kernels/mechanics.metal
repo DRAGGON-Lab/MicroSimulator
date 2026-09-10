@@ -36,8 +36,7 @@ MechanicsDofs contact_jacobian(float3 normal, float3 arm, float3 axis, float tot
                                float weight) {
   MechanicsDofs result;
   result.linear_length =
-      float4(weight * normal,
-             weight * dot(axis, arm) * dot(axis, normal) / total_length);
+      float4(weight * normal, weight * dot(axis, arm) * dot(axis, normal) / total_length);
   result.rotation = float4(weight * cross(arm, normal), 0.0f);
   return result;
 }
@@ -48,9 +47,8 @@ kernel void build_mechanics_rows(
     device const uint* second_slots [[buffer(4)]], device const float4* points [[buffer(5)]],
     device const float4* normals [[buffer(6)]], device const float* separations [[buffer(7)]],
     device const float* weights [[buffer(8)]], device MechanicsDofs* first_rows [[buffer(9)]],
-    device MechanicsDofs* second_rows [[buffer(10)]],
-    device float* right_hand_side [[buffer(11)]], constant uint& contact_count [[buffer(12)]],
-    uint index [[thread_position_in_grid]]) {
+    device MechanicsDofs* second_rows [[buffer(10)]], device float* right_hand_side [[buffer(11)]],
+    constant uint& contact_count [[buffer(12)]], uint index [[thread_position_in_grid]]) {
   if (index >= contact_count) {
     return;
   }
@@ -59,9 +57,8 @@ kernel void build_mechanics_rows(
   float weight = weights[index];
   float3 normal = normals[index].xyz;
   float3 point = points[index].xyz;
-  first_rows[index] =
-      contact_jacobian(normal, point - centers[first].xyz, axes[first].xyz,
-                       geometry[first].x + 2.0f * geometry[first].y, weight);
+  first_rows[index] = contact_jacobian(normal, point - centers[first].xyz, axes[first].xyz,
+                                       geometry[first].x + 2.0f * geometry[first].y, weight);
   second_rows[index] =
       second == 0xffffffffu
           ? zero_dofs()
@@ -70,14 +67,15 @@ kernel void build_mechanics_rows(
   right_hand_side[index] = weight * separations[index];
 }
 
-kernel void apply_mechanics_b(
-    device const MechanicsDofs* first_rows [[buffer(0)]],
-    device const MechanicsDofs* second_rows [[buffer(1)]],
-    device const uint* first_slots [[buffer(2)]],
-    device const uint* second_slots [[buffer(3)]],
-    device const MechanicsDofs* input [[buffer(4)]], device float* row_values [[buffer(5)]],
-    constant uint& contact_count [[buffer(6)]], device const uchar* fixed [[buffer(7)]],
-    uint index [[thread_position_in_grid]]) {
+kernel void apply_mechanics_b(device const MechanicsDofs* first_rows [[buffer(0)]],
+                              device const MechanicsDofs* second_rows [[buffer(1)]],
+                              device const uint* first_slots [[buffer(2)]],
+                              device const uint* second_slots [[buffer(3)]],
+                              device const MechanicsDofs* input [[buffer(4)]],
+                              device float* row_values [[buffer(5)]],
+                              constant uint& contact_count [[buffer(6)]],
+                              device const uchar* fixed [[buffer(7)]],
+                              uint index [[thread_position_in_grid]]) {
   if (index >= contact_count) {
     return;
   }
@@ -91,14 +89,15 @@ kernel void apply_mechanics_b(
   }
 }
 
-kernel void apply_mechanics_transpose(
-    device const MechanicsDofs* first_rows [[buffer(0)]],
-    device const MechanicsDofs* second_rows [[buffer(1)]],
-    device const float* row_values [[buffer(2)]],
-    device const uint* incidence_offsets [[buffer(3)]],
-    device const uint* incidence_indices [[buffer(4)]],
-    device const uint* first_slots [[buffer(5)]], device MechanicsDofs* output [[buffer(6)]],
-    constant uint& cell_count [[buffer(7)]], uint cell [[thread_position_in_grid]]) {
+kernel void apply_mechanics_transpose(device const MechanicsDofs* first_rows [[buffer(0)]],
+                                      device const MechanicsDofs* second_rows [[buffer(1)]],
+                                      device const float* row_values [[buffer(2)]],
+                                      device const uint* incidence_offsets [[buffer(3)]],
+                                      device const uint* incidence_indices [[buffer(4)]],
+                                      device const uint* first_slots [[buffer(5)]],
+                                      device MechanicsDofs* output [[buffer(6)]],
+                                      constant uint& cell_count [[buffer(7)]],
+                                      uint cell [[thread_position_in_grid]]) {
   if (cell >= cell_count) {
     return;
   }
@@ -131,8 +130,7 @@ kernel void add_mechanics_regularizer(
   float radius = geometry[cell].y;
   float mass = mu_a * total_length;
   float axial_inertia = 0.5f * mass * radius * radius;
-  float transverse_inertia =
-      mass * (total_length * total_length + 3.0f * radius * radius) / 12.0f;
+  float transverse_inertia = mass * (total_length * total_length + 3.0f * radius * radius) / 12.0f;
   float3 axis = axes[cell].xyz;
   float3 rotation = input[cell].rotation.xyz;
   float3 inertia_rotation = rotation * transverse_inertia +
@@ -146,12 +144,13 @@ kernel void add_mechanics_regularizer(
   output[cell] = result;
 }
 
-kernel void initialize_mechanics_vectors(
-    device MechanicsDofs* right_hand_side [[buffer(0)]],
-    device MechanicsDofs* solution [[buffer(1)]], device MechanicsDofs* residual [[buffer(2)]],
-    device MechanicsDofs* search_direction [[buffer(3)]],
-    constant uint& cell_count [[buffer(4)]], device const uchar* fixed [[buffer(5)]],
-    uint cell [[thread_position_in_grid]]) {
+kernel void initialize_mechanics_vectors(device MechanicsDofs* right_hand_side [[buffer(0)]],
+                                         device MechanicsDofs* solution [[buffer(1)]],
+                                         device MechanicsDofs* residual [[buffer(2)]],
+                                         device MechanicsDofs* search_direction [[buffer(3)]],
+                                         constant uint& cell_count [[buffer(4)]],
+                                         device const uchar* fixed [[buffer(5)]],
+                                         uint cell [[thread_position_in_grid]]) {
   if (cell >= cell_count) {
     return;
   }
@@ -174,20 +173,22 @@ kernel void update_mechanics_solution_residual(
   residual[cell] = added(residual[cell], scaled(applied[cell], -alpha));
 }
 
-kernel void update_mechanics_search_direction(
-    device const MechanicsDofs* residual [[buffer(0)]],
-    device MechanicsDofs* search_direction [[buffer(1)]], constant float& beta [[buffer(2)]],
-    constant uint& cell_count [[buffer(3)]], uint cell [[thread_position_in_grid]]) {
+kernel void update_mechanics_search_direction(device const MechanicsDofs* residual [[buffer(0)]],
+                                              device MechanicsDofs* search_direction [[buffer(1)]],
+                                              constant float& beta [[buffer(2)]],
+                                              constant uint& cell_count [[buffer(3)]],
+                                              uint cell [[thread_position_in_grid]]) {
   if (cell >= cell_count) {
     return;
   }
   search_direction[cell] = added(residual[cell], scaled(search_direction[cell], beta));
 }
 
-kernel void subtract_mechanics_vectors(
-    device const MechanicsDofs* left [[buffer(0)]],
-    device const MechanicsDofs* right [[buffer(1)]], device MechanicsDofs* output [[buffer(2)]],
-    constant uint& cell_count [[buffer(3)]], uint cell [[thread_position_in_grid]]) {
+kernel void subtract_mechanics_vectors(device const MechanicsDofs* left [[buffer(0)]],
+                                       device const MechanicsDofs* right [[buffer(1)]],
+                                       device MechanicsDofs* output [[buffer(2)]],
+                                       constant uint& cell_count [[buffer(3)]],
+                                       uint cell [[thread_position_in_grid]]) {
   if (cell >= cell_count) {
     return;
   }

@@ -1,0 +1,46 @@
+# Checks that run on every commit. They cover the fast, purely local gates:
+# formatting and linting for each language in the tree, plus the Python type
+# check. Tests, native builds, and backend conformance are not here; they need
+# a configured build and hardware, and run through CTest and the conformance
+# scripts instead.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        # The device photomasks under docs/tutorials/devices are legitimately
+        # large and are tracked deliberately.
+        args: [--maxkb=1024]
+        exclude: ^docs/tutorials/devices/
+      - id: end-of-file-fixer
+        exclude: ^docs/tutorials/devices/
+      - id: trailing-whitespace
+        exclude: ^docs/tutorials/devices/
+
+  # Pinned to the version the project depends on, so a hook run and a local
+  # `ruff check` enforce the same rule set. Formatting is deliberately absent:
+  # the linter's rules, including import order, are what this tree follows.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.3
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v19.1.7
+    hooks:
+      - id: clang-format
+        types_or: [c++, c, cuda, objective-c++, metal]
+        files: ^cpp/
+
+  - repo: local
+    hooks:
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        pass_filenames: false
+        types: [python]

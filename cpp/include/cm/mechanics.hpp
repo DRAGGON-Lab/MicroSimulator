@@ -58,6 +58,10 @@ struct MechanicsIntegrationParameters {
 void validate_mechanics_parameters(const MechanicsParameters& parameters);
 void validate_mechanics_integration_parameters(const MechanicsIntegrationParameters& parameters);
 
+// The axis-angle rotation of a unit direction by a rotation vector, with the
+// angle capped at ``max_rotation``.
+[[nodiscard]] Vec3 rotate_axis_angle(Vec3 direction, Vec3 rotation, float max_rotation);
+
 void integrate_mechanics_result(
     WorldState& state, const MechanicsSolveResult& result,
     const MechanicsIntegrationParameters& parameters = MechanicsIntegrationParameters{},

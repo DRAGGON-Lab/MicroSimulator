@@ -9,6 +9,7 @@ from microsimulator import (
     BackendKind,
     GridBoundaryKind,
     GridShape,
+    SignalGridAffineReaction,
     SignalGridSpec,
     SignalGridVelocityField,
     SignalIntegrationKind,
@@ -16,7 +17,13 @@ from microsimulator import (
     Vec3,
     backend_available,
 )
-from microsimulator.flow import FlowError, colony_mobility, gap_mobility, solve_flow_field
+from microsimulator.flow import (
+    FlowError,
+    colony_mobility,
+    colony_species_density,
+    gap_mobility,
+    solve_flow_field,
+)
 from microsimulator.microfluidics import TrapChannelDevice
 
 
@@ -376,3 +383,77 @@ def test_partly_blocked_inlets_and_walled_off_pockets_solve() -> None:
     # The pocket is cut off from the flow, so it carries none.
     assert sealed_field.y_faces[_y_face(pocket, 3, 3, 0)] == 0.0
     assert sealed_field.y_faces[_y_face(pocket, 4, 3, 0)] == 0.0
+
+
+def test_colony_species_density_rasterizes_one_channel() -> None:
+    """Intracellular concentration times B is conserved by physical smoothing."""
+
+    spec = _duct(nx=3, ny=3, nz=1)
+    spec.spacing = Vec3(4.0, 4.0, 4.0)
+
+    @dataclass
+    class _Cell:
+        position: Vec3
+        species: list[float]
+        length: float = 2.0
+        radius: float = 0.5
+
+    cells = [
+        _Cell(Vec3(0.0, 0.0, 0.0), [1.0, 2.0]),
+        _Cell(Vec3(0.0, 0.0, 0.0), [3.0, 4.0]),
+        _Cell(Vec3(4.0, 4.0, 0.0), [0.0, 5.0]),
+        _Cell(Vec3(400.0, 0.0, 0.0), [9.0, 9.0]),
+    ]
+    density = colony_species_density(spec, cells, species=1)
+    voxel = spec.voxel_volume
+    amount = 11 * math.pi * 0.5**2 * (2 + 2 * 0.5)
+    assert math.isclose(sum(density) * voxel, amount, rel_tol=1e-7)
+    assert density[_site(spec, 0, 0, 0)] > 0
+    assert density[_site(spec, 1, 1, 0)] > 0
+    with pytest.raises(FlowError, match="outside the cell"):
+        colony_species_density(spec, cells, species=5)
+
+
+def test_a_running_simulation_swaps_its_signal_reaction() -> None:
+    """A loss that depends on cell state can be handed to transport each step."""
+
+    spec = _duct(nx=3, ny=1, nz=1)
+    spec.x_lower.kind = GridBoundaryKind.NO_FLUX
+    spec.x_lower.values = []
+    spec.x_upper.kind = GridBoundaryKind.NO_FLUX
+    spec.x_upper.values = []
+    for name in ("y_lower", "y_upper"):
+        boundary = getattr(spec, name)
+        boundary.kind = GridBoundaryKind.NO_FLUX
+        boundary.values = []
+        setattr(spec, name, boundary)
+    spec.diffusion = [0.0]
+    spec.integration = SignalIntegrationKind.CRANK_NICOLSON
+
+    simulation = Simulation()
+    simulation.configure_signal_grid(spec, [4.0, 4.0, 4.0])
+    simulation.step(0.5)
+    assert simulation.signal_levels == [4.0, 4.0, 4.0]
+
+    reaction = SignalGridAffineReaction()
+    reaction.source_rates = [0.0, 0.0, 0.0]
+    reaction.loss_rates = [2.0, 0.0, 0.0]
+    simulation.set_signal_reaction(reaction)
+    simulation.step(0.5)
+    levels = simulation.signal_levels
+    assert levels[0] < 4.0
+    assert levels[1] == 4.0
+
+    # Transport takes the reaction into its implicit diagonal, so a loss that
+    # would remove more than a site holds in one explicit step is still stable.
+    # Crank-Nicolson stays positive while the loss times the step is under two.
+    reaction.loss_rates = [3.0, 0.0, 0.0]
+    simulation.set_signal_reaction(reaction)
+    before_strong = simulation.signal_levels[0]
+    simulation.step(0.5)
+    assert 0.0 < simulation.signal_levels[0] < before_strong * 0.5
+
+    simulation.set_signal_reaction(None)
+    before = simulation.signal_levels
+    simulation.step(0.5)
+    assert simulation.signal_levels == before

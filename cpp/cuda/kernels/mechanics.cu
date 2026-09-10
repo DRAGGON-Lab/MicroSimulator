@@ -181,8 +181,7 @@ __global__ void add_mechanics_regularizer(const float4* axes, const float4* geom
 __global__ void initialize_mechanics_vectors(MechanicsDofsGpu* right_hand_side,
                                              MechanicsDofsGpu* solution, MechanicsDofsGpu* residual,
                                              MechanicsDofsGpu* search_direction,
-                                             const std::uint8_t* fixed,
-                                             std::uint32_t cell_count) {
+                                             const std::uint8_t* fixed, std::uint32_t cell_count) {
   const auto cell = blockIdx.x * blockDim.x + threadIdx.x;
   if (cell >= cell_count) {
     return;

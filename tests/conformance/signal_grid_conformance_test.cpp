@@ -146,6 +146,7 @@ void run_case(cm::SignalIntegrationKind integration, float dt, SpecKind kind = S
 int main() {
   run_case(cm::SignalIntegrationKind::forward_euler, 0.02F);
   run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F);
+  run_case(cm::SignalIntegrationKind::backward_euler, 0.5F);
   run_case(cm::SignalIntegrationKind::forward_euler, 0.02F, SpecKind::masked);
   run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::masked);
   run_case(cm::SignalIntegrationKind::forward_euler, 0.02F, SpecKind::velocity_field);

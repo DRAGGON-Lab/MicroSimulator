@@ -31,6 +31,8 @@ class Simulation {
 
   CellId add_cell(const CellInit& cell);
   void remove_cell(CellId id);
+  void apply_flow_drift(float dt, const MechanicsIntegrationParameters& parameters =
+                                      MechanicsIntegrationParameters{});
   ConstraintId add_plane_constraint(const PlaneConstraintInit& plane);
   ConstraintId add_sphere_constraint(const SphereConstraintInit& sphere);
   ConstraintId add_box_constraint(const BoxConstraintInit& box);
@@ -45,6 +47,7 @@ class Simulation {
   void configure_signal_grid(const SignalGridSpec& spec, std::vector<float> levels = {});
   void set_signal_levels(std::span<const float> levels);
   void set_velocity_field(std::optional<SignalGridVelocityField> field);
+  void set_signal_reaction(std::optional<SignalGridAffineReaction> reaction);
   std::pair<CellId, CellId> divide(CellId parent_id, float first_fraction);
   std::pair<CellId, CellId> divide_equal(CellId parent_id);
   void step(float dt);

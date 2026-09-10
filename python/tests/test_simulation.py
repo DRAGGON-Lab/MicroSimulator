@@ -12,6 +12,8 @@ from microsimulator import (
     ConstraintRegion,
     ContactParameters,
     ExternalConstraintKind,
+    GridBoundaryKind,
+    GridShape,
     MechanicsIntegrationParameters,
     MechanicsParameters,
     PlaneConstraintInit,
@@ -19,6 +21,8 @@ from microsimulator import (
     RateOp,
     RodContactLocation,
     RodEndpoint,
+    SignalGridSpec,
+    SignalGridVelocityField,
     Simulation,
     SolverBreakdown,
     SolverStatus,
@@ -466,3 +470,131 @@ def test_native_growth_matches_cpu(backend: BackendKind) -> None:
 
     for cpu_cell, native_cell in zip(cpu.cells(), native.cells(), strict=True):
         assert math.isclose(cpu_cell.length, native_cell.length, abs_tol=1.0e-6)
+
+
+def uniform_flow_grid(
+    *, origin: float, spacing: float, sites: int, speed: float
+) -> SignalGridSpec:
+    """A collapsed y/z lattice carrying a uniform x flow between fixed ends."""
+
+    shape = GridShape()
+    shape.x, shape.y, shape.z = sites, 1, 1
+    grid = SignalGridSpec()
+    grid.signal_count = 1
+    grid.shape = shape
+    grid.origin = Vec3(origin, 0.0, 0.0)
+    grid.spacing = Vec3(spacing, 1.0, 1.0)
+    grid.diffusion = [0.0]
+    grid.advection = [Vec3()]
+    grid.x_lower.kind = GridBoundaryKind.FIXED
+    grid.x_lower.values = [0.0]
+    grid.x_upper.kind = GridBoundaryKind.FIXED
+    grid.x_upper.values = [0.0]
+    field = SignalGridVelocityField()
+    field.x_faces = [speed] * (sites + 1)
+    field.y_faces = [0.0] * (2 * sites)
+    field.z_faces = [0.0] * (2 * sites)
+    grid.velocity_field = field
+    return grid
+
+
+@pytest.mark.parametrize(
+    ("origin", "spacing"), [(0.0, 1.0), (0.1, 0.3), (-97.5, 1.65), (0.7, 5.0)]
+)
+def test_flow_drift_clamps_endpoints_on_any_lattice(origin: float, spacing: float) -> None:
+    sites = 33
+    simulation = Simulation()
+    simulation.configure_signal_grid(uniform_flow_grid(
+        origin=origin, spacing=spacing, sites=sites, speed=2.0
+    ))
+    cell = CellInit()
+    cell.position = Vec3(origin + spacing * (sites - 1), 0.0, 0.0)
+    cell.direction = Vec3(1.0, 0.0, 0.0)
+    cell.length = 2.0 * spacing
+    cell.radius = 0.3
+    cell_id = simulation.add_cell(cell)
+
+    simulation.apply_flow_drift(0.1)
+
+    assert math.isclose(
+        simulation.cell(cell_id).position.x,
+        origin + spacing * (sites - 1) + 0.2,
+        rel_tol=1.0e-5,
+        abs_tol=1.0e-5,
+    )
+
+
+def test_flow_drift_substeps_instead_of_clipping_the_total_rotation() -> None:
+    shape = GridShape()
+    shape.x, shape.y, shape.z = 3, 3, 1
+    grid = SignalGridSpec()
+    grid.signal_count = 1
+    grid.shape = shape
+    grid.spacing = Vec3(1.0, 1.0, 1.0)
+    grid.diffusion = [0.0]
+    grid.advection = [Vec3()]
+    grid.x_lower.kind = GridBoundaryKind.FIXED
+    grid.x_lower.values = [0.0]
+    grid.x_upper.kind = GridBoundaryKind.FIXED
+    grid.x_upper.values = [0.0]
+    field = SignalGridVelocityField()
+    field.x_faces = [float(y) for _ in range(4) for y in range(3)]
+    field.y_faces = [0.0] * 12
+    field.z_faces = [0.0] * 18
+    grid.velocity_field = field
+
+    cell = CellInit()
+    cell.position = Vec3(1.0, 1.0, 0.0)
+    cell.direction = Vec3(0.0, 1.0, 0.0)
+    cell.length = 2.0
+    cell.radius = 0.3
+
+    capped = Simulation()
+    capped.configure_signal_grid(grid)
+    capped_id = capped.add_cell(cell)
+    capped.apply_flow_drift(1.0)
+    limit = MechanicsIntegrationParameters().max_rotation_radians
+    assert capped.cell(capped_id).direction.x > 3 * math.sin(limit)
+
+    frozen = Simulation()
+    frozen.configure_signal_grid(grid)
+    frozen_id = frozen.add_cell(cell)
+    integration = MechanicsIntegrationParameters()
+    integration.max_rotation_radians = 0.0
+    frozen.apply_flow_drift(1.0, integration)
+    assert math.isclose(frozen.cell(frozen_id).direction.x, 0.0, abs_tol=1.0e-6)
+    assert math.isclose(frozen.cell(frozen_id).direction.y, 1.0, abs_tol=1.0e-6)
+
+
+def test_a_cell_inside_a_wall_samples_no_flow_and_does_not_drift() -> None:
+    """Mechanics can press a crowded cell into a wall; drift must survive it.
+
+    The velocity field is zero on every face of a solid site, so a stencil with
+    no fluid in it samples exactly zero and the cell stays put. Concentration
+    there has no such value, so sampling it is still an error.
+    """
+
+    sites = 5
+    grid = uniform_flow_grid(origin=0.0, spacing=1.0, sites=sites, speed=2.0)
+    # A solid block in the middle of the line, with the flow stopping at it.
+    grid.obstacles = [0, 0, 1, 0, 0]
+    field = SignalGridVelocityField()
+    field.x_faces = [2.0, 2.0, 0.0, 0.0, 2.0, 2.0]
+    field.y_faces = [0.0] * (2 * sites)
+    field.z_faces = [0.0] * (2 * sites)
+    grid.velocity_field = field
+
+    simulation = Simulation()
+    simulation.configure_signal_grid(grid, [1.0, 1.0, 0.0, 1.0, 1.0])
+    buried = CellInit()
+    buried.position = Vec3(2.0, 0.0, 0.0)
+    buried.direction = Vec3(1.0, 0.0, 0.0)
+    buried.length = 0.0
+    buried.radius = 0.3
+    buried_id = simulation.add_cell(buried)
+
+    simulation.apply_flow_drift(0.5)
+
+    assert simulation.cell(buried_id).position.x == 2.0
+    with pytest.raises(ValueError, match="inside a grid obstacle"):
+        simulation.sample_signals(Vec3(2.0, 0.0, 0.0))

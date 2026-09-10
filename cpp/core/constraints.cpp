@@ -3,6 +3,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <unordered_set>
 #include <utility>
 
@@ -44,9 +45,8 @@ void validate_sphere(const SphereConstraint& sphere) {
 }
 
 bool positive_finite_extents(const Vec3& half_extents) {
-  return std::isfinite(half_extents.x) && half_extents.x > 0.0F &&
-         std::isfinite(half_extents.y) && half_extents.y > 0.0F &&
-         std::isfinite(half_extents.z) && half_extents.z > 0.0F;
+  return std::isfinite(half_extents.x) && half_extents.x > 0.0F && std::isfinite(half_extents.y) &&
+         half_extents.y > 0.0F && std::isfinite(half_extents.z) && half_extents.z > 0.0F;
 }
 
 void validate_box(const BoxConstraint& box) {
@@ -94,50 +94,25 @@ void validate_constraint_state(ConstraintId next_id, std::span<const PlaneConstr
   }
   std::unordered_set<ConstraintId> ids;
   ids.reserve(total);
-  ConstraintId previous_plane = invalid_constraint_id;
-  for (const auto& plane : planes) {
-    validate_plane(plane);
-    if (plane.id <= previous_plane || plane.id >= next_id) {
-      throw std::invalid_argument("checkpoint plane identifiers are not ordered and allocated");
+  const auto check_ordered = [&ids, next_id](const auto& constraints, auto&& validate,
+                                             const char* kind) {
+    ConstraintId previous = invalid_constraint_id;
+    for (const auto& constraint : constraints) {
+      validate(constraint);
+      if (constraint.id <= previous || constraint.id >= next_id) {
+        throw std::invalid_argument(std::string("checkpoint ") + kind +
+                                    " identifiers are not ordered and allocated");
+      }
+      if (!ids.insert(constraint.id).second) {
+        throw std::invalid_argument("checkpoint contains a duplicate constraint identifier");
+      }
+      previous = constraint.id;
     }
-    if (!ids.insert(plane.id).second) {
-      throw std::invalid_argument("checkpoint contains a duplicate constraint identifier");
-    }
-    previous_plane = plane.id;
-  }
-  ConstraintId previous_sphere = invalid_constraint_id;
-  for (const auto& sphere : spheres) {
-    validate_sphere(sphere);
-    if (sphere.id <= previous_sphere || sphere.id >= next_id) {
-      throw std::invalid_argument("checkpoint sphere identifiers are not ordered and allocated");
-    }
-    if (!ids.insert(sphere.id).second) {
-      throw std::invalid_argument("checkpoint contains a duplicate constraint identifier");
-    }
-    previous_sphere = sphere.id;
-  }
-  ConstraintId previous_box = invalid_constraint_id;
-  for (const auto& box : boxes) {
-    validate_box(box);
-    if (box.id <= previous_box || box.id >= next_id) {
-      throw std::invalid_argument("checkpoint box identifiers are not ordered and allocated");
-    }
-    if (!ids.insert(box.id).second) {
-      throw std::invalid_argument("checkpoint contains a duplicate constraint identifier");
-    }
-    previous_box = box.id;
-  }
-  ConstraintId previous_cylinder = invalid_constraint_id;
-  for (const auto& cylinder : cylinders) {
-    validate_cylinder(cylinder);
-    if (cylinder.id <= previous_cylinder || cylinder.id >= next_id) {
-      throw std::invalid_argument("checkpoint cylinder identifiers are not ordered and allocated");
-    }
-    if (!ids.insert(cylinder.id).second) {
-      throw std::invalid_argument("checkpoint contains a duplicate constraint identifier");
-    }
-    previous_cylinder = cylinder.id;
-  }
+  };
+  check_ordered(planes, validate_plane, "plane");
+  check_ordered(spheres, validate_sphere, "sphere");
+  check_ordered(boxes, validate_box, "box");
+  check_ordered(cylinders, validate_cylinder, "cylinder");
 }
 
 std::size_t checked_offset_count(std::size_t cell_count) {

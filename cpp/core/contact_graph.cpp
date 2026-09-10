@@ -70,8 +70,8 @@ void validate_contact_parameters(const ContactParameters& parameters) {
   }
 }
 
-std::vector<ContactCandidate> find_cell_contact_candidates(
-    const WorldState& state, const ContactParameters& parameters) {
+std::vector<ContactCandidate> find_cell_contact_candidates(const WorldState& state,
+                                                           const ContactParameters& parameters) {
   validate_contact_parameters(parameters);
   const auto geometry = state.geometry_state();
   std::vector<CapsuleBounds> bounds;
@@ -112,10 +112,10 @@ std::vector<ContactCandidate> find_cell_contact_candidates(
     });
     active.erase(expired.begin(), expired.end());
     for (const auto* candidate : active) {
-      const auto overlaps_y = candidate->maximum_y >= current.minimum_y &&
-                              current.maximum_y >= candidate->minimum_y;
-      const auto overlaps_z = candidate->maximum_z >= current.minimum_z &&
-                              current.maximum_z >= candidate->minimum_z;
+      const auto overlaps_y =
+          candidate->maximum_y >= current.minimum_y && current.maximum_y >= candidate->minimum_y;
+      const auto overlaps_z =
+          candidate->maximum_z >= current.minimum_z && current.maximum_z >= candidate->minimum_z;
       if (!overlaps_y || !overlaps_z) {
         continue;
       }
@@ -125,11 +125,11 @@ std::vector<ContactCandidate> find_cell_contact_candidates(
     }
     active.push_back(&current);
   }
-  std::ranges::sort(candidates, [&geometry](const ContactCandidate& left,
-                                            const ContactCandidate& right) {
-    return std::tuple{geometry.ids[left.first_slot], geometry.ids[left.second_slot]} <
-           std::tuple{geometry.ids[right.first_slot], geometry.ids[right.second_slot]};
-  });
+  std::ranges::sort(
+      candidates, [&geometry](const ContactCandidate& left, const ContactCandidate& right) {
+        return std::tuple{geometry.ids[left.first_slot], geometry.ids[left.second_slot]} <
+               std::tuple{geometry.ids[right.first_slot], geometry.ids[right.second_slot]};
+      });
   return candidates;
 }
 
