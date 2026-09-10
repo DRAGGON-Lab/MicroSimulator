@@ -46,6 +46,8 @@ void launch_flow_pcg_direction(const float* preconditioned, float* direction, fl
                                std::uint32_t count, cudaStream_t stream);
 void launch_flow_vector_negate(const float* input, float* output, std::uint32_t count,
                                cudaStream_t stream);
+void launch_flow_vector_combine(const float* source, float* target, float alpha, float beta,
+                                std::uint32_t count, cudaStream_t stream);
 void launch_flow_vector_subtract(const float* left, const float* right, float* output,
                                  std::uint32_t count, cudaStream_t stream);
 void launch_flow_dot_partial(const float* left, const float* right, float* partials,

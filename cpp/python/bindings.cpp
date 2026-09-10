@@ -187,6 +187,8 @@ NB_MODULE(_core, module) {
   nb::class_<cm::ResolvedFlowReport>(module, "ResolvedFlowReport")
       .def_ro("outer_iterations", &cm::ResolvedFlowReport::outer_iterations)
       .def_ro("inner_iterations", &cm::ResolvedFlowReport::inner_iterations)
+      .def_ro("relative_residual", &cm::ResolvedFlowReport::relative_residual)
+      .def_ro("momentum_relative_residual", &cm::ResolvedFlowReport::momentum_relative_residual)
       .def_ro("divergence_rms", &cm::ResolvedFlowReport::divergence_rms)
       .def_ro("mean_inlet_speed", &cm::ResolvedFlowReport::mean_inlet_speed)
       .def_ro("max_speed", &cm::ResolvedFlowReport::max_speed)

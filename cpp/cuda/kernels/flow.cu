@@ -85,15 +85,15 @@ __global__ void depth_flow_operator(const float* input, const float* mobility,
       auto neighbor = coordinate;
       --neighbor.values[axis];
       const auto neighbor_index = site_index(neighbor, grid);
-      result -= harmonic_mean(mobility[index], mobility[neighbor_index]) *
-                grid.inverse_spacing_squared[axis] * input[neighbor_index];
+      result += harmonic_mean(mobility[index], mobility[neighbor_index]) *
+                grid.inverse_spacing_squared[axis] * (input[index] - input[neighbor_index]);
     }
     if (coordinate.values[axis] + 1 < grid.dimensions[axis]) {
       auto neighbor = coordinate;
       ++neighbor.values[axis];
       const auto neighbor_index = site_index(neighbor, grid);
-      result -= harmonic_mean(mobility[index], mobility[neighbor_index]) *
-                grid.inverse_spacing_squared[axis] * input[neighbor_index];
+      result += harmonic_mean(mobility[index], mobility[neighbor_index]) *
+                grid.inverse_spacing_squared[axis] * (input[index] - input[neighbor_index]);
     }
   }
   output[index] = result;
@@ -267,6 +267,12 @@ __global__ void flow_vector_negate(const float* input, float* output, std::uint3
   }
 }
 
+__global__ void flow_vector_combine(const float* source, float* target, float alpha, float beta,
+                                    std::uint32_t count) {
+  const auto i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < count) target[i] = alpha * source[i] + beta * target[i];
+}
+
 __global__ void flow_vector_subtract(const float* left, const float* right, float* output,
                                      std::uint32_t count) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -362,6 +368,12 @@ void launch_flow_pcg_direction(const float* preconditioned, float* direction, fl
 void launch_flow_vector_negate(const float* input, float* output, std::uint32_t count,
                                cudaStream_t stream) {
   flow_vector_negate<<<block_count(count), threads_per_block, 0, stream>>>(input, output, count);
+}
+
+void launch_flow_vector_combine(const float* source, float* target, float alpha, float beta,
+                                std::uint32_t count, cudaStream_t stream) {
+  flow_vector_combine<<<block_count(count), threads_per_block, 0, stream>>>(source, target, alpha,
+                                                                            beta, count);
 }
 
 void launch_flow_vector_subtract(const float* left, const float* right, float* output,

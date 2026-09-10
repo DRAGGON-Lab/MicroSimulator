@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "cm/flow.hpp"
+#include "core/flexible_gmres.hpp"
 #include "core/flow_system.hpp"
 
 namespace cm {
@@ -169,21 +170,53 @@ void validate_flow_grid(const SignalGridSpec& spec, FlowAxis axis) {
           "native flow-axis boundaries must be fixed to identify inlet and outlet");
     }
   }
+  const detail::FlowGridLayout layout(spec, axis);
+  std::vector<std::uint8_t> visited(layout.site_count(), 0);
+  std::vector<std::size_t> pending;
+  for (std::size_t i = 0; i < layout.site_count(); ++i) {
+    if (!spec.solid_site(i) && layout.site_coordinates(i)[axis_index] == 0) {
+      visited[i] = 1;
+      pending.push_back(i);
+    }
+  }
+  if (pending.empty()) throw std::invalid_argument("the flow inlet boundary is entirely blocked");
+  bool reachable = false;
+  while (!pending.empty()) {
+    const auto site = pending.back();
+    pending.pop_back();
+    if (layout.site_coordinates(site)[axis_index] + 1 == layout.dimensions()[axis_index]) {
+      reachable = true;
+      break;
+    }
+    for (std::size_t component = 0; component < 3; ++component)
+      for (const auto offset : {-1, 1}) {
+        const auto neighbor = layout.neighbor_site(site, component, offset);
+        if (neighbor && !visited[*neighbor] && !spec.solid_site(*neighbor)) {
+          visited[*neighbor] = 1;
+          pending.push_back(*neighbor);
+        }
+      }
+  }
+  if (!reachable)
+    throw std::runtime_error("the device carries no through-flow: the outlet is unreachable");
 }
 
 DepthAveragedFlowResult solve_depth_averaged_flow_cpu(
     const SignalGridSpec& spec, std::span<const float> mobility,
     const DepthAveragedFlowParameters& parameters) {
   parameters.validate();
-  const detail::DepthAveragedFlowSystem system(spec, mobility, parameters.axis);
+  const detail::ShallowFlowReduction reduction(spec, mobility, parameters.axis);
+  const detail::DepthAveragedFlowSystem system(reduction.grid(), reduction.conductance(),
+                                               parameters.axis);
   const auto solve =
       conjugate_gradient([&](std::span<const double> input,
                              std::vector<double>& output) { system.apply(input, output); },
                          system.right_hand_side(), system.diagonal(), parameters.relative_tolerance,
                          parameters.max_iterations, "depth-averaged flow");
   const auto unscaled = system.velocity(solve.solution);
-  const auto scaled = detail::scale_velocity(
-      spec, system.layout(), unscaled, system.open_inlet_faces(), parameters.mean_inlet_speed);
+  const auto scaled =
+      detail::scale_velocity(spec, reduction.original_layout(), reduction.lift(unscaled),
+                             reduction.open_inlet_faces(), parameters.mean_inlet_speed);
   return {
       .field = scaled.field,
       .report = {.iterations = solve.iterations,
@@ -215,30 +248,48 @@ ResolvedFlowResult solve_resolved_flow_cpu(const SignalGridSpec& spec, std::span
     return result.solution;
   };
 
-  std::vector<double> force(system.force().begin(), system.force().end());
-  const auto particular = solve_momentum(force);
-  auto schur_rhs_double = system.divergence(particular);
-  std::vector<float> schur_rhs(schur_rhs_double.size());
-  for (std::size_t index = 0; index < schur_rhs.size(); ++index) {
-    schur_rhs[index] = static_cast<float>(-schur_rhs_double[index]);
-  }
+  const double continuity_scale =
+      1.0 / *std::min_element(system.layout().spacing().begin(), system.layout().spacing().end());
+  const auto nu = system.layout().total_face_count();
+  const auto np = system.layout().site_count();
   const auto pressure_diagonal = system.pressure_diagonal();
-  const auto pressure = conjugate_gradient(
-      [&](std::span<const double> input, std::vector<double>& output) {
-        const auto gradient = system.gradient(input);
-        const auto response = solve_momentum(gradient);
-        output = system.divergence(response);
-        for (auto& value : output) {
-          value = -value;
-        }
-      },
-      schur_rhs, pressure_diagonal, parameters.relative_tolerance, parameters.max_outer_iterations,
-      "resolved-flow pressure");
-
-  const auto correction = solve_momentum(system.gradient(pressure.solution));
-  std::vector<double> velocity(particular.size());
-  for (std::size_t index = 0; index < velocity.size(); ++index) {
-    velocity[index] = particular[index] - correction[index];
+  using Vector = std::vector<double>;
+  detail::FlexibleKrylovOperations<Vector> ops;
+  ops.make_zero = [&] { return Vector(nu + np, 0.0); };
+  ops.copy = [](const Vector& source, Vector& target) { target = source; };
+  ops.axpy = [](Vector& target, double alpha, const Vector& source) {
+    for (std::size_t i = 0; i < target.size(); ++i) target[i] += alpha * source[i];
+  };
+  ops.dot = [](const Vector& a, const Vector& b) { return dot_product(a, b); };
+  ops.apply = [&](const Vector& input, Vector& output) {
+    const auto u = std::span<const double>(input).first(nu);
+    const auto p = std::span<const double>(input).subspan(nu);
+    Vector momentum;
+    system.apply_momentum(u, momentum);
+    const auto gradient = system.gradient(p);
+    const auto divergence = system.divergence(u);
+    for (std::size_t i = 0; i < nu; ++i) output[i] = momentum[i] + gradient[i];
+    for (std::size_t i = 0; i < np; ++i) output[nu + i] = continuity_scale * divergence[i];
+  };
+  ops.precondition = [&](const Vector& input, Vector& output) {
+    const auto u = solve_momentum(std::span<const double>(input).first(nu));
+    std::copy(u.begin(), u.end(), output.begin());
+    for (std::size_t i = 0; i < np; ++i)
+      output[nu + i] =
+          pressure_diagonal[i] > 0 ? -input[nu + i] / (continuity_scale * pressure_diagonal[i]) : 0;
+  };
+  auto rhs = ops.make_zero();
+  std::copy(system.force().begin(), system.force().end(), rhs.begin());
+  const auto solution = detail::flexible_gmres(ops, rhs, parameters.relative_tolerance,
+                                               parameters.max_outer_iterations);
+  Vector velocity(solution.solution.begin(),
+                  solution.solution.begin() + static_cast<std::ptrdiff_t>(nu));
+  Vector residual = ops.make_zero();
+  ops.apply(solution.solution, residual);
+  double momentum_square = 0.0, force_square = 0.0;
+  for (std::size_t i = 0; i < nu; ++i) {
+    momentum_square += (residual[i] - rhs[i]) * (residual[i] - rhs[i]);
+    force_square += rhs[i] * rhs[i];
   }
   const auto divergence = system.divergence(velocity);
   double divergence_square_sum = 0.0;
@@ -258,8 +309,11 @@ ResolvedFlowResult solve_resolved_flow_cpu(const SignalGridSpec& spec, std::span
       spec, system.layout(), unscaled, system.open_inlet_faces(), parameters.mean_inlet_speed);
   return {
       .field = scaled.field,
-      .report = {.outer_iterations = pressure.iterations,
+      .report = {.outer_iterations = solution.iterations,
                  .inner_iterations = inner_iterations,
+                 .relative_residual = static_cast<float>(solution.relative_residual),
+                 .momentum_relative_residual =
+                     static_cast<float>(std::sqrt(momentum_square / force_square)),
                  .divergence_rms = static_cast<float>(divergence_rms * std::abs(scaled.factor)),
                  .mean_inlet_speed = parameters.mean_inlet_speed,
                  .max_speed = scaled.max_speed,

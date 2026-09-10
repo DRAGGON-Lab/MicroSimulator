@@ -1,6 +1,6 @@
 """Staggered-grid Stokes-Brinkman flow solve for device grids.
 
-This is the high-fidelity companion to the Hele-Shaw solver in
+This is the spatially resolved companion to the Hele-Shaw solver in
 `microsimulator.flow`: it resolves the full velocity field, including viscous
 boundary layers on every wall, instead of depth-averaging them into a mobility
 closure. The momentum balance is inertia-free Stokes with an optional Brinkman
@@ -23,12 +23,14 @@ profile shape. Because the problem is linear, the solution is rescaled to a
 requested mean inlet speed and viscosity drops out; the drag field ``d`` is an
 inverse permeability with units of one over length squared.
 
-The saddle-point system is solved by the pressure Schur complement: an outer
-conjugate gradient on `S = D A^-1 D^T` (symmetric positive definite), with
-each application solving three independent component Laplacians by inner
-conjugate gradient. The selected CPU, Metal, or CUDA backend executes the
-matrix-free operator and Krylov iterations. This costs far more than the
-Hele-Shaw solve.
+Flexible GMRES solves the fixed velocity-pressure block system. Approximate
+momentum CG solves and a diagonal pressure approximation act only as a variable
+preconditioner. Convergence uses a freshly evaluated block residual, with
+continuity scaled by inverse minimum spacing; the report also gives the
+momentum residual and physical divergence RMS. The selected CPU, Metal, or
+CUDA backend executes the matrix-free operators and vector operations.
+Resolved gaps and mesh convergence are needed for quantitative wall shear;
+a one-voxel gap does not resolve a parabolic velocity profile.
 """
 
 # pyright: reportPrivateUsage=false
@@ -67,6 +69,7 @@ def colony_drag(
     *,
     drag_coefficient: float,
     max_volume_fraction: float = 0.9,
+    averaging_radius: float = 4.0,
 ) -> list[float]:
     """Build the Brinkman drag field (inverse permeability) from the colony.
 
@@ -76,7 +79,11 @@ def colony_drag(
     stay at zero (they are walls, not porous media).
     """
 
-    fraction = colony_volume_fraction(spec, cells, max_volume_fraction=max_volume_fraction)
+    if not 0 < max_volume_fraction < 1:
+        raise FlowError("maximum volume fraction must lie strictly between zero and one")
+    fraction = np.minimum(
+        colony_volume_fraction(spec, cells, averaging_radius=averaging_radius), max_volume_fraction
+    )
     drag = _kozeny_carman_drag(fraction, drag_coefficient)
     obstacles = spec.obstacles
     if obstacles:

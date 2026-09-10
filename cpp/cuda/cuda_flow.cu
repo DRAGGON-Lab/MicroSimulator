@@ -5,12 +5,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "core/flexible_gmres.hpp"
 #include "core/flow_system.hpp"
 #include "cuda_flow.cuh"
 #include "kernels/flow.cuh"
@@ -225,7 +227,9 @@ DepthAveragedFlowResult solve_depth_averaged_flow(const SignalGridSpec& spec,
                                                   const DepthAveragedFlowParameters& parameters,
                                                   cudaStream_t stream) {
   parameters.validate();
-  const detail::DepthAveragedFlowSystem system(spec, mobility, parameters.axis);
+  const detail::ShallowFlowReduction reduction(spec, mobility, parameters.axis);
+  const detail::DepthAveragedFlowSystem system(reduction.grid(), reduction.conductance(),
+                                               parameters.axis);
   const auto grid = make_grid_parameters(system.layout());
   DeviceBuffer<float> mobility_buffer(grid.site_count, "failed to allocate CUDA depth mobility");
   DeviceBuffer<float> diagonal_buffer(grid.site_count, "failed to allocate CUDA depth diagonal");
@@ -252,8 +256,9 @@ DepthAveragedFlowResult solve_depth_averaged_flow(const SignalGridSpec& spec,
                              grid, stream);
   check_launch("failed to launch CUDA depth-averaged velocity reconstruction");
   const auto velocity = download(velocity_buffer, stream, "failed to download CUDA depth velocity");
-  const auto scaled = detail::scale_velocity(
-      spec, system.layout(), velocity, system.open_inlet_faces(), parameters.mean_inlet_speed);
+  const auto scaled =
+      detail::scale_velocity(spec, reduction.original_layout(), reduction.lift(velocity),
+                             reduction.open_inlet_faces(), parameters.mean_inlet_speed);
   return {
       .field = scaled.field,
       .report = {.iterations = report.iterations,
@@ -296,88 +301,98 @@ ResolvedFlowResult solve_resolved_flow(const SignalGridSpec& spec, std::span<con
   upload(pressure_diagonal_buffer, std::span<const float>(pressure_diagonal), stream,
          "failed to upload CUDA pressure diagonal");
 
-  DeviceBuffer<float> particular(grid.total_face_count,
-                                 "failed to allocate CUDA particular velocity");
-  DeviceBuffer<float> schur_rhs(grid.site_count,
-                                "failed to allocate CUDA pressure right-hand side");
-  DeviceBuffer<float> pressure(grid.site_count, "failed to allocate CUDA pressure");
-  DeviceBuffer<float> gradient(grid.total_face_count, "failed to allocate CUDA pressure gradient");
-  DeviceBuffer<float> response(grid.total_face_count, "failed to allocate CUDA momentum response");
-  DeviceBuffer<float> correction(grid.total_face_count,
-                                 "failed to allocate CUDA velocity correction");
-  DeviceBuffer<float> velocity(grid.total_face_count, "failed to allocate CUDA resolved velocity");
-  DeviceBuffer<float> divergence(grid.site_count, "failed to allocate CUDA velocity divergence");
-  PcgWorkspace inner_workspace(grid.total_face_count);
-  PcgWorkspace outer_workspace(grid.site_count);
-
-  std::uint64_t inner_iterations = 0;
-  const auto solve_momentum = [&](const float* rhs, float* solution) {
-    const auto result = solve_pcg(
-        rhs, face_diagonal_buffer.data(), solution, inner_workspace, grid.total_face_count,
-        parameters.inner_relative_tolerance, parameters.max_inner_iterations,
-        "CUDA resolved-flow momentum", stream, [&](const float* input, float* output) {
-          launch_resolved_flow_momentum(input, active_buffer.data(), exists_buffer.data(),
-                                        face_drag_buffer.data(), output, grid, stream);
-          check_launch("failed to launch CUDA resolved-flow momentum operator");
-        });
-    if (inner_iterations > std::numeric_limits<std::uint64_t>::max() - result.iterations) {
-      throw std::overflow_error("resolved-flow inner iteration count overflow");
-    }
-    inner_iterations += result.iterations;
+  DeviceBuffer<float> gradient(grid.total_face_count, "CUDA block gradient");
+  PcgWorkspace inner_workspace(grid.total_face_count), outer_workspace(grid.site_count);
+  struct Block {
+    DeviceBuffer<float> u, p;
+    Block(std::size_t nu, std::size_t np)
+        : u(nu, "CUDA Krylov velocity"), p(np, "CUDA Krylov pressure") {}
   };
-
-  solve_momentum(force_buffer.data(), particular.data());
-  launch_resolved_flow_divergence(particular.data(), fluid_buffer.data(), schur_rhs.data(), grid,
-                                  stream);
-  check_launch("failed to launch CUDA resolved-flow divergence");
-  launch_flow_vector_negate(schur_rhs.data(), schur_rhs.data(), grid.site_count, stream);
-  check_launch("failed to launch CUDA pressure right-hand-side negation");
-  const auto pressure_report = solve_pcg(
-      schur_rhs.data(), pressure_diagonal_buffer.data(), pressure.data(), outer_workspace,
-      grid.site_count, parameters.relative_tolerance, parameters.max_outer_iterations,
-      "CUDA resolved-flow pressure", stream, [&](const float* input, float* output) {
-        launch_resolved_flow_gradient(input, fluid_buffer.data(), active_buffer.data(),
-                                      gradient.data(), grid, stream);
-        check_launch("failed to launch CUDA resolved-flow gradient");
-        solve_momentum(gradient.data(), response.data());
-        launch_resolved_flow_divergence(response.data(), fluid_buffer.data(), output, grid, stream);
-        check_launch("failed to launch CUDA resolved-flow Schur divergence");
-        launch_flow_vector_negate(output, output, grid.site_count, stream);
-        check_launch("failed to launch CUDA resolved-flow Schur negation");
-      });
-  launch_resolved_flow_gradient(pressure.data(), fluid_buffer.data(), active_buffer.data(),
-                                gradient.data(), grid, stream);
-  check_launch("failed to launch CUDA resolved-flow final gradient");
-  solve_momentum(gradient.data(), correction.data());
-  launch_flow_vector_subtract(particular.data(), correction.data(), velocity.data(),
-                              grid.total_face_count, stream);
-  check_launch("failed to launch CUDA resolved-flow velocity correction");
-  launch_resolved_flow_divergence(velocity.data(), fluid_buffer.data(), divergence.data(), grid,
-                                  stream);
-  check_launch("failed to launch CUDA resolved-flow final divergence");
-  const auto divergence_values =
-      download(divergence, stream, "failed to download CUDA resolved-flow divergence");
-  const auto velocity_values =
-      download(velocity, stream, "failed to download CUDA resolved-flow velocity");
-
-  double divergence_square_sum = 0.0;
-  std::size_t fluid_count = 0;
-  for (std::size_t site = 0; site < system.fluid().size(); ++site) {
-    if (system.fluid()[site] != 0) {
-      const auto value = static_cast<double>(divergence_values[site]);
-      divergence_square_sum += value * value;
-      ++fluid_count;
-    }
-  }
-  const auto divergence_rms =
-      fluid_count == 0 ? 0.0 : std::sqrt(divergence_square_sum / static_cast<double>(fluid_count));
-  const auto scaled =
-      detail::scale_velocity(spec, system.layout(), velocity_values, system.open_inlet_faces(),
-                             parameters.mean_inlet_speed);
+  using Vector = std::shared_ptr<Block>;
+  const double continuity_scale =
+      1.0 / *std::min_element(system.layout().spacing().begin(), system.layout().spacing().end());
+  const auto combine = [&](const float* source, float* target, double alpha, float beta,
+                           std::uint32_t count) {
+    if (!std::isfinite(alpha) || std::abs(alpha) > std::numeric_limits<float>::max())
+      throw std::runtime_error("non-finite CUDA Krylov coefficient");
+    launch_flow_vector_combine(source, target, static_cast<float>(alpha), beta, count, stream);
+    check_launch("CUDA Krylov vector update");
+  };
+  detail::FlexibleKrylovOperations<Vector> ops;
+  ops.make_zero = [&] {
+    auto value = std::make_shared<Block>(grid.total_face_count, grid.site_count);
+    check_cuda(cudaMemsetAsync(value->u.data(), 0, grid.total_face_count * sizeof(float), stream),
+               "zero CUDA Krylov velocity");
+    check_cuda(cudaMemsetAsync(value->p.data(), 0, grid.site_count * sizeof(float), stream),
+               "zero CUDA Krylov pressure");
+    return value;
+  };
+  ops.copy = [&](const Vector& source, Vector& target) {
+    combine(source->u.data(), target->u.data(), 1, 0, grid.total_face_count);
+    combine(source->p.data(), target->p.data(), 1, 0, grid.site_count);
+  };
+  ops.axpy = [&](Vector& target, double alpha, const Vector& source) {
+    combine(source->u.data(), target->u.data(), alpha, 1, grid.total_face_count);
+    combine(source->p.data(), target->p.data(), alpha, 1, grid.site_count);
+  };
+  ops.dot = [&](const Vector& a, const Vector& b) {
+    return dot(a->u.data(), b->u.data(), grid.total_face_count, inner_workspace, stream) +
+           dot(a->p.data(), b->p.data(), grid.site_count, outer_workspace, stream);
+  };
+  ops.apply = [&](const Vector& input, Vector& output) {
+    launch_resolved_flow_momentum(input->u.data(), active_buffer.data(), exists_buffer.data(),
+                                  face_drag_buffer.data(), output->u.data(), grid, stream);
+    launch_resolved_flow_gradient(input->p.data(), fluid_buffer.data(), active_buffer.data(),
+                                  gradient.data(), grid, stream);
+    combine(gradient.data(), output->u.data(), 1, 1, grid.total_face_count);
+    launch_resolved_flow_divergence(input->u.data(), fluid_buffer.data(), output->p.data(), grid,
+                                    stream);
+    combine(output->p.data(), output->p.data(), continuity_scale, 0, grid.site_count);
+  };
+  std::uint64_t inner_iterations = 0;
+  ops.precondition = [&](const Vector& input, Vector& output) {
+    const auto report = solve_pcg(
+        input->u.data(), face_diagonal_buffer.data(), output->u.data(), inner_workspace,
+        grid.total_face_count, parameters.inner_relative_tolerance, parameters.max_inner_iterations,
+        "CUDA momentum preconditioner", stream, [&](const float* x, float* y) {
+          launch_resolved_flow_momentum(x, active_buffer.data(), exists_buffer.data(),
+                                        face_drag_buffer.data(), y, grid, stream);
+          check_launch("CUDA preconditioner momentum");
+        });
+    inner_iterations += report.iterations;
+    launch_flow_pcg_precondition(input->p.data(), pressure_diagonal_buffer.data(), output->p.data(),
+                                 grid.site_count, stream);
+    combine(output->p.data(), output->p.data(), -1 / continuity_scale, 0, grid.site_count);
+  };
+  auto rhs = ops.make_zero();
+  combine(force_buffer.data(), rhs->u.data(), 1, 0, grid.total_face_count);
+  const auto solution = detail::flexible_gmres(ops, rhs, parameters.relative_tolerance,
+                                               parameters.max_outer_iterations);
+  auto residual = ops.make_zero();
+  ops.apply(solution.solution, residual);
+  ops.axpy(residual, -1, rhs);
+  const double momentum_square =
+      dot(residual->u.data(), residual->u.data(), grid.total_face_count, inner_workspace, stream);
+  const double force_square =
+      dot(rhs->u.data(), rhs->u.data(), grid.total_face_count, inner_workspace, stream);
+  const double divergence_square =
+      dot(residual->p.data(), residual->p.data(), grid.site_count, outer_workspace, stream);
+  const auto fluid_count =
+      std::count(system.fluid().begin(), system.fluid().end(), std::uint8_t{1});
+  const double divergence_rms =
+      fluid_count == 0
+          ? 0.0
+          : std::sqrt(divergence_square / static_cast<double>(fluid_count)) / continuity_scale;
+  const auto velocity = download(solution.solution->u, stream, "download CUDA velocity");
+  const auto scaled = detail::scale_velocity(
+      spec, system.layout(), velocity, system.open_inlet_faces(), parameters.mean_inlet_speed);
   return {
       .field = scaled.field,
-      .report = {.outer_iterations = pressure_report.iterations,
+      .report = {.outer_iterations = solution.iterations,
                  .inner_iterations = inner_iterations,
+                 .relative_residual = static_cast<float>(solution.relative_residual),
+                 .momentum_relative_residual =
+                     static_cast<float>(std::sqrt(momentum_square / force_square)),
                  .divergence_rms = static_cast<float>(divergence_rms * std::abs(scaled.factor)),
                  .mean_inlet_speed = parameters.mean_inlet_speed,
                  .max_speed = scaled.max_speed,

@@ -78,21 +78,24 @@ kernel void depth_flow_operator(device const float* input [[buffer(0)]],
     return;
   }
   const uint3 coordinate = site_coordinate(index, grid);
-  float result = diagonal[index] * input[index];
+  float result = 0.0f;
+  const float boundary = 2.0f * mobility[index] * grid.inverse_spacing_squared[grid.flow_axis];
+  if (coordinate[grid.flow_axis] == 0) result += boundary * input[index];
+  if (coordinate[grid.flow_axis]+1 == grid.dimensions[grid.flow_axis]) result += boundary * input[index];
   for (uint axis = 0; axis < 3; ++axis) {
     if (coordinate[axis] > 0) {
       uint3 neighbor = coordinate;
       neighbor[axis] -= 1;
       const uint neighbor_index = site_index(neighbor, grid);
-      result -= harmonic_mean(mobility[index], mobility[neighbor_index]) *
-                grid.inverse_spacing_squared[axis] * input[neighbor_index];
+      result += harmonic_mean(mobility[index], mobility[neighbor_index]) *
+                grid.inverse_spacing_squared[axis] * (input[index] - input[neighbor_index]);
     }
     if (coordinate[axis] + 1 < grid.dimensions[axis]) {
       uint3 neighbor = coordinate;
       neighbor[axis] += 1;
       const uint neighbor_index = site_index(neighbor, grid);
-      result -= harmonic_mean(mobility[index], mobility[neighbor_index]) *
-                grid.inverse_spacing_squared[axis] * input[neighbor_index];
+      result += harmonic_mean(mobility[index], mobility[neighbor_index]) *
+                grid.inverse_spacing_squared[axis] * (input[index] - input[neighbor_index]);
     }
   }
   output[index] = result;
@@ -313,4 +316,13 @@ kernel void flow_dot_partial(device const float* left [[buffer(0)]],
   if (local_index == 0) {
     partials[group_index] = values[0];
   }
+}
+
+kernel void flow_vector_combine(device const float* source [[buffer(0)]],
+                                device float* target [[buffer(1)]],
+                                constant float& alpha [[buffer(2)]],
+                                constant float& beta [[buffer(3)]],
+                                constant uint& count [[buffer(4)]],
+                                uint i [[thread_position_in_grid]]) {
+  if (i < count) target[i] = alpha*source[i] + beta*target[i];
 }

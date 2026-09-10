@@ -3,15 +3,14 @@
 A device is described once in physical coordinates and then projected into the
 engine's typed inputs: box wall constraints for mechanics, a solid mask for the
 signal grid, and a numerically solved face-staggered flow field for advection
-(the steady Hele-Shaw solve of `microsimulator.flow`, so mass is conserved per
-voxel through any mask geometry). The runtime receives only materialized data;
+(the shallow, depth-integrated solve of `microsimulator.flow`, with conservative
+fluxes through supported column geometries). The runtime receives only materialized data;
 every predicate here is authoring-time.
 
-Voxelization is conservative: a lattice site is solid only when its entire
-voxel lies inside a wall, so the mechanics walls enclose the solid mask and a
-cell pressed against a wall always has a fluid site to sample. The mask's
-fluid region therefore reaches up to half a voxel into each wall, which is the
-staircase accuracy of any mask at the grid resolution.
+Voxel centers are classified against the same physical wall predicates used by
+mechanics. For axis-aligned planes the staircase wall offset is at most half a
+voxel spacing. Curved geometry requires convergence checks; unresolved narrow
+features cannot be recovered by renaming or enlarging the fluid region.
 """
 
 from __future__ import annotations
@@ -49,7 +48,6 @@ def _recedes(edge: float, wall: float, half: float) -> bool:
     """Whether a voxel's upper edge has reached a wall lying below it."""
 
     return edge <= wall + _EDGE_TOLERANCE * half
-
 
 
 class _ChannelDevice:
@@ -104,11 +102,9 @@ class _ChannelDevice:
         shape = spec.shape
         origin = spec.origin
         spacing = spec.spacing
-        # A site is solid only when its whole voxel lies inside a wall, so the
-        # mask's solid region is enclosed by the mechanics walls. The voxel
-        # holding any position a cell can reach is then fluid, which guarantees
-        # every sampling stencil has at least one fluid corner.
-        half = (spacing.x * 0.5, spacing.y * 0.5, spacing.z * 0.5)
+        # Evaluate the continuous geometry at voxel centers. Do not erode walls
+        # to make interpolation easier: sampling handles fluid support separately.
+        half = (0.0, 0.0, 0.0)
         obstacles = [0] * (shape.x * shape.y * shape.z)
         for x in range(shape.x):
             px = origin.x + spacing.x * x
@@ -226,11 +222,10 @@ class TrapChannelDevice(_ChannelDevice):
             return True
         if _reaches(abs(pz) - hz, self.trap_half_z, hz):
             return True
-        if _reaches(px - hx, self.trap_open_x, hx) and _reaches(
-            abs(py) - hy, self.trap_half_y, hy
-        ):
+        if _reaches(px - hx, self.trap_open_x, hx) and _reaches(abs(py) - hy, self.trap_half_y, hy):
             return True
         return _reaches(px - hx, self.trap_back_x, hx)
+
 
 @dataclass(frozen=True, slots=True)
 class BiopixelTrapDevice(_ChannelDevice):

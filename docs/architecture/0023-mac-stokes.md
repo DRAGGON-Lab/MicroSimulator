@@ -1,77 +1,21 @@
-# ADR 0023: staggered MAC Stokes-Brinkman solve and flow benchmarks
+# ADR 0023: resolved Stokes-Brinkman flow
 
 - Status: accepted
 - Date: 2026-08-18
-- Amended: 2026-08-29
-
-## Context
-
-The Hele-Shaw solve (ADR 0022) depth-averages viscous drag into a mobility
-field. That closure is the right cost point for device authoring and in-loop
-colony feedback, but it cannot resolve viscous boundary layers on side walls
-or the true cross-channel profile, and its accuracy claims need an anchor: a
-solver whose only approximation is the mesh.
+- Amended: 2026-09-10
 
 ## Decision
 
-`microsimulator.stokes` solves the inertia-free Stokes-Brinkman momentum
-balance with incompressibility,
+`microsimulator.stokes` solves `mu lap(v) - mu d v - grad(p) = 0`, `div(v) = 0` on a staggered Cartesian grid, with velocity on faces and pressure at voxel centers. The inverse permeability d has units of inverse length squared. Stationary biomass can contribute empirical Brinkman drag using the conserved, smoothed density defined in ADR 0022. The closure needs calibration and does not describe freely moving cells or resolved cell-scale hydrodynamic forces.
 
-```text
-mu lap(v) - mu d(x) v - grad p = 0        div v = 0
-```
+No-slip walls follow obstacle voxel boundaries. Normal wall velocities are zero and tangential components use reflected ghosts. Collapsed axes are invariant directions, not resolved one-cell gaps. Flow-axis boundaries prescribe ghost pressures with zero-gradient normal velocity; developing inlet flow requires upstream padding. Linear solutions are scaled to the requested mean inlet speed, removing the pressure amplitude and viscosity from the velocity comparison.
 
-on the marker-and-cell staggering the engine already uses: velocities on
-faces, pressure at cell centers, so the solved field is the engine's transport
-input with no interpolation. Walls are the obstacle voxel boundaries and every
-non-flow domain edge; wall planes sit half a spacing beyond the outermost site
-centers, matching where the device helpers author floors and ceilings. Normal
-velocities on fluid-solid faces are eliminated at zero and tangential
-components see walls through reflected ghosts, the standard second-order
-voxel-grid treatment. The flow-axis boundaries carry prescribed ghost
-pressures (inlet one, outlet zero) with zero-gradient normal outflow, and the
-linear solution is rescaled to a requested mean inlet speed, so viscosity
-drops out; the Brinkman drag field is an inverse permeability
-(`colony_drag` builds it from the colony's volume fraction). Collapsed axes
-are invariant directions, matching engine transport semantics.
+Write momentum as `A v + G p = f`, continuity as `D v = 0`, with `G = -D^T` for the uniform-grid discrete inner products and nonnegative symmetric A on active velocity faces. A known linear inlet-to-outlet pressure profile is removed analytically, so the unknown pressure is a correction and the forcing is distributed through the channel. Flexible GMRES solves this fixed block system. Momentum CG and a diagonal approximation to `-D diag(A)^-1 G` act only as a variable block preconditioner. An inexact inner solve therefore cannot change the outer operator. Continuity is scaled by inverse minimum spacing to balance the block residual. Restart length is 40, with twice-modified Gram-Schmidt. Convergence requires a freshly computed residual of the original block equations, not just a recursive Krylov estimate.
 
-Write the discrete momentum equation as `A v + G p = f` and incompressibility as `D v = 0`, where `G = -D^T` under the declared face and cell inner products. Eliminating velocity gives the positive pressure Schur system `(-D A^-1 G) p = -D A^-1 f`. An outer Jacobi-preconditioned conjugate-gradient solve applies this operator matrix-free; each application invokes an inner Jacobi-preconditioned conjugate-gradient solve for the block-diagonal face momentum operator. The three component blocks are stored in one concatenated face vector, which preserves their mathematical independence while allowing one backend-native Krylov operation.
+CPU, Metal, and CUDA keep their own native operator and vector implementations; accelerator Krylov vectors remain on device. The report includes the true scaled block relative residual, momentum relative residual, physical divergence RMS after speed normalization, iteration counts, and minimum transverse gap resolution. Field storage is binary32; the default outer and inner tolerances are `1e-6`. Fine binary32 second differences can prevent convergence at `1e-6`; the fine Brinkman benchmark explicitly requests `1e-5`, well below its discretization error. An unattainable requested tolerance causes a reported failure and is never silently relaxed. A loose inner tolerance affects performance but should preserve the converged field within the outer tolerance and binary32 error. Disconnected inlet/outlet geometry is rejected; unforced sealed components remain at zero flow with an arbitrary pressure gauge.
 
-Resolved flow is a `ComputeBackend` domain operation. The CPU implementation evaluates the same operators in C++, while Metal and CUDA keep pressure, velocity, Krylov work vectors, gradients, and divergences in device memory and execute independent MSL and CUDA kernels. The host controls the iteration from reduced scalar data and downloads the final velocity and divergence report. Neither accelerator implementation calls the CPU solver. The portable field contract is binary32 and both outer and inner relative tolerances default to `1e-6`.
+## Validation and limits
 
-The cost remains above the depth-averaged solve, but it is no longer restricted to a Python build-time calculation. Models can execute either solver on their selected backend, including a resolved re-solve when that cost is justified.
+The analytic benchmark script and Python tests measure plane-Poiseuille and two-layer Brinkman profile convergence, the square-duct peak/mean ratio, shallow/resolved consistency, and gap-resolution error. Native tests check operator adjointness, viscous symmetry and nonnegative energy; conformance compares heterogeneous native backend fields. A separate loose-inner-tolerance regression checks true residuals and solution invariance.
 
-## Validation
-
-`scripts/run_flow_benchmarks.py` runs both solvers through an explicitly selected backend against literature and exact references and fails nonzero on any tolerance miss; `test_stokes.py` enforces the same physics at test sizes. The shared C++ `flow_conformance` scenario separately compares every available native backend with the CPU reference for heterogeneous mobility and Brinkman drag.
-
-- Plane Poiseuille: exact parabola, observed convergence order 2. The duct
-  peak is interpolated to the centerline, since cell centers straddle the axis
-  of an evenly divided duct.
-- Square duct: peak-to-mean velocity ratio 2.0962 (Shah & London 1978;
-  White, Viscous Fluid Flow), within 0.5% at 32 voxels per side.
-- Two-layer Brinkman channel: exact ODE solution (Brinkman 1949) matched in
-  value and slope across the fluid-porous interface, with observed
-  second-order convergence. Both profiles are compared at unit mean, since the
-  solve rescales to the requested speed and amplitude carries no information.
-- Cross-solver consistency: in a thin gap the depth-averaged MAC solution
-  reproduces the Hele-Shaw flux split around a pillar to under one percent -
-  each solver validates the other in the regime where both apply.
-- Gap resolution: a channel one voxel across carries about two and a half
-  times the flux its parabolic profile would, converging toward the
-  lubrication limit as the gap resolves - within about ten percent at four
-  voxels and a few percent at eight.
-- The zero-drag path is bit-identical to omitting the drag field, and solved
-  fields pass engine validation and discrete conservation checks unchanged.
-
-## Consequences
-
-- Resolved wall shear and cross-channel profiles are available where a study needs them on CPU, Metal, and CUDA.
-- The Hele-Shaw closure's domain of validity is now measured, not asserted.
-- Resolution bounds the MAC solve as the closure bounds the depth-averaged
-  one. Every solve reports `min_gap_voxels`, the fluid voxels across its
-  narrowest transverse channel, so a caller can tell which of the two solvers
-  is the better model of a given grid: below four voxels across a gap the
-  closure is, because it carries the gap-height physics analytically.
-- Inlet and outlet impose fully developed flow; strongly developing flow at a
-  device inlet needs upstream padding voxels.
+The model assumptions, staircase geometry, boundary treatment, and discretization all limit accuracy. Planar aligned-wall profile convergence does not establish second-order accuracy around arbitrary curved obstacles. Device helpers classify voxel centers against the same continuous geometry used by mechanics; planar wall displacement is at most half a spacing, while narrow or curved features require geometry convergence. A one-voxel gap does not resolve a parabolic profile. `min_gap_voxels` is a diagnostic, not an accuracy certificate or an automatic solver-selection rule. Experimental PIV comparisons must include sampling uncertainty and useful baselines; qualitative agreement alone does not validate colony coupling.
