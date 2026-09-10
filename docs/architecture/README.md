@@ -29,3 +29,5 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 - [Versioned columnar analysis datasets](0013-analysis-datasets.md)
 
 Current backend status and the tests required to support it are documented in [testing and validation](../development/validation.md).
+
+- [Biomass accounting](0024-biomass-accounting.md)

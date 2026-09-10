@@ -75,6 +75,16 @@ void test_validation_is_atomic_and_requires_convergence() {
   assert(close(state.cell(id).position.x, 0.0F));
 }
 
+void test_relaxation_cannot_create_biomass() {
+  cm::WorldState state;
+  const auto id = state.add_cell(cm::CellInit{});
+  const auto before = state.cell(id).length;
+  cm::MechanicsSolveResult result;
+  result.corrections = {cm::CellCorrection{{}, {}, 0.5F}};
+  cm::integrate_mechanics_result(state, result);
+  assert(state.cell(id).length == before);
+}
+
 void test_fixed_cell_integration_only_applies_declared_growth() {
   cm::WorldState state;
   cm::CellInit cell;
@@ -129,6 +139,7 @@ void test_simulation_relaxation_reduces_penetration() {
 }  // namespace
 
 int main() {
+  test_relaxation_cannot_create_biomass();
   test_integration_applies_declared_geometry_semantics();
   test_validation_is_atomic_and_requires_convergence();
   test_fixed_cell_integration_only_applies_declared_growth();

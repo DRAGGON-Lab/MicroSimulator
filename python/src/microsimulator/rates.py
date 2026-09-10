@@ -165,7 +165,17 @@ class RatePlanBuilder:
         return self._source(RateOp.CELL_TYPE)
 
     def cell_volume(self) -> RateExpression:
+        """Effective biomass volume pi*r**2*(length + 2*r)."""
         return self._source(RateOp.CELL_VOLUME)
+
+    def cell_volume_change_rate(self) -> RateExpression:
+        """Realized biomass-volume increase / dt in this step (zero at dt=0).
+
+        Use ``-cell_volume_change_rate() / yield`` for growth-linked uptake.
+        This includes the discrete growth increment instead of approximating
+        it with the elongation rate times the post-growth cell volume.
+        """
+        return self._source(RateOp.CELL_VOLUME_CHANGE_RATE)
 
     def cell_surface_area(self) -> RateExpression:
         return self._source(RateOp.CELL_SURFACE_AREA)

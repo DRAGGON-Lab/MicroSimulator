@@ -93,6 +93,7 @@ _RATE_OP_NAMES = {
     RateOp.GROWTH_RATE: "growth_rate",
     RateOp.CELL_TYPE: "cell_type",
     RateOp.CELL_VOLUME: "cell_volume",
+    RateOp.CELL_VOLUME_CHANGE_RATE: "cell_volume_change_rate",
     RateOp.CELL_SURFACE_AREA: "cell_surface_area",
     RateOp.ADD: "add",
     RateOp.SUBTRACT: "subtract",
