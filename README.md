@@ -2,7 +2,7 @@
   <img src="docs/assets/microsimulator-logo.png" alt="MicroSimulator" width="640">
 </p>
 
-MicroSimulator is an accelerator-native successor to [CellModeller](https://github.com/cellmodeller/CellModeller) for individual-based multicellular modeling. It combines a Python modeling interface with a C++23 engine and independent CPU, Apple Metal, and NVIDIA CUDA implementations.
+MicroSimulator is a framework for individual-based multicellular modeling. It combines a Python modeling interface with a C++23 engine and independent CPU, Apple Metal, and NVIDIA CUDA implementations.
 
 Models can combine rod-shaped growth and division, lineage, contact mechanics and constraints, intracellular dynamics, and cell-grid signaling. Versioned checkpoints, batch manifests, data-only scenes, and Parquet/Zarr exports support reproducible research workflows.
 
