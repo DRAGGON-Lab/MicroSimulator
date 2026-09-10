@@ -386,7 +386,7 @@ def test_partly_blocked_inlets_and_walled_off_pockets_solve() -> None:
 
 
 def test_colony_species_density_rasterizes_one_channel() -> None:
-    """A per-cell rate becomes a per-volume rate through the voxel it sits in."""
+    """Intracellular concentration times B is conserved by physical smoothing."""
 
     spec = _duct(nx=3, ny=3, nz=1)
     spec.spacing = Vec3(4.0, 4.0, 4.0)
@@ -395,6 +395,8 @@ def test_colony_species_density_rasterizes_one_channel() -> None:
     class _Cell:
         position: Vec3
         species: list[float]
+        length: float = 2.0
+        radius: float = 0.5
 
     cells = [
         _Cell(Vec3(0.0, 0.0, 0.0), [1.0, 2.0]),
@@ -404,9 +406,10 @@ def test_colony_species_density_rasterizes_one_channel() -> None:
     ]
     density = colony_species_density(spec, cells, species=1)
     voxel = spec.voxel_volume
-    assert math.isclose(density[_site(spec, 0, 0, 0)], 6.0 / voxel)
-    assert math.isclose(density[_site(spec, 1, 1, 0)], 5.0 / voxel)
-    assert density[_site(spec, 2, 2, 0)] == 0.0
+    amount = 11 * math.pi * 0.5**2 * (2 + 2 * 0.5)
+    assert math.isclose(sum(density) * voxel, amount, rel_tol=1e-7)
+    assert density[_site(spec, 0, 0, 0)] > 0
+    assert density[_site(spec, 1, 1, 0)] > 0
     with pytest.raises(FlowError, match="outside the cell"):
         colony_species_density(spec, cells, species=5)
 
