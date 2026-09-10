@@ -82,94 +82,26 @@ def _regulate(step):
 Removal keeps stable identifiers and lineage history, so analysis can count washout events
 and trace removed cells' ancestry from checkpoints.
 
-## Numerical flow: arbitrary geometry and colony feedback
+## Numerical flow and stationary resistance
 
-Device flow fields are solved, not authored: `microsimulator.flow` computes the steady
-Hele-Shaw–Brinkman problem over the grid's fluid voxels and returns the same face-staggered
-field the engine consumes. `apply_to_grid` runs this solve for every device, and it works
-for any mask geometry — junctions, bends, pillars, a CAD-derived layout — not just straight
-channels. The solver is also available directly for grids built without a device helper:
+`microsimulator.flow` solves `div_xy(H*m*grad_xy(p)) = 0` with one pressure per depth column. The default mobility is proportional to H², so integrated flux has the required H³ gap dependence. Harmonic face conductance and conservative lifting provide the face field used by transport. The shallow solver requires contiguous columns above a common floor; full three-dimensional obstructions require `microsimulator.stokes`. Both normalize velocity to a prescribed inlet speed and execute on the selected native backend.
 
 ```python
 from microsimulator.flow import colony_mobility, solve_flow_field
 
-field, report = solve_flow_field(
-    grid,
-    mean_inlet_speed=20.0,
-    simulation=simulation,
-)  # Stokes limit
-grid.velocity_field = field
-```
-
-The solve is a variable-coefficient pressure problem (`div(m grad p) = 0`), so the returned fluxes conserve mass per voxel and vanish on wall faces by construction; the flow-axis boundaries must be `FIXED` to act as inlet and outlet, and the linear solution is rescaled to the requested mean inlet speed. With uniform mobility this is the Stokes limit of the depth-averaged closure: correct routing through any mask and a plug profile across the channel width, with side-wall boundary layers outside the closure. The CPU implementation is C++, while Metal and CUDA execute independent MSL and CUDA kernels for the matrix-free operator and Krylov iterations; neither accelerator calls the CPU solver.
-
-The mobility field is where Brinkman feedback enters: `colony_mobility` rasterizes the
-colony's volume fraction and adds Kozeny–Carman style drag, so media diverts around a packed
-trap and seeps through its edges. Because the field is data, regulation code re-solves as
-the colony grows and swaps it into the running simulation — the trap models do this every
-`RESOLVE_INTERVAL` steps:
-
-```python
-def _regulate(step: ControllerStep) -> StepPlan:
-    if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
-        mobility = colony_mobility(GRID, step.cells, drag_coefficient=DRAG_COEFFICIENT)
-        field, _ = solve_flow_field(
-            GRID,
-            mean_inlet_speed=FLOW_SPEED,
-            mobility=mobility,
-            simulation=step.simulation,
-        )
-        step.simulation.set_velocity_field(field)
-    ...
-```
-
-`Simulation.set_velocity_field` validates the replacement against the full grid
-specification before swapping it; transport, drift, and checkpoints all use whichever field
-is current. The re-solve cadence is a model choice, and the trade is cost against staleness:
-the trap models re-solve every hundred steps, which at `dt = 0.02` is a couple of doublings
-of colony growth, so the field the drift and transport see lags the colony by that much.
-Shorten the interval where the blockage matters quantitatively. The drag coefficient is a
-modeling parameter (how strongly a packed colony resists through-flow relative to the open
-channel), not a measured constant.
-
-### Resolved flow: the MAC Stokes–Brinkman solver
-
-When a study needs the flow the closure cannot express — viscous boundary layers on side
-walls, the true cross-channel profile, resolved wall shear — `microsimulator.stokes` solves
-the full staggered-grid Stokes–Brinkman problem with the same call shape and returns the
-same engine-ready field:
-
-```python
-from microsimulator.stokes import colony_drag, solve_stokes_field
-
-field, report = solve_stokes_field(grid, mean_inlet_speed=20.0, simulation=simulation)
-field, report = solve_stokes_field(
-    grid,
-    mean_inlet_speed=20.0,
-    drag=colony_drag(grid, cells, drag_coefficient=0.4),
-    simulation=simulation,
+mobility = colony_mobility(
+    grid, (cell for cell in cells if cell.fixed),
+    drag_coefficient=100.0, averaging_radius=4.0,
 )
+field, report = solve_flow_field(
+    grid, mean_inlet_speed=20.0, mobility=mobility, simulation=simulation,
+)
+simulation.set_velocity_field(field)
 ```
 
-It costs far more than the Hele-Shaw solve, so devices keep the closure for authoring and
-in-loop feedback; the MAC solver anchors it where the grid resolves the gap. Each solve
-reports `min_gap_voxels`, the fluid voxels across its narrowest channel: below about four
-the MAC solve over-predicts that channel's flux and the depth-averaged closure is the more
-accurate model, which is why the shallow device grids here stay on the closure. Both
-solvers run against literature and exact references in `scripts/run_flow_benchmarks.py` —
-plane Poiseuille and the two-layer Brinkman channel against their exact solutions with
-measured second-order convergence, the Shah–London square-duct peak-to-mean ratio, and a
-thin-gap cross-check in which the depth-averaged MAC solution reproduces the Hele-Shaw flux
-split around a pillar:
+Stationary resistance uses explicitly attached cells. A trapped but freely moving population is not automatically a stationary porous matrix. The four examples apply that distinction; the pillar model supplies attached founders. Biomass is deposited conservatively over a fixed physical radius, and only the resistance formula caps density. The drag coefficient and smoothing radius require calibration; grid size and refresh interval require numerical sensitivity checks.
 
-```console
-uv run python scripts/run_flow_benchmarks.py --backend cpu
-uv run python scripts/run_flow_benchmarks.py --backend metal
-uv run python scripts/run_flow_benchmarks.py --backend cpu --fine
-```
-
-The next tutorial, [Solved flow](flow-solvers.md), exercises all of this machinery on a
-pillar-array channel built without any device helper.
+For resolved wall profiles use `solve_stokes_field`, with the same field interface and adequately resolved gaps. It solves a fixed Stokes-Brinkman block system by flexible GMRES and reports true momentum/block residuals and divergence. `min_gap_voxels` is diagnostic rather than a guarantee. The [flow tutorial](flow-solvers.md) gives the solver assumptions and analytic checks, and [nutrient validation](nutrient-validation.md) measures spatial growth, conservation, and refinement effects.
 
 ## A source-backed Prindle biopixel example
 
@@ -222,7 +154,7 @@ uv run microsimulator view --model examples/tutorials/biopixel_trap.py --seed 5 
 
 Model lengths are expressed in micrometers. Only the 100 x 85 x 1.65 trapping region is taken from the published methods; the table above identifies the remaining geometry and transport inputs as model choices.
 
-Time is a model growth scale. `growth_rate` is the exponential rate of cell length, so `BASE_GROWTH_RATE = 1.0` gives a doubling time of `ln 2 ≈ 0.69` model time units. Mapping that doubling to a biological duration, such as 30 minutes, is illustrative and would make one model time unit about 43 minutes; it is not a calibration performed by this example. Nutrient and AHL levels are dimensionless concentration scales set by their inlet values and coupling parameters.
+Time is a model growth scale. `growth_rate` is the exponential rate of cell length, so `BASE_GROWTH_RATE = 1.0` doubles cylindrical length in `ln 2 ≈ 0.69` model time units. Biochemical biomass includes an end contribution and therefore does not obey that exact exponential law. Mapping that doubling to a biological duration, such as 30 minutes, is illustrative and would make one model time unit about 43 minutes; it is not a calibration performed by this example. Nutrient and AHL levels are dimensionless concentration scales set by their inlet values and coupling parameters.
 
 For the biopixel example's configured channel values, `U = 20`, `L = 100`, and `D = 40` give a nominal channel-scale Péclet number `U L / D = 50`. That number characterizes this model only. Velocity is nonuniform, flow inside the dead-end cavity is much weaker, and no experimental flow or diffusivity measurements are fitted here, so the example makes no claim of experimental Péclet-number fidelity.
 
@@ -248,3 +180,11 @@ The model also does not reproduce an experimentally established separation betwe
   [pillar channel](flow-solvers.md) shows it for curved walls.
 - A sampling position whose whole stencil is solid raises an error rather than returning
   zero.
+
+## Uptake and time integration
+
+The tutorials consume the actual biochemical biomass increment `Delta B / yield`, where `B = pi*r²*(length + 2*r)`. Division conserves this amount, which is distinct from geometric capsule volume. `growth_rate * B` is not the realized biomass rate under the length-growth law.
+
+Backward Euler is the baseline for their stiff transport and affine losses. Cellular sinks remain explicit; native biological failure restores growth, species, signals, time, and the prior solver report. Controller regulation, division callbacks, and mechanics are separate operations. No rejected step may be counted as successful growth. The Danino circuit is a qualitative example: its AHL secretion uses intracellular concentration times B, and its AiiA loss uses a conservatively smoothed enzyme amount. Its parameters and oscillations are not experimentally calibrated.
+
+The biopixel model explicitly uses signal absolute residual tolerance `1e-5` because binary32 noise at concentration 10 and its fine depth spacing prevents reliable convergence at `1e-6`. This is a model-scale numerical choice, not a biological accuracy claim.

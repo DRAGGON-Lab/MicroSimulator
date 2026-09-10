@@ -4,7 +4,8 @@ The device is a monolayer channel crossed by a staggered array of cylindrical
 pillars - geometry with no analytic flow profile, so the field comes from the
 numerical solve: `solve_flow_field` routes the media around every pillar with
 per-voxel mass conservation, and the same solve re-runs at a fixed cadence
-with the colony's Brinkman drag so growing colonies divert the flow. Founder
+with attached-cell resistance. The three anchors illustrate prescribed shedding;
+they do not establish a quantitative biofilm blockage or detachment model. Founder
 cells are adhered (fixed) in pillar wakes; each division keeps the mother
 attached and releases the daughter into the stream, which carries it between
 the pillars and washes it out at the end of the channel - a biofilm shedding
@@ -41,7 +42,7 @@ from microsimulator.checkpoint import CheckpointBundle, JSONValue
 from microsimulator.flow import colony_mobility, gap_mobility, solve_flow_field
 
 MODEL_ID = "tutorials.pillar-channel"
-MODEL_VERSION = 2
+MODEL_VERSION = 3
 DIVISION = UniformLengthDivision(3.2, 3.8, jitter_z=False)
 
 CHANNEL_HALF_WIDTH = 40.0
@@ -60,34 +61,20 @@ FOUNDER_SITES = ((-20.0, -46.0), (20.0, -46.0), (0.0, 14.0))
 NUTRIENT_INLET = 10.0
 BASE_GROWTH_RATE = 1.0
 NUTRIENT_K = 5.0
-# Nutrient is one limiting substrate in arbitrary concentration units, fed at
-# NUTRIENT_INLET. Uptake is tied to realized growth: a cell consumes
-# growth_rate * volume / NUTRIENT_YIELD per unit time, so Monod-limited growth
-# and consumption stay consistent. The yield sets the coupling strength, and
-# this value makes a packed trap's uptake comparable to the diffusive supply
-# through its mouth, so nutrient penetrates a few tens of micrometers and the
-# colony behind that front grows more slowly.
+# Nutrient uses arbitrary concentration units. Each accepted step consumes
+# the actual increase of B = pi*r^2*(length + 2*r), divided by this yield.
+# The value is illustrative; penetration and growth require refinement checks.
 NUTRIENT_YIELD = 0.5
 
-# Brinkman feedback: how often the colony's drag re-solves the device flow,
-# and how strongly a packed voxel resists through-flow.
+# Resistance feedback uses only fixed (attached) cells, with a physical
+# smoothing radius independent of the grid. Free cells do not form a matrix.
 RESOLVE_INTERVAL = 100
 DRAG_COEFFICIENT = 100.0
 
 
-def _in_pillar_core(px: float, py: float, margin: float) -> bool:
-    # A voxel is solid only when it lies entirely inside the pillar (its
-    # center plus half the voxel diagonal stays within the radius). The
-    # mechanics cylinders therefore enclose every solid voxel, so a cell
-    # center can never sit inside the mask and signal sampling is always in
-    # fluid; the stair-stepped flow blockage is conservative by the same
-    # margin.
-    core = PILLAR_RADIUS - margin
-    if core <= 0.0:
-        return False
-    return any(
-        (px - x) * (px - x) + (py - y) * (py - y) < core * core for x, y in PILLARS
-    )
+def _in_pillar_core(px: float, py: float) -> bool:
+    # Classify centers against the same cylinder used by contact mechanics.
+    return any((px - x) ** 2 + (py - y) ** 2 < PILLAR_RADIUS**2 for x, y in PILLARS)
 
 
 def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
@@ -96,12 +83,11 @@ def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
     grid = SignalGridSpec()
     grid.signal_count = 1
     grid.shape = shape
-    grid.origin = Vec3(-42.0, -118.0, -8.0)
-    grid.spacing = Vec3(4.0, 4.0, 4.0)
+    grid.origin = Vec3(-42.0, -118.0, -4.5)
+    grid.spacing = Vec3(4.0, 4.0, 3.0)
     grid.diffusion = [40.0]
     grid.advection = [Vec3()]
-    grid.integration = SignalIntegrationKind.CRANK_NICOLSON
-    margin = 0.5 * math.hypot(grid.spacing.x, grid.spacing.y)
+    grid.integration = SignalIntegrationKind.BACKWARD_EULER
     obstacles = [0] * grid.site_count
     for x in range(shape.x):
         px = grid.origin.x + grid.spacing.x * x
@@ -112,7 +98,7 @@ def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
                 solid = (
                     abs(px) >= CHANNEL_HALF_WIDTH
                     or abs(pz) >= CHANNEL_HALF_HEIGHT
-                    or _in_pillar_core(px, py, margin)
+                    or _in_pillar_core(px, py)
                 )
                 if solid:
                     obstacles[(x * shape.y + y) * shape.z + z] = 1
@@ -158,7 +144,7 @@ def _add_walls(simulation: Simulation) -> None:
 
 def _rate_plan() -> CoupledRatePlan:
     rates = RatePlanBuilder()
-    uptake = -(rates.growth_rate() * rates.cell_volume()) / NUTRIENT_YIELD
+    uptake = -rates.cell_volume_change_rate() / NUTRIENT_YIELD
     return rates.coupled_plan(0, 1, (), (uptake,))
 
 
@@ -175,7 +161,8 @@ def _nutrient_growth(simulation: Simulation, position: Vec3) -> float:
 def _regulate(step: ControllerStep) -> StepPlan:
     if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
         mobility = colony_mobility(
-            GRID, step.cells, base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT
+            GRID, (cell for cell in step.cells if cell.fixed),
+            base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT
         )
         field, _ = solve_flow_field(
             GRID,
@@ -227,7 +214,7 @@ def build(context: ModelContext) -> NativeController:
     simulation.set_coupled_rate_plan(_rate_plan())
     _add_walls(simulation)
 
-    founder_ids = []
+    founder_ids: list[int] = []
     for x, y in FOUNDER_SITES:
         founder = CellInit()
         founder.position = Vec3(x, y, 0.0)
