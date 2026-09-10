@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "../../cpp/core/flow_system.hpp"
 #include "cm/simulation.hpp"
 
 namespace {
@@ -42,6 +43,31 @@ void assert_throws(Function&& function) {
 }  // namespace
 
 int main() {
+  {
+    auto spec = duct(4, 6, 3, {0.7F, 1.1F, 0.9F});
+    spec.obstacles.assign(spec.site_count(), 0);
+    spec.obstacles[22] = 1;
+    std::vector<float> drag(spec.site_count(), 0.3F);
+    const cm::detail::ResolvedFlowSystem system(spec, drag, cm::FlowAxis::y);
+    std::vector<double> u(system.active().size()), v(u.size()), p(spec.site_count());
+    for (std::size_t i = 0; i < u.size(); ++i) {
+      u[i] = system.active()[i] ? std::sin(static_cast<double>(i)) : 0;
+      v[i] = system.active()[i] ? std::cos(static_cast<double>(i) * 0.7) : 0;
+    }
+    for (std::size_t i = 0; i < p.size(); ++i) p[i] = std::sin(static_cast<double>(i) * 0.3);
+    const auto dot = [](const auto& a, const auto& b) {
+      double sum = 0;
+      for (std::size_t i = 0; i < a.size(); ++i) sum += a[i] * b[i];
+      return sum;
+    };
+    const auto gp = system.gradient(p), du = system.divergence(u);
+    assert(std::abs(dot(u, gp) + dot(du, p)) < 1e-10);
+    std::vector<double> au, av;
+    system.apply_momentum(u, au);
+    system.apply_momentum(v, av);
+    assert(std::abs(dot(u, av) - dot(au, v)) < 1e-10);
+    assert(dot(u, au) > 0);
+  }
   {
     const auto spec = duct(4, 8, 3);
     cm::Simulation simulation;

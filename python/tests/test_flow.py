@@ -189,7 +189,7 @@ def test_colony_mobility_adds_drag_where_cells_pack() -> None:
     sparse = mobility[_site(spec, 1, 1, 0)]
     empty = mobility[_site(spec, 0, 2, 0)]
     assert mobility[_site(spec, 2, 2, 0)] == 0.0
-    assert packed < sparse < empty == 1.0
+    assert packed < sparse < empty <= 1.0
     # Packed voxels hit the volume-fraction cap rather than shrinking without bound.
     capped = 1.0 / (1.0 + 100.0 * 0.9**2 / (1.0 - 0.9) ** 3)
     assert math.isclose(packed, capped, rel_tol=1.0e-9)

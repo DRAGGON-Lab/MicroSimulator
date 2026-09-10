@@ -62,16 +62,14 @@ void run_depth_case(cm::BackendKind backend, std::uint32_t device_index) {
   auto spec = duct(5, 8, 2, {0.7F, 1.1F, 0.6F});
   spec.obstacles.assign(spec.site_count(), 0);
   for (std::uint32_t y = 3; y <= 4; ++y) {
-    spec.obstacles[site_index(spec, 2, y, 0)] = 1;
+    spec.obstacles[site_index(spec, 2, y, 1)] = 1;
   }
   std::vector<float> mobility(spec.site_count(), 1.0F);
   for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
     for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
       for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
         mobility[site_index(spec, x, y, z)] =
-            spec.solid_site(site_index(spec, x, y, z))
-                ? 0.0F
-                : 0.4F + 0.1F * static_cast<float>(x) + 0.05F * static_cast<float>(z);
+            spec.solid_site(site_index(spec, x, y, z)) ? 0.0F : 0.4F + 0.1F * static_cast<float>(x);
       }
     }
   }

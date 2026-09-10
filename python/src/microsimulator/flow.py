@@ -1,24 +1,18 @@
-"""Steady Hele-Shaw-Brinkman flow solve for device grids.
+"""Depth-integrated shallow flow on a Cartesian device grid.
 
-The solver computes the depth-averaged Darcy-Brinkman pressure problem
-``div(m grad p) = 0`` over the fluid voxels of a signal grid and returns the
-face fluxes ``v = -m_face * dp/dn`` as a face-staggered velocity field. The
-per-voxel mobility ``m`` carries the physics: uniform mobility is the Stokes
-limit of the closure and resolves flow through arbitrary mask geometry, while
-reduced mobility inside a colony (`colony_mobility`) adds Brinkman drag so a
-packed trap diverts flow. Mobility is relative - the linear solution is
-rescaled to a requested mean inlet speed - so callers never handle pressure or
-viscosity units. Discrete conservation and zero velocity on closed faces hold
-by construction, and the returned field passes the engine's grid validation
-unchanged.
+The pressure has one unknown per x/y fluid column. The native solver solves
+``div_xy(q) = 0`` with ``q = -H*m*grad_xy(p)`` and gap height H. Default relative
+mobility is proportional to H**2, giving the H**3 Hele-Shaw conductance.
+User-supplied mobility must be constant through each column. Colony resistance
+is a calibrated phenomenological closure, not resolved cell hydrodynamics.
 
-Pressure is fixed on the fluid boundary faces of the flow axis (inlet one,
-outlet zero) and every other exterior face carries no flux; the flow axis
-boundaries must therefore be `FIXED` and no axis may be periodic. The discrete
-operator is symmetric positive definite and is solved matrix-free with
-Jacobi-preconditioned conjugate gradient by the CPU, Metal, or CUDA backend
-selected for the simulation. Side-wall boundary layers, whose thickness is on
-the order of the gap height, are outside the closure.
+Columns must be contiguous and share a planar floor; use resolved Stokes flow
+for overhangs, multilayer channels, or flow along z. Harmonic conductance and
+half-cell pressure boundaries define the finite-volume operator. CPU, Metal,
+and CUDA solve it natively. A conservative lift distributes each integrated
+face flux over its open depth and reconstructs vertical flux by continuity for
+3D transport. This lift does not resolve a wall-normal velocity profile.
+Velocities are normalized to the requested mean inlet speed.
 """
 
 from __future__ import annotations
@@ -41,6 +35,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     Simulation,
     Vec3,
 )
+from .biomass import biomass_volume
 
 _FloatGrid = NDArray[np.float64]
 _BoolGrid = NDArray[np.bool_]
@@ -110,7 +105,7 @@ def solve_flow_field(
     Flow runs from the lower to the upper boundary of ``axis``; a negative
     ``mean_inlet_speed`` reverses it. The grid's shape, spacing, obstacles,
     and boundary kinds are read from ``spec``; ``mobility`` optionally gives
-    one relative mobility per site (default uniform, the Stokes limit). If a
+    one relative gap-mean mobility per site (default proportional to gap height squared). If a
     simulation is supplied, its native backend executes the solve. Otherwise
     a temporary simulation uses ``backend`` and ``device_index``.
     """
@@ -161,48 +156,94 @@ def gap_mobility(spec: SignalGridSpec) -> list[float]:
     return [float(value) for value in mobility.ravel()]
 
 
+def _deposit_amount(
+    spec: SignalGridSpec,
+    position: Vec3,
+    amount: float,
+    averaging_radius: float,
+    target: _FloatGrid,
+) -> None:
+    """Integrate a separable tent kernel over voxels, then conserve its amount."""
+    dims = (spec.shape.x, spec.shape.y, spec.shape.z)
+    origin = (spec.origin.x, spec.origin.y, spec.origin.z)
+    spacing = (spec.spacing.x, spec.spacing.y, spec.spacing.z)
+    centers = (position.x, position.y, position.z)
+    if any(not math.isfinite(v) for v in centers) or not math.isfinite(amount) or amount < 0:
+        raise FlowError("deposited positions and nonnegative amounts must be finite")
+    if any(
+        p < o - h / 2 or p >= o + (n - 0.5) * h
+        for p, o, h, n in zip(centers, origin, spacing, dims, strict=True)
+    ):
+        return  # Outside the modeled volume: removal/washout is the caller's responsibility.
+    slices: list[slice] = []
+    weights: list[_FloatGrid] = []
+    for p, o, h, n in zip(centers, origin, spacing, dims, strict=True):
+        lo = max(0, math.floor((p - averaging_radius - o) / h + 0.5))
+        hi = min(n, math.ceil((p + averaging_radius - o) / h + 0.5))
+        edges = (o + (np.arange(lo, hi + 1) - 0.5) * h - p) / averaging_radius
+        cdf = np.where(
+            edges <= -1,
+            0,
+            np.where(
+                edges < 0,
+                0.5 * (edges + 1) ** 2,
+                np.where(edges < 1, 1 - 0.5 * (1 - edges) ** 2, 1),
+            ),
+        )
+        slices.append(slice(lo, hi))
+        weights.append(np.diff(cdf))
+    kernel = weights[0][:, None, None] * weights[1][None, :, None] * weights[2][None, None, :]
+    region = tuple(slices)
+    if spec.obstacles:
+        solid = np.asarray(spec.obstacles, dtype=np.uint8).reshape(dims)[region] != 0
+        kernel[solid] = 0
+        # Restrict to one face-connected fluid component of the kernel support.
+        connected = np.zeros(kernel.shape, dtype=bool)
+        seed = tuple(int(i) for i in np.unravel_index(int(np.argmax(kernel)), kernel.shape))
+        pending = [seed]
+        while pending:
+            index = pending.pop()
+            if connected[index] or kernel[index] <= 0:
+                continue
+            connected[index] = True
+            for axis in range(3):
+                for offset in (-1, 1):
+                    adjacent = list(index)
+                    adjacent[axis] += offset
+                    if 0 <= adjacent[axis] < kernel.shape[axis]:
+                        pending.append(tuple(adjacent))
+        kernel[~connected] = 0
+    total = float(kernel.sum())
+    if total <= 0:
+        raise FlowError("biomass deposition has no connected fluid support")
+    target[region] += (amount / total) * kernel
+
+
 def colony_volume_fraction(
     spec: SignalGridSpec,
     cells: Iterable[_RodLike],
     *,
-    max_volume_fraction: float = 0.9,
+    averaging_radius: float = 4.0,
 ) -> _FloatGrid:
-    """Rasterize the colony into a per-voxel volume fraction grid.
+    """Conservative biomass density B/voxel_volume, without density clipping.
 
-    Each cell's capsule volume accumulates into the voxel holding its center
-    (the grid origin is the center of site zero, so voxel ``i`` spans the
-    half-open interval centered on ``origin + i * spacing``); fractions are
-    capped at ``max_volume_fraction``.
+    B is the effective biochemical volume, not geometric capsule volume.
+    The tent kernel radius is in physical length units and remains fixed under
+    mesh refinement. Boundary-truncated kernels are renormalized within one
+    connected fluid region. Cells outside the grid's physical extent are omitted.
     """
-
-    if not 0.0 < max_volume_fraction < 1.0:
-        raise FlowError("maximum volume fraction must lie strictly between zero and one")
+    if not math.isfinite(averaging_radius) or averaging_radius <= 0:
+        raise FlowError("averaging radius must be finite and positive")
     dims = (spec.shape.x, spec.shape.y, spec.shape.z)
-    origin = (spec.origin.x, spec.origin.y, spec.origin.z)
-    spacing = (spec.spacing.x, spec.spacing.y, spec.spacing.z)
     volume = np.zeros(dims, dtype=np.float64)
     for cell in cells:
-        position = (cell.position.x, cell.position.y, cell.position.z)
-        indices: list[int] = []
-        inside = True
-        for component in range(3):
-            index = math.floor(
-                (position[component] - origin[component]) / spacing[component] + 0.5
-            )
-            if not 0 <= index < dims[component]:
-                inside = False
-                break
-            indices.append(index)
-        if not inside:
-            continue
-        radius = cell.radius
-        capsule = math.pi * radius * radius * cell.length + (4.0 / 3.0) * math.pi * radius**3
-        volume[indices[0], indices[1], indices[2]] += capsule
-    return np.minimum(volume / spec.voxel_volume, max_volume_fraction)
+        _deposit_amount(
+            spec, cell.position, biomass_volume(cell.length, cell.radius), averaging_radius, volume
+        )
+    return volume / spec.voxel_volume
 
 
-
-class _SpeciesRodLike(Protocol):
+class _SpeciesRodLike(_RodLike, Protocol):
     @property
     def position(self) -> Vec3: ...
     @property
@@ -214,38 +255,19 @@ def colony_species_density(
     cells: Iterable[_SpeciesRodLike],
     *,
     species: int,
+    averaging_radius: float = 4.0,
 ) -> list[float]:
-    """Rasterize one intracellular species into a per-voxel density.
-
-    Each cell's level accumulates into the voxel holding its center, on the
-    same nearest-voxel convention as `colony_volume_fraction`, and the total is
-    divided by the voxel volume. A rate written per cell and per unit of that
-    species becomes a rate per unit volume of field, which is what an affine
-    grid reaction carries.
-    """
-
+    """Conservatively deposit intracellular amount concentration * biomass volume."""
     if species < 0:
         raise FlowError("species index must be non-negative")
-    dims = (spec.shape.x, spec.shape.y, spec.shape.z)
-    origin = (spec.origin.x, spec.origin.y, spec.origin.z)
-    spacing = (spec.spacing.x, spec.spacing.y, spec.spacing.z)
-    totals = np.zeros(dims, dtype=np.float64)
+    if not math.isfinite(averaging_radius) or averaging_radius <= 0:
+        raise FlowError("averaging radius must be finite and positive")
+    totals = np.zeros((spec.shape.x, spec.shape.y, spec.shape.z), dtype=np.float64)
     for cell in cells:
-        levels = cell.species
-        if species >= len(levels):
+        if species >= len(cell.species):
             raise FlowError("species index is outside the cell's species")
-        position = (cell.position.x, cell.position.y, cell.position.z)
-        indices: list[int] = []
-        for component in range(3):
-            index = math.floor(
-                (position[component] - origin[component]) / spacing[component] + 0.5
-            )
-            if not 0 <= index < dims[component]:
-                break
-            indices.append(index)
-        if len(indices) != 3:
-            continue
-        totals[indices[0], indices[1], indices[2]] += max(0.0, levels[species])
+        amount = cell.species[species] * biomass_volume(cell.length, cell.radius)
+        _deposit_amount(spec, cell.position, amount, averaging_radius, totals)
     return [float(value) for value in (totals / spec.voxel_volume).ravel()]
 
 
@@ -256,20 +278,15 @@ def colony_mobility(
     base: float | Sequence[float] = 1.0,
     drag_coefficient: float = 100.0,
     max_volume_fraction: float = 0.9,
+    averaging_radius: float = 4.0,
 ) -> list[float]:
-    """Build the Brinkman mobility field from the current colony.
+    """Column-mean phenomenological mobility from conserved biomass density.
 
-    Each cell's capsule volume accumulates into the voxel holding its center
-    (the grid origin is the center of site zero, so voxel ``i`` spans the
-    half-open interval centered on ``origin + i * spacing``); the resulting
-    volume fraction ``phi`` adds Kozeny-Carman style drag
-    ``drag_coefficient * phi^2 / (1 - phi)^3`` to the base resistance, so
-    ``1/m = 1/base + drag``. ``base`` is a uniform value or a per-site field
-    such as `gap_mobility`. The drag coefficient is a modeling choice: it
-    sets how strongly a packed colony resists through-flow relative to the
-    open channel. Solid voxels stay at zero mobility.
+    The density cap regularizes only the resistance law; deposited biomass is
+    never discarded. Both base mobility and returned mobility are gap means.
     """
-
+    if not 0 < max_volume_fraction < 1:
+        raise FlowError("maximum volume fraction must lie strictly between zero and one")
     dims = (spec.shape.x, spec.shape.y, spec.shape.z)
     if isinstance(base, (int, float)):
         if not math.isfinite(base) or base <= 0.0:
@@ -281,7 +298,15 @@ def colony_mobility(
         base_grid = np.asarray(base, dtype=np.float64).reshape(dims)
         if not bool(np.all(np.isfinite(base_grid))) or bool(np.any(base_grid < 0.0)):
             raise FlowError("base mobility values must be finite and non-negative")
-    fraction = colony_volume_fraction(spec, cells, max_volume_fraction=max_volume_fraction)
+    fraction = colony_volume_fraction(spec, cells, averaging_radius=averaging_radius)
+    fluid = (
+        np.ones(dims, dtype=np.float64)
+        if not spec.obstacles
+        else (np.asarray(spec.obstacles).reshape(dims) == 0).astype(np.float64)
+    )
+    count = fluid.sum(axis=2, keepdims=True)
+    column_density = fraction.sum(axis=2, keepdims=True) / np.maximum(count, 1)
+    fraction = np.minimum(column_density, max_volume_fraction) * fluid
     drag = _kozeny_carman_drag(fraction, drag_coefficient)
     # m = b / (1 + b * drag) is 1 / (1/b + drag) extended continuously to b = 0.
     mobility = base_grid / (1.0 + base_grid * drag)

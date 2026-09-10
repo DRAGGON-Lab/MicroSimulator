@@ -138,7 +138,9 @@ def bench_two_layer_brinkman(coarse: int, simulation: Simulation) -> list[Result
             spec,
             mean_inlet_speed=1.0,
             drag=drag,
-            tolerance=1.0e-6,
+            # At fine spacing, binary32 second differences have a residual
+            # floor above 1e-6. Keep this explicit and well below profile error.
+            tolerance=1.0e-5,
             simulation=simulation,
         )
         profile = np.asarray(field.y_faces).reshape(1, 7, nz)[0, 3, :]

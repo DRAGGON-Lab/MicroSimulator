@@ -48,6 +48,8 @@ struct ResolvedFlowParameters {
 struct ResolvedFlowReport {
   std::uint32_t outer_iterations{0};
   std::uint64_t inner_iterations{0};
+  float relative_residual{0.0F};
+  float momentum_relative_residual{0.0F};
   float divergence_rms{0.0F};
   float mean_inlet_speed{0.0F};
   float max_speed{0.0F};

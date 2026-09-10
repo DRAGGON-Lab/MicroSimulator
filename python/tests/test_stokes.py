@@ -193,7 +193,7 @@ def test_colony_drag_rasterizes_the_colony() -> None:
     empty = drag[site_index(spec, 1, 1, 0)]
     solid = drag[site_index(spec, 2, 2, 0)]
     assert packed > 0.0
-    assert empty == 0.0
+    assert 0.0 < empty < packed
     assert solid == 0.0
     assert math.isclose(packed, 50.0 * 0.9**2 / (1.0 - 0.9) ** 3, rel_tol=1.0e-9)
     with pytest.raises(FlowError, match="finite and non-negative"):

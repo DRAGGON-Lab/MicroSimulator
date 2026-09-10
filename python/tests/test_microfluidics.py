@@ -116,3 +116,21 @@ def test_biopixel_cavity_is_shallow_beside_the_model_channel() -> None:
     assert device._solid(42.5, 0.0, 2.475, half)
     assert not device._solid(-50.0, 0.0, 9.075, half)
     assert math.isclose(device.trap_height / device.channel_height, 0.165)
+
+
+def test_planar_mask_wall_error_is_bounded_by_half_spacing() -> None:
+    device = TrapChannelDevice()
+    for h in (1.0, 2.0, 4.0):
+        for shift in (0.1, 0.4, 0.9):
+            spec = SignalGridSpec()
+            spec.signal_count = 1
+            shape = GridShape()
+            shape.x, shape.y, shape.z = int(180 / h), 2, 1
+            spec.shape, spec.spacing = shape, Vec3(h, h, h)
+            spec.origin, spec.diffusion = Vec3(-110 + shift * h, 0, 0), [0]
+            device.apply_to_grid(spec, inlet_values=[0], outlet_values=[0])
+            columns = [x for x in range(shape.x) if not spec.obstacles[x * 2]]
+            lower = spec.origin.x + (columns[0] - 0.5) * h
+            upper = spec.origin.x + (columns[-1] + 0.5) * h
+            assert abs(lower - device.channel_far_x) <= h / 2 + 1e-5
+            assert abs(upper - device.trap_back_x) <= h / 2 + 1e-5
