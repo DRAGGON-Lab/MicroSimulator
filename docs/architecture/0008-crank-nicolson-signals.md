@@ -1,7 +1,8 @@
-# ADR 0008: Crank-Nicolson signal transport
+# ADR 0008: implicit signal transport
 
 - Status: accepted
 - Date: 2026-08-15
+- Amended: 2026-09-10
 
 ## Context
 
@@ -49,3 +50,11 @@ CPU is the numerical reference. Metal and CUDA use native Jacobi stencil kernels
 - Checkpoint version 5 records the integration and solver configuration; versions 1 through 4 migrate signal grids to Forward Euler defaults.
 - Coupled rates use the same semi-implicit transport solve with explicit cell sources, preserving old-field sampling and simultaneous commit semantics.
 - The legacy Green's-function truncation and ignored convolution are not compatibility targets.
+
+## Positivity-preserving baseline
+
+`SignalIntegrationKind.BACKWARD_EULER` uses `c_(n+1) - dt (T + R)(c_(n+1)) = c_n + dt s`. The same native Jacobi operators use implicit weight dt and zero explicit transport weight. Conservative upwind transport, diffusion, and nonnegative affine source/loss give an M-matrix and preserve nonnegative concentrations when the explicit right-hand side is nonnegative, to solve tolerance. Backward Euler is first order and damps unresolved fast transients; it is the baseline for stiff loss, not a claim of higher temporal accuracy. Crank-Nicolson remains available for suitably resolved smooth transport and retains its possible sign oscillations.
+
+Cell sinks remain explicit. Their amount must be affordable at the chosen step; backward Euler does not make arbitrary cell uptake positive. No clipping or silent mass correction is applied. `Simulation.step` now commits growth, species, grid levels, time, and the signal report as one transaction. A failed uptake, negative field, or nonconverged solve restores the previous biological state. The caller can reduce dt and recompute nutrient-limited growth; accepting growth after a rejected nutrient update is prohibited. Controller hooks and separate mechanics operations are outside this native biological transaction.
+
+Native and Python tests cover stiff scalar loss, conservative stiff diffusion, all integration modes with realized-growth uptake, full rollback on nutrient overdraw, backend conformance, and checkpoint restart with the new integration tag.

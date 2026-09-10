@@ -20,13 +20,9 @@ float effective_surface_area(float length, float radius) {
   return 2.0f * pi * radius * (length + 2.0f * radius);
 }
 
-float evaluate_instruction(const RateInstruction instruction,
-                           device const float* workspace,
-                           device const float* species,
-                           float4 center,
-                           float4 geometry,
-                           float growth_rate,
-                           int cell_type, float volume_change_rate) {
+float evaluate_instruction(const RateInstruction instruction, device const float* workspace,
+                           device const float* species, float4 center, float4 geometry,
+                           float growth_rate, int cell_type, float volume_change_rate) {
   switch (instruction.operation) {
     case 0:
       return instruction.value;
@@ -115,11 +111,13 @@ kernel void advance_species(
   device float* cell_workspace = workspace + workspace_offset;
   device const float* cell_species = levels + species_offset;
   for (uint index = 0; index < instruction_count; ++index) {
-    float value = evaluate_instruction(instructions[index], cell_workspace, cell_species,
-                                       centers[cell], geometry[cell], growth_rates[cell],
-                                       cell_types[cell],
-            dt == 0.0f ? 0.0f : (effective_volume(geometry[cell].x, radius) -
-                                 effective_volume(previous_lengths[cell], radius)) / dt);
+    float value =
+        evaluate_instruction(instructions[index], cell_workspace, cell_species, centers[cell],
+                             geometry[cell], growth_rates[cell], cell_types[cell],
+                             dt == 0.0f ? 0.0f
+                                        : (effective_volume(geometry[cell].x, radius) -
+                                           effective_volume(previous_lengths[cell], radius)) /
+                                              dt);
     cell_workspace[index] = value;
     if (!isfinite(value)) {
       atomic_fetch_or_explicit(error, 1u, memory_order_relaxed);

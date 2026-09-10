@@ -10,6 +10,7 @@ from microsimulator import (
     GridShape,
     RatePlanBuilder,
     SignalGridSpec,
+    SignalIntegrationKind,
     Simulation,
     Vec3,
     backend_available,
@@ -41,13 +42,15 @@ def test_division_preserves_biomass_and_intracellular_amount(fraction: float) ->
 
 
 @pytest.mark.parametrize("backend", list(BackendKind))
+@pytest.mark.parametrize("integration", list(SignalIntegrationKind))
 def test_realized_growth_consumes_exactly_its_yield_on_every_backend(
-    backend: BackendKind, tmp_path: Path
+    backend: BackendKind, integration: SignalIntegrationKind, tmp_path: Path
 ) -> None:
     if not backend_available(backend):
         pytest.skip("backend unavailable")
     simulation = Simulation(backend, species_count=1)
     spec = SignalGridSpec()
+    spec.integration = integration
     shape = GridShape()
     shape.x = shape.y = shape.z = 1
     spec.shape = shape

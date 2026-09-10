@@ -56,7 +56,8 @@ float cell_site_weight(float4 center, GridShape shape, float4 origin, float4 spa
          axis_site_weight(coordinate_z, shape.z, z);
 }
 
-uint stencil_component(float4 center, GridShape shape, float4 origin, float4 spacing, device const uchar* obstacles) {
+uint stencil_component(float4 center, GridShape shape, float4 origin, float4 spacing,
+                       device const uchar* obstacles) {
   float cx = axis_coordinate(center.x, origin.x, spacing.x, shape.x);
   float cy = axis_coordinate(center.y, origin.y, spacing.y, shape.y);
   float cz = axis_coordinate(center.z, origin.z, spacing.z, shape.z);
@@ -66,10 +67,14 @@ uint stencil_component(float4 center, GridShape shape, float4 origin, float4 spa
   for (unsigned bit = 0; bit < 8; ++bit) {
     unsigned x = lx + (bit >> 2), y = ly + ((bit >> 1) & 1u), z = lz + (bit & 1u);
     if (x >= shape.x || y >= shape.y || z >= shape.z) continue;
-    float w = axis_site_weight(cx, shape.x, x) * axis_site_weight(cy, shape.y, y) * axis_site_weight(cz, shape.z, z);
+    float w = axis_site_weight(cx, shape.x, x) * axis_site_weight(cy, shape.y, y) *
+              axis_site_weight(cz, shape.z, z);
     if (w <= 0 || obstacles[site_index(shape, x, y, z)] != 0) continue;
     fluid |= 1u << bit;
-    if (w > best) { best = w; seed = 1u << bit; }
+    if (w > best) {
+      best = w;
+      seed = 1u << bit;
+    }
   }
   unsigned connected = seed;
   for (unsigned pass = 0; pass < 8; ++pass) {
@@ -179,7 +184,8 @@ float cell_scatter_weight(float4 center, GridShape shape, float4 origin, float4 
 
 float evaluate_instruction(const RateInstruction instruction, device const float* workspace,
                            device const float* species, device const float* signals, float4 center,
-                           float4 geometry, float growth_rate, int cell_type, float volume_change_rate) {
+                           float4 geometry, float growth_rate, int cell_type,
+                           float volume_change_rate) {
   switch (instruction.operation) {
     case 0:
       return instruction.value;
@@ -285,8 +291,10 @@ kernel void advance_coupled_cells(
     float value =
         evaluate_instruction(instructions[index], cell_workspace, cell_species, cell_signals,
                              centers[cell], geometry[cell], growth_rates[cell], cell_types[cell],
-            dt == 0.0f ? 0.0f : (effective_volume(geometry[cell].x, radius) -
-                                 effective_volume(previous_lengths[cell], radius)) / dt);
+                             dt == 0.0f ? 0.0f
+                                        : (effective_volume(geometry[cell].x, radius) -
+                                           effective_volume(previous_lengths[cell], radius)) /
+                                              dt);
     cell_workspace[index] = value;
     if (!isfinite(value)) {
       atomic_fetch_or_explicit(error, 1u, memory_order_relaxed);
@@ -401,7 +409,7 @@ kernel void advance_coupled_grid(
     float weight = cell_scatter_weight(centers[cell], shape, origin, spacing, obstacles, x, y, z);
     source += weight * cell_signal_rates[cell * signal_count + signal] * inverse_voxel_volume;
   }
-  float transport_scale = crank_nicolson == 0u ? dt : 0.5f * dt;
+  float transport_scale = crank_nicolson == 0u ? dt : (crank_nicolson == 1u ? 0.5f * dt : 0.0f);
   float candidate = current + transport_scale * rate + dt * source;
   output[index] = candidate;
   if (!isfinite(candidate) || (crank_nicolson == 0u && candidate < 0.0f)) {

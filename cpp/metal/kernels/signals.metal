@@ -124,7 +124,7 @@ kernel void advance_signal_grid(
       transport_point(levels, diffusion, advection, fixed_values, reaction_source, reaction_loss,
                       obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundary_kinds,
                       shape, spacing, signal_count, index);
-  float scale = crank_nicolson == 0u ? dt : 0.5f * dt;
+  float scale = crank_nicolson == 0u ? dt : (crank_nicolson == 1u ? 0.5f * dt : 0.0f);
   float candidate = levels[index] + scale * transport.rate;
 
   output[index] = candidate;

@@ -20,6 +20,7 @@ enum class GridBoundaryKind : std::uint8_t {
 enum class SignalIntegrationKind : std::uint8_t {
   forward_euler,
   crank_nicolson,
+  backward_euler,
 };
 
 struct SignalSolveParameters {

@@ -1,63 +1,21 @@
-# ADR 0021: advective flow drift on cells
+# ADR 0021: finite-aspect flow drift
 
 - Status: accepted
 - Date: 2026-08-16
-
-## Context
-
-The velocity field advects grid signals but exerts nothing on cells. In a flow-fed trap,
-cells outside the trap should be carried downstream; in the overdamped regime a cell's
-velocity relaxes to the local fluid velocity on a timescale far below one time step, so the
-cell translates with the flow and a rod in shear rotates.
+- Amended: 2026-09-10
 
 ## Decision
 
-`Simulation.apply_flow_drift(dt, integration)` advects every non-fixed cell through the grid's velocity
-field by one explicit step, as an operation between growth and contact relaxation. The fluid
-velocity is sampled at both capsule centerline endpoints: each stencil site's cell-centered
-velocity is the mean of its two face velocities per axis, and the trilinear weights are the
-signal-sampling weights, including the obstacle renormalization near walls. Endpoints are
-clamped to the lattice of site centers before sampling: mechanics walls, not the lattice
-edge, bound cells, so a rod whose tip pokes past the outermost site samples the nearest
-in-grid point rather than erroring. Clamping happens in the lattice coordinate the bound is
-tested in rather than in position space, so a clamped endpoint lies inside the lattice for
-every origin and spacing. From endpoint velocities `v1` and `v2` with cylinder length `l`
-and axis `a`:
+`Simulation.apply_flow_drift(dt, integration)` translates each non-fixed cell at the interpolated velocity of its center. Its direction p follows the equivalent-spheroid Jeffery equation `dp/dt = Omega p + lambda (E p - (p.Ep)p)`, where `E = (grad(u) + grad(u)^T)/2`, `Omega = (grad(u) - grad(u)^T)/2`, `a = (length + 2 radius)/(2 radius)`, and `lambda = (a² - 1)/(a² + 1)`. This retains rigid-body rotation for a sphere and finite-aspect tumbling in shear. A capsule is approximated by a spheroid with the same aspect ratio; the equation is not an exact capsule hydrodynamic solution. See [Jeffery (1922)](https://doi.org/10.1098/rspa.1922.0078) and the zero-inertia equation in [Einarsson et al. (2015)](https://arxiv.org/abs/1504.02849).
 
-- translation is `dt * (v1 + v2) / 2`;
-- the rotation vector is `dt * (a x (v2 - v1)) / l`, the least-squares rigid rotation for the
-  endpoint velocity difference, taken as zero when `l` is degenerate, applied as an
-  axis-angle rotation capped by the caller's mechanics integration rotation limit, through
-  the same axis-angle helper mechanical integration uses.
+The field is sampled with the face-connected trilinear stencil, after converting opposing face velocities to site-centered velocities. Velocity gradients use centered differences of that interpolant over one grid spacing. Sampling is clamped at the center lattice; a fully solid stencil has zero velocity. Near-wall rotation is therefore an interpolation approximation and requires spatial refinement; wall hydrodynamic torques, lubrication forces, adhesion, and detachment are not included.
 
-Every update is validated before any world-state mutation, matching mechanical integration.
-The operation requires a signal grid with a velocity field. A cell whose sampling stencil
-holds no fluid samples zero rather than erroring: the field is validated zero on every face
-of a solid site, so that is the field's own value there, and a cell that contact relaxation
-has pressed into a wall simply does not drift. Concentration has no such value, so sampling
-it inside an obstacle remains a model error. Fixed cells do not move.
+A normalized explicit midpoint step advances position and direction. Internal substeps limit translation to one quarter of the minimum grid spacing and angular displacement to `max_rotation_radians`. The latter bounds each substep, not the total rotation, so tightening it improves integration instead of changing the motion law. Zero retains the explicit option to freeze orientation. Excessive substep counts or invalid geometry reject the operation before any cell is changed. Length and radius remain unchanged, preserving biochemical biomass.
 
-Drift composes with contact relaxation by operator splitting: drift first, then the ordinary
-relaxation resolves any overlap the drift produced against walls or neighbors. The controller
-applies drift when its mechanics configuration enables `flow_drift`, before the relaxation
-passes. A formulation that couples drag into the relaxation right-hand side, so wall contact
-forces balance fluid forces within one solve, is a candidate refinement with its own contract;
-the explicit split is the reference behavior.
+The controller composes drift with contact relaxation and growth by first-order splitting. Drift integration is second order in a smooth fixed velocity field, but this does not make the complete coupled simulation second order. Outer timestep and mechanics convergence still need checking. Fixed cells are the explicit attached population; free-cell washout is kinematic, not a prediction of attachment or detachment thresholds.
 
-The operation is host-side over committed state and identical on every backend; no kernel or
-checkpoint change is involved. `flow_drift` is part of the controller's mechanics
-configuration payload.
+The operation runs on the host over committed state identically for every backend. `flow_drift` remains part of the controller checkpoint configuration.
 
-## Validation sequence
+## Validation
 
-1. A free cell in uniform flow translates by exactly `velocity * dt` per drift call.
-2. A rod spanning a shear gradient rotates toward alignment; a fixed cell does not move.
-3. Drift against a wall followed by relaxation leaves the cell outside the wall.
-
-## Consequences
-
-- Washout becomes dynamic: flow carries cells to the removal predicate rather than the model
-  teleporting them.
-- Splitting error is first order in `dt`; models choose steps so per-step drift stays small
-  relative to cell size, as they already do for growth.
-- Cells in zero-velocity regions, including trap interiors, are unaffected.
+Tests cover uniform translation, finite-aspect Jeffery shear including the spherical limit, rigid-rotation convergence, fixed cells, zero orientation limit, clamped and fully solid sampling, length conservation, and controller checkpoint continuation.

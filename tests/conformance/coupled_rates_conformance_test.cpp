@@ -153,6 +153,7 @@ void run_case(cm::SignalIntegrationKind integration, float dt, bool masked = fal
 int main() {
   run_case(cm::SignalIntegrationKind::forward_euler, 0.01F);
   run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F);
+  run_case(cm::SignalIntegrationKind::backward_euler, 0.5F);
   run_case(cm::SignalIntegrationKind::forward_euler, 0.01F, true);
   run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F, true);
   return 0;

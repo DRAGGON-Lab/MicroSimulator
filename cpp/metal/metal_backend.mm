@@ -490,8 +490,7 @@ class MetalBackend final : public ComputeBackend {
     const MetalUInt4 shape{spec.shape.x, spec.shape.y, spec.shape.z,
                            static_cast<std::uint32_t>(spec.site_count())};
     const MetalFloat4 spacing{spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F};
-    const auto crank_nicolson =
-        static_cast<std::uint32_t>(spec.integration == SignalIntegrationKind::crank_nicolson);
+    const auto crank_nicolson = static_cast<std::uint32_t>(spec.integration);
     @autoreleasepool {
       id<MTLCommandBuffer> command_buffer = [queue_ commandBuffer];
       id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
@@ -536,11 +535,12 @@ class MetalBackend final : public ComputeBackend {
           signal_levels_, signal_output_, signal_diffusion_, signal_advection_,
           signal_fixed_values_, signal_reaction_source_, signal_reaction_loss_, signal_obstacles_,
           signal_x_faces_, signal_y_faces_, signal_z_faces_, has_velocity_field, signal_error_,
-          boundary_kinds, shape, spacing, dt, signal_count, level_count, spec.solver);
+          boundary_kinds, shape, spacing, (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count,
+          level_count, spec.solver);
       result_buffer = solve.first;
       report = solve.second;
       if (!report.converged) {
-        throw std::runtime_error("Metal Crank-Nicolson signal solve did not converge after " +
+        throw std::runtime_error("Metal Implicit signal solve did not converge after " +
                                  std::to_string(report.iterations) + " iterations");
       }
     }
@@ -672,8 +672,7 @@ class MetalBackend final : public ComputeBackend {
                            static_cast<std::uint32_t>(spec.site_count())};
     const MetalFloat4 origin{spec.origin.x, spec.origin.y, spec.origin.z, 0.0F};
     const MetalFloat4 spacing{spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F};
-    const auto crank_nicolson =
-        static_cast<std::uint32_t>(spec.integration == SignalIntegrationKind::crank_nicolson);
+    const auto crank_nicolson = static_cast<std::uint32_t>(spec.integration);
     @autoreleasepool {
       id<MTLCommandBuffer> command_buffer = [queue_ commandBuffer];
       id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
@@ -751,13 +750,13 @@ class MetalBackend final : public ComputeBackend {
           coupled_grid_levels_, coupled_grid_output_, coupled_diffusion_, coupled_advection_,
           coupled_fixed_values_, coupled_reaction_source_, coupled_reaction_loss_,
           coupled_obstacles_, coupled_x_faces_, coupled_y_faces_, coupled_z_faces_,
-          has_velocity_field, coupled_error_, boundary_kinds, shape, spacing, dt, signal_count,
-          level_count, spec.solver);
+          has_velocity_field, coupled_error_, boundary_kinds, shape, spacing,
+          (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count, level_count, spec.solver);
       result_buffer = solve.first;
       report = solve.second;
       if (!report.converged) {
         throw std::runtime_error(
-            "Metal Crank-Nicolson coupled signal solve did not converge after " +
+            "Metal Implicit coupled signal solve did not converge after " +
             std::to_string(report.iterations) + " iterations");
       }
     }
@@ -1209,7 +1208,7 @@ class MetalBackend final : public ComputeBackend {
       const MetalUInt4& shape, const MetalFloat4& spacing, float dt, std::uint32_t signal_count,
       std::uint32_t level_count, const SignalSolveParameters& parameters) {
     ensure_signal_solve_capacity(level_count);
-    const auto half_dt = 0.5F * dt;
+    const auto half_dt = dt;
     SignalSolveReport report;
     report.residual_rms = signal_residual_rms(
         initial, right_hand_side, diffusion, advection, fixed_values, reaction_source,

@@ -524,7 +524,7 @@ def test_flow_drift_clamps_endpoints_on_any_lattice(origin: float, spacing: floa
     )
 
 
-def test_flow_drift_honors_the_mechanics_rotation_limit() -> None:
+def test_flow_drift_substeps_instead_of_clipping_the_total_rotation() -> None:
     shape = GridShape()
     shape.x, shape.y, shape.z = 3, 3, 1
     grid = SignalGridSpec()
@@ -554,7 +554,7 @@ def test_flow_drift_honors_the_mechanics_rotation_limit() -> None:
     capped_id = capped.add_cell(cell)
     capped.apply_flow_drift(1.0)
     limit = MechanicsIntegrationParameters().max_rotation_radians
-    assert math.isclose(capped.cell(capped_id).direction.x, math.sin(limit), abs_tol=1.0e-6)
+    assert capped.cell(capped_id).direction.x > 3 * math.sin(limit)
 
     frozen = Simulation()
     frozen.configure_signal_grid(grid)

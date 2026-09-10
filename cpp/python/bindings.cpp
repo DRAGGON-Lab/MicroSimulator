@@ -43,7 +43,8 @@ NB_MODULE(_core, module) {
 
   nb::enum_<cm::SignalIntegrationKind>(module, "SignalIntegrationKind")
       .value("FORWARD_EULER", cm::SignalIntegrationKind::forward_euler)
-      .value("CRANK_NICOLSON", cm::SignalIntegrationKind::crank_nicolson);
+      .value("CRANK_NICOLSON", cm::SignalIntegrationKind::crank_nicolson)
+      .value("BACKWARD_EULER", cm::SignalIntegrationKind::backward_euler);
 
   nb::enum_<cm::RateOp>(module, "RateOp")
       .value("CONSTANT", cm::RateOp::constant)
