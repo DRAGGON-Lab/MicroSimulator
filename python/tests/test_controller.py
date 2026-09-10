@@ -24,6 +24,7 @@ from microsimulator import (
     Simulation,
     SimulationController,
     StepPlan,
+    Vec3,
     backend_available,
     build_model,
     capture_random_state,
@@ -307,3 +308,58 @@ def test_native_controller_example_builds_and_resumes(tmp_path: Path) -> None:
     )
     assert load_checkpoint_bundle(output).controller is not None
     assert resumed.completed_steps == 5
+
+def test_step_plan_removals_delete_cells_after_divisions() -> None:
+    simulation = Simulation(BackendKind.CPU, species_count=0)
+    first = CellInit()
+    first_id = simulation.add_cell(first)
+    second = CellInit()
+    second.position = Vec3(5.0, 0.0, 0.0)
+    second_id = simulation.add_cell(second)
+
+    def regulate(step: ControllerStep) -> StepPlan:
+        del step
+        return StepPlan(removals=(second_id,))
+
+    controller = NativeController(
+        simulation,
+        model_id="removal-test",
+        model_version=1,
+        rng=random.Random(3),
+        regulate=regulate,
+    )
+    controller.step(0.05)
+
+    identifiers = [cell.id for cell in simulation.cells()]
+    assert identifiers == [first_id]
+
+    def bad_regulate(step: ControllerStep) -> StepPlan:
+        del step
+        return StepPlan(removals=(second_id,))
+
+    bad_controller = NativeController(
+        simulation,
+        model_id="removal-test",
+        model_version=1,
+        rng=random.Random(3),
+        regulate=bad_regulate,
+    )
+    with pytest.raises(ControllerPlanError, match="unknown or duplicate"):
+        bad_controller.step(0.05)
+
+    def conflicted(step: ControllerStep) -> StepPlan:
+        del step
+        return StepPlan(
+            divisions=(DivisionRequest(first_id),),
+            removals=(first_id,),
+        )
+
+    conflict_controller = NativeController(
+        simulation,
+        model_id="removal-test",
+        model_version=1,
+        rng=random.Random(3),
+        regulate=conflicted,
+    )
+    with pytest.raises(ControllerPlanError, match="removes a dividing cell"):
+        conflict_controller.step(0.05)

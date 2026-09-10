@@ -16,7 +16,7 @@ namespace {
 float evaluate_instruction(const RateInstruction& instruction, std::span<const float> workspace,
                            std::span<const float> species, std::span<const float> signals,
                            const CellGeometryView& geometry, const CellAttributeView& attributes,
-                           std::size_t cell) {
+                           std::size_t cell, float volume_change_rate) {
   switch (instruction.operation) {
     case RateOp::constant:
       return instruction.value;
@@ -38,6 +38,8 @@ float evaluate_instruction(const RateInstruction& instruction, std::span<const f
       return attributes.growth_rates[cell];
     case RateOp::cell_type:
       return static_cast<float>(attributes.cell_types[cell]);
+    case RateOp::cell_volume_change_rate:
+      return volume_change_rate;
     case RateOp::cell_volume:
       return effective_cell_volume(geometry.lengths[cell], geometry.radii[cell]);
     case RateOp::cell_surface_area:
@@ -161,8 +163,13 @@ SignalSolveReport advance_coupled_cpu(WorldState& state, SignalGrid& grid,
     const auto cell_signals =
         std::span<const float>(sampled).subspan(cell * plan.signal_count(), plan.signal_count());
     for (std::size_t index = 0; index < plan.instructions().size(); ++index) {
-      workspace[index] = evaluate_instruction(plan.instructions()[index], workspace, cell_species,
-                                              cell_signals, geometry, attributes, cell);
+      workspace[index] = evaluate_instruction(
+          plan.instructions()[index], workspace, cell_species, cell_signals, geometry, attributes,
+          cell,
+          dt == 0.0F ? 0.0F
+                     : (effective_cell_volume(geometry.lengths[cell], geometry.radii[cell]) -
+                        effective_cell_volume(previous_lengths[cell], geometry.radii[cell])) /
+                           dt);
       if (!std::isfinite(workspace[index])) {
         throw std::domain_error("coupled rate instruction " + std::to_string(index) +
                                 " produced a non-finite value");

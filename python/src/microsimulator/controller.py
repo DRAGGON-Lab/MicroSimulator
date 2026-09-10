@@ -91,6 +91,7 @@ class StepPlan:
 
     updates: tuple[CellUpdate, ...] = ()
     divisions: tuple[DivisionRequest, ...] = ()
+    removals: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,6 +410,17 @@ class NativeController:
                 raise ControllerPlanError("division fraction must be strictly between zero and one")
             if parent.length < 2.0 * parent.radius:
                 raise ControllerPlanError("division parent is shorter than its cap diameter")
+        removals_value = cast(object, plan.removals)
+        if not isinstance(removals_value, tuple):
+            raise ControllerPlanError("step plan removals must be a tuple")
+        removing: set[int] = set()
+        for removal_value in cast(tuple[object, ...], removals_value):
+            removal = _plan_integer(removal_value, "removal cell ID", 1, _UINT64_MAX)
+            if removal not in snapshots or removal in removing:
+                raise ControllerPlanError("step plan removes an unknown or duplicate cell")
+            if removal in dividing:
+                raise ControllerPlanError("step plan removes a dividing cell")
+            removing.add(removal)
         return plan
 
     def _apply_update(self, update: CellUpdate) -> None:
@@ -444,6 +456,8 @@ class NativeController:
                     second=self.simulation.cell(second_id),
                 )
                 self._on_division(self._context(), event)
+        for removal in plan.removals:
+            self.simulation.remove_cell(removal)
 
         self.simulation.step(dt)
         reports: list[MechanicsSolveResult] = []

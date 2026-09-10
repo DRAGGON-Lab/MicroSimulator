@@ -16,28 +16,91 @@ const PYTHON_SCENE = `{
     "cells": [
       {
         "cell_type": -2,
-        "direction": [1.0, 0.0, 0.0],
+        "direction": [
+          1.0,
+          0.0,
+          0.0
+        ],
         "fixed": false,
         "growth_rate": 0.125,
         "id": "9223372036854775815",
         "length": 4.0,
         "parent_id": "1",
-        "position": [1.0, 2.5, -3.0],
+        "position": [
+          1.0,
+          2.5,
+          -3.0
+        ],
         "radius": 0.5,
         "slot": 0,
-        "species": [7.25]
+        "species": [
+          7.25
+        ]
       }
     ],
+    "constraints": {
+      "boxes": [
+        {
+          "allowed_region": "outside",
+          "center": [
+            4.0,
+            -1.0,
+            0.5
+          ],
+          "coefficient": 0.75,
+          "half_extents": [
+            1.5,
+            0.5,
+            2.0
+          ],
+          "id": "3"
+        }
+      ],
+      "cylinders": [
+        {
+          "allowed_region": "inside",
+          "center": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "coefficient": 1.0,
+          "half_height": 2.0,
+          "id": "4",
+          "radius": 6.0
+        }
+      ],
+      "planes": [
+        {
+          "coefficient": 1.25,
+          "id": "2",
+          "inward_normal": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "point": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        }
+      ],
+      "spheres": []
+    },
     "signal_grid": null,
     "species_count": 1,
     "time": 1.0
   },
   "integrity": {
     "algorithm": "sha256",
-    "frame": "a10da18274e64b7c33d19f9cf8e84560f200254e8b7931a753890c431bc5af04"
+    "frame": "1f64bdd2bd5e230f094922c4c4701a3919972a8f26ae462aa9b253709e056584"
   },
-  "producer": {"name": "microsimulator", "version": "0.1.0"},
-  "version": 1
+  "producer": {
+    "name": "microsimulator",
+    "version": "0.1.0"
+  },
+  "version": 2
 }`;
 
 async function digest(value: unknown): Promise<string> {
@@ -62,6 +125,15 @@ describe("scene reader", () => {
     expect(frame.cells[0]?.id).toBe("9223372036854775815");
     expect(frame.cells[0]?.position).toEqual([1, 2.5, -3]);
     expect(frame.cells[0]?.species).toEqual([7.25]);
+    expect(frame.constraints.planes[0]?.id).toBe("2");
+    expect(frame.constraints.planes[0]?.inwardNormal).toEqual([0, 0, 1]);
+    expect(frame.constraints.boxes[0]?.id).toBe("3");
+    expect(frame.constraints.boxes[0]?.halfExtents).toEqual([1.5, 0.5, 2]);
+    expect(frame.constraints.boxes[0]?.allowedRegion).toBe("outside");
+    expect(frame.constraints.cylinders[0]?.id).toBe("4");
+    expect(frame.constraints.cylinders[0]?.radius).toBe(6);
+    expect(frame.constraints.cylinders[0]?.halfHeight).toBe(2);
+    expect(frame.constraints.cylinders[0]?.allowedRegion).toBe("inside");
   });
 
   it("reads the previous scene format and still rejects tampering", async () => {

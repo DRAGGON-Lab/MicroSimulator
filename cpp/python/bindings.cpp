@@ -49,6 +49,7 @@ NB_MODULE(_core, module) {
       .value("GROWTH_RATE", cm::RateOp::growth_rate)
       .value("CELL_TYPE", cm::RateOp::cell_type)
       .value("CELL_VOLUME", cm::RateOp::cell_volume)
+      .value("CELL_VOLUME_CHANGE_RATE", cm::RateOp::cell_volume_change_rate)
       .value("CELL_SURFACE_AREA", cm::RateOp::cell_surface_area)
       .value("ADD", cm::RateOp::add)
       .value("SUBTRACT", cm::RateOp::subtract)
@@ -68,17 +69,22 @@ NB_MODULE(_core, module) {
       .value("SELECT", cm::RateOp::select)
       .value("SIGNAL", cm::RateOp::signal);
 
-  nb::enum_<cm::SphereRegion>(module, "SphereRegion")
-      .value("OUTSIDE", cm::SphereRegion::outside)
-      .value("INSIDE", cm::SphereRegion::inside);
+  nb::enum_<cm::ConstraintRegion>(module, "ConstraintRegion")
+      .value("OUTSIDE", cm::ConstraintRegion::outside)
+      .value("INSIDE", cm::ConstraintRegion::inside);
+  module.attr("SphereRegion") = module.attr("ConstraintRegion");
 
   nb::enum_<cm::ExternalConstraintKind>(module, "ExternalConstraintKind")
       .value("PLANE", cm::ExternalConstraintKind::plane)
-      .value("SPHERE", cm::ExternalConstraintKind::sphere);
+      .value("SPHERE", cm::ExternalConstraintKind::sphere)
+      .value("BOX", cm::ExternalConstraintKind::box)
+      .value("CYLINDER", cm::ExternalConstraintKind::cylinder);
 
-  nb::enum_<cm::RodEndpoint>(module, "RodEndpoint")
-      .value("NEGATIVE", cm::RodEndpoint::negative)
-      .value("POSITIVE", cm::RodEndpoint::positive);
+  nb::enum_<cm::RodContactLocation>(module, "RodContactLocation")
+      .value("NEGATIVE", cm::RodContactLocation::negative)
+      .value("POSITIVE", cm::RodContactLocation::positive)
+      .value("INTERIOR", cm::RodContactLocation::interior);
+  module.attr("RodEndpoint") = module.attr("RodContactLocation");
 
   nb::enum_<cm::SolverStatus>(module, "SolverStatus")
       .value("CONVERGED", cm::SolverStatus::converged)
@@ -134,6 +140,12 @@ NB_MODULE(_core, module) {
       .def_rw("loss_rates", &cm::SignalGridAffineReaction::loss_rates)
       .def("validate", &cm::SignalGridAffineReaction::validate, "level_count"_a);
 
+  nb::class_<cm::SignalGridVelocityField>(module, "SignalGridVelocityField")
+      .def(nb::init<>())
+      .def_rw("x_faces", &cm::SignalGridVelocityField::x_faces)
+      .def_rw("y_faces", &cm::SignalGridVelocityField::y_faces)
+      .def_rw("z_faces", &cm::SignalGridVelocityField::z_faces);
+
   nb::class_<cm::SignalGridSpec>(module, "SignalGridSpec")
       .def(nb::init<>())
       .def_rw("signal_count", &cm::SignalGridSpec::signal_count)
@@ -143,6 +155,8 @@ NB_MODULE(_core, module) {
       .def_rw("diffusion", &cm::SignalGridSpec::diffusion)
       .def_rw("advection", &cm::SignalGridSpec::advection)
       .def_rw("reaction", &cm::SignalGridSpec::reaction)
+      .def_rw("obstacles", &cm::SignalGridSpec::obstacles)
+      .def_rw("velocity_field", &cm::SignalGridSpec::velocity_field)
       .def_rw("integration", &cm::SignalGridSpec::integration)
       .def_rw("solver", &cm::SignalGridSpec::solver)
       .def_rw("x_lower", &cm::SignalGridSpec::x_lower)
@@ -215,7 +229,7 @@ NB_MODULE(_core, module) {
       .def_prop_ro("instructions",
                    [](const cm::SpeciesRatePlan& plan) {
                      return std::vector<cm::RateInstruction>(plan.instructions().begin(),
-                                                              plan.instructions().end());
+                                                             plan.instructions().end());
                    })
       .def_prop_ro("outputs",
                    [](const cm::SpeciesRatePlan& plan) {
@@ -234,7 +248,7 @@ NB_MODULE(_core, module) {
       .def_prop_ro("instructions",
                    [](const cm::CoupledRatePlan& plan) {
                      return std::vector<cm::RateInstruction>(plan.instructions().begin(),
-                                                              plan.instructions().end());
+                                                             plan.instructions().end());
                    })
       .def_prop_ro("species_outputs",
                    [](const cm::CoupledRatePlan& plan) {
@@ -271,7 +285,7 @@ NB_MODULE(_core, module) {
       .def_prop_ro("contacts",
                    [](const cm::ContactGraph& graph) {
                      return std::vector<cm::CellContact>(graph.contacts().begin(),
-                                                          graph.contacts().end());
+                                                         graph.contacts().end());
                    })
       .def("__len__", &cm::ContactGraph::size)
       .def(
@@ -302,6 +316,21 @@ NB_MODULE(_core, module) {
       .def_rw("coefficient", &cm::SphereConstraintInit::coefficient)
       .def_rw("allowed_region", &cm::SphereConstraintInit::allowed_region);
 
+  nb::class_<cm::BoxConstraintInit>(module, "BoxConstraintInit")
+      .def(nb::init<>())
+      .def_rw("center", &cm::BoxConstraintInit::center)
+      .def_rw("half_extents", &cm::BoxConstraintInit::half_extents)
+      .def_rw("coefficient", &cm::BoxConstraintInit::coefficient)
+      .def_rw("allowed_region", &cm::BoxConstraintInit::allowed_region);
+
+  nb::class_<cm::CylinderConstraintInit>(module, "CylinderConstraintInit")
+      .def(nb::init<>())
+      .def_rw("center", &cm::CylinderConstraintInit::center)
+      .def_rw("radius", &cm::CylinderConstraintInit::radius)
+      .def_rw("half_height", &cm::CylinderConstraintInit::half_height)
+      .def_rw("coefficient", &cm::CylinderConstraintInit::coefficient)
+      .def_rw("allowed_region", &cm::CylinderConstraintInit::allowed_region);
+
   nb::class_<cm::PlaneConstraint>(module, "_PlaneConstraint")
       .def(nb::init<>())
       .def_rw("id", &cm::PlaneConstraint::id)
@@ -317,11 +346,30 @@ NB_MODULE(_core, module) {
       .def_rw("coefficient", &cm::SphereConstraint::coefficient)
       .def_rw("allowed_region", &cm::SphereConstraint::allowed_region);
 
+  nb::class_<cm::BoxConstraint>(module, "_BoxConstraint")
+      .def(nb::init<>())
+      .def_rw("id", &cm::BoxConstraint::id)
+      .def_rw("center", &cm::BoxConstraint::center)
+      .def_rw("half_extents", &cm::BoxConstraint::half_extents)
+      .def_rw("coefficient", &cm::BoxConstraint::coefficient)
+      .def_rw("allowed_region", &cm::BoxConstraint::allowed_region);
+
+  nb::class_<cm::CylinderConstraint>(module, "_CylinderConstraint")
+      .def(nb::init<>())
+      .def_rw("id", &cm::CylinderConstraint::id)
+      .def_rw("center", &cm::CylinderConstraint::center)
+      .def_rw("radius", &cm::CylinderConstraint::radius)
+      .def_rw("half_height", &cm::CylinderConstraint::half_height)
+      .def_rw("coefficient", &cm::CylinderConstraint::coefficient)
+      .def_rw("allowed_region", &cm::CylinderConstraint::allowed_region);
+
   nb::class_<cm::ConstraintSetCheckpoint>(module, "_ConstraintSetCheckpoint")
       .def(nb::init<>())
       .def_rw("next_id", &cm::ConstraintSetCheckpoint::next_id)
       .def_rw("planes", &cm::ConstraintSetCheckpoint::planes)
       .def_rw("spheres", &cm::ConstraintSetCheckpoint::spheres)
+      .def_rw("boxes", &cm::ConstraintSetCheckpoint::boxes)
+      .def_rw("cylinders", &cm::ConstraintSetCheckpoint::cylinders)
       .def("validate", &cm::ConstraintSetCheckpoint::validate);
 
   nb::class_<cm::SimulationCheckpoint>(module, "_SimulationCheckpoint")
@@ -345,7 +393,8 @@ NB_MODULE(_core, module) {
       .def_ro("cell_slot", &cm::ExternalContact::cell_slot)
       .def_ro("constraint_id", &cm::ExternalContact::constraint_id)
       .def_ro("constraint_kind", &cm::ExternalContact::constraint_kind)
-      .def_ro("endpoint", &cm::ExternalContact::endpoint)
+      .def_ro("location", &cm::ExternalContact::location)
+      .def_prop_ro("endpoint", [](const cm::ExternalContact& contact) { return contact.location; })
       .def_ro("point_on_cell", &cm::ExternalContact::point_on_cell)
       .def_ro("normal", &cm::ExternalContact::normal)
       .def_ro("signed_separation", &cm::ExternalContact::signed_separation)
@@ -357,7 +406,7 @@ NB_MODULE(_core, module) {
       .def_prop_ro("contacts",
                    [](const cm::ExternalContactGraph& graph) {
                      return std::vector<cm::ExternalContact>(graph.contacts().begin(),
-                                                              graph.contacts().end());
+                                                             graph.contacts().end());
                    })
       .def("__len__", &cm::ExternalContactGraph::size)
       .def(
@@ -400,8 +449,8 @@ NB_MODULE(_core, module) {
       .def(nb::init<cm::BackendKind, std::size_t, std::size_t, std::uint32_t>(),
            "backend"_a = cm::BackendKind::cpu, "reserved_capacity"_a = 0, "species_count"_a = 0,
            "device_index"_a = 0)
-      .def(nb::init<cm::BackendKind, const cm::SimulationCheckpoint&, std::uint32_t>(),
-           "backend"_a, "checkpoint"_a, "device_index"_a = 0)
+      .def(nb::init<cm::BackendKind, const cm::SimulationCheckpoint&, std::uint32_t>(), "backend"_a,
+           "checkpoint"_a, "device_index"_a = 0)
       .def_prop_ro("backend_info", &cm::Simulation::backend_info)
       .def("supports", &cm::Simulation::supports, "feature"_a)
       .def_prop_ro("time", &cm::Simulation::time)
@@ -412,8 +461,11 @@ NB_MODULE(_core, module) {
       .def_prop_ro("last_signal_solve_report", &cm::Simulation::last_signal_solve_report)
       .def_prop_ro("has_coupled_rate_plan", &cm::Simulation::has_coupled_rate_plan)
       .def("add_cell", &cm::Simulation::add_cell, "cell"_a)
+      .def("remove_cell", &cm::Simulation::remove_cell, "id"_a)
       .def("add_plane_constraint", &cm::Simulation::add_plane_constraint, "plane"_a)
       .def("add_sphere_constraint", &cm::Simulation::add_sphere_constraint, "sphere"_a)
+      .def("add_box_constraint", &cm::Simulation::add_box_constraint, "box"_a)
+      .def("add_cylinder_constraint", &cm::Simulation::add_cylinder_constraint, "cylinder"_a)
       .def("set_cell_geometry", &cm::Simulation::set_cell_geometry, "id"_a, "position"_a,
            "direction"_a, "length"_a)
       .def("set_cell_attributes", &cm::Simulation::set_cell_attributes, "id"_a, "growth_rate"_a,

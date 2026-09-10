@@ -19,6 +19,7 @@ from typing import NoReturn, cast
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendKind,
     CellSnapshot,
+    ConstraintRegion,
     CoupledRatePlan,
     GridBoundary,
     GridBoundaryKind,
@@ -27,12 +28,14 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     RateOp,
     SignalGridAffineReaction,
     SignalGridSpec,
+    SignalGridVelocityField,
     SignalIntegrationKind,
     Simulation,
     SpeciesRatePlan,
-    SphereRegion,
     Vec3,
+    _BoxConstraint,
     _ConstraintSetCheckpoint,
+    _CylinderConstraint,
     _LineageEntry,
     _PlaneConstraint,
     _SignalGridCheckpoint,
@@ -42,7 +45,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
 )
 
 CHECKPOINT_FORMAT = "microsimulator-checkpoint"
-CHECKPOINT_VERSION = 7
+CHECKPOINT_VERSION = 8
 MAX_CHECKPOINT_BYTES = 1 << 30
 _NATIVE_CHECKPOINT_VERSION = 4
 
@@ -93,6 +96,7 @@ _RATE_OP_NAMES = {
     RateOp.GROWTH_RATE: "growth_rate",
     RateOp.CELL_TYPE: "cell_type",
     RateOp.CELL_VOLUME: "cell_volume",
+    RateOp.CELL_VOLUME_CHANGE_RATE: "cell_volume_change_rate",
     RateOp.CELL_SURFACE_AREA: "cell_surface_area",
     RateOp.ADD: "add",
     RateOp.SUBTRACT: "subtract",
@@ -113,11 +117,11 @@ _RATE_OP_NAMES = {
     RateOp.SIGNAL: "signal",
 }
 _RATE_OPS = {name: operation for operation, name in _RATE_OP_NAMES.items()}
-_SPHERE_REGION_NAMES = {
-    SphereRegion.OUTSIDE: "outside",
-    SphereRegion.INSIDE: "inside",
+_CONSTRAINT_REGION_NAMES = {
+    ConstraintRegion.OUTSIDE: "outside",
+    ConstraintRegion.INSIDE: "inside",
 }
-_SPHERE_REGIONS = {name: region for region, name in _SPHERE_REGION_NAMES.items()}
+_CONSTRAINT_REGIONS = {name: region for region, name in _CONSTRAINT_REGION_NAMES.items()}
 _BACKEND_NAMES = {
     BackendKind.CPU: "cpu",
     BackendKind.METAL: "metal",
@@ -172,6 +176,16 @@ def _signal_grid_to_json(checkpoint: _SignalGridCheckpoint | None) -> JSONValue:
                     "loss_rates": list(spec.reaction.loss_rates),
                 }
                 if spec.reaction is not None
+                else None
+            ),
+            "obstacles": list(spec.obstacles),
+            "velocity_field": (
+                {
+                    "x_faces": list(spec.velocity_field.x_faces),
+                    "y_faces": list(spec.velocity_field.y_faces),
+                    "z_faces": list(spec.velocity_field.z_faces),
+                }
+                if spec.velocity_field is not None
                 else None
             ),
             "integration": _SIGNAL_INTEGRATION_NAMES[spec.integration],
@@ -254,9 +268,30 @@ def _simulation_to_json(checkpoint: _SimulationCheckpoint) -> dict[str, JSONValu
             "center": _vec3_to_json(sphere.center),
             "radius": sphere.radius,
             "coefficient": sphere.coefficient,
-            "allowed_region": _SPHERE_REGION_NAMES[sphere.allowed_region],
+            "allowed_region": _CONSTRAINT_REGION_NAMES[sphere.allowed_region],
         }
         for sphere in checkpoint.constraints.spheres
+    ]
+    boxes: list[JSONValue] = [
+        {
+            "id": box.id,
+            "center": _vec3_to_json(box.center),
+            "half_extents": _vec3_to_json(box.half_extents),
+            "coefficient": box.coefficient,
+            "allowed_region": _CONSTRAINT_REGION_NAMES[box.allowed_region],
+        }
+        for box in checkpoint.constraints.boxes
+    ]
+    cylinders: list[JSONValue] = [
+        {
+            "id": cylinder.id,
+            "center": _vec3_to_json(cylinder.center),
+            "radius": cylinder.radius,
+            "half_height": cylinder.half_height,
+            "coefficient": cylinder.coefficient,
+            "allowed_region": _CONSTRAINT_REGION_NAMES[cylinder.allowed_region],
+        }
+        for cylinder in checkpoint.constraints.cylinders
     ]
     instructions = _instructions_to_json(checkpoint.species_rate_plan.instructions)
     return {
@@ -271,6 +306,8 @@ def _simulation_to_json(checkpoint: _SimulationCheckpoint) -> dict[str, JSONValu
             "next_id": checkpoint.constraints.next_id,
             "planes": planes,
             "spheres": spheres,
+            "boxes": boxes,
+            "cylinders": cylinders,
         },
         "species_rate_plan": {
             "species_count": checkpoint.species_rate_plan.species_count,
@@ -520,10 +557,43 @@ def _sphere(value: object, path: str) -> _SphereConstraint:
     sphere.coefficient = _number(data["coefficient"], f"{path}.coefficient", float32=True)
     region_name = _string(data["allowed_region"], f"{path}.allowed_region")
     try:
-        sphere.allowed_region = _SPHERE_REGIONS[region_name]
+        sphere.allowed_region = _CONSTRAINT_REGIONS[region_name]
     except KeyError:
         _fail(f"{path}.allowed_region", f"unknown sphere region {region_name!r}")
     return sphere
+
+
+def _box(value: object, path: str) -> _BoxConstraint:
+    data = _object(value, path)
+    _keys(data, path, {"id", "center", "half_extents", "coefficient", "allowed_region"})
+    box = _BoxConstraint()
+    box.id = _integer(data["id"], f"{path}.id", 1, _UINT64_MAX)
+    box.center = _vec3(data["center"], f"{path}.center")
+    box.half_extents = _vec3(data["half_extents"], f"{path}.half_extents")
+    box.coefficient = _number(data["coefficient"], f"{path}.coefficient", float32=True)
+    region_name = _string(data["allowed_region"], f"{path}.allowed_region")
+    try:
+        box.allowed_region = _CONSTRAINT_REGIONS[region_name]
+    except KeyError:
+        _fail(f"{path}.allowed_region", f"unknown box region {region_name!r}")
+    return box
+
+
+def _cylinder(value: object, path: str) -> _CylinderConstraint:
+    data = _object(value, path)
+    _keys(data, path, {"id", "center", "radius", "half_height", "coefficient", "allowed_region"})
+    cylinder = _CylinderConstraint()
+    cylinder.id = _integer(data["id"], f"{path}.id", 1, _UINT64_MAX)
+    cylinder.center = _vec3(data["center"], f"{path}.center")
+    cylinder.radius = _number(data["radius"], f"{path}.radius", float32=True)
+    cylinder.half_height = _number(data["half_height"], f"{path}.half_height", float32=True)
+    cylinder.coefficient = _number(data["coefficient"], f"{path}.coefficient", float32=True)
+    region_name = _string(data["allowed_region"], f"{path}.allowed_region")
+    try:
+        cylinder.allowed_region = _CONSTRAINT_REGIONS[region_name]
+    except KeyError:
+        _fail(f"{path}.allowed_region", f"unknown cylinder region {region_name!r}")
+    return cylinder
 
 
 def _instruction(value: object, path: str) -> RateInstruction:
@@ -594,6 +664,8 @@ def _signal_grid(value: object, path: str, schema_version: int) -> _SignalGridCh
         spec_keys.update({"integration", "solver"})
     if schema_version >= 7:
         spec_keys.add("reaction")
+    if schema_version >= 8:
+        spec_keys.update({"obstacles", "velocity_field"})
     _keys(
         spec_data,
         f"{path}.spec",
@@ -628,6 +700,37 @@ def _signal_grid(value: object, path: str, schema_version: int) -> _SignalGridCh
     ]
     if schema_version >= 7:
         spec.reaction = _affine_reaction(spec_data["reaction"], f"{path}.spec.reaction")
+    if schema_version >= 8:
+        spec.obstacles = [
+            _integer(item, f"{path}.spec.obstacles[{index}]", 0, 1)
+            for index, item in enumerate(
+                _array(spec_data["obstacles"], f"{path}.spec.obstacles")
+            )
+        ]
+        field_value = spec_data["velocity_field"]
+        if field_value is not None:
+            field_data = _object(field_value, f"{path}.spec.velocity_field")
+            _keys(field_data, f"{path}.spec.velocity_field", {"x_faces", "y_faces", "z_faces"})
+            field = SignalGridVelocityField()
+            field.x_faces = [
+                _number(item, f"{path}.spec.velocity_field.x_faces[{index}]", float32=True)
+                for index, item in enumerate(
+                    _array(field_data["x_faces"], f"{path}.spec.velocity_field.x_faces")
+                )
+            ]
+            field.y_faces = [
+                _number(item, f"{path}.spec.velocity_field.y_faces[{index}]", float32=True)
+                for index, item in enumerate(
+                    _array(field_data["y_faces"], f"{path}.spec.velocity_field.y_faces")
+                )
+            ]
+            field.z_faces = [
+                _number(item, f"{path}.spec.velocity_field.z_faces[{index}]", float32=True)
+                for index, item in enumerate(
+                    _array(field_data["z_faces"], f"{path}.spec.velocity_field.z_faces")
+                )
+            ]
+            spec.velocity_field = field
     if schema_version >= 5:
         integration_name = _string(spec_data["integration"], f"{path}.spec.integration")
         if integration_name not in _SIGNAL_INTEGRATIONS:
@@ -738,7 +841,10 @@ def _native_checkpoint(value: object, schema_version: int) -> _SimulationCheckpo
     ]
 
     constraint_data = _object(data["constraints"], "$.simulation.constraints")
-    _keys(constraint_data, "$.simulation.constraints", {"next_id", "planes", "spheres"})
+    constraint_keys = {"next_id", "planes", "spheres"}
+    if schema_version >= 8:
+        constraint_keys.update({"boxes", "cylinders"})
+    _keys(constraint_data, "$.simulation.constraints", constraint_keys)
     constraints = _ConstraintSetCheckpoint()
     constraints.next_id = _integer(
         constraint_data["next_id"], "$.simulation.constraints.next_id", 1, _UINT64_MAX
@@ -755,6 +861,19 @@ def _native_checkpoint(value: object, schema_version: int) -> _SimulationCheckpo
             _array(constraint_data["spheres"], "$.simulation.constraints.spheres")
         )
     ]
+    if schema_version >= 8:
+        constraints.boxes = [
+            _box(item, f"$.simulation.constraints.boxes[{index}]")
+            for index, item in enumerate(
+                _array(constraint_data["boxes"], "$.simulation.constraints.boxes")
+            )
+        ]
+        constraints.cylinders = [
+            _cylinder(item, f"$.simulation.constraints.cylinders[{index}]")
+            for index, item in enumerate(
+                _array(constraint_data["cylinders"], "$.simulation.constraints.cylinders")
+            )
+        ]
 
     plan_data = _object(data["species_rate_plan"], "$.simulation.species_rate_plan")
     _keys(
@@ -838,7 +957,7 @@ def load_checkpoint_bundle(
     if "version" not in root:
         _fail("$", "missing keys ['version']")
     schema_version = _integer(root["version"], "$.version", 0, _UINT32_MAX)
-    supported_versions = {1, 2, 3, 4, 5, 6, CHECKPOINT_VERSION}
+    supported_versions = {1, 2, 3, 4, 5, 6, 7, CHECKPOINT_VERSION}
     if schema_version not in supported_versions:
         _fail("$.version", f"unsupported checkpoint version {schema_version}")
     required = {

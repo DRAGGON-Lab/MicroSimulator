@@ -41,8 +41,8 @@ The machine-readable contract is `compatibility/legacy-renderers-v1.json`. It au
 
 | Family | CellModeller behavior | MicroSimulator support |
 | --- | --- | --- |
-| rod cells (`GLBacteriumRenderer`, `GLCelBacteriumRenderer`, `GL2DBacteriumRenderer`) | rods, stable cell IDs, selection, arbitrary color fields | Supported through scene-v1 rods, typed color mappings, and the independent viewer. |
-| signal grid (`GLGridRenderer`) | direct reads from the signaling integrator | Supported through scene-v1 grids and viewer-owned channel and slice selection. |
+| rod cells (`GLBacteriumRenderer`, `GLCelBacteriumRenderer`, `GL2DBacteriumRenderer`) | rods, stable cell IDs, selection, arbitrary color fields | Supported through scene rods, typed color mappings, and the independent viewer. |
+| signal grid (`GLGridRenderer`) | direct reads from the signaling integrator | Supported through scene grids and viewer-owned channel and slice selection. |
 | sphere cells (`GLSphereRenderer`) | a distinct spherical cell morphology; no bundled call site; picking references an undefined radius | Not supported as a cell morphology. Typed inside/outside sphere constraints remain available for rod cells. |
 | plant cells (`GLPlantRenderer`, `GLPlantSignalRenderer`) | polygon `nodep`/`wallp` geometry and arbitrary signal attributes; no bundled call site or plant engine | Not supported; MicroSimulator has no corresponding plant-cell state model. |
 | periodic cell images (`GLBacteriumRendererWithPeriodicImages`) | four visual copies offset by mutable collision-grid bounds; no declared periodic cell topology or bundled call site | Not supported for cells. Typed periodic signal boundaries remain available. |

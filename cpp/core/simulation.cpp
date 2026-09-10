@@ -100,12 +100,22 @@ bool Simulation::has_coupled_rate_plan() const noexcept { return coupled_rate_pl
 
 CellId Simulation::add_cell(const CellInit& cell) { return state_.add_cell(cell); }
 
+void Simulation::remove_cell(CellId id) { state_.remove_cell(id); }
+
 ConstraintId Simulation::add_plane_constraint(const PlaneConstraintInit& plane) {
   return constraints_.add_plane(plane);
 }
 
 ConstraintId Simulation::add_sphere_constraint(const SphereConstraintInit& sphere) {
   return constraints_.add_sphere(sphere);
+}
+
+ConstraintId Simulation::add_box_constraint(const BoxConstraintInit& box) {
+  return constraints_.add_box(box);
+}
+
+ConstraintId Simulation::add_cylinder_constraint(const CylinderConstraintInit& cylinder) {
+  return constraints_.add_cylinder(cylinder);
 }
 
 void Simulation::set_cell_geometry(CellId id, Vec3 position, Vec3 direction, float length) {

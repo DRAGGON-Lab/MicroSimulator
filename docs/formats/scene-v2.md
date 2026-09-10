@@ -1,4 +1,4 @@
-# MicroSimulator scene format v1
+# MicroSimulator scene format v2
 
 The scene format is an immutable presentation snapshot. It is safe data for a viewer, not a simulation checkpoint: it has no equations, solver settings, controller state, Python source, or resume authority.
 
@@ -9,7 +9,7 @@ A document is UTF-8 JSON with these root fields:
 ```json
 {
   "format": "microsimulator-scene",
-  "version": 1,
+  "version": 2,
   "producer": { "name": "microsimulator", "version": "0.1.0" },
   "integrity": { "algorithm": "sha256", "frame": "..." },
   "frame": {}
@@ -25,10 +25,30 @@ The digest is SHA-256 over the frame encoded with the RFC 8785 JSON Canonicaliza
 - `time`: non-negative simulation time;
 - `backend`: source kind, backend name, device name, zero-based device index, and whether the backend is native;
 - `species_count`: the fixed number of per-cell species values;
-- `cells`: rods in compact slot order; and
+- `cells`: rods in compact slot order;
+- `constraints`: the external constraint set; and
 - `signal_grid`: a scalar grid or `null`.
 
 Each cell records its stable `id`, optional lineage `parent_id`, compact `slot`, position, normalized direction, cylindrical length, radius, growth rate, cell type, fixed state, and ordered species values. IDs are canonical positive decimal strings because the engine's unsigned 64-bit identity range exceeds JavaScript's exact integer range. Slots and other bounded integers remain JSON numbers.
+
+## Constraints
+
+`constraints` records the simulation's external constraint set as four arrays: `planes`,
+`spheres`, `boxes`, and `cylinders`. Empty arrays are valid. Every constraint carries its stable `id` as a
+canonical decimal string (the shared identifier space with cells uses the same unsigned 64-bit
+range) and a positive `coefficient`.
+
+- A plane records a `point` and a normalized `inward_normal`; cells are permitted on the
+  inward side.
+- A sphere records a `center`, positive `radius`, and an `allowed_region` of `"outside"` or
+  `"inside"`.
+- A box records a `center`, positive `half_extents`, and an `allowed_region` of `"outside"`
+  or `"inside"`. Boxes are axis-aligned.
+- A cylinder records a `center`, positive `radius`, positive `half_height`, and an
+  `allowed_region` of `"outside"` or `"inside"`. Cylinders are z-aligned.
+
+Constraints are presentation data for device geometry: a viewer renders walls, pillars, and
+chambers from them but attaches no mechanical semantics.
 
 ## Signal grid
 
@@ -44,4 +64,4 @@ The scene preserves all channels. A viewer chooses a channel and slice as presen
 
 ## Compatibility
 
-Writers always emit the current version. Readers accept version 1 exactly and fail closed on later versions until an explicit migration is defined. Backend conformance compares frame semantics while ignoring the expected backend identity fields. Pixel output is tested separately by the viewer.
+Writers always emit the current version. Readers accept version 2 exactly and fail closed on other versions until an explicit migration is defined. Backend conformance compares frame semantics while ignoring the expected backend identity fields. Pixel output is tested separately by the viewer.

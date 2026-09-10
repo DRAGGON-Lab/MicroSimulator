@@ -14,11 +14,16 @@ from microsimulator import (
     SCENE_VERSION,
     BackendFeature,
     BackendKind,
+    BoxConstraintInit,
     CellInit,
+    ConstraintRegion,
+    CylinderConstraintInit,
     GridBoundaryKind,
     GridShape,
+    PlaneConstraintInit,
     SceneBackend,
     SceneCell,
+    SceneConstraints,
     SceneError,
     SceneFrame,
     SignalGridSpec,
@@ -70,6 +75,28 @@ def _simulation(backend: BackendKind = BackendKind.CPU) -> Simulation:
     second.cell_type = -4
     second.species = [1.0, 2.0]
     simulation.add_cell(second)
+
+    plane = PlaneConstraintInit()
+    plane.point = Vec3(0.0, 0.0, -1.0)
+    plane.inward_normal = Vec3(0.0, 0.0, 2.0)
+    plane.coefficient = 1.25
+    assert simulation.add_plane_constraint(plane) == 1
+
+    box = BoxConstraintInit()
+    box.center = Vec3(4.0, -1.0, 0.5)
+    box.half_extents = Vec3(1.5, 0.5, 2.0)
+    box.coefficient = 0.75
+    box.allowed_region = ConstraintRegion.OUTSIDE
+    assert simulation.add_box_constraint(box) == 2
+
+    dish = CylinderConstraintInit()
+    dish.center = Vec3(0.0, 0.0, 1.0)
+    dish.radius = 6.0
+    dish.half_height = 2.0
+    dish.coefficient = 1.0
+    dish.allowed_region = ConstraintRegion.INSIDE
+    assert simulation.add_cylinder_constraint(dish) == 3
+
     simulation.divide_equal(parent)
     simulation.step(0.125)
     return simulation
@@ -109,6 +136,19 @@ def test_capture_scene_is_backend_neutral_and_complete() -> None:
         1.0,
         abs_tol=1.0e-6,
     )
+
+    constraints = reference.constraints
+    assert [plane.id for plane in constraints.planes] == [1]
+    assert constraints.planes[0].point == (0.0, 0.0, -1.0)
+    assert math.isclose(constraints.planes[0].inward_normal[2], 1.0, abs_tol=1.0e-6)
+    assert constraints.spheres == ()
+    assert [box.id for box in constraints.boxes] == [2]
+    assert constraints.boxes[0].center == (4.0, -1.0, 0.5)
+    assert constraints.boxes[0].half_extents == (1.5, 0.5, 2.0)
+    assert constraints.boxes[0].allowed_region == "outside"
+    assert [cylinder.id for cylinder in constraints.cylinders] == [3]
+    assert constraints.cylinders[0].radius == 6.0
+    assert constraints.cylinders[0].allowed_region == "inside"
 
     grid = reference.signal_grid
     assert grid is not None
@@ -173,6 +213,7 @@ def test_scene_preserves_identifiers_outside_javascript_integer_range() -> None:
                 species=(),
             ),
         ),
+        constraints=SceneConstraints(planes=(), spheres=(), boxes=(), cylinders=()),
         signal_grid=None,
     )
     encoded = dumps_scene(frame)

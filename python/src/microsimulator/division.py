@@ -91,6 +91,13 @@ class UniformLengthDivision:
             if cell.length > float(cast(int | float, targets[str(cell.id)]))
         )
 
+    def forget(self, step: ControllerStep, cell_ids: tuple[int, ...]) -> None:
+        """Drop division targets for cells the returned plan removes."""
+
+        targets = self._targets(step)
+        for cell_id in cell_ids:
+            targets.pop(str(cell_id), None)
+
     def on_division(self, step: ControllerStep, event: DivisionEvent) -> None:
         """Transfer policy state, apply optional jitter, and sample daughter targets."""
 

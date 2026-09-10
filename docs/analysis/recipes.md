@@ -6,7 +6,7 @@ MicroSimulator analysis starts from an immutable dataset, not executable model c
 uv sync --extra analysis
 ```
 
-Open and verify the dataset once, then reuse the resulting handle. The reader accepts the original v1 identity contract and the current v2 contract. Verification checks the dataset identity and every Parquet and Zarr digest before a recipe can scan data:
+Open and verify the dataset once, then reuse the resulting handle. The reader accepts the original v1 identity contract, v2 datasets, and the current v3 contract. Verification checks the dataset identity and every Parquet and Zarr digest before a recipe can scan data:
 
 ```python
 from microsimulator.analysis import open_dataset
