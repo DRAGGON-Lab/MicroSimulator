@@ -1,5 +1,7 @@
 # Run, inspect, and resume a tutorial
 
+Start with a cell trap supplied by a flowing nutrient channel. This model combines device walls, a steady flow solve, solute transport, nutrient-dependent growth, and cell motion. The [microfluidics tutorial](microfluidics.md) explains the model, and the [modeling guide](../microfluidics.md) introduces the broader workflow.
+
 ## Prepare the workspace
 
 MicroSimulator requires Python 3.12, CMake, Ninja, a C++23 compiler, and `uv`. From the repository root:
@@ -21,23 +23,22 @@ pnpm --dir viewer build
 
 ## Run a deterministic model
 
-Tutorial options are JSON-valued model parameters. A string therefore needs JSON quotes inside the shell argument:
+Run the trap on the CPU backend and save a checkpoint every 20 steps:
 
 ```console
 uv run microsimulator run \
-  --model examples/tutorials/biophysics.py \
-  --parameter scenario='"basics"' \
+  --model examples/microfluidic_trap.py \
   --backend cpu \
   --seed 42 \
   --steps 100 \
-  --dt 0.05 \
+  --dt 0.02 \
   --checkpoint-every 20 \
-  --output results/tutorial-basics.json
+  --output results/tutorial-trap.json
 ```
 
 The seed belongs to the model's dedicated random stream. It controls founder variation, daughter-axis jitter, stochastic plasmid partitioning, and conjugation events where applicable. The checkpoint records the model digest, seed, parameters, controller state, random state, native state, and run provenance.
 
-Use `--stop-cell-count` for a bounded colony experiment:
+Other tutorials expose JSON-valued model parameters. A string needs JSON quotes inside the shell argument. For example, the biophysics tutorial uses a `scenario` parameter; add `--stop-cell-count` to bound the colony size:
 
 ```console
 uv run microsimulator run \
@@ -57,16 +58,15 @@ The maximum step count is still required so a non-growing model always terminate
 
 ```console
 uv run microsimulator view \
-  --model examples/tutorials/gene_expression.py \
-  --parameter scenario='"oscillator"' \
+  --model examples/microfluidic_trap.py \
   --backend cpu \
   --seed 42 \
-  --dt 0.01 \
-  --checkpoint-output results/oscillator-live.json \
+  --dt 0.02 \
+  --checkpoint-output results/trap-live.json \
   --open
 ```
 
-The viewer can play, pause, step, reset, and request a checkpoint. Choose `Species` coloring to inspect intracellular channels, `Cell type` for strain or discrete-state categories, `Growth rate` for regulated growth, and enable a signal slice for signaling models. Selecting a cell shows its stable ID, lineage parent, geometry, type, growth rate, and ordered species values.
+The viewer can play, pause, step, reset, and request a checkpoint. For the trap, enable a nutrient signal slice and choose `Growth rate` coloring to inspect the population alongside its environment. Other models can use `Species` coloring for intracellular channels or `Cell type` for strain or discrete-state categories. Selecting a cell shows its stable ID, lineage parent, geometry, type, growth rate, and ordered species values.
 
 The browser owns only presentation state. Python owns the clock, model, backend, checkpoint path, and random state.
 
@@ -76,14 +76,13 @@ Controller-backed checkpoints must be resumed with the same model source, seed, 
 
 ```console
 uv run microsimulator run \
-  --model examples/tutorials/gene_expression.py \
-  --resume results/oscillator-live.json \
-  --parameter scenario='"oscillator"' \
+  --model examples/microfluidic_trap.py \
+  --resume results/tutorial-trap.json \
   --backend cpu \
   --seed 42 \
   --steps 100 \
-  --dt 0.01 \
-  --output results/oscillator-resumed.json
+  --dt 0.02 \
+  --output results/trap-resumed.json
 ```
 
 Do not add `--overwrite` casually. Runs fail before mutation when a final or planned periodic output already exists.

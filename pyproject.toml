@@ -8,7 +8,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "microsimulator"
 version = "0.1.0"
-description = "Native Metal and CUDA multicellular simulation engine"
+description = "Microfluidic simulation of microbial populations, flow, and solute transport"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12,<3.13"

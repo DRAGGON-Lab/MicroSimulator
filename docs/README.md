@@ -1,12 +1,16 @@
 # MicroSimulator documentation
 
-These guides explain how to build, run, inspect, and analyze MicroSimulator models. Design decisions and historical CellModeller comparisons are available as reference material, but the main documentation is organized around the work researchers and developers perform.
+MicroSimulator models microbial populations in microfluidic environments, connecting device geometry and flow to solute transport, cell growth, and signaling. These guides take you from a device description and biological rules to runnable experiments, visualization, and quantitative analysis. The modeling interface also supports colonies and multicellular systems without a device.
 
 ## Start here
 
 | If you want to… | Read… |
 | --- | --- |
+| Understand how devices, flow, and cells fit together | [Microfluidics modeling guide](microfluidics.md) |
 | Run a first simulation | [Getting started](tutorials/getting-started.md) |
+| Build a trap or channel with growth and washout | [Microfluidic devices](tutorials/microfluidics.md) |
+| Choose a flow solver and assess its numerical behavior | [Flow models](microfluidics.md#choosing-a-flow-model) and [flow benchmarks](tutorials/flow-solvers.md#numerical-evidence) |
+| Measure nutrient penetration and growth | [Controlled nutrient study](tutorials/nutrient-validation.md) |
 | Learn the modeling interface | [Tutorials](tutorials/README.md) |
 | Understand numerical conventions | [Numerical contract](architecture/numerical-contract.md) |
 | Analyze simulation output | [Analysis recipes](analysis/recipes.md) |
@@ -16,15 +20,14 @@ These guides explain how to build, run, inspect, and analyze MicroSimulator mode
 
 ## Tutorials
 
-The tutorials form an ordered introduction, but each runnable model is self-contained:
+Start with [getting started](tutorials/getting-started.md) to install the tools, run a model, inspect it, and resume a checkpoint. Then follow the [tutorial index](tutorials/README.md) by topic. Each runnable model is self-contained.
 
-1. [Run, inspect, and resume a model](tutorials/getting-started.md)
-2. [Growth, division, cell types, and constraints](tutorials/biophysics-and-growth.md)
-3. [Intracellular species and gene circuits](tutorials/intracellular-dynamics.md)
-4. [Diffusible signals and cell-cell communication](tutorials/signaling.md)
-5. [Plasmid segregation, contacts, and conjugation](tutorials/discrete-state-and-contacts.md)
-6. [Checkpoints, contact graphs, and quantitative analysis](tutorials/analysis.md)
-7. [SimBOL circuit examples](tutorials/simbol.md)
+| Topic | Guides |
+| --- | --- |
+| Devices, flow, and transport | [Walls, flow, and washout](tutorials/microfluidics.md); [pillar channels and flow solvers](tutorials/flow-solvers.md); [nutrient penetration and growth](tutorials/nutrient-validation.md) |
+| Cell biology | [Growth and mechanics](tutorials/biophysics-and-growth.md); [gene circuits](tutorials/intracellular-dynamics.md); [signaling](tutorials/signaling.md); [plasmids and contacts](tutorials/discrete-state-and-contacts.md) |
+| Circuits in populations | [SimBOL examples](tutorials/simbol.md); [Danino clock in a device](../examples/tutorials/danino_clock.py) |
+| Quantitative output | [Checkpoints, contact graphs, and analysis](tutorials/analysis.md) |
 
 Executable teaching models are under [`examples/tutorials`](../examples/tutorials). Smaller focused examples are available in [`examples`](../examples).
 
@@ -34,6 +37,9 @@ The [architecture guide](architecture/README.md) introduces the engine design an
 
 Start with these documents when extending the engine:
 
+- [Shallow device flow](architecture/0022-brinkman-flow.md) and [resolved Stokes-Brinkman flow](architecture/0023-mac-stokes.md)
+- [Flow-driven cell motion](architecture/0021-flow-drift.md)
+- [Biomass, growth, and uptake](architecture/0024-biomass-accounting.md)
 - [Independent native backends](architecture/0001-native-backends.md)
 - [Contact mechanics](architecture/0002-contact-mechanics.md)
 - [Grid signaling and cell coupling](architecture/0006-grid-signaling.md)
@@ -67,7 +73,7 @@ The [testing and validation guide](development/validation.md) distinguishes comp
 
 ## CellModeller compatibility
 
-The [compatibility and migration guide](compatibility/README.md) explains which CellModeller models and artifacts can be used directly, which require a typed translation, and where behavior intentionally differs. Source-pinned matrices and subsystem comparisons are kept there as supporting reference material rather than mixed into the main tutorials.
+MicroSimulator originated as a CellModeller rewrite and now has an independent device, flow, and transport modeling workflow. The [compatibility and migration guide](compatibility/README.md) explains which CellModeller models and artifacts can be used directly, which require a typed translation, and where behavior intentionally differs. Source-pinned matrices and subsystem comparisons preserve the evidence behind those migration decisions.
 
 ## Development and validation
 
@@ -90,6 +96,4 @@ uv run --with pre-commit pre-commit install
 uv run --with pre-commit pre-commit run --all-files
 ```
 
-The hooks cover the fast local gates only. Tests, native builds, and backend
-conformance need a configured build and hardware, and run through CTest and the
-[conformance scripts](development/validation.md).
+The hooks cover the fast local gates only. Tests, native builds, and backend conformance need a configured build and hardware, and run through CTest and the [conformance scripts](development/validation.md).

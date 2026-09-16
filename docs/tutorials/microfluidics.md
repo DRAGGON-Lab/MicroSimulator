@@ -1,7 +1,6 @@
 # Microfluidic devices: walls, flow, and washout
 
-This tutorial builds models that live inside devices: geometry that confines cells, blocks
-chemistry, and carries media. Four examples cover the range:
+This tutorial connects device geometry, flowing media, and cell biology in runnable MicroSimulator models. The [modeling guide](../microfluidics.md) introduces the workflow and the choice of flow solver. Four examples cover the range:
 
 | Model | Device | Demonstrates |
 | --- | --- | --- |
@@ -58,12 +57,7 @@ DEVICE.apply_to_grid(
 
 ## Flow on signals and on cells
 
-The velocity field advects every signal with conservative upwind face fluxes under both
-integrators. Cells feel the same field through explicit drift: with
-`MechanicsConfig(flow_drift=True)`, the controller advects each non-fixed cell by the fluid
-velocity sampled at its endpoints before contact relaxation, so escaped cells travel down the
-channel and rods rotate in shear. Contact relaxation then resolves any overlap the drift
-produced against walls or neighbors.
+The velocity field advects every signal with conservative upwind face fluxes under all three signal integrators. With `MechanicsConfig(flow_drift=True)`, the controller translates each non-fixed cell using the velocity sampled at its center and rotates it with a finite-aspect Jeffery approximation, so escaped cells travel down the channel and rods rotate in shear. Contact relaxation then resolves overlaps with walls or neighbors. The [flow-drift design](../architecture/0021-flow-drift.md) describes this kinematic approximation and its integration limits.
 
 ## Washout
 
@@ -165,8 +159,7 @@ The model also does not reproduce an experimentally established separation betwe
 - Choose `dt` so the largest per-step drift, `max_speed * dt`, stays below a cell radius;
   `solve_flow_field` reports `max_speed`, and the trap examples use `dt = 0.02` with a mean
   channel speed of 20.
-- Forward Euler enforces its stability bound from the per-site advective outflow; the trap
-  models select Crank-Nicolson.
+- Forward Euler enforces its stability bound from the per-site advective outflow; the trap models select backward Euler for stiff transport and affine losses. Explicit cellular uptake still constrains the timestep.
 - The implicit solve's relative tolerance is the accuracy the step delivers: it asks for
   that reduction of the residual the step starts with, so a model gets what it asked for
   regardless of its concentration scale. These models keep the engine defaults.

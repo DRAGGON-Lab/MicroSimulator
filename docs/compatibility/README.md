@@ -1,6 +1,8 @@
 # Compatibility and migration
 
-MicroSimulator preserves the useful modeling semantics of CellModeller while replacing OpenCL source injection, executable pickle state, private solver access, and UI-owned simulation control with explicit interfaces. Compatibility is based on observable model behavior, not on reproducing implementation details line for line.
+MicroSimulator began as a CellModeller rewrite and developed into an independent system for modeling microbial populations in microfluidic devices. This guide documents the connection to CellModeller for researchers migrating models, comparing trajectories, or reusing earlier results. For new device models, start with the [microfluidics modeling guide](../microfluidics.md).
+
+The compatibility interfaces preserve supported CellModeller modeling semantics through Python callbacks and typed equation translations. MicroSimulator defines its own device, flow, transport, storage, and execution interfaces. The comparisons below document observable behavior and intentional numerical differences so that an existing model can be assessed before migration.
 
 ## Using CellModeller material
 

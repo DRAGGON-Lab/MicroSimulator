@@ -17,6 +17,16 @@ Backend-affecting work is checked in the following order:
 
 Passing compilation is necessary but not sufficient. GPU conformance always means execution on the corresponding hardware, and a complete application claim additionally requires the Python, checkpoint, legacy-model, viewer, and analysis workflows.
 
+## Microfluidic models
+
+The microfluidics validation combines analytic flow checks with coupled device experiments:
+
+- [Flow benchmarks](../tutorials/flow-solvers.md#numerical-evidence) compare plane and square ducts, layered Brinkman flow, shallow flux routing, and shallow/resolved agreement in a common thin-gap regime.
+- The [controlled nutrient study](../tutorials/nutrient-validation.md) measures nutrient penetration, attached-population growth, boundary budgets, and sensitivity to grid spacing, timestep, and flow-refresh interval.
+- The [device tutorials](../tutorials/microfluidics.md) compose walls, transport, growth, division, cell drift, model-defined washout, and checkpoint continuation.
+
+These checks address numerical behavior under explicit model assumptions. The controlled nutrient study excludes division, mechanics, and detachment; the interactive examples exercise the broader workflow. Experimental calibration requires additional evidence for the chosen geometry, boundary conditions, biological rates, and empirical resistance parameters.
+
 ## Backend contract
 
 Every test-enabled build runs the shared scenarios against every enumerated device compiled into that build. `backend_contract_conformance` requires each constructed device to advertise growth, species, contacts, mechanics, constraints, signals, coupled rates, depth-averaged flow, and resolved flow. Capability guards in individual tests may help diagnose partial development builds, but they cannot turn a missing capability into a green complete-backend result.
@@ -38,8 +48,8 @@ Together, these gates cover:
 
 - growth, equal and asymmetric division, stable identity, and lineage;
 - cell contacts, plane, sphere, box, and cylinder constraints, full-capsule finite-obstacle contact, fixed cells, and mechanics relaxation;
-- species, signal transport, Forward Euler, Crank-Nicolson, and coupled rates;
-- depth-averaged Darcy-Brinkman flow and resolved MAC Stokes-Brinkman flow;
+- species, signal transport, Forward Euler, Crank-Nicolson, backward Euler, and coupled rates;
+- depth-averaged Hele-Shaw/Darcy flow and resolved MAC Stokes-Brinkman flow;
 - checkpoint migration, exact controller resume, and deterministic runtime random state;
 - batch execution, stopping rules, output collision handling, and run manifests;
 - scene capture, live-viewer reset and checkpoint behavior, and protocol validation;

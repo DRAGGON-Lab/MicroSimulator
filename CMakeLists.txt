@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.25)
 project(
   MicroSimulator
   VERSION 0.1.0
-  DESCRIPTION "Native Metal and CUDA multicellular simulation engine"
+  DESCRIPTION "Microfluidic simulation of microbial populations, flow, and solute transport"
   LANGUAGES CXX
 )
 

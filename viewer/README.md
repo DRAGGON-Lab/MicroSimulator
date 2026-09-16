@@ -1,6 +1,8 @@
 # MicroSimulator scene viewer
 
-This package is a TypeScript and Three.js consumer of `microsimulator-scene` documents. It has no Python bridge, model loader, simulation clock, checkpoint writer, CUDA context, or Metal device access. Standalone mode reads scene files; live mode sends a closed control vocabulary to the Python-owned engine session and verifies every returned scene document.
+The MicroSimulator viewer displays cells, device walls, and signal fields so you can inspect a population in its microfluidic environment. Use it to explore saved scenes or follow a live simulation with growth-rate coloring, nutrient slices, and individual-cell inspection.
+
+The viewer is a TypeScript and Three.js client for `microsimulator-scene` documents. Standalone mode reads scene files; live mode sends typed controls to a Python-owned engine session and verifies every returned scene document. Python owns the model, simulation clock, backend, and checkpoint writer.
 
 ## Run locally
 
@@ -20,11 +22,14 @@ From the repository root:
 
 ```console
 uv sync --group dev --extra viewer
+pnpm --dir viewer install
 pnpm --dir viewer build
 uv run microsimulator view \
-  --model examples/batch_model.py \
-  --dt 0.05 \
-  --checkpoint-output results/live.json \
+  --model examples/microfluidic_trap.py \
+  --backend cpu \
+  --seed 42 \
+  --dt 0.02 \
+  --checkpoint-output results/trap-live.json \
   --open
 ```
 
@@ -33,8 +38,9 @@ Without `--open`, open the tokenized loopback URL printed by `microsimulator`. T
 ## Capabilities
 
 - SHA-256 verification over the Python writer's RFC 8785 canonical frame;
-- strict scene v1 structural and numerical validation;
+- strict scene v2 structural and numerical validation;
 - instanced cylinder and sphere rendering for exact spherocylinder geometry;
+- device walls rendered from plane, sphere, box, and cylinder constraints;
 - orbit, pan, zoom, colony framing, raycast picking, and selection highlighting;
 - exact cell geometry, lineage, type, fixed state, growth, and species inspection;
 - categorical cell-type and fixed-state color maps;
