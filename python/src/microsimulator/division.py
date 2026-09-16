@@ -105,8 +105,11 @@ class UniformLengthDivision:
         parent_key = str(event.parent.id)
         daughter_keys = {str(event.first.id), str(event.second.id)}
         active = {str(cell.id) for cell in step.cells}
+        # Plan removals apply after divisions, so cells already forgotten for
+        # this step's removals are still active here; targets may be a subset
+        # of the pre-division identities but never contain anything else.
         expected = (active - daughter_keys) | {parent_key}
-        if set(targets) != expected:
+        if parent_key not in targets or not set(targets) <= expected:
             raise ControllerStateError("division targets do not match pre-division identities")
         del targets[parent_key]
         if self.jitter_z is not None:

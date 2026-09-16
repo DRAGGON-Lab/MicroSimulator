@@ -82,3 +82,14 @@ cmake --preset cpu-debug
 cmake --build --preset cpu-debug
 ctest --preset cpu-debug
 ```
+
+Formatting, linting, and the Python type check run as commit hooks:
+
+```console
+uv run --with pre-commit pre-commit install
+uv run --with pre-commit pre-commit run --all-files
+```
+
+The hooks cover the fast local gates only. Tests, native builds, and backend
+conformance need a configured build and hardware, and run through CTest and the
+[conformance scripts](development/validation.md).

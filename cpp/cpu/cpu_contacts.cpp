@@ -155,8 +155,7 @@ Vec3 deterministic_normal(const Capsule& first, const Capsule& second, const Poi
   return normalized(cross(first.axis, *least_aligned));
 }
 
-ContactGraph contacts_for_candidates(const WorldState& state,
-                                     const ContactParameters& parameters,
+ContactGraph contacts_for_candidates(const WorldState& state, const ContactParameters& parameters,
                                      std::span<const ContactCandidate> candidates) {
   const auto geometry = state.geometry_state();
   std::vector<CellContact> contacts;
@@ -216,11 +215,10 @@ ContactGraph find_cell_contacts_cpu_exhaustive(const WorldState& state,
   candidates.reserve(pair_count);
   for (std::size_t first = 0; first < geometry.size(); ++first) {
     for (std::size_t second = first + 1; second < geometry.size(); ++second) {
-      candidates.push_back(geometry.ids[first] < geometry.ids[second]
-                               ? ContactCandidate{static_cast<Slot>(first),
-                                                  static_cast<Slot>(second)}
-                               : ContactCandidate{static_cast<Slot>(second),
-                                                  static_cast<Slot>(first)});
+      candidates.push_back(
+          geometry.ids[first] < geometry.ids[second]
+              ? ContactCandidate{static_cast<Slot>(first), static_cast<Slot>(second)}
+              : ContactCandidate{static_cast<Slot>(second), static_cast<Slot>(first)});
     }
   }
   return contacts_for_candidates(state, parameters, candidates);

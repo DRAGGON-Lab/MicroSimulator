@@ -475,7 +475,7 @@ void WorldState::validate() const {
   const std::array sizes{
       position_x_.size(),  position_y_.size(),  position_z_.size(), direction_x_.size(),
       direction_y_.size(), direction_z_.size(), length_.size(),     radius_.size(),
-      growth_rate_.size(), cell_type_.size(), fixed_.size(),
+      growth_rate_.size(), cell_type_.size(),   fixed_.size(),
   };
   if (!std::ranges::all_of(sizes, [expected](std::size_t size) { return size == expected; })) {
     throw std::logic_error("world state arrays have inconsistent lengths");

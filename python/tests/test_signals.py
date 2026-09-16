@@ -13,6 +13,7 @@ from microsimulator import (
     GridShape,
     RateInstruction,
     RateOp,
+    RatePlanBuilder,
     SignalGridSpec,
     SignalIntegrationKind,
     Simulation,
@@ -73,6 +74,11 @@ def test_cpu_signal_transport_sampling_and_stability() -> None:
 def test_cpu_crank_nicolson_accepts_a_step_beyond_the_euler_bound() -> None:
     spec = _line_spec()
     spec.integration = SignalIntegrationKind.CRANK_NICOLSON
+    # The relative tolerance asks for a reduction of the residual the step
+    # starts with, so it sets how closely the committed field approaches the
+    # exact one: this solve is checked to a millionth, so it asks for rather
+    # better than that.
+    spec.solver.relative_tolerance = 1.0e-7
     simulation = Simulation()
     simulation.configure_signal_grid(spec, [0.0, 1.0, 0.0])
 
@@ -84,6 +90,80 @@ def test_cpu_crank_nicolson_accepts_a_step_beyond_the_euler_bound() -> None:
     assert report.converged
     assert report.iterations > 0
     assert report.residual_rms <= 2.0e-5
+
+
+def _uptake_removed(background: float, integration: SignalIntegrationKind) -> float:
+    """Total signal a single growing cell removes from a uniform field in one step."""
+
+    rates = RatePlanBuilder()
+    uptake = -(rates.growth_rate() * rates.cell_volume())
+    plan = rates.coupled_plan(0, 1, (), (uptake,))
+
+    shape = GridShape()
+    shape.x, shape.y, shape.z = 4, 4, 4
+    spec = SignalGridSpec()
+    spec.signal_count = 1
+    spec.shape = shape
+    spec.spacing = Vec3(4.0, 4.0, 4.0)
+    spec.diffusion = [0.0]
+    spec.advection = [Vec3()]
+    spec.integration = integration
+
+    simulation = Simulation()
+    simulation.configure_signal_grid(spec, [background] * 64)
+    simulation.set_coupled_rate_plan(plan)
+    cell = CellInit()
+    cell.position = Vec3(4.0, 4.0, 4.0)
+    cell.length = 2.6
+    cell.radius = 0.5
+    cell.growth_rate = 0.667
+    simulation.add_cell(cell)
+
+    before = sum(simulation.signal_levels)
+    simulation.step(0.02)
+    return (before - sum(simulation.signal_levels)) * spec.voxel_volume
+
+
+@pytest.mark.parametrize("background", [1.0, 10.0, 100.0])
+def test_cell_sources_reach_the_grid_at_any_resolvable_background(background: float) -> None:
+    """A cell's exchange with the field must survive the convergence test.
+
+    An implicit step is accepted on a residual, and a cell's contribution is
+    small next to a well-stocked field. Judging that residual against the field
+    would let the contribution fall under the threshold and be dropped, leaving
+    the model silently inert, so it is judged against the residual the step
+    starts with instead. Forward Euler applies its sources unconditionally and
+    is the reference here.
+    """
+
+    explicit = _uptake_removed(background, SignalIntegrationKind.FORWARD_EULER)
+    implicit = _uptake_removed(background, SignalIntegrationKind.CRANK_NICOLSON)
+    assert math.isclose(implicit, explicit, rel_tol=1.0e-3)
+    assert implicit > 0.0
+
+
+def test_a_source_below_the_field_noise_commits_a_converged_step() -> None:
+    """The limit of an implicit solve: a source it cannot see is not an error.
+
+    Convergence is decided on a residual computed in float32, so a source that
+    moves the field by less than its own representable resolution leaves no
+    residual to detect. The step still converges and commits rather than
+    failing; a model whose exchange is that small next to its background needs
+    forward Euler or a concentration scale that resolves it.
+    """
+
+    removed = _uptake_removed(1.0e4, SignalIntegrationKind.CRANK_NICOLSON)
+    assert removed == 0.0
+
+
+def test_cell_sources_match_their_declared_amount() -> None:
+    cell_volume = math.pi * 0.5**2 * (2.6 + 2.0 * 0.5)
+    expected = 0.02 * 0.667 * cell_volume
+    for integration in (
+        SignalIntegrationKind.FORWARD_EULER,
+        SignalIntegrationKind.CRANK_NICOLSON,
+    ):
+        assert math.isclose(_uptake_removed(10.0, integration), expected, rel_tol=0.02)
 
 
 def test_fixed_and_periodic_boundaries_are_explicit() -> None:

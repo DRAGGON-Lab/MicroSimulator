@@ -136,6 +136,7 @@ _GRID_BOUNDARIES = {name: kind for kind, name in _GRID_BOUNDARY_NAMES.items()}
 _SIGNAL_INTEGRATION_NAMES = {
     SignalIntegrationKind.FORWARD_EULER: "forward_euler",
     SignalIntegrationKind.CRANK_NICOLSON: "crank_nicolson",
+    SignalIntegrationKind.BACKWARD_EULER: "backward_euler",
 }
 _SIGNAL_INTEGRATIONS = {name: kind for kind, name in _SIGNAL_INTEGRATION_NAMES.items()}
 

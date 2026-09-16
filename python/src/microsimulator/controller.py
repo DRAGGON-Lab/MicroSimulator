@@ -185,6 +185,7 @@ class MechanicsConfig:
     require_convergence: bool = True
     constraint_activation_margin: float = 0.0
     constraint_degeneracy_epsilon: float = 1.0e-6
+    flow_drift: bool = False
 
     def __post_init__(self) -> None:
         _integer(self.passes, "mechanics.passes", 1, _UINT32_MAX)
@@ -221,6 +222,8 @@ class MechanicsConfig:
             raise ControllerStateError("mechanics constraint/contact parameters are invalid")
         if not isinstance(cast(object, self.require_convergence), bool):
             raise ControllerStateError("mechanics.require_convergence must be Boolean")
+        if not isinstance(cast(object, self.flow_drift), bool):
+            raise ControllerStateError("mechanics.flow_drift must be Boolean")
 
     def native_parameters(
         self,
@@ -262,6 +265,9 @@ class MechanicsConfig:
         require_convergence = value["require_convergence"]
         if not isinstance(require_convergence, bool):
             raise ControllerStateError("mechanics.require_convergence must be Boolean")
+        flow_drift = value["flow_drift"]
+        if not isinstance(flow_drift, bool):
+            raise ControllerStateError("mechanics.flow_drift must be Boolean")
         return cls(
             passes=_integer(value["passes"], "mechanics.passes", 1, _UINT32_MAX),
             mu_a=_finite_number(value["mu_a"], "mechanics.mu_a"),
@@ -296,6 +302,7 @@ class MechanicsConfig:
                 value["constraint_degeneracy_epsilon"],
                 "mechanics.constraint_degeneracy_epsilon",
             ),
+            flow_drift=flow_drift,
         )
 
 
@@ -461,6 +468,13 @@ class NativeController:
 
         self.simulation.step(dt)
         reports: list[MechanicsSolveResult] = []
+        if (
+            self._mechanics is not None
+            and self._mechanics.flow_drift
+            and self.simulation.cell_count != 0
+        ):
+            _, _, integration, _ = self._mechanics.native_parameters()
+            self.simulation.apply_flow_drift(dt, integration)
         if self._mechanics is not None and self.simulation.cell_count != 0:
             parameters = self._mechanics.native_parameters()
             for _ in range(self._mechanics.passes):

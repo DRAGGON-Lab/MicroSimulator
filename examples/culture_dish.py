@@ -1,7 +1,9 @@
 """Colony growth confined to a round culture dish.
 
 The dish is a single inside-region cylinder constraint: its barrel is the circular
-dish wall and its caps confine the colony to a monolayer.
+dish wall and its caps hold the colony in a shallow layer. The caps leave a cell
+diameter of play, so the colony stays essentially planar but is free to relieve
+crowding in z rather than being pinned to one plane.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from microsimulator import (
 from microsimulator.checkpoint import CheckpointBundle, JSONValue
 
 MODEL_ID = "examples.culture-dish"
-MODEL_VERSION = 1
+MODEL_VERSION = 2
 DIVISION = UniformLengthDivision(3.2, 3.8, jitter_z=False)
 
 DISH_RADIUS = 30.0
@@ -59,7 +61,9 @@ def build(context: ModelContext) -> NativeController:
     founder_ids = []
     for index in range(FOUNDER_COUNT):
         placement = context.rng.uniform(0.0, 2.0 * math.pi)
-        distance = context.rng.uniform(0.0, DISH_RADIUS * 0.5)
+        # The square root spreads founders uniformly over the seeded area
+        # rather than crowding them toward the middle.
+        distance = DISH_RADIUS * 0.5 * math.sqrt(context.rng.uniform(0.0, 1.0))
         angle = context.rng.uniform(0.0, 2.0 * math.pi)
         founder = CellInit()
         founder.position = Vec3(
