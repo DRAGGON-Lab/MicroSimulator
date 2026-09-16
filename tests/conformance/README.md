@@ -16,7 +16,11 @@ A backend only earns conformance when this executable passes with that native ba
 
 ## Backend contract
 
-The backend contract scenario constructs every enumerated device and requires it to advertise growth, species, cell contacts, cell mechanics, external constraints, signals, and coupled rates. Individual scientific fixtures may retain capability guards to diagnose partially implemented development builds, but a feature-complete Metal or CUDA build cannot pass the conformance suite by opting out of one of those fixtures.
+The backend contract scenario constructs every enumerated device and requires it to advertise growth, species, cell contacts, cell mechanics, external constraints, signals, coupled rates, depth-averaged flow, and resolved flow. Individual scientific fixtures may retain capability guards to diagnose partially implemented development builds, but a feature-complete Metal or CUDA build cannot pass the conformance suite by opting out of one of those fixtures.
+
+## Flow
+
+The flow scenario exercises two native domain operations. The depth-averaged case uses a 5-by-8-by-2 anisotropic grid with an internal obstacle and spatially varying mobility. The resolved case uses a 6-by-7-by-2 anisotropic grid with a two-layer Brinkman drag field. Every backend solves through its own matrix-free operator and Krylov kernels, reports convergence, and returns all face components. Velocity fields are compared with the CPU reference using absolute and relative tolerances of `8e-4`; the resolved divergence RMS must remain below `5e-5`, and the minimum transverse gap is exact. CPU-only execution validates the reference fixture, Metal conformance requires execution on an Apple GPU, and CUDA conformance requires execution on an NVIDIA GPU.
 
 ## Species
 

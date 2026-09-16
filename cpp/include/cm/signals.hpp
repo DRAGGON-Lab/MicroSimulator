@@ -124,6 +124,7 @@ class SignalGrid {
   [[nodiscard]] SignalGridCheckpoint checkpoint() const;
   void set_levels(std::span<const float> levels);
   void replace_levels(std::vector<float> levels);
+  void set_velocity_field(std::optional<SignalGridVelocityField> field);
   void validate_step(float dt) const;
   void validate() const;
 

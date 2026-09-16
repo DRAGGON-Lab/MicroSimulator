@@ -23,6 +23,7 @@
 #include "cm/metal/mechanics_source.hpp"
 #include "cm/metal/signals_source.hpp"
 #include "cm/metal/species_source.hpp"
+#include "metal_flow.hpp"
 
 namespace cm {
 namespace {
@@ -252,6 +253,7 @@ class MetalBackend final : public ComputeBackend {
       mechanics_reduce_pipeline_ =
           compile_pipeline(device_, mechanics_library, @"reduce_sum_pairs",
                            "failed to create the Metal mechanics-reduction pipeline");
+      flow_solver_ = std::make_unique<metal::FlowSolver>(device_index_);
     }
   }
 
@@ -272,7 +274,9 @@ class MetalBackend final : public ComputeBackend {
     return feature == BackendFeature::growth || feature == BackendFeature::species ||
            feature == BackendFeature::cell_contacts || feature == BackendFeature::cell_mechanics ||
            feature == BackendFeature::external_constraints || feature == BackendFeature::signals ||
-           feature == BackendFeature::coupled_rates;
+           feature == BackendFeature::coupled_rates ||
+           feature == BackendFeature::depth_averaged_flow ||
+           feature == BackendFeature::resolved_flow;
   }
 
   void advance_growth(WorldState& state, float dt) override {
@@ -951,6 +955,18 @@ class MetalBackend final : public ComputeBackend {
     }
     result.corrections = download_mechanics_solution(geometry.size());
     return result;
+  }
+
+  [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(
+      const SignalGridSpec& spec, std::span<const float> mobility,
+      const DepthAveragedFlowParameters& parameters) override {
+    return flow_solver_->solve_depth_averaged(spec, mobility, parameters);
+  }
+
+  [[nodiscard]] ResolvedFlowResult solve_resolved_flow(
+      const SignalGridSpec& spec, std::span<const float> drag,
+      const ResolvedFlowParameters& parameters) override {
+    return flow_solver_->solve_resolved(spec, drag, parameters);
   }
 
  private:
@@ -2127,6 +2143,7 @@ class MetalBackend final : public ComputeBackend {
   id<MTLComputePipelineState> mechanics_subtract_pipeline_{nil};
   id<MTLComputePipelineState> mechanics_dot_pipeline_{nil};
   id<MTLComputePipelineState> mechanics_reduce_pipeline_{nil};
+  std::unique_ptr<metal::FlowSolver> flow_solver_;
 
   id<MTLBuffer> lengths_{nil};
   id<MTLBuffer> growth_rates_{nil};

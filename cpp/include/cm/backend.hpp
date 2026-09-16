@@ -8,6 +8,7 @@
 #include "cm/constraints.hpp"
 #include "cm/contact_graph.hpp"
 #include "cm/coupled_rates.hpp"
+#include "cm/flow.hpp"
 #include "cm/mechanics.hpp"
 #include "cm/signals.hpp"
 #include "cm/species.hpp"
@@ -38,6 +39,12 @@ class ComputeBackend {
   [[nodiscard]] virtual MechanicsSolveResult solve_cell_mechanics(
       const WorldState& state, const ContactGraph& contacts,
       const ExternalContactGraph& external_contacts, const MechanicsParameters& parameters) = 0;
+  [[nodiscard]] virtual DepthAveragedFlowResult solve_depth_averaged_flow(
+      const SignalGridSpec& spec, std::span<const float> mobility,
+      const DepthAveragedFlowParameters& parameters) = 0;
+  [[nodiscard]] virtual ResolvedFlowResult solve_resolved_flow(
+      const SignalGridSpec& spec, std::span<const float> drag,
+      const ResolvedFlowParameters& parameters) = 0;
 };
 
 [[nodiscard]] std::unique_ptr<ComputeBackend> make_cpu_backend(std::uint32_t device_index = 0);
