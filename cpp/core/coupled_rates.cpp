@@ -96,6 +96,7 @@ void CoupledRatePlan::validate() const {
       case RateOp::growth_rate:
       case RateOp::cell_type:
       case RateOp::cell_volume:
+      case RateOp::cell_volume_change_rate:
       case RateOp::cell_surface_area:
         break;
       case RateOp::negate:

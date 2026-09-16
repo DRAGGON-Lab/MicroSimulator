@@ -35,6 +35,7 @@ class RateOp(Enum):
     GROWTH_RATE: RateOp
     CELL_TYPE: RateOp
     CELL_VOLUME: RateOp
+    CELL_VOLUME_CHANGE_RATE: RateOp
     CELL_SURFACE_AREA: RateOp
     ADD: RateOp
     SUBTRACT: RateOp

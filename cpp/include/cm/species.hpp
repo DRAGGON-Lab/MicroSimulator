@@ -38,6 +38,7 @@ enum class RateOp : std::uint8_t {
   equal = 25,
   select = 26,
   signal = 27,
+  cell_volume_change_rate = 28,
 };
 
 struct RateInstruction {
