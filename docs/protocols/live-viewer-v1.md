@@ -23,7 +23,7 @@ Every new connection receives a `frame` message. The server also broadcasts a fr
 }
 ```
 
-`scene` is a complete scene-v1 document, including its RFC 8785 SHA-256 integrity value. `revision` changes once per step batch or reset. The browser must verify and validate each document as it would a scene file.
+`scene` is a complete scene document at the current scene format version, including its RFC 8785 SHA-256 integrity value. `revision` changes once per step batch or reset. The browser must verify and validate each document as it would a scene file.
 
 A successful checkpoint command returns the server-configured absolute path:
 

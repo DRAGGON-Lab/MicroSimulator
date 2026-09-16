@@ -205,6 +205,47 @@ void test_fixed_state_is_mutable_persistent_and_inherited() {
   restored.validate();
 }
 
+void test_removal_backfills_slots_and_keeps_lineage() {
+  cm::WorldState state(0, 2);
+  cm::CellInit cell;
+  cell.species = {1.0F, 2.0F};
+  const auto first = state.add_cell(cell);
+  cell.position = {5.0F, 0.0F, 0.0F};
+  cell.species = {3.0F, 4.0F};
+  const auto second = state.add_cell(cell);
+  cell.position = {9.0F, 0.0F, 0.0F};
+  cell.species = {5.0F, 6.0F};
+  const auto third = state.add_cell(cell);
+  const auto daughters = state.divide_equal(first);
+
+  state.remove_cell(second);
+  assert(state.size() == 3);
+  assert(!state.contains(second));
+  assert(state.contains(third));
+  const auto moved = state.cell(daughters.second);
+  assert(moved.slot == 1);
+  const auto untouched = state.cell(third);
+  assert(untouched.slot == 2);
+  assert(untouched.position.x == 9.0F);
+  assert(untouched.species[0] == 5.0F);
+  assert(state.lineage_parent(daughters.first) == first);
+
+  const auto checkpoint = state.checkpoint();
+  checkpoint.validate();
+  const cm::WorldState restored(checkpoint);
+  assert(restored.size() == 3);
+  assert(restored.lineage_parent(daughters.second) == first);
+
+  bool rejected = false;
+  try {
+    state.remove_cell(second);
+  } catch (const std::exception&) {
+    rejected = true;
+  }
+  assert(rejected);
+  state.validate();
+}
+
 void test_unavailable_backends_do_not_fall_back() {
   assert(cm::backend_device_count(cm::BackendKind::cpu) == 1);
   assert(cm::backend_available(cm::BackendKind::cpu, 0));
@@ -246,6 +287,7 @@ int main() {
   test_mutable_cell_attributes_keep_stable_identity();
   test_geometry_can_be_updated_by_stable_id();
   test_fixed_state_is_mutable_persistent_and_inherited();
+  test_removal_backfills_slots_and_keeps_lineage();
   test_unavailable_backends_do_not_fall_back();
   return 0;
 }

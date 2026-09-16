@@ -36,23 +36,64 @@ void validate_sphere(const SphereConstraint& sphere) {
   }
   validate_coefficient(sphere.coefficient);
   switch (sphere.allowed_region) {
-    case SphereRegion::outside:
-    case SphereRegion::inside:
+    case ConstraintRegion::outside:
+    case ConstraintRegion::inside:
       return;
   }
   throw std::invalid_argument("checkpoint sphere uses an unknown allowed region");
 }
 
+bool positive_finite_extents(const Vec3& half_extents) {
+  return std::isfinite(half_extents.x) && half_extents.x > 0.0F &&
+         std::isfinite(half_extents.y) && half_extents.y > 0.0F &&
+         std::isfinite(half_extents.z) && half_extents.z > 0.0F;
+}
+
+void validate_box(const BoxConstraint& box) {
+  if (box.id == invalid_constraint_id || !finite(box.center) ||
+      !positive_finite_extents(box.half_extents)) {
+    throw std::invalid_argument("checkpoint box contains invalid geometry");
+  }
+  validate_coefficient(box.coefficient);
+  switch (box.allowed_region) {
+    case ConstraintRegion::outside:
+    case ConstraintRegion::inside:
+      return;
+  }
+  throw std::invalid_argument("checkpoint box uses an unknown allowed region");
+}
+
+void validate_cylinder(const CylinderConstraint& cylinder) {
+  if (cylinder.id == invalid_constraint_id || !finite(cylinder.center) ||
+      !std::isfinite(cylinder.radius) || cylinder.radius <= 0.0F ||
+      !std::isfinite(cylinder.half_height) || cylinder.half_height <= 0.0F) {
+    throw std::invalid_argument("checkpoint cylinder contains invalid geometry");
+  }
+  validate_coefficient(cylinder.coefficient);
+  switch (cylinder.allowed_region) {
+    case ConstraintRegion::outside:
+    case ConstraintRegion::inside:
+      return;
+  }
+  throw std::invalid_argument("checkpoint cylinder uses an unknown allowed region");
+}
+
 void validate_constraint_state(ConstraintId next_id, std::span<const PlaneConstraint> planes,
-                               std::span<const SphereConstraint> spheres) {
+                               std::span<const SphereConstraint> spheres,
+                               std::span<const BoxConstraint> boxes,
+                               std::span<const CylinderConstraint> cylinders) {
   if (next_id == invalid_constraint_id) {
     throw std::invalid_argument("checkpoint next constraint identifier is invalid");
   }
-  if (spheres.size() > std::numeric_limits<std::size_t>::max() - planes.size()) {
-    throw std::overflow_error("checkpoint constraint count overflow");
+  std::size_t total = planes.size();
+  for (const auto count : {spheres.size(), boxes.size(), cylinders.size()}) {
+    if (count > std::numeric_limits<std::size_t>::max() - total) {
+      throw std::overflow_error("checkpoint constraint count overflow");
+    }
+    total += count;
   }
   std::unordered_set<ConstraintId> ids;
-  ids.reserve(planes.size() + spheres.size());
+  ids.reserve(total);
   ConstraintId previous_plane = invalid_constraint_id;
   for (const auto& plane : planes) {
     validate_plane(plane);
@@ -75,6 +116,28 @@ void validate_constraint_state(ConstraintId next_id, std::span<const PlaneConstr
     }
     previous_sphere = sphere.id;
   }
+  ConstraintId previous_box = invalid_constraint_id;
+  for (const auto& box : boxes) {
+    validate_box(box);
+    if (box.id <= previous_box || box.id >= next_id) {
+      throw std::invalid_argument("checkpoint box identifiers are not ordered and allocated");
+    }
+    if (!ids.insert(box.id).second) {
+      throw std::invalid_argument("checkpoint contains a duplicate constraint identifier");
+    }
+    previous_box = box.id;
+  }
+  ConstraintId previous_cylinder = invalid_constraint_id;
+  for (const auto& cylinder : cylinders) {
+    validate_cylinder(cylinder);
+    if (cylinder.id <= previous_cylinder || cylinder.id >= next_id) {
+      throw std::invalid_argument("checkpoint cylinder identifiers are not ordered and allocated");
+    }
+    if (!ids.insert(cylinder.id).second) {
+      throw std::invalid_argument("checkpoint contains a duplicate constraint identifier");
+    }
+    previous_cylinder = cylinder.id;
+  }
 }
 
 std::size_t checked_offset_count(std::size_t cell_count) {
@@ -92,6 +155,10 @@ void validate_contact(const ExternalContact& contact, std::size_t cell_count) {
   if (contact.cell_slot >= cell_count) {
     throw std::invalid_argument("external contact cell slot is invalid");
   }
+  if (contact.constraint_kind > ExternalConstraintKind::cylinder ||
+      contact.location > RodContactLocation::interior) {
+    throw std::invalid_argument("external contact contains an invalid tag");
+  }
   if (!finite(contact.point_on_cell) || !finite(contact.normal) ||
       !std::isfinite(contact.signed_separation) || !std::isfinite(contact.weight) ||
       contact.weight <= 0.0F) {
@@ -105,11 +172,15 @@ void validate_contact(const ExternalContact& contact, std::size_t cell_count) {
 }  // namespace
 
 void ConstraintSetCheckpoint::validate() const {
-  validate_constraint_state(next_id, planes, spheres);
+  validate_constraint_state(next_id, planes, spheres, boxes, cylinders);
 }
 
 ConstraintSet::ConstraintSet(const ConstraintSetCheckpoint& checkpoint)
-    : next_id_(checkpoint.next_id), planes_(checkpoint.planes), spheres_(checkpoint.spheres) {
+    : next_id_(checkpoint.next_id),
+      planes_(checkpoint.planes),
+      spheres_(checkpoint.spheres),
+      boxes_(checkpoint.boxes),
+      cylinders_(checkpoint.cylinders) {
   checkpoint.validate();
 }
 
@@ -155,25 +226,74 @@ ConstraintId ConstraintSet::add_sphere(const SphereConstraintInit& sphere) {
   return id;
 }
 
-std::size_t ConstraintSet::size() const noexcept { return planes_.size() + spheres_.size(); }
+ConstraintId ConstraintSet::add_box(const BoxConstraintInit& box) {
+  if (!finite(box.center) || !positive_finite_extents(box.half_extents)) {
+    throw std::invalid_argument("box geometry must be finite with positive half extents");
+  }
+  validate_coefficient(box.coefficient);
+  const auto id = allocate_id();
+  boxes_.push_back({
+      .id = id,
+      .center = box.center,
+      .half_extents = box.half_extents,
+      .coefficient = box.coefficient,
+      .allowed_region = box.allowed_region,
+  });
+  return id;
+}
 
-bool ConstraintSet::empty() const noexcept { return planes_.empty() && spheres_.empty(); }
+ConstraintId ConstraintSet::add_cylinder(const CylinderConstraintInit& cylinder) {
+  if (!finite(cylinder.center) || !std::isfinite(cylinder.radius) || cylinder.radius <= 0.0F ||
+      !std::isfinite(cylinder.half_height) || cylinder.half_height <= 0.0F) {
+    throw std::invalid_argument(
+        "cylinder geometry must be finite with a positive radius and half height");
+  }
+  validate_coefficient(cylinder.coefficient);
+  const auto id = allocate_id();
+  cylinders_.push_back({
+      .id = id,
+      .center = cylinder.center,
+      .radius = cylinder.radius,
+      .half_height = cylinder.half_height,
+      .coefficient = cylinder.coefficient,
+      .allowed_region = cylinder.allowed_region,
+  });
+  return id;
+}
+
+std::size_t ConstraintSet::size() const noexcept {
+  return planes_.size() + spheres_.size() + boxes_.size() + cylinders_.size();
+}
+
+bool ConstraintSet::empty() const noexcept {
+  return planes_.empty() && spheres_.empty() && boxes_.empty() && cylinders_.empty();
+}
 
 std::span<const PlaneConstraint> ConstraintSet::planes() const& noexcept { return planes_; }
 
 std::span<const SphereConstraint> ConstraintSet::spheres() const& noexcept { return spheres_; }
+
+std::span<const BoxConstraint> ConstraintSet::boxes() const& noexcept { return boxes_; }
+
+std::span<const CylinderConstraint> ConstraintSet::cylinders() const& noexcept {
+  return cylinders_;
+}
 
 ConstraintSetCheckpoint ConstraintSet::checkpoint() const {
   ConstraintSetCheckpoint result{
       .next_id = next_id_,
       .planes = planes_,
       .spheres = spheres_,
+      .boxes = boxes_,
+      .cylinders = cylinders_,
   };
   result.validate();
   return result;
 }
 
-void ConstraintSet::validate() const { validate_constraint_state(next_id_, planes_, spheres_); }
+void ConstraintSet::validate() const {
+  validate_constraint_state(next_id_, planes_, spheres_, boxes_, cylinders_);
+}
 
 void validate_constraint_contact_parameters(const ConstraintContactParameters& parameters) {
   if (!std::isfinite(parameters.activation_margin) || parameters.activation_margin < 0.0F) {

@@ -12,6 +12,7 @@ const FRAME = {
     native: false,
   },
   cells: [],
+  constraints: { boxes: [], cylinders: [], planes: [], spheres: [] },
   signal_grid: null,
   species_count: 0,
   time: 0,
@@ -28,7 +29,7 @@ async function scene(): Promise<Record<string, unknown>> {
   );
   return {
     format: "microsimulator-scene",
-    version: 1,
+    version: 2,
     producer: { name: "microsimulator", version: "0.1.0" },
     integrity: {
       algorithm: "sha256",

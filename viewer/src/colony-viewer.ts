@@ -2,15 +2,19 @@ import {
   ACESFilmicToneMapping,
   AmbientLight,
   Box3,
+  BoxGeometry,
   Color,
   CylinderGeometry,
   DataTexture,
   DirectionalLight,
   DoubleSide,
+  EdgesGeometry,
   GridHelper,
   Group,
   InstancedMesh,
   LinearFilter,
+  LineBasicMaterial,
+  LineSegments,
   Matrix4,
   Mesh,
   MeshBasicMaterial,
@@ -32,14 +36,18 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 import { rgbBytes, viridis, type RGB } from "./color";
 import type { SignalSlice } from "./grid";
-import type { SceneCell, SceneFrame } from "./scene";
+import type { SceneCell, SceneConstraints, SceneFrame } from "./scene";
 
 type SelectionCallback = (cell: SceneCell | null) => void;
 
 function disposeGroup(group: Group): void {
   for (const child of [...group.children]) {
     group.remove(child);
-    if (child instanceof Mesh || child instanceof InstancedMesh) {
+    if (
+      child instanceof Mesh ||
+      child instanceof InstancedMesh ||
+      child instanceof LineSegments
+    ) {
       child.geometry.dispose();
       const materials = Array.isArray(child.material)
         ? child.material
@@ -66,6 +74,7 @@ export class ColonyViewer {
   private readonly camera = new PerspectiveCamera(42, 1, 0.01, 10_000);
   private readonly controls: OrbitControls;
   private readonly colony = new Group();
+  private readonly device = new Group();
   private readonly signal = new Group();
   private readonly highlight = new Group();
   private readonly grid = new GridHelper(20, 20, 0x34413c, 0x222b27);
@@ -114,6 +123,7 @@ export class ColonyViewer {
       this.grid,
       this.signal,
       this.colony,
+      this.device,
       this.highlight,
     );
     this.grid.rotateX(Math.PI / 2);
@@ -146,10 +156,12 @@ export class ColonyViewer {
     if (frame.cells.length === 0) {
       this.selectedCellId = null;
       this.onSelection(null);
-      this.sceneBounds = new Box3(
-        new Vector3(-1, -1, -1),
-        new Vector3(1, 1, 1),
-      );
+      const deviceBounds = new Box3();
+      this.buildDevice(frame.constraints, deviceBounds);
+      this.sceneBounds = deviceBounds.isEmpty()
+        ? new Box3(new Vector3(-1, -1, -1), new Vector3(1, 1, 1))
+        : deviceBounds;
+      this.configureReferenceGrid(this.sceneBounds);
       if (fit) {
         this.fitColony();
       }
@@ -233,6 +245,7 @@ export class ColonyViewer {
     secondCaps.computeBoundingSphere();
     this.cellMeshes = [cylinders, firstCaps, secondCaps];
     this.colony.add(...this.cellMeshes);
+    this.buildDevice(frame.constraints, bounds);
     this.sceneBounds = bounds;
     this.configureReferenceGrid(bounds);
     const selectedIndex = frame.cells.findIndex(
@@ -362,6 +375,7 @@ export class ColonyViewer {
 
   public dispose(): void {
     this.renderer.setAnimationLoop(null);
+    disposeGroup(this.device);
     this.resizeObserver.disconnect();
     this.renderer.domElement.removeEventListener(
       "pointerdown",
@@ -417,6 +431,139 @@ export class ColonyViewer {
     )[0];
     this.selectCell(intersection?.instanceId ?? null);
   };
+
+  private buildDevice(constraints: SceneConstraints, bounds: Box3): void {
+    disposeGroup(this.device);
+    const wallColor = 0xd7e8e3;
+    const chamberColor = 0xcfdcea;
+    const edgeMaterial = new LineBasicMaterial({
+      color: 0x9adbc8,
+      transparent: true,
+      opacity: 0.5,
+    });
+
+    const translucent = (color: number, opacity: number) =>
+      new MeshStandardMaterial({
+        color,
+        transparent: true,
+        opacity,
+        roughness: 0.3,
+        metalness: 0,
+        depthWrite: false,
+        side: DoubleSide,
+      });
+
+    for (const box of constraints.boxes) {
+      const outside = box.allowedRegion === "outside";
+      const geometry = new BoxGeometry(
+        box.halfExtents[0] * 2,
+        box.halfExtents[1] * 2,
+        box.halfExtents[2] * 2,
+      );
+      const mesh = new Mesh(
+        geometry,
+        translucent(outside ? wallColor : chamberColor, outside ? 0.22 : 0.1),
+      );
+      mesh.position.fromArray(box.center);
+      mesh.renderOrder = 2;
+      const edges = new LineSegments(new EdgesGeometry(geometry), edgeMaterial);
+      edges.position.fromArray(box.center);
+      edges.renderOrder = 3;
+      this.device.add(mesh, edges);
+      const center = new Vector3().fromArray(box.center);
+      const extent = new Vector3().fromArray(box.halfExtents);
+      bounds.union(
+        new Box3(
+          new Vector3().copy(center).sub(extent),
+          new Vector3().copy(center).add(extent),
+        ),
+      );
+    }
+
+    for (const sphere of constraints.spheres) {
+      const outside = sphere.allowedRegion === "outside";
+      const geometry = new SphereGeometry(sphere.radius, 24, 16);
+      const mesh = new Mesh(
+        geometry,
+        translucent(outside ? wallColor : chamberColor, outside ? 0.22 : 0.1),
+      );
+      mesh.position.fromArray(sphere.center);
+      mesh.renderOrder = 2;
+      this.device.add(mesh);
+      const center = new Vector3().fromArray(sphere.center);
+      bounds.union(
+        new Box3(
+          new Vector3().copy(center).subScalar(sphere.radius),
+          new Vector3().copy(center).addScalar(sphere.radius),
+        ),
+      );
+    }
+
+    const zToAxis = new Quaternion().setFromUnitVectors(
+      new Vector3(0, 1, 0),
+      new Vector3(0, 0, 1),
+    );
+    for (const cylinder of constraints.cylinders) {
+      const outside = cylinder.allowedRegion === "outside";
+      const geometry = new CylinderGeometry(
+        cylinder.radius,
+        cylinder.radius,
+        cylinder.halfHeight * 2,
+        48,
+        1,
+        !outside,
+      );
+      const mesh = new Mesh(
+        geometry,
+        translucent(outside ? wallColor : chamberColor, outside ? 0.22 : 0.12),
+      );
+      mesh.position.fromArray(cylinder.center);
+      mesh.quaternion.copy(zToAxis);
+      mesh.renderOrder = 2;
+      const edges = new LineSegments(
+        new EdgesGeometry(geometry, 30),
+        edgeMaterial,
+      );
+      edges.position.fromArray(cylinder.center);
+      edges.quaternion.copy(zToAxis);
+      edges.renderOrder = 3;
+      this.device.add(mesh, edges);
+      const center = new Vector3().fromArray(cylinder.center);
+      const extent = new Vector3(
+        cylinder.radius,
+        cylinder.radius,
+        cylinder.halfHeight,
+      );
+      bounds.union(
+        new Box3(
+          new Vector3().copy(center).sub(extent),
+          new Vector3().copy(center).add(extent),
+        ),
+      );
+    }
+
+    if (constraints.planes.length > 0) {
+      const focus = bounds.isEmpty()
+        ? new Vector3()
+        : bounds.getCenter(new Vector3());
+      const extent = bounds.isEmpty()
+        ? 20
+        : Math.max(bounds.getSize(new Vector3()).length() * 1.2, 10);
+      for (const plane of constraints.planes) {
+        const point = new Vector3().fromArray(plane.point);
+        const normal = new Vector3().fromArray(plane.inwardNormal).normalize();
+        const mesh = new Mesh(
+          new PlaneGeometry(extent, extent),
+          translucent(wallColor, 0.07),
+        );
+        mesh.quaternion.setFromUnitVectors(new Vector3(0, 0, 1), normal);
+        const offset = new Vector3().copy(focus).sub(point).dot(normal);
+        mesh.position.copy(focus).addScaledVector(normal, -offset);
+        mesh.renderOrder = 2;
+        this.device.add(mesh);
+      }
+    }
+  }
 
   private buildHighlight(cell: SceneCell): void {
     disposeGroup(this.highlight);

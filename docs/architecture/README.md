@@ -12,6 +12,9 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 - [Explicit daughter fractions](0007-division.md)
 - [Persistent fixed rod cells](0009-fixed-cells.md)
 - [Restartable native model controllers](0014-native-controllers.md)
+- [Axis-aligned box constraints](0016-box-constraints.md)
+- [Axis-aligned cylinder constraints](0018-cylinder-constraints.md)
+- [Cell removal](0020-cell-removal.md)
 
 ## Biological dynamics and signaling
 
@@ -21,6 +24,8 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 - [Neighbor diffusion](0010-neighbor-diffusion.md)
 - [Bounded SBML import](0011-sbml-import.md)
 - [Affine grid reactions](0015-affine-grid-reactions.md)
+- [Signal grid obstacles](0017-grid-obstacles.md)
+- [Face-staggered signal velocity fields](0019-velocity-fields.md)
 
 ## Data and presentation
 
