@@ -135,6 +135,12 @@
 
         <section id="viewport" class="viewport" aria-label="3D colony view">
           <div id="canvas-host"></div>
+          <div
+            id="view-cube"
+            class="view-cube"
+            aria-label="Camera orientation: click for the shortest view, double-click to level a face label, or drag to orbit"
+            hidden
+          ></div>
           <div id="empty-state" class="empty-state">
             <div class="empty-icon" aria-hidden="true">
               <span></span><span></span><span></span>
@@ -189,7 +195,8 @@
           </div>
           <div class="viewport-help" aria-hidden="true">
             Drag to orbit · Right-drag to pan · Scroll to zoom · Click a cell to
-            inspect
+            inspect · Cube: click shortest path · Double-click level label ·
+            Drag to orbit
           </div>
           <div
             id="status"

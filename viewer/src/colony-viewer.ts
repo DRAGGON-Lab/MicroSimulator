@@ -37,8 +37,29 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { rgbBytes, viridis, type RGB } from "./color";
 import type { SignalSlice } from "./grid";
 import type { SceneCell, SceneConstraints, SceneFrame } from "./scene";
+import {
+  canonicalViewQuaternion,
+  DEFAULT_VIEW_TARGET,
+  dragOrbitOffset,
+  interpolateViewOrientation,
+  shortestViewQuaternion,
+  targetDirection,
+  ViewCube,
+  type ViewCubeTarget,
+} from "./view-cube";
 
 type SelectionCallback = (cell: SceneCell | null) => void;
+
+interface CameraTransition {
+  readonly startedAt: number;
+  readonly duration: number;
+  readonly startTarget: Vector3;
+  readonly endTarget: Vector3;
+  readonly startOrientation: Quaternion;
+  readonly endOrientation: Quaternion;
+  readonly startDistance: number;
+  readonly endDistance: number;
+}
 
 function disposeGroup(group: Group): void {
   for (const child of [...group.children]) {
@@ -73,6 +94,7 @@ export class ColonyViewer {
   private readonly scene = new Scene();
   private readonly camera = new PerspectiveCamera(42, 1, 0.01, 10_000);
   private readonly controls: OrbitControls;
+  private readonly viewCube: ViewCube;
   private readonly colony = new Group();
   private readonly device = new Group();
   private readonly signal = new Group();
@@ -88,8 +110,13 @@ export class ColonyViewer {
   private signalTexture: DataTexture | null = null;
   private selectedCellId: string | null = null;
   private sceneBounds = new Box3(new Vector3(-1, -1, -1), new Vector3(1, 1, 1));
+  private cameraTransition: CameraTransition | null = null;
 
-  public constructor(host: HTMLElement, onSelection: SelectionCallback) {
+  public constructor(
+    host: HTMLElement,
+    viewCubeElement: HTMLElement,
+    onSelection: SelectionCallback,
+  ) {
     this.onSelection = onSelection;
     this.scene.background = new Color(0x0b0f0e);
     this.renderer = new WebGLRenderer({
@@ -110,6 +137,12 @@ export class ColonyViewer {
     this.controls.dampingFactor = 0.08;
     this.controls.screenSpacePanning = true;
     this.controls.target.set(0, 0, 0);
+    this.viewCube = new ViewCube(
+      viewCubeElement,
+      this.snapToView,
+      this.dragViewCube,
+    );
+    this.viewCube.setVisible(false);
 
     const ambient = new AmbientLight(0xffffff, 1.4);
     const key = new DirectionalLight(0xffffff, 3.4);
@@ -135,19 +168,34 @@ export class ColonyViewer {
       this.handlePointerDown,
     );
     this.renderer.domElement.addEventListener(
+      "pointerdown",
+      this.cancelCameraTransition,
+      true,
+    );
+    this.renderer.domElement.addEventListener(
+      "wheel",
+      this.cancelCameraTransition,
+      true,
+    );
+    this.renderer.domElement.addEventListener(
       "pointerup",
       this.handlePointerUp,
     );
     this.resizeObserver = new ResizeObserver(() => this.resize(host));
     this.resizeObserver.observe(host);
     this.resize(host);
-    this.renderer.setAnimationLoop(() => {
-      this.controls.update();
+    this.renderer.setAnimationLoop((time) => {
+      if (!this.updateCameraTransition(time)) {
+        this.controls.update();
+      }
       this.renderer.render(this.scene, this.camera);
+      this.viewCube.sync(this.camera);
+      this.viewCube.render(this.renderer);
     });
   }
 
   public setFrame(frame: SceneFrame, fit = true): void {
+    this.viewCube.setVisible(true);
     disposeGroup(this.colony);
     this.cellMeshes = [];
     this.cells = frame.cells;
@@ -163,7 +211,7 @@ export class ColonyViewer {
         : deviceBounds;
       this.configureReferenceGrid(this.sceneBounds);
       if (fit) {
-        this.fitColony();
+        this.fitColony(false);
       }
       return;
     }
@@ -262,7 +310,7 @@ export class ColonyViewer {
       this.onSelection(null);
     }
     if (fit) {
-      this.fitColony();
+      this.fitColony(false);
     }
   }
 
@@ -360,17 +408,20 @@ export class ColonyViewer {
     this.onSelection(cell);
   }
 
-  public fitColony(): void {
+  public fitColony(animate = true): void {
     const center = this.sceneBounds.getCenter(new Vector3());
     const size = this.sceneBounds.getSize(new Vector3());
     const radius = Math.max(size.length() / 2, 1);
-    const direction = new Vector3(1, -1.25, 0.9).normalize();
-    this.controls.target.copy(center);
-    this.camera.position.copy(center).addScaledVector(direction, radius * 2.8);
     this.camera.near = Math.max(radius / 1000, 0.001);
     this.camera.far = Math.max(radius * 100, 100);
     this.camera.updateProjectionMatrix();
-    this.controls.update();
+    this.moveCamera(
+      center,
+      targetDirection(DEFAULT_VIEW_TARGET),
+      radius * 2.8,
+      animate,
+      canonicalViewQuaternion(DEFAULT_VIEW_TARGET),
+    );
   }
 
   public dispose(): void {
@@ -385,6 +436,16 @@ export class ColonyViewer {
       "pointerup",
       this.handlePointerUp,
     );
+    this.renderer.domElement.removeEventListener(
+      "pointerdown",
+      this.cancelCameraTransition,
+      true,
+    );
+    this.renderer.domElement.removeEventListener(
+      "wheel",
+      this.cancelCameraTransition,
+      true,
+    );
     disposeGroup(this.colony);
     this.signalTexture?.dispose();
     this.signalTexture = null;
@@ -398,6 +459,7 @@ export class ColonyViewer {
       material.dispose();
     }
     this.controls.dispose();
+    this.viewCube.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -407,6 +469,126 @@ export class ColonyViewer {
       this.pointerOrigin = new Vector2(event.clientX, event.clientY);
     }
   };
+
+  private readonly cancelCameraTransition = (): void => {
+    this.cameraTransition = null;
+    this.restoreWorldUp();
+  };
+
+  private readonly snapToView = (
+    target: ViewCubeTarget,
+    alignLabel: boolean,
+  ): void => {
+    const distance = Math.max(
+      this.camera.position.distanceTo(this.controls.target),
+      0.001,
+    );
+    this.moveCamera(
+      this.controls.target.clone(),
+      targetDirection(target),
+      distance,
+      true,
+      alignLabel ? canonicalViewQuaternion(target) : undefined,
+    );
+  };
+
+  private readonly dragViewCube = (deltaX: number, deltaY: number): void => {
+    this.cameraTransition = null;
+    this.camera.up.set(0, 0, 1);
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    dragOrbitOffset(offset, this.camera.up, deltaX, deltaY, offset);
+    this.camera.position.copy(this.controls.target).add(offset);
+    this.camera.lookAt(this.controls.target);
+    this.controls.update();
+  };
+
+  private moveCamera(
+    target: Vector3,
+    direction: Vector3,
+    distance: number,
+    animate: boolean,
+    requestedOrientation?: Quaternion,
+  ): void {
+    this.cameraTransition = null;
+    const reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const startTarget = this.controls.target.clone();
+    const startOffset = this.camera.position.clone().sub(startTarget);
+    const startDistance = Math.max(startOffset.length(), 0.001);
+    const endDirection = direction.clone().normalize();
+    const startOrientation = this.camera.quaternion.clone();
+    const endOrientation =
+      requestedOrientation?.clone() ??
+      shortestViewQuaternion(startOrientation, endDirection);
+    if (!animate || reducedMotion) {
+      this.applyCameraPose(target, endOrientation, distance);
+      this.controls.update();
+      return;
+    }
+    this.cameraTransition = {
+      startedAt: performance.now(),
+      duration: 360,
+      startTarget,
+      endTarget: target.clone(),
+      startOrientation,
+      endOrientation,
+      startDistance,
+      endDistance: distance,
+    };
+  }
+
+  private updateCameraTransition(time: number): boolean {
+    const transition = this.cameraTransition;
+    if (transition === null) {
+      return false;
+    }
+    const linear = Math.min(
+      Math.max((time - transition.startedAt) / transition.duration, 0),
+      1,
+    );
+    const fraction = 1 - Math.pow(1 - linear, 3);
+    const target = new Vector3().lerpVectors(
+      transition.startTarget,
+      transition.endTarget,
+      fraction,
+    );
+    const orientation = interpolateViewOrientation(
+      transition.startOrientation,
+      transition.endOrientation,
+      fraction,
+    );
+    const distance =
+      transition.startDistance +
+      (transition.endDistance - transition.startDistance) * fraction;
+    this.applyCameraPose(target, orientation, distance);
+    if (linear >= 1) {
+      this.cameraTransition = null;
+      this.controls.update();
+    }
+    return true;
+  }
+
+  private applyCameraPose(
+    target: Vector3,
+    orientation: Quaternion,
+    distance: number,
+  ): void {
+    const direction = new Vector3(0, 0, 1).applyQuaternion(orientation);
+    this.controls.target.copy(target);
+    this.camera.position.copy(target).addScaledVector(direction, distance);
+    this.camera.quaternion.copy(orientation);
+    this.camera.up.set(0, 1, 0).applyQuaternion(orientation).normalize();
+  }
+
+  private restoreWorldUp(): void {
+    if (this.camera.up.z === 1) {
+      return;
+    }
+    this.camera.up.set(0, 0, 1);
+    this.camera.lookAt(this.controls.target);
+    this.controls.update();
+  }
 
   private readonly handlePointerUp = (event: PointerEvent): void => {
     if (event.button !== 0 || this.pointerOrigin === null) {

@@ -42,6 +42,7 @@ Without `--open`, open the tokenized loopback URL printed by `microsimulator`. T
 - instanced cylinder and sphere rendering for exact spherocylinder geometry;
 - device walls rendered from plane, sphere, box, and cylinder constraints;
 - orbit, pan, zoom, colony framing, raycast picking, and selection highlighting;
+- a draggable camera-synchronized flat-corner view cube with readable labels, shortest-path single-click snapping, and double-click label leveling;
 - exact cell geometry, lineage, type, fixed state, growth, and species inspection;
 - categorical cell-type and fixed-state color maps;
 - perceptual growth-rate and species color maps;
