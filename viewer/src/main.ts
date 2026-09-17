@@ -26,6 +26,7 @@ function required<T extends HTMLElement>(id: string): T {
 
 const viewport = required<HTMLElement>("viewport");
 const canvasHost = required<HTMLElement>("canvas-host");
+const viewCubeElement = required<HTMLElement>("view-cube");
 const fileInput = required<HTMLInputElement>("scene-file");
 const fitButton = required<HTMLButtonElement>("fit-button");
 const emptyState = required<HTMLElement>("empty-state");
@@ -72,7 +73,7 @@ let livePlaying = false;
 let liveCheckpointEnabled = false;
 let liveConnection: LiveConnection | null = null;
 
-const viewer = new ColonyViewer(canvasHost, updateSelection);
+const viewer = new ColonyViewer(canvasHost, viewCubeElement, updateSelection);
 
 function formatNumber(value: number): string {
   if (value === 0) {

@@ -442,6 +442,32 @@ dd {
   display: block;
 }
 
+.view-cube {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 3;
+  width: 112px;
+  height: 112px;
+  border: 1px solid rgba(154, 219, 200, 0.3);
+  border-radius: 10px;
+  box-shadow:
+    0 12px 30px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+  cursor: default;
+  touch-action: none;
+}
+
+.view-cube[data-hover="true"] {
+  cursor: pointer;
+  border-color: rgba(139, 224, 189, 0.64);
+}
+
+.view-cube[data-dragging="true"] {
+  cursor: grabbing;
+  border-color: var(--accent);
+}
+
 .viewport[data-dragging="true"]::after {
   content: "Drop scene to open";
   position: absolute;
