@@ -13,7 +13,7 @@ const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
-await page.route("**/src/colony-viewer.ts", async (route) => {
+await page.route("**/src/colony-viewer.ts*", async (route) => {
   const response = await route.fetch();
   const source = await response.text();
   const marker = "this.onSelection = onSelection;";
