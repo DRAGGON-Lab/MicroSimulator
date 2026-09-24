@@ -34,7 +34,8 @@ import {
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-import { rgbBytes, viridis, type RGB } from "./color";
+import { mapScalarColors, rgbBytes, type RGB } from "./color";
+import { AUTOMATIC_SCALAR_RANGE, type ScalarRangeConfig } from "./scalar-range";
 import type { SignalSlice } from "./grid";
 import {
   DatasetReferenceGrid,
@@ -356,25 +357,20 @@ export class ColonyViewer {
     }
   }
 
-  public setSignalSlice(slice: SignalSlice | null): void {
+  public setSignalSlice(
+    slice: SignalSlice | null,
+    range: ScalarRangeConfig = AUTOMATIC_SCALAR_RANGE,
+  ): void {
     this.signalTexture?.dispose();
     this.signalTexture = null;
     disposeGroup(this.signal);
     if (slice === null) {
       return;
     }
-    let minimum = Number.POSITIVE_INFINITY;
-    let maximum = Number.NEGATIVE_INFINITY;
-    for (const value of slice.values) {
-      minimum = Math.min(minimum, value);
-      maximum = Math.max(maximum, value);
-    }
-    const span = maximum - minimum;
+    const mapping = mapScalarColors(slice.values, range);
     const pixels = new Uint8Array(slice.width * slice.height * 4);
-    for (const [index, value] of slice.values.entries()) {
-      const color = rgbBytes(
-        viridis(span === 0 ? 0.5 : (value - minimum) / span),
-      );
+    for (const [index, value] of mapping.colors.entries()) {
+      const color = rgbBytes(value);
       const offset = index * 4;
       pixels[offset] = color[0];
       pixels[offset + 1] = color[1];

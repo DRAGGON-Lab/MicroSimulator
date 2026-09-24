@@ -1,6 +1,12 @@
 import "./style.css";
 
-import { mapCellColors, type ColorMode } from "./color";
+import { mapCellColors, rgbBytes, viridis, type ColorMode } from "./color";
+import {
+  DatasetScalarRanges,
+  resolveScalarRange,
+  type ResolvedScalarRange,
+} from "./scalar-range";
+import { ScalarRangeControls } from "./scalar-range-controls";
 import { ColonyViewer } from "./colony-viewer";
 import { signalSlice, sliceDimension, type SliceAxis } from "./grid";
 import { DatasetPresentationState } from "./presentation-state";
@@ -76,6 +82,20 @@ let livePlaying = false;
 let liveCheckpointEnabled = false;
 let liveConnection: LiveConnection | null = null;
 const presentation = new DatasetPresentationState();
+const scalarRanges = new DatasetScalarRanges();
+const speciesRangeRoot = required<HTMLElement>("species-range");
+const speciesRangeControls = new ScalarRangeControls(
+  speciesRangeRoot,
+  scalarRanges,
+  "species",
+  updateColors,
+);
+const signalRangeControls = new ScalarRangeControls(
+  required<HTMLElement>("signal-color-range"),
+  scalarRanges,
+  "signals",
+  updateSignal,
+);
 
 const viewer = new ColonyViewer(canvasHost, viewCubeElement, updateSelection);
 
@@ -133,16 +153,39 @@ function updateColors(): void {
   }
   const mode = colorMode.value as ColorMode;
   speciesField.hidden = mode !== "species";
+  speciesRangeRoot.hidden = mode !== "species";
   const mapping = mapCellColors(frame, {
     mode,
     speciesIndex: selectedInteger(speciesChannel),
+    range: scalarRanges.get("species", selectedInteger(speciesChannel)),
   });
   viewer.setCellColors(mapping.colors);
-  const scalar = mapping.minimum !== null && mapping.maximum !== null;
-  colorLegend.hidden = !scalar;
-  legendTitle.textContent = mapping.title;
-  legendMinimum.textContent = scalar ? formatNumber(mapping.minimum ?? 0) : "—";
-  legendMaximum.textContent = scalar ? formatNumber(mapping.maximum ?? 0) : "—";
+  colorLegend.hidden = mapping.range === null;
+  if (mapping.range !== null) {
+    if (mode === "species")
+      speciesRangeControls.bind(selectedInteger(speciesChannel), mapping.range);
+    legendTitle.textContent = mapping.title;
+    legendMinimum.textContent =
+      mapping.minimum === null ? "—" : formatNumber(mapping.minimum);
+    legendMaximum.textContent =
+      mapping.maximum === null ? "—" : formatNumber(mapping.maximum);
+    updateRangeLegend("legend", mapping.range);
+  }
+}
+
+function updateRangeLegend(prefix: string, range: ResolvedScalarRange): void {
+  const mode = range.mode === "fixed" ? "Fixed" : "Automatic";
+  const constant =
+    range.mode === "automatic" &&
+    range.count > 0 &&
+    range.minimum === range.maximum;
+  required<HTMLElement>(`${prefix}-mode`).textContent =
+    `${mode}${range.count === 0 ? " · no values" : constant ? " · constant" : ""}`;
+  const ramp = required<HTMLElement>(`${prefix}-ramp`);
+  ramp.hidden = range.mode === "automatic" && range.count === 0;
+  ramp.style.background = constant
+    ? `rgb(${rgbBytes(viridis(0.5)).join(",")})`
+    : "";
 }
 
 function updateSignalRange(): void {
@@ -157,18 +200,35 @@ function updateSignalRange(): void {
 }
 
 function updateSignal(): void {
-  if (frame?.signalGrid === null || frame === null || !signalVisible.checked) {
+  const legend = required<HTMLElement>("signal-legend");
+  if (frame?.signalGrid === null || frame === null) {
     viewer.setSignalSlice(null);
+    legend.hidden = true;
     return;
   }
   const axis = signalAxis.value as SliceAxis;
+  const index = selectedInteger(signalChannel);
   const value = signalSlice(
     frame.signalGrid,
-    selectedInteger(signalChannel),
+    index,
     axis,
     selectedInteger(signalRange),
   );
-  viewer.setSignalSlice(value);
+  const config = scalarRanges.get("signals", index);
+  const range = resolveScalarRange(value.values, config);
+  signalRangeControls.bind(index, range);
+  viewer.setSignalSlice(signalVisible.checked ? value : null, config);
+  legend.hidden = false;
+  required<HTMLElement>("signal-legend-title").textContent = channelLabel(
+    frame,
+    "signals",
+    index,
+  );
+  required<HTMLElement>("signal-legend-min").textContent =
+    range.minimum === null ? "—" : formatNumber(range.minimum);
+  required<HTMLElement>("signal-legend-max").textContent =
+    range.maximum === null ? "—" : formatNumber(range.maximum);
+  updateRangeLegend("signal-legend", range);
 }
 
 function detail(label: string, value: string): HTMLDivElement {
@@ -232,6 +292,9 @@ function presentScene(
 ): void {
   if (newDataset) {
     presentation.beginDataset();
+    scalarRanges.beginDataset();
+    speciesRangeControls.beginDataset();
+    signalRangeControls.beginDataset();
     viewer.beginDataset();
   }
   const display = presentation.forFrame(next);

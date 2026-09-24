@@ -731,3 +731,45 @@ dd {
   margin: 0;
   accent-color: var(--accent);
 }
+
+.scalar-range-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.scalar-range-fields input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.scalar-range-fields input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.scalar-range-fields > button,
+.scalar-range-message {
+  grid-column: 1 / -1;
+}
+
+.scalar-range-message,
+.legend-caption {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.scalar-range-message[data-error="true"] {
+  color: var(--danger);
+}
+
+.legend-caption {
+  margin-block: 6px;
+}
