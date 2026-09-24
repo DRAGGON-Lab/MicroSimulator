@@ -3,6 +3,8 @@ import canonicalize from "canonicalize";
 export const SCENE_FORMAT = "microsimulator-scene";
 export const SCENE_VERSION = 3;
 export const MAX_SCENE_BYTES = 1 << 30;
+// Presentation resource budget; this does not limit native engine counts.
+export const MAX_SCENE_CHANNELS = 4096;
 
 const UINT32_MAX = 2 ** 32 - 1;
 const UINT64_MAX = (1n << 64n) - 1n;
@@ -506,11 +508,10 @@ function parseSignalGrid(value: unknown, path: string): SceneSignalGrid | null {
     "boundaries",
     "levels",
   ]);
-  const signalCount = integer(
+  const signalCount = sceneChannelCount(
     data.signal_count,
     `${path}.signal_count`,
     1,
-    UINT32_MAX,
   );
   const shapeValues = array(data.shape, `${path}.shape`);
   if (shapeValues.length !== 3) {
@@ -615,6 +616,17 @@ function parseChannelMetadata(
   };
 }
 
+function sceneChannelCount(value: unknown, path: string, minimum = 0): number {
+  const count = integer(value, path, minimum, UINT32_MAX);
+  if (count > MAX_SCENE_CHANNELS) {
+    return fail(
+      path,
+      `exceeds scene presentation channel budget of ${MAX_SCENE_CHANNELS} per group`,
+    );
+  }
+  return count;
+}
+
 function parseFrame(value: unknown, path: string, version: number): SceneFrame {
   const data = record(value, path);
   exactKeys(data, path, [
@@ -630,11 +642,9 @@ function parseFrame(value: unknown, path: string, version: number): SceneFrame {
   if (time < 0) {
     return fail(`${path}.time`, "must be non-negative");
   }
-  const speciesCount = integer(
+  const speciesCount = sceneChannelCount(
     data.species_count,
     `${path}.species_count`,
-    0,
-    UINT32_MAX,
   );
   const cells = array(data.cells, `${path}.cells`).map((item, index) =>
     parseCell(item, `${path}.cells[${index}]`, speciesCount),

@@ -53,6 +53,8 @@ save_checkpoint(
 
 `capture_scene` and `save_checkpoint` also accept `channel_metadata` for a bare `Simulation` when no controller is needed. A bare native simulation does not own Python presentation metadata. Therefore `load_checkpoint` refuses a file with non-null labels, just as it refuses a non-null controller payload: use `load_checkpoint_bundle` to avoid silently losing labels. Such a named, bare-native checkpoint is exported or continued through the bundle API; `run --resume` without a model retains its existing unnamed-only contract. Standard named models use the controller resume command above.
 
+Scenes support at most 4096 species and 4096 signals per frame, independently, including unnamed channels and empty colonies. `MAX_SCENE_CHANNELS` exposes this presentation budget; oversized export fails with `SceneError` before copying native state or expanding labels. Native simulation and checkpoint counts retain their existing semantics. When loading checkpoints predating v9, `CheckpointBundle.channel_metadata` keeps both unspecified groups as `None`, without allocating labels from native counts. Bounded scene export supplies the null-filled arrays; callers that explicitly need resolved metadata can use `.resolved(species_count, signal_count)`.
+
 Within a live dataset, channel choices stay keyed by kind and index. Renaming a channel does not change its concentration or select another channel. Frames, reset, and replay retain the same labels through the shared scene parser. Opening another dataset establishes a new presentation identity.
 
 ## SBML labels

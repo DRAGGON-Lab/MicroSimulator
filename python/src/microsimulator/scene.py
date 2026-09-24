@@ -31,6 +31,8 @@ from .checkpoint import JSONValue
 SCENE_FORMAT = "microsimulator-scene"
 SCENE_VERSION = 3
 MAX_SCENE_BYTES = 1 << 30
+# Presentation resource budget, independent of native simulation channel counts.
+MAX_SCENE_CHANNELS = 4096
 
 _UINT32_MAX = (1 << 32) - 1
 _UINT64_MAX = (1 << 64) - 1
@@ -165,6 +167,11 @@ class SceneFrame:
     channel_metadata: ChannelMetadata = UNNAMED_CHANNELS
 
     def __post_init__(self) -> None:
+        _scene_channel_count(self.species_count, "$.frame.species_count")
+        if self.signal_grid is not None:
+            _scene_channel_count(
+                self.signal_grid.signal_count, "$.frame.signal_grid.signal_count", 1
+            )
         object.__setattr__(
             self,
             "channel_metadata",
@@ -197,6 +204,9 @@ def capture_scene(
 ) -> SceneFrame:
     """Capture a complete immutable presentation frame after a simulation step."""
 
+    # Reject before copying native state or expanding omitted channel labels.
+    _scene_channel_count(simulation.species_count, "$.frame.species_count")
+    _scene_channel_count(simulation.signal_count, "$.frame.signal_grid.signal_count")
     checkpoint = simulation._checkpoint()
     checkpoint.validate()
     backend = simulation.backend_info
@@ -462,6 +472,13 @@ def save_scene(frame: SceneFrame, path: str | os.PathLike[str]) -> None:
 
 def _fail(path: str, message: str) -> NoReturn:
     raise SceneError(f"{path}: {message}")
+
+
+def _scene_channel_count(value: object, path: str, minimum: int = 0) -> int:
+    count = _integer(value, path, minimum, _UINT32_MAX)
+    if count > MAX_SCENE_CHANNELS:
+        _fail(path, f"exceeds scene presentation channel budget of {MAX_SCENE_CHANNELS} per group")
+    return count
 
 
 def _reject_constant(value: str) -> NoReturn:
@@ -735,7 +752,7 @@ def _signal_grid(value: object, path: str) -> SceneSignalGrid | None:
         path,
         {"signal_count", "shape", "origin", "spacing", "boundaries", "levels"},
     )
-    signal_count = _integer(data["signal_count"], f"{path}.signal_count", 1, _UINT32_MAX)
+    signal_count = _scene_channel_count(data["signal_count"], f"{path}.signal_count", 1)
     shape_values = _array(data["shape"], f"{path}.shape")
     if len(shape_values) != 3:
         _fail(f"{path}.shape", "expected exactly three dimensions")
@@ -774,7 +791,7 @@ def _frame(value: object, path: str, schema_version: int) -> SceneFrame:
     if schema_version >= 3:
         keys.add("channel_metadata")
     _keys(data, path, keys)
-    species_count = _integer(data["species_count"], f"{path}.species_count", 0, _UINT32_MAX)
+    species_count = _scene_channel_count(data["species_count"], f"{path}.species_count")
     signal_grid = _signal_grid(data["signal_grid"], f"{path}.signal_grid")
     signal_count = signal_grid.signal_count if signal_grid else 0
     try:
@@ -812,6 +829,9 @@ def _validate_boundary(boundary: SceneGridBoundary, signal_count: int, path: str
 
 
 def _validate_frame(frame: SceneFrame) -> None:
+    _scene_channel_count(frame.species_count, "$.frame.species_count")
+    if frame.signal_grid is not None:
+        _scene_channel_count(frame.signal_grid.signal_count, "$.frame.signal_grid.signal_count", 1)
     try:
         frame.channel_metadata.resolved(
             frame.species_count, frame.signal_grid.signal_count if frame.signal_grid else 0

@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 import rfc8785
 from microsimulator import (
+    MAX_SCENE_CHANNELS,
     BackendKind,
     ChannelMetadata,
     ChannelMetadataError,
@@ -131,8 +132,47 @@ def test_metadata_tampering_rejected_and_v8_migrates_only_after_verification(
     del document["channel_metadata"]
     del document["integrity"]["channel_metadata"]
     path.write_text(json.dumps(document))
-    assert load_checkpoint_bundle(path).channel_metadata == ChannelMetadata().resolved(2, 2)
+    bundle = load_checkpoint_bundle(path)
+    assert bundle.channel_metadata == ChannelMetadata()
+    assert capture_scene(
+        bundle.simulation, channel_metadata=bundle.channel_metadata
+    ).channel_metadata == ChannelMetadata().resolved(2, 2)
     document["simulation"]["time"] = 999
+    path.write_text(json.dumps(document))
+    with pytest.raises(CheckpointError, match="state digest does not match"):
+        load_checkpoint_bundle(path)
+
+
+def test_legacy_checkpoint_keeps_unspecified_labels_compact_before_native_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Native state is allowed more channels than a presentation scene. No cells
+    # or label arrays are necessary to represent the legacy checkpoint.
+    simulation = Simulation(BackendKind.CPU, species_count=MAX_SCENE_CHANNELS + 1)
+    path = tmp_path / "legacy.json"
+    save_checkpoint(simulation, path)
+    document = json.loads(path.read_text())
+    document["version"] = 8
+    del document["channel_metadata"]
+    del document["integrity"]["channel_metadata"]
+    path.write_text(json.dumps(document))
+
+    def forbid_expansion(
+        self: ChannelMetadata, species_count: int, signal_count: int
+    ) -> ChannelMetadata:
+        raise AssertionError("legacy restore must not expand absent presentation labels")
+
+    monkeypatch.setattr(ChannelMetadata, "resolved", forbid_expansion)
+    bundle = load_checkpoint_bundle(path)
+    assert bundle.simulation.species_count == MAX_SCENE_CHANNELS + 1
+    assert bundle.channel_metadata.species is None
+    assert bundle.channel_metadata.signals is None
+    assert load_checkpoint(path).species_count == MAX_SCENE_CHANNELS + 1
+    with pytest.raises(SceneError, match="scene presentation channel budget of 4096"):
+        capture_scene(bundle.simulation, channel_metadata=bundle.channel_metadata)
+
+    # Untrusted input must still pass its original integrity validation first.
+    document["simulation"]["world"]["species_count"] = (1 << 32) - 1
     path.write_text(json.dumps(document))
     with pytest.raises(CheckpointError, match="state digest does not match"):
         load_checkpoint_bundle(path)
