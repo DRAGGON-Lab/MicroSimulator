@@ -107,6 +107,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     analysis.add_argument("--overwrite", action="store_true")
 
+    replay = commands.add_parser(
+        "export-replay", help="export explicitly ordered checkpoints for offline replay"
+    )
+    replay.add_argument("checkpoints", nargs="+", type=Path)
+    replay.add_argument("--output", type=Path, required=True, help="new replay bundle directory")
+
     manifest = commands.add_parser(
         "run-manifest", help="execute one named job from a data-only run manifest"
     )
@@ -459,8 +465,7 @@ def _export_analysis(arguments: argparse.Namespace) -> int:
     if not backend_available(backend, device_index):
         count = backend_device_count(backend)
         raise BatchError(
-            f"backend {backend_name} device {device_index} is unavailable "
-            f"({count} device(s) found)"
+            f"backend {backend_name} device {device_index} is unavailable ({count} device(s) found)"
         )
     summary = export_dataset(
         cast(list[Path], arguments.checkpoints),
@@ -511,6 +516,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _view(arguments)
         if arguments.command == "export-analysis":
             return _export_analysis(arguments)
+        if arguments.command == "export-replay":
+            from .replay import export_replay
+
+            summary = export_replay(
+                cast(list[Path], arguments.checkpoints), cast(Path, arguments.output)
+            )
+            print(f"wrote {summary.output} frames={summary.frame_count}")
+            return 0
         if arguments.command == "run-manifest":
             return _run_manifest(arguments)
         return _run(arguments)
