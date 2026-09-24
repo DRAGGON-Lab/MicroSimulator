@@ -1,4 +1,11 @@
-import type { SceneCell, SceneFrame } from "./scene";
+import type { SceneFrame } from "./scene";
+import {
+  AUTOMATIC_SCALAR_RANGE,
+  normalizeScalar,
+  resolveScalarRange,
+  type ResolvedScalarRange,
+  type ScalarRangeConfig,
+} from "./scalar-range";
 
 export type RGB = readonly [number, number, number];
 export type ColorMode = "cell-type" | "species" | "growth-rate" | "fixed";
@@ -6,6 +13,7 @@ export type ColorMode = "cell-type" | "species" | "growth-rate" | "fixed";
 export interface ColorConfig {
   readonly mode: ColorMode;
   readonly speciesIndex: number;
+  readonly range?: ScalarRangeConfig;
 }
 
 export interface ColorMapping {
@@ -13,6 +21,7 @@ export interface ColorMapping {
   readonly title: string;
   readonly minimum: number | null;
   readonly maximum: number | null;
+  readonly range: ResolvedScalarRange | null;
 }
 
 const TYPE_PALETTE: readonly RGB[] = [
@@ -59,28 +68,28 @@ export function viridis(value: number): RGB {
   return VIRIDIS.at(-1)?.[1] ?? [1, 1, 1];
 }
 
+export function mapScalarColors(
+  values: readonly number[],
+  config: ScalarRangeConfig = AUTOMATIC_SCALAR_RANGE,
+): { colors: readonly RGB[]; range: ResolvedScalarRange } {
+  const range = resolveScalarRange(values, config);
+  return {
+    colors: values.map((value) => viridis(normalizeScalar(value, range))),
+    range,
+  };
+}
+
 function scalarMapping(
-  cells: readonly SceneCell[],
   values: readonly number[],
   title: string,
+  config: ScalarRangeConfig = AUTOMATIC_SCALAR_RANGE,
 ): ColorMapping {
-  if (values.length === 0) {
-    return { colors: [], title, minimum: null, maximum: null };
-  }
-  let minimum = Number.POSITIVE_INFINITY;
-  let maximum = Number.NEGATIVE_INFINITY;
-  for (const value of values) {
-    minimum = Math.min(minimum, value);
-    maximum = Math.max(maximum, value);
-  }
-  const span = maximum - minimum;
+  const mapping = mapScalarColors(values, config);
   return {
-    colors: cells.map((_, index) =>
-      viridis(span === 0 ? 0.5 : ((values[index] ?? minimum) - minimum) / span),
-    ),
+    ...mapping,
     title,
-    minimum,
-    maximum,
+    minimum: mapping.range.minimum,
+    maximum: mapping.range.maximum,
   };
 }
 
@@ -100,6 +109,7 @@ export function mapCellColors(
         title: "Cell type",
         minimum: null,
         maximum: null,
+        range: null,
       };
     case "fixed":
       return {
@@ -109,10 +119,10 @@ export function mapCellColors(
         title: "Fixed state",
         minimum: null,
         maximum: null,
+        range: null,
       };
     case "growth-rate":
       return scalarMapping(
-        frame.cells,
         frame.cells.map((cell) => cell.growthRate),
         "Growth rate",
       );
@@ -126,9 +136,9 @@ export function mapCellColors(
         );
       }
       return scalarMapping(
-        frame.cells,
         frame.cells.map((cell) => cell.species[config.speciesIndex] ?? 0),
         `Species ${config.speciesIndex}`,
+        config.range,
       );
     }
   }
