@@ -63,6 +63,47 @@ describe("cell color mappings", () => {
     expect(mapping.colors[2]).toEqual(viridis(0.5));
   });
 
+  it("uses the selected fixed range across frames without changing cell values", () => {
+    const config = {
+      mode: "species" as const,
+      speciesIndex: 0,
+      range: { mode: "fixed" as const, minimum: 0, maximum: 10 },
+    };
+    const initial = mapCellColors(frame, config);
+    const later = {
+      ...frame,
+      cells: [cell(0, 0, 0, [2, 8]), cell(1, 0, 0, [40, 6])],
+    };
+    const mapping = mapCellColors(later, config);
+    expect(initial.colors[0]).toEqual(mapping.colors[0]);
+    expect(mapping.colors[1]).toEqual(viridis(1));
+    expect(mapping.range).toEqual({
+      mode: "fixed",
+      minimum: 0,
+      maximum: 10,
+      count: 2,
+    });
+    expect(later.cells[1]?.species[0]).toBe(40);
+  });
+
+  it("reports a configured fixed scale but zero values for an empty frame", () => {
+    const mapping = mapCellColors(
+      { ...frame, cells: [] },
+      {
+        mode: "species",
+        speciesIndex: 0,
+        range: { mode: "fixed", minimum: -2, maximum: 2 },
+      },
+    );
+    expect(mapping.colors).toEqual([]);
+    expect(mapping.range).toEqual({
+      mode: "fixed",
+      minimum: -2,
+      maximum: 2,
+      count: 0,
+    });
+  });
+
   it("rejects an unavailable species channel", () => {
     expect(() =>
       mapCellColors(frame, { mode: "species", speciesIndex: 2 }),
