@@ -31,6 +31,10 @@ Attached biomass can change flow resistance through a conservatively smoothed de
 
 Free-cell motion uses the local velocity and a finite-aspect Jeffery orientation approximation, followed by contact relaxation. This kinematic coupling approximates rods as equivalent spheroids for rotation. Cell-scale hydrodynamic forces, lubrication, and predictive adhesion or detachment are outside its scope. The [flow-drift design](architecture/0021-flow-drift.md) specifies the approximation and integration limits.
 
+## Cell-occupied extracellular volume
+
+Current native transport stores concentration per full non-wall voxel; cells do not yet exclude extracellular storage. The smoothed biochemical biomass density used for flow resistance is neither bounded geometric occupancy nor a resolved fluid fraction. [ADR 0025](architecture/0025-cell-occupied-volume.md) selects an opt-in coarse geometric-porosity model and provides executable CPU reference cases, including conservative amount remapping as geometry changes. It is a numerical design, not an enabled production feature. Its harmonic face closure and component-level redistribution do not resolve fluid passages around individual cells, membrane transport layers, or displacement flow; geometric, spatial, and timestep refinement remain required.
+
 ## Interpreting results
 
 The [analytic flow benchmarks](tutorials/flow-solvers.md#numerical-evidence) test profile convergence, flux routing, and agreement between the solvers in a shared thin-gap regime. The [controlled nutrient study](tutorials/nutrient-validation.md) measures spatial growth, nutrient balance, and sensitivity to grid spacing, timestep, and flow-refresh interval. It isolates attached-population growth and transport; the interactive tutorials exercise division, mechanics, and washout separately.
