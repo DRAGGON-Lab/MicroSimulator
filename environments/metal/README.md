@@ -2,6 +2,8 @@
 
 Metal is the feature-complete Apple GPU backend. It is implemented directly with the Metal API and independent Metal Shading Language kernels, and it is validated against both the CPU reference and recorded behavior from the original CellModeller OpenCL runtime.
 
+For application commands, use the [shared CPU, Metal, and CUDA tutorial examples](../../docs/tutorials/commands.md#run-the-same-trap-on-cpu-metal-or-cuda), [device discovery](../../docs/tutorials/commands.md#prepare-and-discover-devices), and [shell quoting guide](../../docs/tutorials/commands.md#choose-a-shell). Select this backend with `--backend metal` and an enumerated `--device-index`; the model syntax is unchanged.
+
 Metal is enabled by default on Apple platforms. It compiles embedded MSL source at runtime through `MTLDevice`, making kernel compilation part of device construction and validation.
 
 ## Native conformance

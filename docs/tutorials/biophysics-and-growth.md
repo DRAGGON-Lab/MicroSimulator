@@ -2,6 +2,8 @@
 
 This tutorial introduces cell geometry, growth, division, lineage, cell types, mechanical constraints, and competition. Its five runnable scenarios are defined in `examples/tutorials/biophysics.py`.
 
+For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
+
 ## 1. A founder that grows and divides
 
 Run the basic model:
@@ -9,6 +11,7 @@ Run the basic model:
 ```console
 uv run microsimulator view \
   --model examples/tutorials/biophysics.py \
+  --backend cpu \
   --parameter scenario='"basics"' \
   --seed 42 \
   --dt 0.05 \
@@ -49,6 +52,7 @@ During new tutorial construction, each founder target is sampled exactly once fr
 ```console
 uv run microsimulator view \
   --model examples/tutorials/biophysics.py \
+  --backend cpu \
   --parameter scenario='"two_types"' \
   --seed 42 \
   --dt 0.02 \
@@ -62,6 +66,7 @@ The model places type 0 at `x = -10` and type 1 at `x = 10`. Both use the same g
 ```console
 uv run microsimulator view \
   --model examples/tutorials/biophysics.py \
+  --backend cpu \
   --parameter scenario='"short_cells"' \
   --seed 42 \
   --dt 0.01 \
@@ -75,6 +80,7 @@ This scenario lowers the post-founder division length to produce short spherocyl
 ```console
 uv run microsimulator view \
   --model examples/tutorials/biophysics.py \
+  --backend cpu \
   --parameter scenario='"competition"' \
   --seed 7 \
   --dt 0.01 \
@@ -98,6 +104,7 @@ Use `Growth rate` coloring to see the active zone and `Cell type` coloring to se
 ```console
 uv run microsimulator view \
   --model examples/tutorials/biophysics.py \
+  --backend cpu \
   --parameter scenario='"box"' \
   --seed 42 \
   --dt 0.01 \

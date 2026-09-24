@@ -2,6 +2,8 @@
 
 These tutorials explore cells in microfluidic devices through runnable models: geometry and flow supply the environment, while growth, mechanics, and circuits determine how populations respond. The [modeling guide](../microfluidics.md) introduces the full workflow and its assumptions. Each example can also be used independently.
 
+For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
+
 ## Start here
 
 Follow [getting started](getting-started.md) to run a nutrient-fed trap, configure the viewer, and resume a checkpoint. Then choose a path below.

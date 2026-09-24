@@ -8,6 +8,7 @@ MicroSimulator models microbial populations in microfluidic environments, connec
 | --- | --- |
 | Understand how devices, flow, and cells fit together | [Microfluidics modeling guide](microfluidics.md) |
 | Run a first simulation | [Getting started](tutorials/getting-started.md) |
+| Select a backend or use PowerShell | [Copyable tutorial commands](tutorials/commands.md) |
 | Build a trap or channel with growth and washout | [Microfluidic devices](tutorials/microfluidics.md) |
 | Choose a flow solver and assess its numerical behavior | [Flow models](microfluidics.md#choosing-a-flow-model) and [flow benchmarks](tutorials/flow-solvers.md#numerical-evidence) |
 | Measure nutrient penetration and growth | [Controlled nutrient study](tutorials/nutrient-validation.md) |
