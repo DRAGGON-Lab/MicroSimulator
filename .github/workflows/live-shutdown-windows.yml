@@ -54,7 +54,7 @@ jobs:
           uv run --no-sync python --version 2>&1 | Tee-Object -Append build/shutdown-evidence/platform.txt
           uv run --no-sync microsimulator devices --json | Tee-Object -Append build/shutdown-evidence/platform.txt
 
-      - name: Verify authenticated Stop, worker draining, and same-port process restart
+      - name: Verify Stop, console Ctrl+C, worker draining, and same-port restart
         run: >-
           uv run --no-sync python -m pytest
           python/tests/test_viewer_server.py python/tests/test_viewer_shutdown.py

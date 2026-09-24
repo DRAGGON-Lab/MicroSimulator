@@ -52,9 +52,9 @@ The command is a single line and also works in PowerShell where the Python/nativ
 3. Repeat using Ctrl+C once, both paused and playing. Confirm the prompt returns without `taskkill`, then immediately start another model on the same port.
 4. Close only the browser tab during Play, then reopen the printed URL. Confirm the session remains available and paused.
 
-The automated `python/tests/test_viewer_shutdown.py` suite covers same-socket Stop, checkpoint completion, worker cleanup, and repeated real subprocess restarts. Its Stop/port-reuse test is portable to Windows; the SIGINT subprocess case runs on POSIX. Windows console Ctrl+C must be checked with the attached-console procedure above; passing the POSIX case does not establish Windows behavior.
+The automated `python/tests/test_viewer_shutdown.py` suite covers same-socket Stop, checkpoint completion, worker cleanup, and repeated real subprocess restarts. It sends SIGINT on POSIX. On Windows it starts each viewer in an isolated console and uses a separate attached sender to deliver a real [Windows CTRL_C_EVENT](https://learn.microsoft.com/en-us/windows/console/generateconsolectrlevent), leaving the test runner unaffected. Both paths verify orderly browser notifications, clean process exit, and three different models reusing the same port. This exercises the operating-system interruption path; use the manual procedure above to check a particular interactive terminal application and keyboard configuration.
 
-The `Windows live-session shutdown` GitHub Actions job builds the CPU extension on `windows-2025` and runs the portable server and shutdown tests with dependencies from `uv.lock`. Its uploaded report records Windows, PowerShell, Python, backend availability, and individual test results. The detached CI process cannot substitute for the attached-console Ctrl+C check.
+The `Windows live-session shutdown` GitHub Actions job builds the CPU extension on `windows-2025` and runs the server and shutdown tests, including isolated-console Ctrl+C, with dependencies from `uv.lock`. Its uploaded report records Windows, PowerShell, Python, backend availability, and individual test results.
 
 ## Capabilities
 

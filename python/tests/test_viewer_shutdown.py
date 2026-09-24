@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import socket
+import subprocess
 import sys
 from pathlib import Path
 from threading import Event
@@ -16,7 +18,6 @@ import pytest
 from aiohttp import ClientSession, ClientWebSocketResponse, WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 from microsimulator import BackendKind, CellInit, Simulation, load_checkpoint
-from microsimulator import checkpoint as checkpoint_module
 from microsimulator.checkpoint import JSONValue
 from microsimulator.viewer_server import (
     LiveCommand,
@@ -118,14 +119,14 @@ def test_stop_waits_for_atomic_checkpoint_replace(
         original = output.read_bytes()
         session.step()
         entered, release = Event(), Event()
-        replace = checkpoint_module.os.replace
+        replace = os.replace
 
         def blocked_replace(source: str | Path, destination: str | Path) -> None:
             entered.set()
             assert release.wait(10), "test did not release checkpoint replace"
             replace(source, destination)
 
-        monkeypatch.setattr(checkpoint_module.os, "replace", blocked_replace)
+        monkeypatch.setattr(os, "replace", blocked_replace)
         controller = LiveController(session)
         save = asyncio.create_task(controller.command(LiveCommand("checkpoint")))
         try:
@@ -323,9 +324,6 @@ def test_cli_process_exits_and_reuses_port_for_another_model(
     tmp_path: Path,
     termination: str,
 ) -> None:
-    if termination == "interrupt" and sys.platform == "win32":
-        pytest.skip("Windows Ctrl+C requires an attached console; use documented manual check")
-
     async def exercise() -> None:
         dist = _dist(tmp_path)
         with socket.socket() as reservation:
@@ -359,6 +357,13 @@ def test_cli_process_exits_and_reuses_port_for_another_model(
                 str(port),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # Keep the test runner outside the console receiving Ctrl+C.
+                # CREATE_NEW_PROCESS_GROUP would disable Ctrl+C in the child.
+                creationflags=(
+                    getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+                    if termination == "interrupt" and sys.platform == "win32"
+                    else 0
+                ),
             )
             try:
                 assert process.stdout is not None
@@ -377,7 +382,36 @@ def test_cli_process_exits_and_reuses_port_for_another_model(
                     frame = cast(dict[str, Any], await ws.receive_json(timeout=5))
                     assert frame["scene"]["frame"]["cells"][0]["length"] == 2 + index
                     if termination == "interrupt":
-                        process.send_signal(signal.SIGINT)
+                        if sys.platform == "win32":
+                            # A separate sender attaches to the isolated viewer
+                            # console. Ignore the event in the sender only; the
+                            # viewer receives the real Windows CTRL_C_EVENT.
+                            sender = await asyncio.create_subprocess_exec(
+                                sys.executable,
+                                "-c",
+                                "import ctypes, sys\n"
+                                "kernel = ctypes.WinDLL('kernel32', use_last_error=True)\n"
+                                "kernel.FreeConsole()\n"
+                                "for operation, arguments in (\n"
+                                "    (kernel.AttachConsole, (int(sys.argv[1]),)),\n"
+                                "    (kernel.SetConsoleCtrlHandler, (None, True)),\n"
+                                "    (kernel.GenerateConsoleCtrlEvent, (0, 0)),\n"
+                                "):\n"
+                                "    if not operation(*arguments):\n"
+                                "        raise ctypes.WinError(ctypes.get_last_error())\n",
+                                str(process.pid),
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                            )
+                            try:
+                                _, sender_error = await asyncio.wait_for(sender.communicate(), 10)
+                                assert sender.returncode == 0, sender_error.decode()
+                            finally:
+                                if sender.returncode is None:
+                                    sender.kill()
+                                    await sender.wait()
+                        else:
+                            process.send_signal(signal.SIGINT)
                     else:
                         await ws.send_json({"type": "stop"})
                     assert await ws.receive_json(timeout=5) == {
