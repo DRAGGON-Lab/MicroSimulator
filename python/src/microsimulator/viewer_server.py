@@ -218,11 +218,14 @@ class LiveController:
         await socket.send_str(json.dumps(await self._message(), separators=(",", ":")))
 
     async def broadcast_frame(self) -> None:
-        if not self._sockets:
+        sockets = tuple(self._sockets)
+        if not sockets:
             return
         encoded = json.dumps(await self._message(), separators=(",", ":"))
         stale: list[web.WebSocketResponse] = []
-        for socket in tuple(self._sockets):
+        # A frame captured for earlier clients must not arrive ahead of a newly
+        # connected client's initial frame (or carry its stale playing flag).
+        for socket in sockets:
             if socket.closed:
                 stale.append(socket)
                 continue
@@ -301,6 +304,15 @@ class LiveController:
 
     async def connect(self, socket: web.WebSocketResponse) -> None:
         self._require_active()
+        stale = {client for client in self._sockets if client.closed}
+        if stale:
+            self._sockets.difference_update(stale)
+            if not self._sockets:
+                # The peer may receive its close handshake before the old
+                # request handler reaches finally. Honor last-client pause
+                # before admitting a replacement connection in that window.
+                await self.pause(broadcast=False)
+                self._require_active()
         self._sockets.add(socket)
         await self._send_frame(socket)
 
@@ -410,9 +422,14 @@ async def _websocket(request: web.Request) -> web.StreamResponse:
                 await send_error(error)
     finally:
         consumer.cancel()
-        with suppress(asyncio.CancelledError):
-            await consumer
-        await controller.disconnect(socket)
+        try:
+            # Drop client authority and pause before waiting for canceled work
+            # to drain. Otherwise a reconnect during that wait keeps playback
+            # alive because the old socket still appears to be connected.
+            await controller.disconnect(socket)
+        finally:
+            with suppress(asyncio.CancelledError):
+                await consumer
     return socket
 
 

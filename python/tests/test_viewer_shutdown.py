@@ -13,7 +13,7 @@ from typing import Any, cast
 from urllib.parse import urlsplit
 
 import pytest
-from aiohttp import ClientSession, WSMsgType, web
+from aiohttp import ClientSession, ClientWebSocketResponse, WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 from microsimulator import BackendKind, CellInit, Simulation, load_checkpoint
 from microsimulator import checkpoint as checkpoint_module
@@ -173,7 +173,11 @@ def test_cancelled_waiter_does_not_release_worker_early() -> None:
     asyncio.run(exercise())
 
 
-def test_disconnect_pauses_without_stopping_and_close_is_idempotent(tmp_path: Path) -> None:
+@pytest.mark.parametrize("_attempt", range(10))
+def test_disconnect_pauses_without_stopping_and_close_is_idempotent(
+    tmp_path: Path,
+    _attempt: int,
+) -> None:
     async def exercise() -> None:
         session = LiveSession(_factory, dt=0.1)
         app, token = create_live_app(session, _dist(tmp_path))
@@ -207,6 +211,66 @@ def test_stop_command_is_closed() -> None:
     assert parse_command('{"type":"stop"}') == LiveCommand("stop")
     with pytest.raises(LiveViewerError, match="unknown fields"):
         parse_command('{"type":"stop","force":true}')
+
+
+def test_reconnect_observes_pause_before_disconnected_command_drains(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        entered, release = Event(), Event()
+        reconnect_started = asyncio.Event()
+        frame_message = LiveSession.frame_message
+        connect = LiveController.connect
+        frames, connections = 0, 0
+
+        def blocked_frame(session: LiveSession, *, playing: bool) -> dict[str, JSONValue]:
+            nonlocal frames
+            frames += 1
+            if frames == 2:
+                entered.set()
+                assert release.wait(10), "test did not release frame capture"
+            return frame_message(session, playing=playing)
+
+        async def observe_connect(controller: LiveController, ws: web.WebSocketResponse) -> None:
+            nonlocal connections
+            connections += 1
+            if connections == 2:
+                reconnect_started.set()
+            await connect(controller, ws)
+
+        monkeypatch.setattr(LiveSession, "frame_message", blocked_frame)
+        monkeypatch.setattr(LiveController, "connect", observe_connect)
+        app, token = create_live_app(LiveSession(_factory, dt=0.1), _dist(tmp_path))
+        client = TestClient(TestServer(app))
+        try:
+            await client.start_server()
+            origin = str(client.make_url("/")).rstrip("/")
+
+            async def open_socket() -> ClientWebSocketResponse:
+                return await client.ws_connect(
+                    f"/api/v1/session?token={token}",
+                    headers={"Origin": origin},
+                )
+
+            ws = await open_socket()
+            await ws.receive_json(timeout=5)
+            await ws.send_json({"type": "play"})
+            await _entered(entered)
+            # close() finishes the network handshake while the server's canceled
+            # frame capture is still holding its worker/serialization lock.
+            await ws.close()
+            reconnect = asyncio.create_task(open_socket())
+            await asyncio.wait_for(reconnect_started.wait(), 5)
+            release.set()
+            ws2 = await reconnect
+            assert (await ws2.receive_json(timeout=5))["playing"] is False
+            await ws2.close()
+        finally:
+            release.set()
+            await client.close()
+
+    asyncio.run(exercise())
 
 
 def test_stop_is_not_blocked_by_a_stalled_frame_send(
