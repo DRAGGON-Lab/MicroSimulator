@@ -2,6 +2,8 @@
 
 The [pillar-channel model](../../examples/tutorials/pillar_channel.py) combines cylindrical walls, a depth-integrated flow calculation, attached founder lineages, and released daughters:
 
+Cells retain three-dimensional mechanics inside the channel walls at Z=±3. XY-only division jitter and depth-integrated flow do not impose a planar cell constraint; fixed founders remain attached while released daughters can move and tilt within the finite-height chamber. See the [dimensionality audit](planarity.md).
+
 ```console
 uv run microsimulator view --model examples/tutorials/pillar_channel.py --seed 7 --dt 0.01 --backend metal --open
 ```

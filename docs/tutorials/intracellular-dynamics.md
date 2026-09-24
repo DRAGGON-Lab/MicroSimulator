@@ -2,6 +2,8 @@
 
 This tutorial introduces intracellular concentrations, growth dilution, typed rate equations, gene-circuit feedback, and quantitative time-course analysis. The runnable scenarios are collected in `examples/tutorials/gene_expression.py`.
 
+All five scenarios use XY-only division jitter and start with centers at Z=0, but add no mechanical walls. Their cells retain three-dimensional translations and rotations. See [division jitter and out-of-plane motion](planarity.md) before treating a planar-looking trajectory as a strict 2D model.
+
 All five gene-expression scenarios request a founder centerline length of 3.5 and cap it at the one sampled division target. Initial concentrations are unchanged; the smaller biomass can change total initial amount. See [founder initialization and volume conventions](biophysics-and-growth.md#length-and-volume).
 
 ## The native species contract

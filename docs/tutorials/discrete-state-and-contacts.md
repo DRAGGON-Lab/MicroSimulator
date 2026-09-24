@@ -2,6 +2,8 @@
 
 This tutorial uses plasmid segregation and conjugation to show how discrete biological state, stochastic events, and contact-dependent behavior fit into a MicroSimulator model.
 
+Both models start with centers at Z=0 and axes in XY, and division adds no orientation jitter. Neither has mechanical Z confinement: daughters inherit the parent axis and contact relaxation remains three-dimensional. See [division jitter and out-of-plane motion](planarity.md).
+
 New founders preserve their requested length unless it exceeds the single sampled division target. This also handles the rare short Gaussian target in the conjugation model without rejection sampling. Checkpoint restoration keeps stored lengths and targets. See [founder initialization](biophysics-and-growth.md#length-and-volume).
 
 ## 1. Incompatible plasmid segregation
