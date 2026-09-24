@@ -12,13 +12,13 @@ The [Windows CLI and live-session workflow](../../.github/workflows/live-shutdow
 
 ## Execution record
 
-The local command run on 2026-09-24 passed all ten tests with Python 3.12.8, Bash 3.2.57, Zsh 5.9, and PowerShell 7.6.4. The associated pull request links the exact source SHA and hosted workflow run; reports are retained as CI artifacts.
+The local command run on 2026-09-24 passed all ten tests with Python 3.12.8, Bash 3.2.57, Zsh 5.9, and PowerShell 7.6.4. Windows verification also passed on 2026-09-24 at commit `215e87dbf58c9964aef5a7821cdb3cb494c91490`: [workflow run 36068841367](https://github.com/DRAGGON-Lab/MicroSimulator/actions/runs/36068841367) recorded four command/cleanup tests passing in 17.934 seconds and all 28 live-session shutdown tests passing. Reports are retained as CI artifacts.
 
 | Platform and shell | Backend execution | Command coverage |
 | --- | --- | --- |
 | macOS, POSIX `sh`, Bash, Zsh | Native CPU and Apple M4 Max Metal | Passed: discovery, 100-step CPU/Metal trap, JSON/space paths, headless CPU resume, live CPU checkpoint/Stop/restart |
 | macOS, PowerShell 7.6.4 with Standard arguments | Native CPU and Apple M4 Max Metal | Passed: same commands, PowerShell backtick continuation and string quoting |
-| Windows Server 2025, PowerShell 7 with Standard arguments | Native CPU | Hosted command verification pending; see the pull request workflow result |
+| Windows Server 2025 build 26100, PowerShell 7.6.6, Python 3.12.10 | Native CPU | Passed: discovery, 100-step trap, PowerShell JSON/space paths, resume, three live Stop/restarts, cleanup regression; Metal/CUDA unavailable as expected |
 | NVIDIA CUDA hardware | Not available in the command-verification campaign | Unavailable-backend error checked; no CUDA runtime or numerical claim |
 
 The test runner reports actual Metal availability for each macOS run. This run executed Metal headless trap commands; its JSON scenario, resume, and live-session examples selected CPU. A skipped/unavailable Metal result does not count as GPU execution. Backend support still requires the independent [native and application conformance gates](validation.md), even when a tutorial smoke command succeeds.
