@@ -130,6 +130,34 @@ try {
   await expect(page.locator("#replay-position")).toContainText("4 / 5");
   await expect(page.locator("#time-chip")).toHaveText("t = 0.8");
   await expect(page.locator("#legend-title")).toHaveText("Reporter");
+  // Playing while an uncached seek is pending must preserve its destination.
+  await seek(0, 5);
+  await seek(1, 5);
+  await seek(4, 5);
+  await page.locator("#replay-fps").fill("1");
+  await page.locator("#replay-fps").dispatchEvent("change");
+  await page.evaluate(() => {
+    globalThis.__delayReplayLoad = (ordinal) =>
+      ordinal === 2
+        ? new Promise((resolve) => {
+            globalThis.__releasePending = resolve;
+          })
+        : undefined;
+  });
+  await page.locator("#replay-timeline").fill("2");
+  await page.locator("#replay-timeline").dispatchEvent("input");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.__releasePending))
+    .toBe("function");
+  await page.locator("#replay-play").click();
+  await expect(page.locator("#replay-timeline")).toHaveValue("2");
+  await page.evaluate(() => {
+    globalThis.__releasePending();
+    globalThis.__delayReplayLoad = undefined;
+  });
+  await expect(page.locator("#replay-position")).toContainText("3 / 5");
+  await expect(page.locator("#replay-play")).toHaveText("Pause");
+  await page.locator("#replay-play").click();
   await seek(0, 5);
   await page.locator("#replay-fps").fill("20");
   await page.locator("#replay-fps").dispatchEvent("change");

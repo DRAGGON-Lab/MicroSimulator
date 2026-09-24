@@ -132,6 +132,114 @@ describe("bounded replay loading", () => {
 });
 
 describe("recorded-frame playback", () => {
+  it.each([4, null])(
+    "starts playback from a pending seek when the displayed index is %s",
+    async (displayedIndex) => {
+      const frame = await parseScene(source);
+      vi.useFakeTimers();
+      const delayed = deferred<SceneFrame>();
+      const loads: number[] = [];
+      let pendingSignal: AbortSignal | undefined;
+      const { controller, frames } = player(async (ordinal, signal) => {
+        loads.push(ordinal);
+        if (ordinal === 2) {
+          pendingSignal = signal;
+          return delayed.promise;
+        }
+        return frame;
+      });
+      const initial = displayedIndex === null ? [] : [displayedIndex];
+      if (displayedIndex !== null) {
+        controller.seek(displayedIndex);
+        await flush();
+      }
+      controller.setFps(20);
+      controller.seek(2);
+      controller.play();
+      controller.play();
+      expect(controller.state).toMatchObject({
+        index: displayedIndex,
+        requestedIndex: 2,
+        playing: true,
+        loading: true,
+        error: null,
+      });
+      expect(pendingSignal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(loads).toEqual([...initial, 2]);
+      expect(frames).toEqual(initial);
+      delayed.resolve(frame);
+      await flush();
+      expect(frames).toEqual([...initial, 2]);
+      expect(controller.state.loading).toBe(false);
+      await vi.advanceTimersByTimeAsync(49);
+      expect(controller.state.index).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(frames).toEqual([...initial, 2, 3]);
+      controller.dispose();
+    },
+  );
+  it.each([
+    { displayed: 0, requested: 3 },
+    { displayed: 3, requested: 1 },
+    { displayed: 4, requested: 2 },
+    { displayed: null, requested: 2 },
+  ])(
+    "Play retries failed frame $requested from displayed frame $displayed",
+    async ({ displayed, requested }) => {
+      const frame = await parseScene(source);
+      vi.useFakeTimers();
+      const loads: number[] = [];
+      let attempts = 0;
+      const { controller, frames } = player(async (ordinal) => {
+        loads.push(ordinal);
+        if (ordinal === requested && ++attempts <= 2)
+          throw new Error("temporary read failure");
+        return frame;
+      });
+      const initial = displayed === null ? [] : [displayed];
+      if (displayed !== null) {
+        controller.seek(displayed);
+        await flush();
+      }
+      controller.setFps(20);
+      controller.seek(requested);
+      await flush();
+      for (let retry = 0; retry < 2; retry++) {
+        expect(controller.state).toMatchObject({
+          index: displayed,
+          requestedIndex: requested,
+          playing: false,
+          loading: false,
+        });
+        expect(controller.state.error).toContain(`ordinal ${requested}`);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(frames).toEqual(initial);
+        controller.play();
+        expect(controller.state).toMatchObject({
+          requestedIndex: requested,
+          playing: true,
+          loading: true,
+          error: null,
+        });
+        await flush();
+      }
+      expect(loads).toEqual([...initial, requested, requested, requested]);
+      expect(frames).toEqual([...initial, requested]);
+      expect(controller.state).toMatchObject({
+        index: requested,
+        requestedIndex: requested,
+        playing: true,
+        loading: false,
+        error: null,
+      });
+      await vi.advanceTimersByTimeAsync(49);
+      expect(controller.state.index).toBe(requested);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(controller.state.index).toBe(requested + 1);
+      controller.dispose();
+    },
+  );
   it("steps both ways, plays all recorded frames at selected fps, and stops at the end", async () => {
     const frame = await parseScene(source);
     vi.useFakeTimers();
