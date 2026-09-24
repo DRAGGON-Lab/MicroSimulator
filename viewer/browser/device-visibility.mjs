@@ -17,7 +17,7 @@ const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
 
 // Observe the real application instance rather than replacing its renderer.
-await page.route("**/src/colony-viewer.ts", async (route) => {
+await page.route("**/src/colony-viewer.ts*", async (route) => {
   const response = await route.fetch();
   const source = await response.text();
   const marker = "this.onSelection = onSelection;";
