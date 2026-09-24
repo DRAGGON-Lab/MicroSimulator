@@ -1047,7 +1047,9 @@ def load_checkpoint_bundle(
         labels = (
             ChannelMetadata.from_json(root["channel_metadata"], species_count, signal_count)
             if schema_version >= 9
-            else ChannelMetadata().resolved(species_count, signal_count)
+            # Legacy files contain no labels. Preserve that omission compactly:
+            # claimed native counts must not allocate new presentation arrays.
+            else UNNAMED_CHANNELS
         )
     except ChannelMetadataError as error:
         raise CheckpointError(str(error)) from error
