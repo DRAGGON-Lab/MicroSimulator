@@ -103,3 +103,58 @@ def test_uniform_length_division_rejects_missing_target_state() -> None:
     )
     with pytest.raises(ControllerStateError, match="length_division"):
         controller.step(0.1)
+
+
+def test_founder_initialization_caps_native_precision_without_resampling() -> None:
+    from microsimulator import capped_founder_length
+
+    stream = random.Random(71)
+    expected = random.Random(71)
+    policy = UniformLengthDivision(2.5, 3.0)
+    simulation = Simulation(BackendKind.CPU, species_count=2)
+    founders: list[CellInit] = []
+    for index, length in enumerate((3.5, 1.0, 3.5, 2.75)):
+        founder = CellInit()
+        founder.position = Vec3(index * 10.0, 2.0, 3.0)
+        founder.direction = Vec3(0.0, 1.0, 0.0)
+        founder.length = length
+        founder.radius = 0.4
+        founder.cell_type = index
+        founder.species = [2.0, 3.0]
+        founders.append(founder)
+    state: dict[str, JSONValue] = {}
+    ids = policy.initialize_founders(simulation, state, stream, tuple(founders))
+    target_state = cast(dict[str, JSONValue], state[policy.state_key])
+    targets = cast(dict[str, float], target_state["targets"])
+    for index, (cell_id, requested) in enumerate(zip(ids, (3.5, 1.0, 3.5, 2.75), strict=True)):
+        target = expected.uniform(2.5, 3.0)
+        cell = simulation.cell(cell_id)
+        assert targets[str(cell_id)] == target
+        assert cell.length <= target
+        assert cell.length == capped_founder_length(requested, target)
+        assert (cell.position.x, cell.position.y, cell.position.z) == (index * 10.0, 2.0, 3.0)
+        assert (cell.direction.x, cell.direction.y, cell.direction.z) == (0.0, 1.0, 0.0)
+        assert abs(cell.radius - 0.4) < 1.0e-7
+        assert cell.cell_type == index
+        assert cell.species == [2.0, 3.0]
+    assert stream.getstate() == expected.getstate()
+    with pytest.raises(ControllerStateError, match="already contains"):
+        policy.initialize_founders(simulation, state, stream, ())
+
+
+def test_capped_founder_length_rounds_down_when_nearest_float_exceeds_target() -> None:
+    from microsimulator import capped_founder_length
+
+    target = 2.99999999
+    founder = CellInit()
+    founder.length = target
+    assert founder.length > target  # nearest native float rounds up
+    founder.length = capped_founder_length(3.5, target)
+    assert founder.length <= target
+    assert capped_founder_length(1.5, target) == 1.5
+    assert capped_founder_length(0.0, 0.0) == 0.0
+    for invalid in (-1.0, float("inf"), float("nan")):
+        with pytest.raises(ValueError):
+            capped_founder_length(invalid, 3.0)
+        with pytest.raises(ValueError):
+            capped_founder_length(3.0, invalid)

@@ -16,6 +16,7 @@ from microsimulator import (
     NativeController,
     StepPlan,
     Vec3,
+    capped_founder_length,
 )
 from microsimulator.checkpoint import CheckpointBundle, JSONValue
 
@@ -92,8 +93,10 @@ def build(context: ModelContext) -> NativeController:
         founder.radius = 0.4
         founder.growth_rate = 1.0
         founder.cell_type = cell_type
+        target = founder.length + context.rng.gauss(1.9, 0.45)
+        founder.length = capped_founder_length(founder.length, target)
         founder_id = simulation.add_cell(founder)
-        targets[str(founder_id)] = founder.length + context.rng.gauss(1.9, 0.45)
+        targets[str(founder_id)] = target
 
     regulate, divided = _callbacks(transfer_probability)
     return NativeController(
