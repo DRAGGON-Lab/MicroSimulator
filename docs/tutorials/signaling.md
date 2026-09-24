@@ -2,6 +2,8 @@
 
 This tutorial introduces extracellular grids, diffusion, cell-grid exchange, sender-receiver communication, and two-strain mutualism. Run the scenarios in `examples/tutorials/signaling.py` with a small time step such as `0.01`.
 
+All scenarios use XY-only division jitter with three-dimensional mechanics. `single_gene` and `communication` have lateral Y walls only; `mutualism` has no mechanical walls. Signal-grid depth does not constrain cell Z or tilt. See [division jitter and out-of-plane motion](planarity.md).
+
 Each new founder requests centerline length 3.5 and is capped at its sampled division threshold. Its radius, position, cell type, and initial concentrations are preserved. See [founder initialization](biophysics-and-growth.md#length-and-volume).
 
 ## Grid geometry and units
