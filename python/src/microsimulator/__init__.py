@@ -53,6 +53,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     backend_available,
     backend_device_count,
 )
+from .channels import ChannelMetadata, ChannelMetadataError
 from .checkpoint import (
     CHECKPOINT_FORMAT,
     CHECKPOINT_VERSION,
@@ -163,6 +164,8 @@ __all__ = [
     "CellInit",
     "CellSnapshot",
     "CellUpdate",
+    "ChannelMetadata",
+    "ChannelMetadataError",
     "CheckpointBundle",
     "CheckpointError",
     "CheckpointSourceBackend",

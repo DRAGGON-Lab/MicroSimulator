@@ -35,6 +35,10 @@ const frame: SceneFrame = {
     native: true,
   },
   speciesCount: 0,
+  channelMetadata: {
+    species: Array(0).fill(null),
+    signals: Array(0).fill(null),
+  },
   cells: [cell],
   constraints,
   signalGrid: null,

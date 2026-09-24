@@ -15,6 +15,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     RateOp,
     SpeciesRatePlan,
 )
+from .channels import ChannelMetadata
 
 _FLOAT32_MAX = 3.4028234663852886e38
 _UINT32_MAX = (1 << 32) - 1
@@ -35,6 +36,17 @@ class SBMLRateModel:
     initial_levels: tuple[float, ...]
     rate_plan: SpeciesRatePlan
     warnings: tuple[str, ...]
+
+    @property
+    def channel_metadata(self) -> ChannelMetadata:
+        """Use nonempty SBML names, falling back to stable SBML identifiers."""
+
+        return ChannelMetadata(
+            species=tuple(
+                name if name.strip() else identifier
+                for name, identifier in zip(self.species_names, self.species_ids, strict=True)
+            )
+        )
 
     @property
     def species_count(self) -> int:
@@ -263,8 +275,7 @@ def _local_parameters(kinetic_law: _KineticLaw, reaction_id: str) -> dict[str, f
         for index in range(kinetic_law.getNumLocalParameters())
     ]
     parameters.extend(
-        (kinetic_law.getParameter(index), True)
-        for index in range(kinetic_law.getNumParameters())
+        (kinetic_law.getParameter(index), True) for index in range(kinetic_law.getNumParameters())
     )
     for parameter, check_constant in parameters:
         identifier = parameter.getId()
@@ -427,9 +438,7 @@ def _species_metadata(
                 f"species {identifier!r} must declare exactly one initial concentration or amount"
             )
         initial = (
-            species.getInitialConcentration()
-            if has_concentration
-            else species.getInitialAmount()
+            species.getInitialConcentration() if has_concentration else species.getInitialAmount()
         )
         initial = _finite_float32(initial, f"species {identifier!r} initial level")
         if initial < 0.0:
@@ -444,9 +453,7 @@ def _species_metadata(
 def _stoichiometry(reference: _SpeciesReference, reaction_id: str) -> float:
     if reference.isSetStoichiometryMath() or not reference.getConstant():
         raise SBMLImportError(f"reaction {reaction_id!r} uses dynamic stoichiometry")
-    value = _finite_float32(
-        reference.getStoichiometry(), f"reaction {reaction_id!r} stoichiometry"
-    )
+    value = _finite_float32(reference.getStoichiometry(), f"reaction {reaction_id!r} stoichiometry")
     if value < 0.0:
         raise SBMLImportError(f"reaction {reaction_id!r} stoichiometry must be non-negative")
     return value
@@ -531,9 +538,7 @@ def parse_sbml(source: str) -> SBMLRateModel:
         raise SBMLImportError("SBML source must be a nonempty string")
     libsbml = _libsbml()
     document = libsbml.readSBMLFromString(source)
-    if document.getLevel() > 0 and (
-        document.getLevel() != 3 or document.getVersion() != 2
-    ):
+    if document.getLevel() > 0 and (document.getLevel() != 3 or document.getVersion() != 2):
         raise SBMLImportError("SBML import currently requires Level 3 Version 2 Core")
     warnings = _validate_document(document, libsbml)
     model = document.getModel()

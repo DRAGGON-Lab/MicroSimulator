@@ -34,6 +34,7 @@ const frame: SceneFrame = {
     native: false,
   },
   speciesCount: 2,
+  channelMetadata: { species: [null, null], signals: [] },
   constraints: { planes: [], spheres: [], boxes: [], cylinders: [] },
   cells: [
     cell(0, -1, 0.5, [2, 8]),
