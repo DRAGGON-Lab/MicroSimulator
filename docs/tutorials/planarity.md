@@ -27,6 +27,8 @@ The following contracts describe the checked-in models after the founder-initial
 
 ## Reproduce and locate a departure
 
+For backend discovery and shell-specific JSON quoting, see the [shared command guide](commands.md#choose-a-shell). The commands below run the dedicated diagnostic script; its diagnostic flags are described here.
+
 Run the diagnostic from the repository root after installing the development environment:
 
 ```console
