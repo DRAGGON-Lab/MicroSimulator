@@ -25,10 +25,11 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     Simulation,
     Vec3,
 )
+from .channels import UNNAMED_CHANNELS, ChannelMetadata, ChannelMetadataError
 from .checkpoint import JSONValue
 
 SCENE_FORMAT = "microsimulator-scene"
-SCENE_VERSION = 2
+SCENE_VERSION = 3
 MAX_SCENE_BYTES = 1 << 30
 
 _UINT32_MAX = (1 << 32) - 1
@@ -161,6 +162,16 @@ class SceneFrame:
     cells: tuple[SceneCell, ...]
     constraints: SceneConstraints
     signal_grid: SceneSignalGrid | None
+    channel_metadata: ChannelMetadata = UNNAMED_CHANNELS
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "channel_metadata",
+            self.channel_metadata.resolved(
+                self.species_count, self.signal_grid.signal_count if self.signal_grid else 0
+            ),
+        )
 
 
 def _installed_version() -> str:
@@ -181,7 +192,9 @@ def _capture_boundary(boundary: GridBoundary) -> SceneGridBoundary:
     )
 
 
-def capture_scene(simulation: Simulation) -> SceneFrame:
+def capture_scene(
+    simulation: Simulation, *, channel_metadata: ChannelMetadata = UNNAMED_CHANNELS
+) -> SceneFrame:
     """Capture a complete immutable presentation frame after a simulation step."""
 
     checkpoint = simulation._checkpoint()
@@ -276,6 +289,9 @@ def capture_scene(simulation: Simulation) -> SceneFrame:
         cells=cells,
         constraints=constraints,
         signal_grid=signal_grid,
+        channel_metadata=channel_metadata.resolved(
+            simulation.species_count, simulation.signal_count
+        ),
     )
     _validate_frame(frame)
     return frame
@@ -375,6 +391,9 @@ def _frame_to_json(frame: SceneFrame) -> dict[str, JSONValue]:
         "cells": cells,
         "constraints": constraints,
         "signal_grid": grid,
+        "channel_metadata": frame.channel_metadata.to_json(
+            frame.species_count, frame.signal_grid.signal_count if frame.signal_grid else 0
+        ),
     }
 
 
@@ -400,13 +419,16 @@ def dumps_scene(frame: SceneFrame) -> str:
         },
         "frame": payload,
     }
-    return json.dumps(
-        document,
-        allow_nan=False,
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-    ) + "\n"
+    return (
+        json.dumps(
+            document,
+            allow_nan=False,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 def save_scene(frame: SceneFrame, path: str | os.PathLike[str]) -> None:
@@ -746,11 +768,25 @@ def _signal_grid(value: object, path: str) -> SceneSignalGrid | None:
     )
 
 
-def _frame(value: object, path: str) -> SceneFrame:
+def _frame(value: object, path: str, schema_version: int) -> SceneFrame:
     data = _object(value, path)
-    _keys(data, path, {"time", "backend", "species_count", "cells", "constraints", "signal_grid"})
+    keys = {"time", "backend", "species_count", "cells", "constraints", "signal_grid"}
+    if schema_version >= 3:
+        keys.add("channel_metadata")
+    _keys(data, path, keys)
     species_count = _integer(data["species_count"], f"{path}.species_count", 0, _UINT32_MAX)
+    signal_grid = _signal_grid(data["signal_grid"], f"{path}.signal_grid")
+    signal_count = signal_grid.signal_count if signal_grid else 0
+    try:
+        labels = (
+            ChannelMetadata.from_json(data["channel_metadata"], species_count, signal_count)
+            if schema_version >= 3
+            else ChannelMetadata().resolved(species_count, signal_count)
+        )
+    except ChannelMetadataError as error:
+        raise SceneError(str(error)) from error
     frame = SceneFrame(
+        channel_metadata=labels,
         time=_number(data["time"], f"{path}.time"),
         backend=_backend(data["backend"], f"{path}.backend"),
         species_count=species_count,
@@ -759,7 +795,7 @@ def _frame(value: object, path: str) -> SceneFrame:
             for index, item in enumerate(_array(data["cells"], f"{path}.cells"))
         ),
         constraints=_constraints(data["constraints"], f"{path}.constraints"),
-        signal_grid=_signal_grid(data["signal_grid"], f"{path}.signal_grid"),
+        signal_grid=signal_grid,
     )
     _validate_frame(frame)
     return frame
@@ -776,6 +812,12 @@ def _validate_boundary(boundary: SceneGridBoundary, signal_count: int, path: str
 
 
 def _validate_frame(frame: SceneFrame) -> None:
+    try:
+        frame.channel_metadata.resolved(
+            frame.species_count, frame.signal_grid.signal_count if frame.signal_grid else 0
+        )
+    except ChannelMetadataError as error:
+        raise SceneError(str(error)) from error
     _number(frame.time, "$.frame.time")
     if frame.time < 0.0:
         _fail("$.frame.time", "must be non-negative")
@@ -936,7 +978,7 @@ def parse_scene(source: str | bytes) -> SceneFrame:
     if _string(root["format"], "$.format") not in (SCENE_FORMAT, "cellmodeller2-scene"):
         _fail("$.format", "not a MicroSimulator scene")
     schema_version = _integer(root["version"], "$.version", 0, _UINT32_MAX)
-    if schema_version != SCENE_VERSION:
+    if schema_version not in {2, SCENE_VERSION}:
         _fail("$.version", f"unsupported scene version {schema_version}")
     producer = _object(root["producer"], "$.producer")
     _keys(producer, "$.producer", {"name", "version"})
@@ -947,12 +989,10 @@ def parse_scene(source: str | bytes) -> SceneFrame:
     if _string(integrity["algorithm"], "$.integrity.algorithm") != "sha256":
         _fail("$.integrity.algorithm", "unsupported integrity algorithm")
     expected_digest = _string(integrity["frame"], "$.integrity.frame")
-    actual_digest = hashlib.sha256(
-        _canonical_json(cast(JSONValue, root["frame"]))
-    ).hexdigest()
+    actual_digest = hashlib.sha256(_canonical_json(cast(JSONValue, root["frame"]))).hexdigest()
     if not hmac.compare_digest(actual_digest, expected_digest):
         _fail("$.integrity.frame", "frame digest does not match")
-    return _frame(root["frame"], "$.frame")
+    return _frame(root["frame"], "$.frame", schema_version)
 
 
 def load_scene(path: str | os.PathLike[str]) -> SceneFrame:

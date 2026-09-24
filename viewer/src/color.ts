@@ -1,4 +1,4 @@
-import type { SceneFrame } from "./scene";
+import { channelLabel, type SceneFrame } from "./scene";
 import {
   AUTOMATIC_SCALAR_RANGE,
   normalizeScalar,
@@ -137,7 +137,7 @@ export function mapCellColors(
       }
       return scalarMapping(
         frame.cells.map((cell) => cell.species[config.speciesIndex] ?? 0),
-        `Species ${config.speciesIndex}`,
+        channelLabel(frame, "species", config.speciesIndex),
         config.range,
       );
     }

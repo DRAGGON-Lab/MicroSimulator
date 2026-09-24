@@ -64,4 +64,4 @@ The scene preserves all channels. A viewer chooses a channel and slice as presen
 
 ## Compatibility
 
-Writers always emit the current version. Readers accept version 2 exactly and fail closed on other versions until an explicit migration is defined. Backend conformance compares frame semantics while ignoring the expected backend identity fields. Pixel output is tested separately by the viewer.
+Current writers emit [version 3](scene-v3.md). Current readers verify version-2 frames against this original schema and digest, then supply unnamed channel metadata in memory. Backend conformance compares frame semantics while ignoring the expected backend identity fields. Pixel output is tested separately by the viewer.

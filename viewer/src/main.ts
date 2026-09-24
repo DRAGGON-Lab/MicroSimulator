@@ -18,6 +18,7 @@ import {
 } from "./live";
 import {
   MAX_SCENE_BYTES,
+  channelLabel,
   parseScene,
   type SceneCell,
   type SceneFrame,
@@ -125,14 +126,14 @@ function setStatus(message: string, kind: "info" | "error" = "info"): void {
 function options(
   select: HTMLSelectElement,
   count: number,
-  prefix: string,
+  label: (index: number) => string,
   selected: number,
 ): void {
   select.replaceChildren();
   for (let index = 0; index < count; index += 1) {
     const option = document.createElement("option");
     option.value = String(index);
-    option.textContent = `${prefix} ${index}`;
+    option.textContent = label(index);
     select.append(option);
   }
   select.value = String(selected);
@@ -217,7 +218,11 @@ function updateSignal(): void {
   signalRangeControls.bind(index, range);
   viewer.setSignalSlice(signalVisible.checked ? value : null, config);
   legend.hidden = false;
-  required<HTMLElement>("signal-legend-title").textContent = `Signal ${index}`;
+  required<HTMLElement>("signal-legend-title").textContent = channelLabel(
+    frame,
+    "signals",
+    index,
+  );
   required<HTMLElement>("signal-legend-min").textContent =
     range.minimum === null ? "—" : formatNumber(range.minimum);
   required<HTMLElement>("signal-legend-max").textContent =
@@ -266,7 +271,10 @@ function updateSelection(cell: SceneCell | null): void {
     const item = document.createElement("li");
     const label = document.createElement("span");
     const encoded = document.createElement("code");
-    label.textContent = `Channel ${index}`;
+    label.textContent =
+      frame === null
+        ? `Channel ${index}`
+        : channelLabel(frame, "species", index);
     encoded.textContent = formatNumber(value);
     item.append(label, encoded);
     speciesValues.append(item);
@@ -305,7 +313,12 @@ function presentScene(
     next.signalGrid === null ? "None" : next.signalGrid.shape.join(" × ");
 
   colorMode.value = display.colorMode;
-  options(speciesChannel, next.speciesCount, "Channel", display.speciesChannel);
+  options(
+    speciesChannel,
+    next.speciesCount,
+    (index) => channelLabel(next, "species", index),
+    display.speciesChannel,
+  );
   const speciesOption = colorMode.querySelector<HTMLOptionElement>(
     'option[value="species"]',
   );
@@ -320,7 +333,7 @@ function presentScene(
     options(
       signalChannel,
       next.signalGrid.signalCount,
-      "Channel",
+      (index) => channelLabel(next, "signals", index),
       display.signalChannel,
     );
     signalRange.max = String(

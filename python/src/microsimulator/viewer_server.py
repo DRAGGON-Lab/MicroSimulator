@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 from aiohttp import WSMsgType, web
 
 from .checkpoint import JSONValue, save_checkpoint
-from .runner import RunnableModel, controller_state, native_simulation
+from .runner import RunnableModel, controller_state, model_channel_metadata, native_simulation
 from .scene import capture_scene, dumps_scene
 
 MAX_COMMAND_BYTES = 4096
@@ -104,6 +104,7 @@ class LiveSession:
     def _build(self) -> tuple[RunnableModel, dict[str, JSONValue]]:
         model, provenance = self._factory()
         native_simulation(model).validate()
+        model_channel_metadata(model)
         return model, dict(provenance)
 
     def step(self, steps: int = 1) -> None:
@@ -141,12 +142,20 @@ class LiveSession:
             destination,
             provenance=provenance,
             controller=controller_state(self._model),
+            channel_metadata=model_channel_metadata(self._model),
         )
         return destination
 
     def frame_message(self, *, playing: bool) -> dict[str, JSONValue]:
         native = native_simulation(self._model)
-        scene = cast(dict[str, JSONValue], json.loads(dumps_scene(capture_scene(native))))
+        scene = cast(
+            dict[str, JSONValue],
+            json.loads(
+                dumps_scene(
+                    capture_scene(native, channel_metadata=model_channel_metadata(self._model))
+                )
+            ),
+        )
         return {
             "type": "frame",
             "revision": self._revision,

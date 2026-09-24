@@ -82,3 +82,7 @@ Switching to Fixed starts from the current extrema (with finite padding for cons
 Settings belong to the numerical species or signal channel within the current dataset. They survive temporarily missing channels/grids, live updates, same-model reset, and frame seeking; opening another dataset restores automatic defaults. The shared `resolveScalarRange()` and `normalizeScalar()` APIs reject non-finite data explicitly, retain zero-valued and negative data, and avoid overflowing the difference between extreme finite bounds. They produce display intensity only and do not modify model data.
 
 `browser/scalar-ranges.mjs` checks actual cell instance colors, signal texture pixels, legends, validation messages, keyboard interaction, and dataset transitions in Chromium. Run it with a Vite server on port 4315, or set `VIEWER_URL`, using the same optional Playwright module and evidence-directory environment variables as the reference-grid test.
+
+## Channel labels
+
+Model-defined species and signal names appear in channel selectors, the species legend, and cell inspection. Duplicate names include their channel indices; unnamed channels retain `Channel N`. Names are presentation text; indices continue to identify selected channels. Current readers accept scene v2 and v3, while writers emit v3. See the [authoring guide](../docs/models/channel-labels.md) and [scene v3 schema](../docs/formats/scene-v3.md).
