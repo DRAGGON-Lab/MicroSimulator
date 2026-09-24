@@ -261,7 +261,10 @@ def _founder_targets(model: SimulationController) -> dict[str, float]:
 @pytest.mark.parametrize("seed", (0, 7, 17, 71))
 @pytest.mark.parametrize(("filename", "parameters", "dt"), _FOUNDER_MODELS)
 def test_tutorial_founders_do_not_divide_without_growth(
-    filename: str, parameters: dict[str, JSONValue], dt: float, seed: int,
+    filename: str,
+    parameters: dict[str, JSONValue],
+    dt: float,
+    seed: int,
 ) -> None:
     model, _ = build_model(
         _TUTORIALS / filename,
@@ -277,7 +280,10 @@ def test_tutorial_founders_do_not_divide_without_growth(
     # Existing strict comparison still divides each founder after its length grows.
     for cell in model.simulation.cells():
         model.simulation.set_cell_geometry(
-            cell.id, cell.position, cell.direction, targets[str(cell.id)] + 0.01,
+            cell.id,
+            cell.position,
+            cell.direction,
+            targets[str(cell.id)] + 0.01,
         )
     model.step(0.0)
     assert not set(ids) & {cell.id for cell in model.simulation.cells()}
@@ -285,7 +291,10 @@ def test_tutorial_founders_do_not_divide_without_growth(
 
 @pytest.mark.parametrize(("filename", "parameters", "dt"), _FOUNDER_MODELS)
 def test_tutorial_founder_initialization_is_deterministic_and_resume_does_not_cap(
-    filename: str, parameters: dict[str, JSONValue], dt: float, tmp_path: Path,
+    filename: str,
+    parameters: dict[str, JSONValue],
+    dt: float,
+    tmp_path: Path,
 ) -> None:
     context = ModelContext(BackendKind.CPU, 0, seed=71, parameters=parameters)
     first, provenance = build_model(_TUTORIALS / filename, context)
