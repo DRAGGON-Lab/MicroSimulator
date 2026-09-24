@@ -194,7 +194,14 @@ export class ColonyViewer {
     });
   }
 
-  public setFrame(frame: SceneFrame, fit = true): void {
+  /** Call once when opening a file, live session, or recording. */
+  public beginDataset(): void {
+    this.cancelCameraTransition();
+    this.selectCell(null);
+  }
+
+  /** Frame updates, including reset/seek, retain camera and dataset state. */
+  public setFrame(frame: SceneFrame, fit = false): void {
     this.viewCube.setVisible(true);
     disposeGroup(this.colony);
     this.cellMeshes = [];
