@@ -756,3 +756,71 @@ dd {
 .legend-caption {
   margin-block: 6px;
 }
+
+.composite-channel {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.composite-channel-heading,
+.composite-legend-channel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.composite-channel-heading input {
+  accent-color: var(--accent);
+}
+
+.composite-swatch {
+  flex: 0 0 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--line-strong);
+}
+
+.composite-channel summary {
+  cursor: pointer;
+  margin-block: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.composite-tint-form input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.composite-tint-form input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.composite-channel-order {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.composite-channel-order button {
+  padding-inline: 8px;
+  font-size: 11px;
+}
+
+.composite-legend {
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.composite-legend-channel + .composite-legend-channel {
+  margin-top: 8px;
+}

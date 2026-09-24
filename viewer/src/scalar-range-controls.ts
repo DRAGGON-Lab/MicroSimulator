@@ -4,6 +4,7 @@ import {
   suggestedFixedRange,
   type ResolvedScalarRange,
   type ScalarChannelKind,
+  type ScalarRangeConfig,
 } from "./scalar-range";
 
 /** Reusable keyboard-accessible editor; draft text never changes the active range. */
@@ -14,6 +15,7 @@ export class ScalarRangeControls {
   private readonly maximum: HTMLInputElement;
   private readonly message: HTMLElement;
   private channel: number | null = null;
+  private active: ScalarRangeConfig | null = null;
   private resolved: ResolvedScalarRange | null = null;
 
   public constructor(
@@ -105,12 +107,16 @@ export class ScalarRangeControls {
 
   public beginDataset(): void {
     this.channel = null;
+    this.active = null;
     this.resolved = null;
   }
 
   public bind(channel: number, resolved: ResolvedScalarRange): void {
     this.resolved = resolved;
-    if (this.channel !== channel) {
+    if (
+      this.channel !== channel ||
+      this.active !== this.ranges.get(this.kind, channel)
+    ) {
       this.channel = channel;
       this.syncFields();
     }
@@ -119,6 +125,7 @@ export class ScalarRangeControls {
   private syncFields(): void {
     if (this.channel === null || this.resolved === null) return;
     const active = this.ranges.get(this.kind, this.channel);
+    this.active = active;
     const fixed =
       this.ranges.lastFixed(this.kind, this.channel) ??
       suggestedFixedRange(this.resolved);
