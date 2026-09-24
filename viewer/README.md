@@ -60,7 +60,7 @@ The `Windows live-session shutdown` GitHub Actions job builds the CPU extension 
 
 - SHA-256 verification over the Python writer's RFC 8785 canonical frame;
 - strict scene v2 structural and numerical validation;
-- instanced cylinder and sphere rendering for exact spherocylinder geometry;
+- instanced open cylinders and matching hemispheres for continuous capsule surfaces;
 - device walls rendered from plane, sphere, box, and cylinder constraints;
 - orbit, pan, zoom, colony framing, raycast picking, and selection highlighting;
 - a draggable camera-synchronized flat-corner view cube with readable labels, shortest-path single-click snapping, and double-click label leveling;
@@ -145,3 +145,7 @@ Source paths are used exactly in command-line order; avoid relying on shell glob
 The reader loads frames on demand through a bounded three-frame/64 MiB accounting-budget LRU cache; it does not decode the whole recording. Oversized frames are uncached, and renderer/current-load allocations exist outside that cache. See the [replay format](../docs/formats/replay-v1.md) for integrity, provenance, resource bounds and failure behavior. This first implementation imports checkpoint sequences; live recording, video export and timeline-based simulation restart are separate features.
 
 For browser regression checks, generate native fixtures with `.venv/bin/python viewer/browser/replay-fixtures.py /tmp/replay-fixtures`, run the viewer on port 4326, then run `viewer/browser/replay.mjs` with `REPLAY_FIXTURES=/tmp/replay-fixtures` and `MICROSIMULATOR_PLAYWRIGHT_MODULE` pointing to an installed Playwright module. This uses the existing shared browser harness and adds no production debug API.
+
+Capsule geometry tests verify the scene's cylindrical centerline length, constant radius, spherical ends, zero-length sphere case, arbitrary orientation, outward topology, exact equator positions/normals, and ray picking. The selected-cell overlay uses the same geometry with radius increased by 8%; the cap centers retain the original centerline length. Three instanced draw calls represent the colony, independent of cell count. Replacing frames disposes both geometry and instance buffers.
+
+For visual and GPU-resource checks, see [the capsule browser regression](browser/README.md). Mesh tessellation and pixel aliasing can still affect silhouettes at distant zoom levels; the shared tangent joins specifically remove overlapping end disks and mismatched sphere/cylinder boundaries. The viewer does not smooth or modify simulated cell motion.
