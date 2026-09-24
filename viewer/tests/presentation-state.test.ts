@@ -34,6 +34,17 @@ const frame: SceneFrame = {
 };
 
 describe("dataset presentation lifecycle", () => {
+  it("restores the desired slice after an axis round trip", () => {
+    const state = new DatasetPresentationState();
+    state.beginDataset();
+    state.preferences.signalSlice = 8;
+    expect(state.forFrame(frame).signalSlice).toBe(8);
+    state.preferences.signalAxis = "x";
+    expect(state.forFrame(frame).signalSlice).toBe(4);
+    state.preferences.signalAxis = "z";
+    expect(state.forFrame(frame).signalSlice).toBe(8);
+  });
+
   it("resets defaults only on an explicit new dataset", () => {
     const state = new DatasetPresentationState();
     state.beginDataset();

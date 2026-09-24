@@ -150,7 +150,7 @@ function updateSignalRange(): void {
   const axis = signalAxis.value as SliceAxis;
   const maximum = sliceDimension(frame.signalGrid, axis) - 1;
   signalRange.max = String(maximum);
-  signalRange.value = String(Math.min(selectedInteger(signalRange), maximum));
+  signalRange.value = String(presentation.forFrame(frame).signalSlice);
   sliceValue.value = signalRange.value;
 }
 
