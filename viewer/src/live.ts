@@ -1,6 +1,7 @@
 import { parseScene, type SceneFrame } from "./scene";
 
-export type LiveConnectionState = "connecting" | "connected" | "closed";
+export type LiveConnectionState =
+  "connecting" | "connected" | "stopping" | "stopped" | "closed";
 
 export interface LiveFrameMessage {
   readonly type: "frame";
@@ -21,11 +22,21 @@ export interface LiveErrorMessage {
   readonly message: string;
 }
 
+export interface LiveSessionMessage {
+  readonly type: "session";
+  readonly state: "stopping" | "stopped";
+}
+
 export type LiveMessage =
-  LiveFrameMessage | LiveCheckpointMessage | LiveErrorMessage;
+  | LiveFrameMessage
+  | LiveCheckpointMessage
+  | LiveErrorMessage
+  | LiveSessionMessage;
 
 export type LiveCommand =
-  | Readonly<{ type: "frame" | "play" | "pause" | "reset" | "checkpoint" }>
+  | Readonly<{
+      type: "frame" | "play" | "pause" | "reset" | "checkpoint" | "stop";
+    }>
   | Readonly<{ type: "step"; steps?: number }>;
 
 export interface LiveCallbacks {
@@ -130,12 +141,21 @@ export async function parseLiveMessage(encoded: string): Promise<LiveMessage> {
     exactKeys(message, "$", ["type", "message"]);
     return { type, message: string(message.message, "$.message") };
   }
+  if (type === "session") {
+    exactKeys(message, "$", ["type", "state"]);
+    if (message.state !== "stopping" && message.state !== "stopped") {
+      return fail("$.state", "unknown session state");
+    }
+    return { type, state: message.state };
+  }
   return fail("$.type", "unknown message type");
 }
 
 export class LiveConnection {
   private socket: WebSocket | null = null;
   private messageQueue = Promise.resolve();
+  private stopping = false;
+  private stopped = false;
 
   public constructor(
     private readonly token: string,
@@ -164,26 +184,50 @@ export class LiveConnection {
         return;
       }
       this.messageQueue = this.messageQueue
-        .then(async () =>
-          this.callbacks.message(await parseLiveMessage(encoded)),
-        )
+        .then(async () => {
+          if (this.stopped) return;
+          const message = await parseLiveMessage(encoded);
+          if (message.type === "session") {
+            this.stopping = true;
+            this.stopped = message.state === "stopped";
+            this.callbacks.state(message.state);
+          }
+          this.callbacks.message(message);
+        })
         .catch((error: unknown) => {
           this.callbacks.protocolError(
             error instanceof Error ? error.message : String(error),
           );
         });
     });
-    socket.addEventListener("error", () =>
-      this.callbacks.protocolError("live connection failed"),
-    );
-    socket.addEventListener("close", () => this.callbacks.state("closed"));
+    socket.addEventListener("error", () => {
+      void this.messageQueue.then(() => {
+        if (!this.stopped)
+          this.callbacks.protocolError("live connection failed");
+      });
+    });
+    socket.addEventListener("close", () => {
+      // Scene digest verification is asynchronous. Drain messages before close,
+      // otherwise a valid stopped notification can race with disconnected UI.
+      void this.messageQueue.then(() => {
+        if (!this.stopped) this.callbacks.state("closed");
+      });
+    });
   }
 
   public send(command: LiveCommand): void {
+    if (this.stopping) {
+      if (command.type === "stop") return;
+      throw new LiveProtocolError("live session is stopping or stopped");
+    }
     if (this.socket?.readyState !== WebSocket.OPEN) {
       throw new LiveProtocolError("live connection is not ready");
     }
     this.socket.send(JSON.stringify(command));
+    if (command.type === "stop") {
+      this.stopping = true;
+      this.callbacks.state("stopping");
+    }
   }
 
   public close(): void {

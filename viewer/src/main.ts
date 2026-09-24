@@ -78,6 +78,7 @@ const livePlay = required<HTMLButtonElement>("live-play");
 const liveStep = required<HTMLButtonElement>("live-step");
 const liveReset = required<HTMLButtonElement>("live-reset");
 const liveCheckpoint = required<HTMLButtonElement>("live-checkpoint");
+const liveStop = required<HTMLButtonElement>("live-stop");
 
 let openRequest = 0;
 let frame: SceneFrame | null = null;
@@ -495,6 +496,7 @@ function updateLiveControls(): void {
   liveStep.disabled = !liveConnected;
   liveReset.disabled = !liveConnected;
   liveCheckpoint.disabled = !liveConnected || !liveCheckpointEnabled;
+  liveStop.disabled = !liveConnected;
   livePlay.textContent = livePlaying ? "Pause" : "Play";
 }
 
@@ -508,11 +510,21 @@ function liveState(state: LiveConnectionState): void {
       ? "Connecting"
       : state === "connected"
         ? "Live"
-        : "Disconnected";
+        : state === "stopping"
+          ? "Stopping"
+          : state === "stopped"
+            ? "Stopped"
+            : "Disconnected";
   liveTransport.dataset.state = state;
   updateLiveControls();
   if (state === "closed") {
     setStatus("Live simulation disconnected", "error");
+  } else if (state === "stopping") {
+    setStatus("Stopping session after the current operation finishes…");
+  } else if (state === "stopped") {
+    setStatus(
+      "Session stopped. You can launch another model from the terminal.",
+    );
   }
 }
 
@@ -535,14 +547,14 @@ function liveMessage(message: LiveMessage): void {
     liveFrame(message);
   } else if (message.type === "checkpoint") {
     setStatus(`Checkpoint saved to ${message.path}`);
-  } else {
+  } else if (message.type === "error") {
     setStatus(message.message, "error");
   }
 }
 
 function sendLive(
   command:
-    | { type: "play" | "pause" | "reset" | "checkpoint" }
+    | { type: "play" | "pause" | "reset" | "checkpoint" | "stop" }
     | { type: "step"; steps: number },
 ): void {
   try {
@@ -583,6 +595,7 @@ liveReset.addEventListener("click", () => sendLive({ type: "reset" }));
 liveCheckpoint.addEventListener("click", () =>
   sendLive({ type: "checkpoint" }),
 );
+liveStop.addEventListener("click", () => sendLive({ type: "stop" }));
 
 window.addEventListener(
   "beforeunload",
