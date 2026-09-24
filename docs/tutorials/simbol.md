@@ -4,6 +4,8 @@ SimBOL connects an SBOL 3 design to simulator-specific code through a summarized
 
 The six circuit models start in XY and use XY-only division jitter without mechanical walls. The Danino clock uses a finite-height trap. Both retain three-dimensional mechanics; see [division jitter, confinement, and out-of-plane motion](planarity.md).
 
+For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
+
 These are explicit example models, not a general SBOL-to-rate-plan import path. The [source reference](../compatibility/tutorial-source-provenance.md#simbol-source-workflow) describes how they relate to the SimBOL notebook, generated Python, and JSON fixtures.
 
 ## Run the six circuits
@@ -13,6 +15,7 @@ Use one model and select a circuit:
 ```console
 uv run microsimulator view \
   --model examples/tutorials/simbol_circuits.py \
+  --backend cpu \
   --parameter circuit='"bba_0001"' \
   --seed 42 \
   --dt 0.01 \
@@ -35,6 +38,7 @@ Parameters are JSON numbers:
 ```console
 uv run microsimulator run \
   --model examples/tutorials/simbol_circuits.py \
+  --backend cpu \
   --parameter circuit='"bba_0004"' \
   --parameter inducer_concentration=4.0 \
   --seed 42 \
@@ -117,6 +121,7 @@ These choices change trajectories relative to the generated callback scripts. A 
 ```console
 uv run microsimulator view \
   --model examples/tutorials/danino_clock.py \
+  --backend cpu \
   --seed 42 \
   --dt 0.005 \
   --open

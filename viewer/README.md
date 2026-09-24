@@ -2,6 +2,8 @@
 
 The MicroSimulator viewer displays cells, device walls, and signal fields so you can inspect a population in its microfluidic environment. Use it to explore saved scenes or follow a live simulation with growth-rate coloring, nutrient slices, and individual-cell inspection.
 
+See [tutorial commands by backend and shell](../docs/tutorials/commands.md#live-view-stop-and-restart) for copyable CPU/Metal/CUDA selection, PowerShell quoting, paths with spaces, checkpoint resume, and Stop/restart. Multiline commands below use POSIX shell backslashes.
+
 The viewer is a TypeScript and Three.js client for `microsimulator-scene` documents. Standalone mode reads scene files; live mode sends typed controls to a Python-owned engine session and verifies every returned scene document. Python owns the model, simulation clock, backend, and checkpoint writer.
 
 ## Run locally
@@ -45,7 +47,7 @@ For example, after stopping the trap model above, launch a different model on th
 uv run microsimulator view --model examples/tutorials/biophysics.py --backend cpu --seed 42 --dt 0.02 --port 8765 --open
 ```
 
-The command is a single line and also works in PowerShell where the Python/native build is available. To distinguish Windows console behavior from browser behavior, use this manual verification procedure in an attached PowerShell or Command Prompt console:
+The command is a single line and also works in PowerShell 7.3+ where the Python/native build is available; configure [Standard argument passing](../docs/tutorials/commands.md#choose-a-shell) for JSON-valued parameters. To distinguish Windows console behavior from browser behavior, use this manual verification procedure in an attached PowerShell or Command Prompt console:
 
 1. Record the Windows version, terminal application/version, Python version, and exact launch command. Start the command above and click Stop while paused. Confirm the prompt returns, then start the second model on port 8765.
 2. Repeat with Play active and `--frame-steps 10000`. Confirm Stopping transitions to Stopped without finishing the entire batch.
@@ -54,7 +56,7 @@ The command is a single line and also works in PowerShell where the Python/nativ
 
 The automated `python/tests/test_viewer_shutdown.py` suite covers same-socket Stop, checkpoint completion, worker cleanup, and repeated real subprocess restarts. It sends SIGINT on POSIX. On Windows it starts each viewer in an isolated console and uses a separate attached sender to deliver a real [Windows CTRL_C_EVENT](https://learn.microsoft.com/en-us/windows/console/generateconsolectrlevent), leaving the test runner unaffected. Both paths verify orderly browser notifications, clean process exit, and three different models reusing the same port. This exercises the operating-system interruption path; use the manual procedure above to check a particular interactive terminal application and keyboard configuration.
 
-The `Windows live-session shutdown` GitHub Actions job builds the CPU extension on `windows-2025` and runs the server and shutdown tests, including isolated-console Ctrl+C, with dependencies from `uv.lock`. Its uploaded report records Windows, PowerShell, Python, backend availability, and individual test results.
+The `Windows CLI and live-session checks` GitHub Actions job builds the CPU extension on `windows-2025` and runs the server and shutdown tests, including isolated-console Ctrl+C, with dependencies from `uv.lock`. Its uploaded report records Windows, PowerShell, Python, backend availability, and individual test results.
 
 ## Capabilities
 

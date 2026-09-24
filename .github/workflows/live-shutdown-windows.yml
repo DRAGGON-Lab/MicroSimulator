@@ -1,4 +1,4 @@
-name: Windows live-session shutdown
+name: Windows CLI and live-session checks
 
 on:
   pull_request:
@@ -7,10 +7,14 @@ on:
       - CMakeLists.txt
       - cpp/**
       - python/**
+      - docs/tutorials/**
+      - docs/development/tutorial-command-validation.md
+      - environments/**/README.md
+      - viewer/README.md
       - pyproject.toml
       - uv.lock
   push:
-    branches: [master, marpaia/17]
+    branches: [master, marpaia/17, marpaia/24]
   workflow_dispatch:
 
 permissions:
@@ -31,6 +35,7 @@ jobs:
       CMAKE_BUILD_PARALLEL_LEVEL: "2"
       # Exercise the host reference engine without requiring a GPU toolkit.
       CMAKE_ARGS: -DCM_ENABLE_METAL=OFF -DCM_ENABLE_CUDA=OFF -DCM_BUILD_TESTS=OFF
+      MICROSIMULATOR_COMMAND_REPORT: build/shutdown-evidence/tutorial-commands
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -59,6 +64,11 @@ jobs:
           uv run --no-sync python -m pytest
           python/tests/test_viewer_server.py python/tests/test_viewer_shutdown.py
           -v --tb=short --junitxml=build/shutdown-evidence/tests.xml
+
+      - name: Execute the documented PowerShell CLI commands
+        run: >-
+          uv run --no-sync python -m pytest python/tests/test_tutorial_commands.py
+          -v --tb=short --junitxml=build/shutdown-evidence/tutorial-commands.xml
 
       - name: Upload shutdown evidence
         if: ${{ always() }}

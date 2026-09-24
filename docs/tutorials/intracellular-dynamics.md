@@ -4,6 +4,8 @@ This tutorial introduces intracellular concentrations, growth dilution, typed ra
 
 All five scenarios use XY-only division jitter and start with centers at Z=0, but add no mechanical walls. Their cells retain three-dimensional translations and rotations. See [division jitter and out-of-plane motion](planarity.md) before treating a planar-looking trajectory as a strict 2D model.
 
+For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
+
 All five gene-expression scenarios request a founder centerline length of 3.5 and cap it at the one sampled division target. Initial concentrations are unchanged; the smaller biomass can change total initial amount. See [founder initialization and volume conventions](biophysics-and-growth.md#length-and-volume).
 
 ## The native species contract
@@ -26,6 +28,7 @@ Equal division copies concentrations to both daughters. Since their effective vo
 ```console
 uv run microsimulator view \
   --model examples/tutorials/gene_expression.py \
+  --backend cpu \
   --parameter scenario='"constitutive"' \
   --seed 42 \
   --dt 0.01 \
@@ -56,6 +59,7 @@ The `legacy_constitutive` scenario provides an alternative parameterization with
 ```console
 uv run microsimulator view \
   --model examples/tutorials/gene_expression.py \
+  --backend cpu \
   --parameter scenario='"dilution"' \
   --seed 42 \
   --dt 0.01 \
@@ -69,6 +73,7 @@ The founder starts at `x = 10` and the explicit chemical rate is zero. Any decli
 ```console
 uv run microsimulator view \
   --model examples/tutorials/gene_expression.py \
+  --backend cpu \
   --parameter scenario='"derepression"' \
   --seed 42 \
   --dt 0.01 \
@@ -89,6 +94,7 @@ As growth dilutes `x0`, reporter production approaches one. Inspect both channel
 ```console
 uv run microsimulator view \
   --model examples/tutorials/gene_expression.py \
+  --backend cpu \
   --parameter scenario='"oscillator"' \
   --seed 42 \
   --dt 0.005 \
@@ -113,6 +119,7 @@ Create periodic checkpoints, export them, and plot or inspect one stable cell li
 ```console
 uv run microsimulator run \
   --model examples/tutorials/gene_expression.py \
+  --backend cpu \
   --parameter scenario='"oscillator"' \
   --seed 42 \
   --steps 400 \
