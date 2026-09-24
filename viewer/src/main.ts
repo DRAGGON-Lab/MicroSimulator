@@ -11,6 +11,7 @@ import {
 } from "./live";
 import {
   MAX_SCENE_BYTES,
+  channelLabel,
   parseScene,
   type SceneCell,
   type SceneFrame,
@@ -103,14 +104,14 @@ function setStatus(message: string, kind: "info" | "error" = "info"): void {
 function options(
   select: HTMLSelectElement,
   count: number,
-  prefix: string,
+  label: (index: number) => string,
 ): void {
   const previous = selectedInteger(select);
   select.replaceChildren();
   for (let index = 0; index < count; index += 1) {
     const option = document.createElement("option");
     option.value = String(index);
-    option.textContent = `${prefix} ${index}`;
+    option.textContent = label(index);
     select.append(option);
   }
   select.value = String(Math.min(previous, Math.max(count - 1, 0)));
@@ -208,7 +209,10 @@ function updateSelection(cell: SceneCell | null): void {
     const item = document.createElement("li");
     const label = document.createElement("span");
     const encoded = document.createElement("code");
-    label.textContent = `Channel ${index}`;
+    label.textContent =
+      frame === null
+        ? `Channel ${index}`
+        : channelLabel(frame, "species", index);
     encoded.textContent = formatNumber(value);
     item.append(label, encoded);
     speciesValues.append(item);
@@ -248,7 +252,9 @@ function presentScene(
   gridShape.textContent =
     next.signalGrid === null ? "None" : next.signalGrid.shape.join(" × ");
 
-  options(speciesChannel, next.speciesCount, "Channel");
+  options(speciesChannel, next.speciesCount, (index) =>
+    channelLabel(next, "species", index),
+  );
   if (next.speciesCount === 0 && colorMode.value === "species") {
     colorMode.value = "cell-type";
   }
@@ -261,7 +267,9 @@ function presentScene(
 
   signalSection.hidden = next.signalGrid === null;
   if (next.signalGrid !== null) {
-    options(signalChannel, next.signalGrid.signalCount, "Channel");
+    options(signalChannel, next.signalGrid.signalCount, (index) =>
+      channelLabel(next, "signals", index),
+    );
     if (!sameShape(previous?.signalGrid ?? null, next.signalGrid)) {
       signalVisible.checked = true;
       signalAxis.value = "z";

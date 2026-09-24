@@ -1,7 +1,7 @@
 import canonicalize from "canonicalize";
 
 export const SCENE_FORMAT = "microsimulator-scene";
-export const SCENE_VERSION = 2;
+export const SCENE_VERSION = 3;
 export const MAX_SCENE_BYTES = 1 << 30;
 
 const UINT32_MAX = 2 ** 32 - 1;
@@ -97,10 +97,38 @@ export interface SceneSignalGrid {
   readonly levels: readonly number[];
 }
 
+export type ChannelKind = "species" | "signals";
+export interface ChannelMetadata {
+  readonly species: readonly (string | null)[];
+  readonly signals: readonly (string | null)[];
+}
+
+/** Presentation only. Numerical indices, never labels, identify channels. */
+export function channelLabel(
+  frame: SceneFrame,
+  kind: ChannelKind,
+  index: number,
+): string {
+  const labels = frame.channelMetadata[kind];
+  if (!Number.isInteger(index) || index < 0 || index >= labels.length) {
+    throw new RangeError(`${kind} channel ${index} is out of range`);
+  }
+  const display = (label: string | null | undefined, slot: number): string =>
+    label === null || label === undefined || label.trim() === ""
+      ? `Channel ${slot}`
+      : label;
+  const label = display(labels[index], index);
+  const duplicated = labels.some(
+    (other, slot) => slot !== index && display(other, slot) === label,
+  );
+  return duplicated ? `${label} [${index}]` : label;
+}
+
 export interface SceneFrame {
   readonly time: number;
   readonly backend: SceneBackend;
   readonly speciesCount: number;
+  readonly channelMetadata: ChannelMetadata;
   readonly cells: readonly SceneCell[];
   readonly constraints: SceneConstraints;
   readonly signalGrid: SceneSignalGrid | null;
@@ -551,7 +579,43 @@ function parseSignalGrid(value: unknown, path: string): SceneSignalGrid | null {
   };
 }
 
-function parseFrame(value: unknown, path: string): SceneFrame {
+function parseChannelMetadata(
+  value: unknown,
+  path: string,
+  speciesCount: number,
+  signalCount: number,
+): ChannelMetadata {
+  const data = record(value, path);
+  exactKeys(data, path, ["species", "signals"]);
+  function labels(
+    kind: ChannelKind,
+    count: number,
+  ): readonly (string | null)[] {
+    const values = array(data[kind], `${path}.${kind}`);
+    if (values.length !== count) {
+      return fail(
+        `${path}.${kind}`,
+        `expected ${count} labels, got ${values.length}`,
+      );
+    }
+    return values.map((value, index) => {
+      if (value === null) return null;
+      const label = string(value, `${path}.${kind}[${index}]`);
+      if (/[\uD800-\uDFFF]/u.test(label))
+        return fail(
+          `${path}.${kind}[${index}]`,
+          "invalid Unicode scalar value",
+        );
+      return label;
+    });
+  }
+  return {
+    species: labels("species", speciesCount),
+    signals: labels("signals", signalCount),
+  };
+}
+
+function parseFrame(value: unknown, path: string, version: number): SceneFrame {
   const data = record(value, path);
   exactKeys(data, path, [
     "time",
@@ -560,6 +624,7 @@ function parseFrame(value: unknown, path: string): SceneFrame {
     "cells",
     "constraints",
     "signal_grid",
+    ...(version >= 3 ? ["channel_metadata"] : []),
   ]);
   const time = number(data.time, `${path}.time`);
   if (time < 0) {
@@ -587,13 +652,29 @@ function parseFrame(value: unknown, path: string): SceneFrame {
     }
     identifiers.add(cell.id);
   }
+  const signalGrid = parseSignalGrid(data.signal_grid, `${path}.signal_grid`);
+  const signalCount = signalGrid?.signalCount ?? 0;
+  // Digest verification has already completed against the unmodified source frame.
+  const channelMetadata =
+    version >= 3
+      ? parseChannelMetadata(
+          data.channel_metadata,
+          `${path}.channel_metadata`,
+          speciesCount,
+          signalCount,
+        )
+      : {
+          species: Array<string | null>(speciesCount).fill(null),
+          signals: Array<string | null>(signalCount).fill(null),
+        };
   return {
     time,
+    channelMetadata,
     backend: parseBackend(data.backend, `${path}.backend`),
     speciesCount,
     cells,
     constraints: parseConstraints(data.constraints, `${path}.constraints`),
-    signalGrid: parseSignalGrid(data.signal_grid, `${path}.signal_grid`),
+    signalGrid,
   };
 }
 
@@ -639,7 +720,8 @@ export async function parseScene(source: string): Promise<SceneFrame> {
   ) {
     return fail("$.format", "not a MicroSimulator scene");
   }
-  if (integer(root.version, "$.version", 0, UINT32_MAX) !== SCENE_VERSION) {
+  const version = integer(root.version, "$.version", 0, UINT32_MAX);
+  if (version !== 2 && version !== SCENE_VERSION) {
     return fail(
       "$.version",
       `unsupported scene version ${String(root.version)}`,
@@ -672,5 +754,5 @@ export async function parseScene(source: string): Promise<SceneFrame> {
   if (actualDigest !== expectedDigest) {
     return fail("$.integrity.frame", "frame digest does not match");
   }
-  return parseFrame(root.frame, "$.frame");
+  return parseFrame(root.frame, "$.frame", version);
 }

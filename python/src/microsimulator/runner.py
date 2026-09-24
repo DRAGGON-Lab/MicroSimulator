@@ -18,6 +18,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     Simulation,
     backend_available,
 )
+from .channels import ChannelMetadata, ChannelMetadataError
 from .checkpoint import CheckpointBundle, JSONValue, save_checkpoint
 from .controller import SimulationController
 
@@ -100,6 +101,19 @@ def native_simulation(model: object) -> Simulation:
     if not isinstance(simulation, Simulation):
         raise BatchError("controller simulation is not a native Simulation")
     return simulation
+
+
+def model_channel_metadata(model: RunnableModel) -> ChannelMetadata:
+    """Read optional model labels without extending the required controller protocol."""
+
+    value = cast(object, getattr(model, "channel_metadata", ChannelMetadata()))
+    if not isinstance(value, ChannelMetadata):
+        raise BatchError("model channel_metadata must be ChannelMetadata")
+    native = native_simulation(model)
+    try:
+        return value.resolved(native.species_count, native.signal_count)
+    except ChannelMetadataError as error:
+        raise BatchError(str(error)) from error
 
 
 def controller_state(model: RunnableModel) -> JSONValue:
@@ -197,12 +211,11 @@ def run_simulation(
         raise BatchError("cell-count threshold must be a positive uint64 value")
     native = native_simulation(simulation)
     native.validate()
+    model_channel_metadata(simulation)
 
     destination = Path(output)
     periodic_steps = (
-        tuple(range(checkpoint_every, steps + 1, checkpoint_every))
-        if checkpoint_every > 0
-        else ()
+        tuple(range(checkpoint_every, steps + 1, checkpoint_every)) if checkpoint_every > 0 else ()
     )
     periodic_paths = tuple(_periodic_path(destination, step) for step in periodic_steps)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -256,6 +269,7 @@ def run_simulation(
                         stop_cell_count=stop_cell_count,
                     ),
                     controller=controller_state(simulation),
+                    channel_metadata=model_channel_metadata(simulation),
                 )
                 written_periodic.append(periodic)
             if reached_cell_count:
@@ -275,6 +289,7 @@ def run_simulation(
             stop_cell_count=stop_cell_count,
         ),
         controller=controller_state(simulation),
+        channel_metadata=model_channel_metadata(simulation),
     )
     return RunSummary(
         completed_steps=completed_steps,
@@ -327,9 +342,7 @@ def build_model(
         else:
             resume_value = module.__dict__.get("resume")
             if not callable(resume_value):
-                raise BatchError(
-                    f"model {source_path} must define resume(context, checkpoint)"
-                )
+                raise BatchError(f"model {source_path} must define resume(context, checkpoint)")
             resume = cast(Callable[[ModelContext, CheckpointBundle], object], resume_value)
             model_value = resume(context, checkpoint)
             entrypoint = "resume(context, checkpoint)"
@@ -346,19 +359,22 @@ def build_model(
 
     if not isinstance(model_value, Simulation | SimulationController):
         raise BatchError(
-            f"model {source_path} {entrypoint} did not return a Simulation or "
-            "SimulationController"
+            f"model {source_path} {entrypoint} did not return a Simulation or SimulationController"
         )
     simulation = native_simulation(model_value)
     if checkpoint is not None and simulation is not checkpoint.simulation:
         raise BatchError(
-            f"model {source_path} resume(context, checkpoint) did not use "
-            "checkpoint.simulation"
+            f"model {source_path} resume(context, checkpoint) did not use checkpoint.simulation"
         )
     info = simulation.backend_info
     if info.kind != context.backend or info.device_index != context.device_index:
         raise BatchError("model returned a simulation on a different backend or device")
     simulation.validate()
+    labels = model_channel_metadata(model_value)
+    if checkpoint is not None and labels != checkpoint.channel_metadata.resolved(
+        simulation.species_count, simulation.signal_count
+    ):
+        raise BatchError("resumed model channel metadata differs from checkpoint")
     provenance: dict[str, JSONValue] = {
         "model": {
             "path": str(source_path),

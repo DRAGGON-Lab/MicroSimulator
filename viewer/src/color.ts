@@ -1,4 +1,4 @@
-import type { SceneCell, SceneFrame } from "./scene";
+import { channelLabel, type SceneCell, type SceneFrame } from "./scene";
 
 export type RGB = readonly [number, number, number];
 export type ColorMode = "cell-type" | "species" | "growth-rate" | "fixed";
@@ -128,7 +128,7 @@ export function mapCellColors(
       return scalarMapping(
         frame.cells,
         frame.cells.map((cell) => cell.species[config.speciesIndex] ?? 0),
-        `Species ${config.speciesIndex}`,
+        channelLabel(frame, "species", config.speciesIndex),
       );
     }
   }
