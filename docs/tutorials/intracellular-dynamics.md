@@ -2,6 +2,8 @@
 
 This tutorial introduces intracellular concentrations, growth dilution, typed rate equations, gene-circuit feedback, and quantitative time-course analysis. The runnable scenarios are collected in `examples/tutorials/gene_expression.py`.
 
+All five gene-expression scenarios request a founder centerline length of 3.5 and cap it at the one sampled division target. Initial concentrations are unchanged; the smaller biomass can change total initial amount. See [founder initialization and volume conventions](biophysics-and-growth.md#length-and-volume).
+
 ## The native species contract
 
 A simulation declares one immutable species count. Each cell contains exactly that many finite single-precision concentrations. A typed rate plan returns one concentration-per-time derivative for each channel.
