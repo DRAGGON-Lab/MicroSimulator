@@ -6,6 +6,7 @@ export interface PresentationPreferences {
   colorMode: ColorMode;
   speciesChannel: number;
   signalVisible: boolean;
+  deviceVisible: boolean;
   signalChannel: number;
   signalAxis: SliceAxis;
   signalSlice: number | null;
@@ -16,6 +17,7 @@ function defaults(): PresentationPreferences {
     colorMode: "cell-type",
     speciesChannel: 0,
     signalVisible: true,
+    deviceVisible: true,
     signalChannel: 0,
     signalAxis: "z",
     signalSlice: null,
