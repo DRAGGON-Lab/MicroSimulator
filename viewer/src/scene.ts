@@ -248,7 +248,7 @@ function floatArray(value: unknown, path: string): readonly number[] {
   );
 }
 
-function parseBackend(value: unknown, path: string): SceneBackend {
+export function parseSceneBackend(value: unknown, path: string): SceneBackend {
   const data = record(value, path);
   exactKeys(data, path, ["kind", "name", "device", "device_index", "native"]);
   const kind = string(data.kind, `${path}.kind`);
@@ -670,7 +670,7 @@ function parseFrame(value: unknown, path: string, version: number): SceneFrame {
   return {
     time,
     channelMetadata,
-    backend: parseBackend(data.backend, `${path}.backend`),
+    backend: parseSceneBackend(data.backend, `${path}.backend`),
     speciesCount,
     cells,
     constraints: parseConstraints(data.constraints, `${path}.constraints`),

@@ -104,3 +104,23 @@ When all channels are disabled or unavailable, cells use neutral gray and the le
 Tints, visibility, list order, and ranges remain associated with numerical channel identity when labels change or data temporarily disappears. Single-species and composite views share each species channel's range. Same-model reset and frame seeking retain settings; opening another dataset restores defaults. The cell inspector, picking, selection highlights, and lineage values continue using the original cell state.
 
 `browser/composite-species.mjs` exercises red-only, green-only, co-expressing, and zero-expression cells in a moving colony, verifies the rendered instance colors, and checks controls, ordering, picking, highlighting, lineage, and dataset transitions. It uses a Vite server on port 4319 (or `VIEWER_URL`) and the same Playwright/evidence environment variables as the other browser checks.
+
+## Replay a recording
+
+Record periodic checkpoints using the short native growth/division/removal example, then list the checkpoint paths in the order they should play:
+
+```sh
+uv run microsimulator run --model examples/replay_demo.py --backend cpu --seed 17 --steps 5 --dt 0.2 --checkpoint-every 1 --output run/replay.json
+uv run microsimulator export-replay run/replay.step-00000001.json run/replay.step-00000002.json run/replay.step-00000003.json run/replay.step-00000004.json run/replay.step-00000005.json --output run/replay-bundle
+pnpm --dir viewer dev
+```
+
+Open the displayed viewer URL, choose **Open recording**, and select the `run/replay-bundle` folder. Select the folder itself, containing `manifest.json` and `frames`, rather than one frame file. The standalone viewer reads the selected local files; no simulation server or source GPU is required.
+
+Use Play/Pause, Previous/Next, the frame slider and Frames/s. Slider arrow keys seek one recorded frame; the buttons also work with keyboard focus. Manual seeking pauses playback. The transport displays a one-based frame position and recorded simulation time, while the manifest uses zero-based ordinals. Equal-time frames remain individually selectable. Playback stops at the end; Play then restarts from frame one. Opening a static scene ends the recording session.
+
+Source paths are used exactly in command-line order; avoid relying on shell globs to establish chronological ordering. The final `run/replay.json` duplicates the last periodic state in this example and is intentionally omitted. Decreasing times cause an error. The exporter refuses existing destinations; choose a new bundle directory for another export. Model parameters and source are unnecessary for export, and no callbacks execute during playback.
+
+The reader loads frames on demand through a bounded three-frame/64 MiB accounting-budget LRU cache; it does not decode the whole recording. Oversized frames are uncached, and renderer/current-load allocations exist outside that cache. See the [replay format](../docs/formats/replay-v1.md) for integrity, provenance, resource bounds and failure behavior. This first implementation imports checkpoint sequences; live recording, video export and timeline-based simulation restart are separate features.
+
+For browser regression checks, generate native fixtures with `.venv/bin/python viewer/browser/replay-fixtures.py /tmp/replay-fixtures`, run the viewer on port 4326, then run `viewer/browser/replay.mjs` with `REPLAY_FIXTURES=/tmp/replay-fixtures` and `MICROSIMULATOR_PLAYWRIGHT_MODULE` pointing to an installed Playwright module. This uses the existing shared browser harness and adds no production debug API.
