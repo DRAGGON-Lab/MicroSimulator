@@ -147,11 +147,17 @@ export class ReplayController {
   }
   public play(): void {
     if (this.disposed) return;
+    const retryFailedFrame = this.error !== null;
     this.playing = true;
     this.error = null;
-    if (this.index === null || this.index === this.frameCount - 1)
-      this.request(0);
-    else if (!this.loading) this.schedule();
+    // A pending or failed seek owns the requested destination, even when the
+    // last successfully displayed frame was the end of the recording.
+    if (!this.loading) {
+      if (retryFailedFrame || this.index === null)
+        this.request(this.requestedIndex);
+      else if (this.index === this.frameCount - 1) this.request(0);
+      else this.schedule();
+    }
     this.emit();
   }
   public setFps(fps: number): void {
