@@ -433,7 +433,9 @@ def test_real_tcp_backpressure_releases_connections_and_reuses_port(
                             return
                         await healthy.send_json({"type": "frame"})
                         requests_sent += 1
-                        await asyncio.wait_for(frames.get(), 5)
+                        # The enclosing 15-second setup budget owns this wait;
+                        # native capture is not part of the network deadline.
+                        await frames.get()
 
                 if sys.platform == "win32":
                     pump = asyncio.create_task(fill_windows_loopback())
