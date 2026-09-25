@@ -20,3 +20,20 @@ MICROSIMULATOR_PLAYWRIGHT_MODULE=/absolute/path/to/@playwright/test/index.mjs CA
 The performance fixture renders 512 cells after ten warmup frames, measuring 60 complete frame replacements (transform upload, coloring, rendering, and `gl.finish()` GPU synchronization). It reports median/p95 wall times, browser/WebGL renderer, three draw calls, per-mesh vertices/triangles, and geometry/buffer counts. Timings include CPU work and synchronization and are local regression evidence, not a cross-device benchmark. It tracks actual `createBuffer`/`deleteBuffer` calls to detect instance-buffer leaks that `renderer.info.memory.geometries` alone misses. Corrected mode requires stable buffer counts across replacements and zero tracked buffers after an empty frame and viewer disposal.
 
 Inspect the PNGs and recorded WebM listed in `results.json`. Compare the tangent joins under identical lighting, distinguishing the reproduced ring seams from silhouette tessellation, pixel aliasing, and the fixture's deliberately changing orientation/position. Do not use test/build success alone to declare the visual artifact resolved.
+
+## Combined feedback campaign
+
+The validation branch includes `feedback-fixtures.py` and `feedback-integration.mjs` to exercise the completed issue stack together. The native exporter produces a growth/division/removal recording and constant-concentration presentation snapshots with missing/reappearing signal grids and device geometry. The browser check verifies fixed species/signal ranges, composite tints/order/enabled state, device visibility, stable-ID selection, camera/reference-grid retention, reverse/rapid seeking, damaged-frame recovery, keyboard navigation and the supported 880px layout. These synthetic presentation transitions are not claims about evolving native device geometry.
+
+```console
+uv run --no-sync python viewer/browser/feedback-fixtures.py /tmp/microsimulator-feedback/fixtures-v3
+pnpm --dir viewer dev --host 127.0.0.1 --port 4330
+```
+
+In another POSIX terminal, run:
+
+```console
+MICROSIMULATOR_PLAYWRIGHT_MODULE=/absolute/path/to/@playwright/test/index.mjs EVIDENCE_DIR=/tmp/microsimulator-feedback node viewer/browser/feedback-integration.mjs
+```
+
+Use a new fixture/output directory for another export. Existing issue browser hooks accept Vite's cache-busting module query strings so hot reload during combined validation does not disable test-only observation. These scripts never install production debug globals.

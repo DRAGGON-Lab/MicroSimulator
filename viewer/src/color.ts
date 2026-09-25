@@ -1,5 +1,10 @@
 import { channelLabel, type SceneFrame } from "./scene";
 import {
+  mapCompositeSpecies,
+  type CompositeChannelConfig,
+  type CompositeChannelLegend,
+} from "./composite-color";
+import {
   AUTOMATIC_SCALAR_RANGE,
   normalizeScalar,
   resolveScalarRange,
@@ -8,12 +13,14 @@ import {
 } from "./scalar-range";
 
 export type RGB = readonly [number, number, number];
-export type ColorMode = "cell-type" | "species" | "growth-rate" | "fixed";
+export type ColorMode =
+  "cell-type" | "species" | "composite" | "growth-rate" | "fixed";
 
 export interface ColorConfig {
   readonly mode: ColorMode;
   readonly speciesIndex: number;
   readonly range?: ScalarRangeConfig;
+  readonly compositeChannels?: readonly CompositeChannelConfig[];
 }
 
 export interface ColorMapping {
@@ -22,6 +29,7 @@ export interface ColorMapping {
   readonly minimum: number | null;
   readonly maximum: number | null;
   readonly range: ResolvedScalarRange | null;
+  readonly composite?: readonly CompositeChannelLegend[];
 }
 
 const TYPE_PALETTE: readonly RGB[] = [
@@ -98,6 +106,20 @@ export function mapCellColors(
   config: ColorConfig,
 ): ColorMapping {
   switch (config.mode) {
+    case "composite": {
+      const mapping = mapCompositeSpecies(
+        frame,
+        config.compositeChannels ?? [],
+      );
+      return {
+        colors: mapping.colors,
+        title: "Species composite",
+        minimum: null,
+        maximum: null,
+        range: null,
+        composite: mapping.channels,
+      };
+    }
     case "cell-type":
       return {
         colors: frame.cells.map((cell) => {

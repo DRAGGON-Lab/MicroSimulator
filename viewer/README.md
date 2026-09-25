@@ -86,10 +86,6 @@ pnpm --dir viewer build
 
 The unit suite includes a Python-authored scene fixture whose digest contains floating-point values that ordinary Python and JavaScript JSON serializers spell differently. Passing that test is the cross-language integrity gate.
 
-Capsule geometry tests verify the scene's cylindrical centerline length, constant radius, spherical ends, zero-length sphere case, arbitrary orientation, outward topology, exact equator positions/normals, and ray picking. The selected-cell overlay uses the same geometry with radius increased by 8%; the cap centers retain the original centerline length. Three instanced draw calls represent the colony, independent of cell count. Replacing frames disposes both geometry and instance buffers.
-
-For visual and GPU-resource checks, see [the capsule browser regression](browser/README.md). Mesh tessellation and pixel aliasing can still affect silhouettes at distant zoom levels; the shared tangent joins specifically remove overlapping end disks and mismatched sphere/cylinder boundaries. The viewer does not smooth or modify simulated cell motion.
-
 ## Dataset presentation lifecycle
 
 Opening a scene file, live session, or recording begins a new dataset. Call `DatasetPresentationState.beginDataset()` and `ColonyViewer.beginDataset()` once, then present its first frame with `setFrame(frame, true)` to fit the camera. Ordinary updates, a reset of the same live model, and recording seeks use `setFrame(frame)` without beginning a dataset. Neither simulation time returning to zero nor a changed signal-grid shape identifies a new dataset.
@@ -99,6 +95,38 @@ Opening a scene file, live session, or recording begins a new dataset. Call `Dat
 The ground reference grid is separate from the scientific signal lattice. Its square extent and origin come from the first frame's finite device geometry (boxes, spheres, and cylinders), or from the initial cell capsule bounds when no finite device exists. Infinite plane constraints are excluded. The extent is at least 10 scene distance units with 20 equal divisions; the grid plane is 0.01 units below the lesser of the initial lower Z bound and zero. An initially empty dataset uses a 10-unit grid centered on the world origin. These values remain fixed even when cells or device geometry appear later, the colony expands beyond the grid, or all cells disappear. Opening another dataset initializes a new reference grid; camera Fit never changes its geometry.
 
 `browser/reference-grid.mjs` verifies the reference grid and presentation lifecycle in Chromium against a running Vite server. It uses Playwright (`@playwright/test`) and its installed Chromium; a shared installation can be supplied through `MICROSIMULATOR_PLAYWRIGHT_MODULE` as an absolute module filename. Set `VIEWER_URL` if the server is not on `http://127.0.0.1:4320`, and `EVIDENCE_DIR` to choose the screenshot directory. The test observes renderer transforms through test-only request instrumentation and introduces no production debug interface.
+
+## Concentration color ranges
+
+Species coloring and signal slices each offer Automatic and Fixed color ranges. Automatic uses the current frame's species extrema or the selected signal slice's extrema. Constant automatic data uses the midpoint color and a uniform legend; empty automatic data shows “no values” without numerical bounds. Fixed uses the entered minimum and maximum across frames and slices. Values outside that interval use endpoint colors; the underlying concentrations and inspector values remain unchanged.
+
+Switching to Fixed starts from the current extrema (with finite padding for constant data), or restores that channel's previously entered fixed bounds. Edit both bounds and choose Apply range or press Enter. Bounds accept finite decimal numbers, including negative numbers and scientific notation, with minimum strictly less than maximum. Invalid or incomplete edits show an explanation and leave the last valid range active. Legends always describe the active range rather than unsubmitted text.
+
+Settings belong to the numerical species or signal channel within the current dataset. They survive temporarily missing channels/grids, live updates, same-model reset, and frame seeking; opening another dataset restores automatic defaults. The shared `resolveScalarRange()` and `normalizeScalar()` APIs reject non-finite data explicitly, retain zero-valued and negative data, and avoid overflowing the difference between extreme finite bounds. They produce display intensity only and do not modify model data.
+
+`browser/scalar-ranges.mjs` checks actual cell instance colors, signal texture pixels, legends, validation messages, keyboard interaction, and dataset transitions in Chromium. Run it with a Vite server on port 4315, or set `VIEWER_URL`, using the same optional Playwright module and evidence-directory environment variables as the reference-grid test.
+
+## Channel labels
+
+Model-defined species and signal names appear in channel selectors, the species legend, and cell inspection. Duplicate names include their channel indices; unnamed channels retain `Channel N`. Names are presentation text; indices continue to identify selected channels. Current readers accept scene v2 and v3, while writers emit v3. See the [authoring guide](../docs/models/channel-labels.md) and [scene v3 schema](../docs/formats/scene-v3.md).
+
+### Device geometry visibility
+
+Use **Show device geometry** in the Scene panel to hide all mechanical constraint meshes and their outlines. The control is disabled when the current frame contains no geometry, while its preference is retained for later frames. Visibility persists through live updates, reset, and replay seeks, and defaults to enabled on opening another dataset. Cells, selection, the reference grid, signal slices, camera pose, and the existing Fit bounds policy are independent of this display setting. No simulation constraint or transport obstacle is changed.
+
+`browser/device-visibility.mjs` verifies all four constraint types, outlines, keyboard toggling, cell picking, sibling visibility, frame/reset retention, missing geometry, camera and Fit invariance, and new-dataset defaults against Vite on port 4323. It uses the same Playwright module and evidence-directory options as the reference-grid browser test.
+
+## Composite species colors
+
+Choose Species composite to display several intracellular channels together. The first two available channels initially use red and green and are enabled; additional channels start disabled. Enable or disable each channel with its checkbox. Display settings exposes its tint (a six-digit sRGB hexadecimal color), the same Automatic/Fixed range editor used by single-species coloring, and controls for reordering the list. Tint or range changes apply when submitted, and invalid edits preserve the active value.
+
+For each cell, every enabled channel is independently normalized with its selected range. Tints are decoded from sRGB into linear RGB; normalized intensity multiplies each linear tint, the contributions are added, and each summed component is clipped to one. The result is encoded back to sRGB for the existing renderer interface, which converts its instance colors to linear RGB. Channel-list order has no effect on the result. Full red and full green therefore produce yellow. The legend lists enabled channel names, tints, and active bounds. Three.js uses a small approximation in its sRGB encoding function; conversion tests bound the resulting error below 0.00001, well below an 8-bit color step.
+
+When all channels are disabled or unavailable, cells use neutral gray and the legend says no channels are active. With active channels and fixed zero-based bounds, zero intensity is black. Automatic constant data uses the same midpoint convention as single-species coloring, including a constant zero field; choose fixed zero-based bounds when zero should mean no displayed contribution. These colors are a presentation mapping, not calibrated fluorescence measurements. Lighting, tone mapping, and selection highlighting can further affect the final pixel appearance.
+
+Tints, visibility, list order, and ranges remain associated with numerical channel identity when labels change or data temporarily disappears. Single-species and composite views share each species channel's range. Same-model reset and frame seeking retain settings; opening another dataset restores defaults. The cell inspector, picking, selection highlights, and lineage values continue using the original cell state.
+
+`browser/composite-species.mjs` exercises red-only, green-only, co-expressing, and zero-expression cells in a moving colony, verifies the rendered instance colors, and checks controls, ordering, picking, highlighting, lineage, and dataset transitions. It uses a Vite server on port 4319 (or `VIEWER_URL`) and the same Playwright/evidence environment variables as the other browser checks.
 
 ## Replay a recording
 
@@ -120,22 +148,6 @@ The reader loads frames on demand through a bounded three-frame/64 MiB accountin
 
 For browser regression checks, generate native fixtures with `.venv/bin/python viewer/browser/replay-fixtures.py /tmp/replay-fixtures`, run the viewer on port 4326, then run `viewer/browser/replay.mjs` with `REPLAY_FIXTURES=/tmp/replay-fixtures` and `MICROSIMULATOR_PLAYWRIGHT_MODULE` pointing to an installed Playwright module. This uses the existing shared browser harness and adds no production debug API.
 
-## Concentration color ranges
+Capsule geometry tests verify the scene's cylindrical centerline length, constant radius, spherical ends, zero-length sphere case, arbitrary orientation, outward topology, exact equator positions/normals, and ray picking. The selected-cell overlay uses the same geometry with radius increased by 8%; the cap centers retain the original centerline length. Three instanced draw calls represent the colony, independent of cell count. Replacing frames disposes both geometry and instance buffers.
 
-Species coloring and signal slices each offer Automatic and Fixed color ranges. Automatic uses the current frame's species extrema or the selected signal slice's extrema. Constant automatic data uses the midpoint color and a uniform legend; empty automatic data shows “no values” without numerical bounds. Fixed uses the entered minimum and maximum across frames and slices. Values outside that interval use endpoint colors; the underlying concentrations and inspector values remain unchanged.
-
-Switching to Fixed starts from the current extrema (with finite padding for constant data), or restores that channel's previously entered fixed bounds. Edit both bounds and choose Apply range or press Enter. Bounds accept finite decimal numbers, including negative numbers and scientific notation, with minimum strictly less than maximum. Invalid or incomplete edits show an explanation and leave the last valid range active. Legends always describe the active range rather than unsubmitted text.
-
-Settings belong to the numerical species or signal channel within the current dataset. They survive temporarily missing channels/grids, live updates, same-model reset, and frame seeking; opening another dataset restores automatic defaults. The shared `resolveScalarRange()` and `normalizeScalar()` APIs reject non-finite data explicitly, retain zero-valued and negative data, and avoid overflowing the difference between extreme finite bounds. They produce display intensity only and do not modify model data.
-
-`browser/scalar-ranges.mjs` checks actual cell instance colors, signal texture pixels, legends, validation messages, keyboard interaction, and dataset transitions in Chromium. Run it with a Vite server on port 4315, or set `VIEWER_URL`, using the same optional Playwright module and evidence-directory environment variables as the reference-grid test.
-
-### Device geometry visibility
-
-Use **Show device geometry** in the Scene panel to hide all mechanical constraint meshes and their outlines. The control is disabled when the current frame contains no geometry, while its preference is retained for later frames. Visibility persists through live updates, reset, and replay seeks, and defaults to enabled on opening another dataset. Cells, selection, the reference grid, signal slices, camera pose, and the existing Fit bounds policy are independent of this display setting. No simulation constraint or transport obstacle is changed.
-
-`browser/device-visibility.mjs` verifies all four constraint types, outlines, keyboard toggling, cell picking, sibling visibility, frame/reset retention, missing geometry, camera and Fit invariance, and new-dataset defaults against Vite on port 4323. It uses the same Playwright module and evidence-directory options as the reference-grid browser test.
-
-## Channel labels
-
-Model-defined species and signal names appear in channel selectors, the species legend, and cell inspection. Duplicate names include their channel indices; unnamed channels retain `Channel N`. Names are presentation text; indices continue to identify selected channels. Current readers accept scene v2 and v3, while writers emit v3. See the [authoring guide](../docs/models/channel-labels.md) and [scene v3 schema](../docs/formats/scene-v3.md).
+For visual and GPU-resource checks, see [the capsule browser regression](browser/README.md). Mesh tessellation and pixel aliasing can still affect silhouettes at distant zoom levels; the shared tangent joins specifically remove overlapping end disks and mismatched sphere/cylinder boundaries. The viewer does not smooth or modify simulated cell motion.

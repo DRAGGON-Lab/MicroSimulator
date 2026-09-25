@@ -8,6 +8,8 @@ import {
 } from "./scalar-range";
 import { ScalarRangeControls } from "./scalar-range-controls";
 import { ColonyViewer } from "./colony-viewer";
+import { CompositeSpeciesState } from "./composite-state";
+import { CompositeSpeciesControls } from "./composite-controls";
 import { signalSlice, sliceDimension, type SliceAxis } from "./grid";
 import { ReplayControls } from "./replay-controls";
 import { DatasetPresentationState } from "./presentation-state";
@@ -88,6 +90,15 @@ let liveCheckpointEnabled = false;
 let liveConnection: LiveConnection | null = null;
 const presentation = new DatasetPresentationState();
 const scalarRanges = new DatasetScalarRanges();
+const compositeState = new CompositeSpeciesState();
+const compositeRoot = required<HTMLElement>("composite-species");
+const compositeControls = new CompositeSpeciesControls(
+  compositeRoot,
+  compositeState,
+  scalarRanges,
+  updateColors,
+  formatNumber,
+);
 const speciesRangeRoot = required<HTMLElement>("species-range");
 const speciesRangeControls = new ScalarRangeControls(
   speciesRangeRoot,
@@ -165,12 +176,19 @@ function updateColors(): void {
   const mode = colorMode.value as ColorMode;
   speciesField.hidden = mode !== "species";
   speciesRangeRoot.hidden = mode !== "species";
+  compositeRoot.hidden = mode !== "composite";
   const mapping = mapCellColors(frame, {
     mode,
     speciesIndex: selectedInteger(speciesChannel),
     range: scalarRanges.get("species", selectedInteger(speciesChannel)),
+    compositeChannels: compositeState.configuration(
+      frame.speciesCount,
+      scalarRanges,
+    ),
   });
   viewer.setCellColors(mapping.colors);
+  if (mapping.composite !== undefined)
+    compositeControls.update(frame, mapping.composite);
   colorLegend.hidden = mapping.range === null;
   if (mapping.range !== null) {
     if (mode === "species")
@@ -230,7 +248,11 @@ function updateSignal(): void {
   signalRangeControls.bind(index, range);
   viewer.setSignalSlice(signalVisible.checked ? value : null, config);
   legend.hidden = false;
-  required<HTMLElement>("signal-legend-title").textContent = `Signal ${index}`;
+  required<HTMLElement>("signal-legend-title").textContent = channelLabel(
+    frame,
+    "signals",
+    index,
+  );
   required<HTMLElement>("signal-legend-min").textContent =
     range.minimum === null ? "—" : formatNumber(range.minimum);
   required<HTMLElement>("signal-legend-max").textContent =
@@ -300,6 +322,8 @@ function presentScene(
   if (newDataset) {
     presentation.beginDataset();
     scalarRanges.beginDataset();
+    compositeState.beginDataset();
+    compositeControls.beginDataset();
     speciesRangeControls.beginDataset();
     signalRangeControls.beginDataset();
     viewer.beginDataset();
