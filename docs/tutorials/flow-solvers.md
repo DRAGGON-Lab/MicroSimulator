@@ -2,6 +2,8 @@
 
 The [pillar-channel model](../../examples/tutorials/pillar_channel.py) combines cylindrical walls, a depth-integrated flow calculation, attached founder lineages, and released daughters:
 
+Cells retain three-dimensional mechanics inside the channel walls at Z=±3. XY-only division jitter and depth-integrated flow do not impose a planar cell constraint; fixed founders remain attached while released daughters can move and tilt within the finite-height chamber. See the [dimensionality audit](planarity.md).
+
 For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
 
 ```console

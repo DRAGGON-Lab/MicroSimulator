@@ -721,3 +721,124 @@ dd {
     transition-duration: 0ms;
   }
 }
+
+.replay-transport {
+  position: absolute;
+  left: 50%;
+  bottom: 62px;
+  z-index: 4;
+  width: min(520px, calc(100% - 28px));
+  transform: translateX(-50%);
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: rgba(20, 25, 24, 0.94);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.3);
+}
+.replay-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.replay-rate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+.replay-rate input {
+  width: 62px;
+  padding: 5px;
+  color: var(--text);
+  background: var(--panel-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+}
+.replay-timeline {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.replay-timeline output {
+  text-align: right;
+}
+.replay-timeline input {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+.replay-message {
+  min-height: 12px;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.replay-message[data-kind="error"] {
+  color: var(--danger);
+}
+
+.scalar-range-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.scalar-range-fields input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.scalar-range-fields input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.scalar-range-fields > button,
+.scalar-range-message {
+  grid-column: 1 / -1;
+}
+
+.scalar-range-message,
+.legend-caption {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.scalar-range-message[data-error="true"] {
+  color: var(--danger);
+}
+
+.legend-caption {
+  margin-block: 6px;
+}
+
+.device-visibility {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.device-visibility input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--accent);
+}

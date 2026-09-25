@@ -30,6 +30,8 @@ These lessons develop the biological rules used within devices and in standalone
 
 The [analysis tutorial](analysis.md) covers checkpoints, contact graphs, and quantitative output. Continue with [analysis recipes](../analysis/recipes.md) for reproducible Parquet/Zarr datasets and Polars queries.
 
+The [dimensionality audit and planarity diagnostic](planarity.md) explain XY-only division jitter, finite-height confinement, and reproducible causes of out-of-plane cell motion.
+
 ## Working with the examples
 
 Teaching models are under [`examples/tutorials`](../../examples/tutorials). Scenario parameters are JSON values passed with `--parameter`; every command in the tutorials can be run from the repository root.

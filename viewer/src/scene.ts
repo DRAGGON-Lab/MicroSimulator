@@ -1,8 +1,10 @@
 import canonicalize from "canonicalize";
 
 export const SCENE_FORMAT = "microsimulator-scene";
-export const SCENE_VERSION = 2;
+export const SCENE_VERSION = 3;
 export const MAX_SCENE_BYTES = 1 << 30;
+// Presentation resource budget; this does not limit native engine counts.
+export const MAX_SCENE_CHANNELS = 4096;
 
 const UINT32_MAX = 2 ** 32 - 1;
 const UINT64_MAX = (1n << 64n) - 1n;
@@ -97,10 +99,57 @@ export interface SceneSignalGrid {
   readonly levels: readonly number[];
 }
 
+export type ChannelKind = "species" | "signals";
+export interface ChannelMetadata {
+  readonly species: readonly (string | null)[];
+  readonly signals: readonly (string | null)[];
+}
+
+// Metadata arrays are readonly. Weak keys retain no discarded frame/history;
+// resolving once also avoids rebuilding a whole group for every selector row.
+const displayChannelLabels = new WeakMap<
+  readonly (string | null)[],
+  readonly string[]
+>();
+
+/** Presentation only. Numerical indices, never labels, identify channels. */
+export function channelLabel(
+  frame: SceneFrame,
+  kind: ChannelKind,
+  index: number,
+): string {
+  const labels = frame.channelMetadata[kind];
+  if (!Number.isInteger(index) || index < 0 || index >= labels.length) {
+    throw new RangeError(`${kind} channel ${index} is out of range`);
+  }
+  let resolved = displayChannelLabels.get(labels);
+  if (resolved === undefined) {
+    const names = labels.map((label, slot) =>
+      label === null || label.trim() === ""
+        ? `Channel ${slot}`
+        : label.replace(/[\t\n\f\r ]+/g, " ").replace(/^ | $/g, ""),
+    );
+    const counts = new Map<string, number>();
+    for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+    resolved = names.map((name, slot) =>
+      counts.get(name)! > 1 ? `${name} [${slot}]` : name,
+    );
+    // A supplied name can imitate an automatically indexed duplicate, e.g.
+    // ["GFP", "GFP", "GFP [0]"]. In that case index the entire group: the
+    // distinct final indices guarantee uniqueness even for nested suffixes.
+    if (new Set(resolved).size !== resolved.length) {
+      resolved = names.map((name, slot) => `${name} [${slot}]`);
+    }
+    displayChannelLabels.set(labels, resolved);
+  }
+  return resolved[index]!;
+}
+
 export interface SceneFrame {
   readonly time: number;
   readonly backend: SceneBackend;
   readonly speciesCount: number;
+  readonly channelMetadata: ChannelMetadata;
   readonly cells: readonly SceneCell[];
   readonly constraints: SceneConstraints;
   readonly signalGrid: SceneSignalGrid | null;
@@ -220,7 +269,7 @@ function floatArray(value: unknown, path: string): readonly number[] {
   );
 }
 
-function parseBackend(value: unknown, path: string): SceneBackend {
+export function parseSceneBackend(value: unknown, path: string): SceneBackend {
   const data = record(value, path);
   exactKeys(data, path, ["kind", "name", "device", "device_index", "native"]);
   const kind = string(data.kind, `${path}.kind`);
@@ -478,11 +527,10 @@ function parseSignalGrid(value: unknown, path: string): SceneSignalGrid | null {
     "boundaries",
     "levels",
   ]);
-  const signalCount = integer(
+  const signalCount = sceneChannelCount(
     data.signal_count,
     `${path}.signal_count`,
     1,
-    UINT32_MAX,
   );
   const shapeValues = array(data.shape, `${path}.shape`);
   if (shapeValues.length !== 3) {
@@ -551,7 +599,54 @@ function parseSignalGrid(value: unknown, path: string): SceneSignalGrid | null {
   };
 }
 
-function parseFrame(value: unknown, path: string): SceneFrame {
+function parseChannelMetadata(
+  value: unknown,
+  path: string,
+  speciesCount: number,
+  signalCount: number,
+): ChannelMetadata {
+  const data = record(value, path);
+  exactKeys(data, path, ["species", "signals"]);
+  function labels(
+    kind: ChannelKind,
+    count: number,
+  ): readonly (string | null)[] {
+    const values = array(data[kind], `${path}.${kind}`);
+    if (values.length !== count) {
+      return fail(
+        `${path}.${kind}`,
+        `expected ${count} labels, got ${values.length}`,
+      );
+    }
+    return values.map((value, index) => {
+      if (value === null) return null;
+      const label = string(value, `${path}.${kind}[${index}]`);
+      if (/[\uD800-\uDFFF]/u.test(label))
+        return fail(
+          `${path}.${kind}[${index}]`,
+          "invalid Unicode scalar value",
+        );
+      return label;
+    });
+  }
+  return {
+    species: labels("species", speciesCount),
+    signals: labels("signals", signalCount),
+  };
+}
+
+function sceneChannelCount(value: unknown, path: string, minimum = 0): number {
+  const count = integer(value, path, minimum, UINT32_MAX);
+  if (count > MAX_SCENE_CHANNELS) {
+    return fail(
+      path,
+      `exceeds scene presentation channel budget of ${MAX_SCENE_CHANNELS} per group`,
+    );
+  }
+  return count;
+}
+
+function parseFrame(value: unknown, path: string, version: number): SceneFrame {
   const data = record(value, path);
   exactKeys(data, path, [
     "time",
@@ -560,16 +655,15 @@ function parseFrame(value: unknown, path: string): SceneFrame {
     "cells",
     "constraints",
     "signal_grid",
+    ...(version >= 3 ? ["channel_metadata"] : []),
   ]);
   const time = number(data.time, `${path}.time`);
   if (time < 0) {
     return fail(`${path}.time`, "must be non-negative");
   }
-  const speciesCount = integer(
+  const speciesCount = sceneChannelCount(
     data.species_count,
     `${path}.species_count`,
-    0,
-    UINT32_MAX,
   );
   const cells = array(data.cells, `${path}.cells`).map((item, index) =>
     parseCell(item, `${path}.cells[${index}]`, speciesCount),
@@ -587,13 +681,29 @@ function parseFrame(value: unknown, path: string): SceneFrame {
     }
     identifiers.add(cell.id);
   }
+  const signalGrid = parseSignalGrid(data.signal_grid, `${path}.signal_grid`);
+  const signalCount = signalGrid?.signalCount ?? 0;
+  // Digest verification has already completed against the unmodified source frame.
+  const channelMetadata =
+    version >= 3
+      ? parseChannelMetadata(
+          data.channel_metadata,
+          `${path}.channel_metadata`,
+          speciesCount,
+          signalCount,
+        )
+      : {
+          species: Array<string | null>(speciesCount).fill(null),
+          signals: Array<string | null>(signalCount).fill(null),
+        };
   return {
     time,
-    backend: parseBackend(data.backend, `${path}.backend`),
+    channelMetadata,
+    backend: parseSceneBackend(data.backend, `${path}.backend`),
     speciesCount,
     cells,
     constraints: parseConstraints(data.constraints, `${path}.constraints`),
-    signalGrid: parseSignalGrid(data.signal_grid, `${path}.signal_grid`),
+    signalGrid,
   };
 }
 
@@ -639,7 +749,8 @@ export async function parseScene(source: string): Promise<SceneFrame> {
   ) {
     return fail("$.format", "not a MicroSimulator scene");
   }
-  if (integer(root.version, "$.version", 0, UINT32_MAX) !== SCENE_VERSION) {
+  const version = integer(root.version, "$.version", 0, UINT32_MAX);
+  if (version !== 2 && version !== SCENE_VERSION) {
     return fail(
       "$.version",
       `unsupported scene version ${String(root.version)}`,
@@ -672,5 +783,5 @@ export async function parseScene(source: string): Promise<SceneFrame> {
   if (actualDigest !== expectedDigest) {
     return fail("$.integrity.frame", "frame digest does not match");
   }
-  return parseFrame(root.frame, "$.frame");
+  return parseFrame(root.frame, "$.frame", version);
 }

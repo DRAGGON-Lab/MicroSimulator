@@ -40,7 +40,14 @@ def capped_founder_length(requested: float, target: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class UniformLengthDivision:
-    """Divide above per-cell thresholds sampled from one uniform distribution."""
+    """Divide above per-cell thresholds sampled from one uniform distribution.
+
+    ``jitter_z=None`` disables orientation jitter; ``False`` adds XY-only
+    perturbations; ``True`` adds XYZ perturbations. XY-only jitter leaves the
+    inherited Z component unchanged before native direction normalization,
+    which can change its normalized value. Neither option constrains daughter
+    positions, contact mechanics, or flow drift to a plane.
+    """
 
     minimum: float
     maximum: float

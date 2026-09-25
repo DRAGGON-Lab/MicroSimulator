@@ -31,11 +31,19 @@ import {
   Vector2,
   Vector3,
   WebGLRenderer,
+  type BufferGeometry,
+  type Material,
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-import { rgbBytes, viridis, type RGB } from "./color";
+import { mapScalarColors, rgbBytes, type RGB } from "./color";
+import { AUTOMATIC_SCALAR_RANGE, type ScalarRangeConfig } from "./scalar-range";
+import { capsuleGeometries, CapsuleTransform } from "./capsule";
 import type { SignalSlice } from "./grid";
+import {
+  DatasetReferenceGrid,
+  REFERENCE_GRID_DIVISIONS,
+} from "./reference-grid";
 import type { SceneCell, SceneConstraints, SceneFrame } from "./scene";
 import {
   canonicalViewQuaternion,
@@ -62,6 +70,8 @@ interface CameraTransition {
 }
 
 function disposeGroup(group: Group): void {
+  const geometries = new Set<BufferGeometry>();
+  const materials = new Set<Material>();
   for (const child of [...group.children]) {
     group.remove(child);
     if (
@@ -69,24 +79,18 @@ function disposeGroup(group: Group): void {
       child instanceof InstancedMesh ||
       child instanceof LineSegments
     ) {
-      child.geometry.dispose();
-      const materials = Array.isArray(child.material)
+      // InstancedMesh owns GPU instanceMatrix/instanceColor buffers in addition
+      // to its geometry. Removing it and disposing geometry alone leaks these.
+      if (child instanceof InstancedMesh) child.dispose();
+      geometries.add(child.geometry);
+      const childMaterials = Array.isArray(child.material)
         ? child.material
         : [child.material];
-      for (const material of materials) {
-        material.dispose();
-      }
+      for (const material of childMaterials) materials.add(material);
     }
   }
-}
-
-function compose(
-  position: Vector3,
-  orientation: Quaternion,
-  scale: Vector3,
-  target: Matrix4,
-): Matrix4 {
-  return target.compose(position, orientation, scale);
+  for (const geometry of geometries) geometry.dispose();
+  for (const material of materials) material.dispose();
 }
 
 export class ColonyViewer {
@@ -99,7 +103,13 @@ export class ColonyViewer {
   private readonly device = new Group();
   private readonly signal = new Group();
   private readonly highlight = new Group();
-  private readonly grid = new GridHelper(20, 20, 0x34413c, 0x222b27);
+  private readonly grid = new GridHelper(
+    20,
+    REFERENCE_GRID_DIVISIONS,
+    0x34413c,
+    0x222b27,
+  );
+  private readonly referenceGrid = new DatasetReferenceGrid();
   private readonly raycaster = new Raycaster();
   private readonly pointer = new Vector2();
   private readonly resizeObserver: ResizeObserver;
@@ -159,6 +169,7 @@ export class ColonyViewer {
       this.device,
       this.highlight,
     );
+    this.grid.name = "reference-grid";
     this.grid.rotateX(Math.PI / 2);
     this.grid.position.z = -0.002;
     this.highlight.visible = false;
@@ -194,11 +205,27 @@ export class ColonyViewer {
     });
   }
 
-  public setFrame(frame: SceneFrame, fit = true): void {
+  /** Call once when opening a file, live session, or recording. */
+  public beginDataset(): void {
+    this.referenceGrid.beginDataset();
+    this.setDeviceVisible(true);
+    this.cancelCameraTransition();
+    this.selectCell(null);
+  }
+
+  /** Presentation only: the group retains visibility when its children rebuild. */
+  public setDeviceVisible(visible: boolean): void {
+    this.device.visible = visible;
+  }
+
+  /** Frame updates, including reset/seek, retain camera and dataset state. */
+  public setFrame(frame: SceneFrame, fit = false): void {
+    this.configureReferenceGrid(frame);
     this.viewCube.setVisible(true);
     disposeGroup(this.colony);
     this.cellMeshes = [];
     this.cells = frame.cells;
+    disposeGroup(this.highlight);
     this.highlight.visible = false;
 
     if (frame.cells.length === 0) {
@@ -209,15 +236,14 @@ export class ColonyViewer {
       this.sceneBounds = deviceBounds.isEmpty()
         ? new Box3(new Vector3(-1, -1, -1), new Vector3(1, 1, 1))
         : deviceBounds;
-      this.configureReferenceGrid(this.sceneBounds);
       if (fit) {
         this.fitColony(false);
       }
       return;
     }
 
-    const cylinderGeometry = new CylinderGeometry(1, 1, 1, 14, 1, false);
-    const capGeometry = new SphereGeometry(1, 14, 9);
+    const [cylinderGeometry, firstCapGeometry, secondCapGeometry] =
+      capsuleGeometries();
     const material = new MeshStandardMaterial({
       roughness: 0.62,
       metalness: 0.04,
@@ -228,12 +254,12 @@ export class ColonyViewer {
       frame.cells.length,
     );
     const firstCaps = new InstancedMesh(
-      capGeometry,
+      firstCapGeometry,
       material,
       frame.cells.length,
     );
     const secondCaps = new InstancedMesh(
-      capGeometry.clone(),
+      secondCapGeometry,
       material,
       frame.cells.length,
     );
@@ -241,48 +267,15 @@ export class ColonyViewer {
     firstCaps.name = "cell-first-caps";
     secondCaps.name = "cell-second-caps";
 
-    const matrix = new Matrix4();
-    const orientation = new Quaternion();
-    const center = new Vector3();
-    const direction = new Vector3();
-    const endpoint = new Vector3();
-    const up = new Vector3(0, 1, 0);
+    const transform = new CapsuleTransform();
     const bounds = new Box3();
 
     for (const [index, cell] of frame.cells.entries()) {
-      center.fromArray(cell.position);
-      direction.fromArray(cell.direction).normalize();
-      orientation.setFromUnitVectors(up, direction);
-      compose(
-        center,
-        orientation,
-        new Vector3(cell.radius, Math.max(cell.length, 1e-7), cell.radius),
-        matrix,
-      );
-      cylinders.setMatrixAt(index, matrix);
-
-      endpoint.copy(direction).multiplyScalar(cell.length / 2);
-      compose(
-        new Vector3().copy(center).sub(endpoint),
-        orientation.identity(),
-        new Vector3(cell.radius, cell.radius, cell.radius),
-        matrix,
-      );
-      firstCaps.setMatrixAt(index, matrix);
-      compose(
-        new Vector3().copy(center).add(endpoint),
-        orientation,
-        new Vector3(cell.radius, cell.radius, cell.radius),
-        matrix,
-      );
-      secondCaps.setMatrixAt(index, matrix);
-
-      const firstEndpoint = new Vector3().copy(center).sub(endpoint);
-      const secondEndpoint = new Vector3().copy(center).add(endpoint);
-      const cellBounds = new Box3()
-        .setFromPoints([firstEndpoint, secondEndpoint])
-        .expandByScalar(cell.radius);
-      bounds.union(cellBounds);
+      transform.update(cell);
+      cylinders.setMatrixAt(index, transform.matrices[0]);
+      firstCaps.setMatrixAt(index, transform.matrices[1]);
+      secondCaps.setMatrixAt(index, transform.matrices[2]);
+      bounds.union(transform.bounds);
     }
 
     cylinders.instanceMatrix.needsUpdate = true;
@@ -295,7 +288,6 @@ export class ColonyViewer {
     this.colony.add(...this.cellMeshes);
     this.buildDevice(frame.constraints, bounds);
     this.sceneBounds = bounds;
-    this.configureReferenceGrid(bounds);
     const selectedIndex = frame.cells.findIndex(
       (cell) => cell.id === this.selectedCellId,
     );
@@ -332,25 +324,20 @@ export class ColonyViewer {
     }
   }
 
-  public setSignalSlice(slice: SignalSlice | null): void {
+  public setSignalSlice(
+    slice: SignalSlice | null,
+    range: ScalarRangeConfig = AUTOMATIC_SCALAR_RANGE,
+  ): void {
     this.signalTexture?.dispose();
     this.signalTexture = null;
     disposeGroup(this.signal);
     if (slice === null) {
       return;
     }
-    let minimum = Number.POSITIVE_INFINITY;
-    let maximum = Number.NEGATIVE_INFINITY;
-    for (const value of slice.values) {
-      minimum = Math.min(minimum, value);
-      maximum = Math.max(maximum, value);
-    }
-    const span = maximum - minimum;
+    const mapping = mapScalarColors(slice.values, range);
     const pixels = new Uint8Array(slice.width * slice.height * 4);
-    for (const [index, value] of slice.values.entries()) {
-      const color = rgbBytes(
-        viridis(span === 0 ? 0.5 : (value - minimum) / span),
-      );
+    for (const [index, value] of mapping.colors.entries()) {
+      const color = rgbBytes(value);
       const offset = index * 4;
       pixels[offset] = color[0];
       pixels[offset + 1] = color[1];
@@ -395,6 +382,7 @@ export class ColonyViewer {
   public selectCell(index: number | null): void {
     if (index === null) {
       this.selectedCellId = null;
+      disposeGroup(this.highlight);
       this.highlight.visible = false;
       this.onSelection(null);
       return;
@@ -756,43 +744,27 @@ export class ColonyViewer {
       opacity: 0.92,
       depthTest: false,
     });
-    const cylinder = new Mesh(
-      new CylinderGeometry(1, 1, 1, 18, 1, false),
-      material,
-    );
-    const firstCap = new Mesh(new SphereGeometry(1, 18, 10), material);
-    const secondCap = new Mesh(new SphereGeometry(1, 18, 10), material);
-    const center = new Vector3().fromArray(cell.position);
-    const direction = new Vector3().fromArray(cell.direction).normalize();
-    const orientation = new Quaternion().setFromUnitVectors(
-      new Vector3(0, 1, 0),
-      direction,
-    );
-    const endpoint = new Vector3()
-      .copy(direction)
-      .multiplyScalar(cell.length / 2);
-    const radius = cell.radius * 1.08;
-    cylinder.position.copy(center);
-    cylinder.quaternion.copy(orientation);
-    cylinder.scale.set(radius, Math.max(cell.length, 1e-7), radius);
-    firstCap.position.copy(center).sub(endpoint);
-    firstCap.scale.setScalar(radius);
-    secondCap.position.copy(center).add(endpoint);
-    secondCap.scale.setScalar(radius);
-    this.highlight.add(cylinder, firstCap, secondCap);
+    const transform = new CapsuleTransform();
+    transform.update(cell, 1.08);
+    for (const [index, geometry] of capsuleGeometries().entries()) {
+      const mesh = new Mesh(geometry, material);
+      const matrix = transform.matrices[index];
+      if (matrix === undefined) throw new Error("missing capsule transform");
+      // The same topology and orientation keep highlighting on the outer
+      // capsule instead of drawing the hidden halves of full spheres.
+      // Copy directly: a zero-length cylinder has a singular axial scale and
+      // cannot be decomposed into a finite quaternion.
+      mesh.matrix.copy(matrix);
+      mesh.matrixAutoUpdate = false;
+      this.highlight.add(mesh);
+    }
     this.highlight.visible = true;
   }
 
-  private configureReferenceGrid(bounds: Box3): void {
-    const size = bounds.getSize(new Vector3());
-    const center = bounds.getCenter(new Vector3());
-    const extent = Math.max(size.x, size.y, 10);
-    this.grid.scale.set(extent / 20, extent / 20, extent / 20);
-    this.grid.position.set(
-      center.x,
-      center.y,
-      Math.min(bounds.min.z, 0) - 0.01,
-    );
+  private configureReferenceGrid(frame: SceneFrame): void {
+    const layout = this.referenceGrid.forFrame(frame);
+    this.grid.scale.setScalar(layout.extent / 20);
+    this.grid.position.fromArray(layout.position);
   }
 
   private resize(host: HTMLElement): void {

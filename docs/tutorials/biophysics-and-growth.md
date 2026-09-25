@@ -2,6 +2,8 @@
 
 This tutorial introduces cell geometry, growth, division, lineage, cell types, mechanical constraints, and competition. Its five runnable scenarios are defined in `examples/tutorials/biophysics.py`.
 
+The `basics`, `two_types`, and `competition` scenarios add XY-only division jitter but retain unrestricted 3D mechanics. `short_cells` adds XYZ jitter. `box` also adds XYZ jitter and has a floor and four lateral walls, with no ceiling. None guarantees a planar colony; see [division jitter and out-of-plane motion](planarity.md) for the full contract and reproducible diagnostics.
+
 For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
 
 ## 1. A founder that grows and divides

@@ -2,6 +2,8 @@
 
 SimBOL connects an SBOL 3 design to simulator-specific code through a summarized JSON representation. This tutorial presents typed MicroSimulator versions of six BioBrick circuit examples and a spatial quorum-sensing clock.
 
+The six circuit models start in XY and use XY-only division jitter without mechanical walls. The Danino clock uses a finite-height trap. Both retain three-dimensional mechanics; see [division jitter, confinement, and out-of-plane motion](planarity.md).
+
 For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
 
 These are explicit example models, not a general SBOL-to-rate-plan import path. The [source reference](../compatibility/tutorial-source-provenance.md#simbol-source-workflow) describes how they relate to the SimBOL notebook, generated Python, and JSON fixtures.

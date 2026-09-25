@@ -2,6 +2,8 @@
 
 This tutorial introduces intracellular concentrations, growth dilution, typed rate equations, gene-circuit feedback, and quantitative time-course analysis. The runnable scenarios are collected in `examples/tutorials/gene_expression.py`.
 
+All five scenarios use XY-only division jitter and start with centers at Z=0, but add no mechanical walls. Their cells retain three-dimensional translations and rotations. See [division jitter and out-of-plane motion](planarity.md) before treating a planar-looking trajectory as a strict 2D model.
+
 For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
 
 All five gene-expression scenarios request a founder centerline length of 3.5 and cap it at the one sampled division target. Initial concentrations are unchanged; the smaller biomass can change total initial amount. See [founder initialization and volume conventions](biophysics-and-growth.md#length-and-volume).

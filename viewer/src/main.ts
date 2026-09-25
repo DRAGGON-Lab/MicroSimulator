@@ -1,8 +1,16 @@
 import "./style.css";
 
-import { mapCellColors, type ColorMode } from "./color";
+import { mapCellColors, rgbBytes, viridis, type ColorMode } from "./color";
+import {
+  DatasetScalarRanges,
+  resolveScalarRange,
+  type ResolvedScalarRange,
+} from "./scalar-range";
+import { ScalarRangeControls } from "./scalar-range-controls";
 import { ColonyViewer } from "./colony-viewer";
 import { signalSlice, sliceDimension, type SliceAxis } from "./grid";
+import { ReplayControls } from "./replay-controls";
+import { DatasetPresentationState } from "./presentation-state";
 import {
   LiveConnection,
   type LiveConnectionState,
@@ -11,6 +19,7 @@ import {
 } from "./live";
 import {
   MAX_SCENE_BYTES,
+  channelLabel,
   parseScene,
   type SceneCell,
   type SceneFrame,
@@ -27,6 +36,8 @@ function required<T extends HTMLElement>(id: string): T {
 const viewport = required<HTMLElement>("viewport");
 const canvasHost = required<HTMLElement>("canvas-host");
 const viewCubeElement = required<HTMLElement>("view-cube");
+const recordingInput = required<HTMLInputElement>("recording-folder");
+const recordingOpen = required<HTMLButtonElement>("recording-open");
 const fileInput = required<HTMLInputElement>("scene-file");
 const fitButton = required<HTMLButtonElement>("fit-button");
 const emptyState = required<HTMLElement>("empty-state");
@@ -44,6 +55,7 @@ const legendMaximum = required<HTMLElement>("legend-max");
 const legendTitle = required<HTMLElement>("legend-title");
 const signalSection = required<HTMLElement>("signal-section");
 const signalVisible = required<HTMLInputElement>("signal-visible");
+const deviceVisible = required<HTMLInputElement>("device-visible");
 const signalChannel = required<HTMLSelectElement>("signal-channel");
 const signalAxis = required<HTMLSelectElement>("signal-axis");
 const signalRange = required<HTMLInputElement>("signal-slice");
@@ -66,6 +78,7 @@ const liveReset = required<HTMLButtonElement>("live-reset");
 const liveCheckpoint = required<HTMLButtonElement>("live-checkpoint");
 const liveStop = required<HTMLButtonElement>("live-stop");
 
+let openRequest = 0;
 let frame: SceneFrame | null = null;
 let statusToken = 0;
 let dragDepth = 0;
@@ -73,8 +86,29 @@ let liveConnected = false;
 let livePlaying = false;
 let liveCheckpointEnabled = false;
 let liveConnection: LiveConnection | null = null;
+const presentation = new DatasetPresentationState();
+const scalarRanges = new DatasetScalarRanges();
+const speciesRangeRoot = required<HTMLElement>("species-range");
+const speciesRangeControls = new ScalarRangeControls(
+  speciesRangeRoot,
+  scalarRanges,
+  "species",
+  updateColors,
+);
+const signalRangeControls = new ScalarRangeControls(
+  required<HTMLElement>("signal-color-range"),
+  scalarRanges,
+  "signals",
+  updateSignal,
+);
 
 const viewer = new ColonyViewer(canvasHost, viewCubeElement, updateSelection);
+const replay = new ReplayControls(
+  required<HTMLElement>("replay-transport"),
+  (frame, newDataset) =>
+    presentScene(frame, "recording", { newDataset, announce: newDataset }),
+  (message) => setStatus(message, "error"),
+);
 
 function formatNumber(value: number): string {
   if (value === 0) {
@@ -104,17 +138,17 @@ function setStatus(message: string, kind: "info" | "error" = "info"): void {
 function options(
   select: HTMLSelectElement,
   count: number,
-  prefix: string,
+  label: (index: number) => string,
+  selected: number,
 ): void {
-  const previous = selectedInteger(select);
   select.replaceChildren();
   for (let index = 0; index < count; index += 1) {
     const option = document.createElement("option");
     option.value = String(index);
-    option.textContent = `${prefix} ${index}`;
+    option.textContent = label(index);
     select.append(option);
   }
-  select.value = String(Math.min(previous, Math.max(count - 1, 0)));
+  select.value = String(selected);
 }
 
 function selectedInteger(
@@ -130,16 +164,39 @@ function updateColors(): void {
   }
   const mode = colorMode.value as ColorMode;
   speciesField.hidden = mode !== "species";
+  speciesRangeRoot.hidden = mode !== "species";
   const mapping = mapCellColors(frame, {
     mode,
     speciesIndex: selectedInteger(speciesChannel),
+    range: scalarRanges.get("species", selectedInteger(speciesChannel)),
   });
   viewer.setCellColors(mapping.colors);
-  const scalar = mapping.minimum !== null && mapping.maximum !== null;
-  colorLegend.hidden = !scalar;
-  legendTitle.textContent = mapping.title;
-  legendMinimum.textContent = scalar ? formatNumber(mapping.minimum ?? 0) : "—";
-  legendMaximum.textContent = scalar ? formatNumber(mapping.maximum ?? 0) : "—";
+  colorLegend.hidden = mapping.range === null;
+  if (mapping.range !== null) {
+    if (mode === "species")
+      speciesRangeControls.bind(selectedInteger(speciesChannel), mapping.range);
+    legendTitle.textContent = mapping.title;
+    legendMinimum.textContent =
+      mapping.minimum === null ? "—" : formatNumber(mapping.minimum);
+    legendMaximum.textContent =
+      mapping.maximum === null ? "—" : formatNumber(mapping.maximum);
+    updateRangeLegend("legend", mapping.range);
+  }
+}
+
+function updateRangeLegend(prefix: string, range: ResolvedScalarRange): void {
+  const mode = range.mode === "fixed" ? "Fixed" : "Automatic";
+  const constant =
+    range.mode === "automatic" &&
+    range.count > 0 &&
+    range.minimum === range.maximum;
+  required<HTMLElement>(`${prefix}-mode`).textContent =
+    `${mode}${range.count === 0 ? " · no values" : constant ? " · constant" : ""}`;
+  const ramp = required<HTMLElement>(`${prefix}-ramp`);
+  ramp.hidden = range.mode === "automatic" && range.count === 0;
+  ramp.style.background = constant
+    ? `rgb(${rgbBytes(viridis(0.5)).join(",")})`
+    : "";
 }
 
 function updateSignalRange(): void {
@@ -149,23 +206,36 @@ function updateSignalRange(): void {
   const axis = signalAxis.value as SliceAxis;
   const maximum = sliceDimension(frame.signalGrid, axis) - 1;
   signalRange.max = String(maximum);
-  signalRange.value = String(Math.min(selectedInteger(signalRange), maximum));
+  signalRange.value = String(presentation.forFrame(frame).signalSlice);
   sliceValue.value = signalRange.value;
 }
 
 function updateSignal(): void {
-  if (frame?.signalGrid === null || frame === null || !signalVisible.checked) {
+  const legend = required<HTMLElement>("signal-legend");
+  if (frame?.signalGrid === null || frame === null) {
     viewer.setSignalSlice(null);
+    legend.hidden = true;
     return;
   }
   const axis = signalAxis.value as SliceAxis;
+  const index = selectedInteger(signalChannel);
   const value = signalSlice(
     frame.signalGrid,
-    selectedInteger(signalChannel),
+    index,
     axis,
     selectedInteger(signalRange),
   );
-  viewer.setSignalSlice(value);
+  const config = scalarRanges.get("signals", index);
+  const range = resolveScalarRange(value.values, config);
+  signalRangeControls.bind(index, range);
+  viewer.setSignalSlice(signalVisible.checked ? value : null, config);
+  legend.hidden = false;
+  required<HTMLElement>("signal-legend-title").textContent = `Signal ${index}`;
+  required<HTMLElement>("signal-legend-min").textContent =
+    range.minimum === null ? "—" : formatNumber(range.minimum);
+  required<HTMLElement>("signal-legend-max").textContent =
+    range.maximum === null ? "—" : formatNumber(range.maximum);
+  updateRangeLegend("signal-legend", range);
 }
 
 function detail(label: string, value: string): HTMLDivElement {
@@ -209,33 +279,39 @@ function updateSelection(cell: SceneCell | null): void {
     const item = document.createElement("li");
     const label = document.createElement("span");
     const encoded = document.createElement("code");
-    label.textContent = `Channel ${index}`;
+    label.textContent =
+      frame === null
+        ? `Channel ${index}`
+        : channelLabel(frame, "species", index);
     encoded.textContent = formatNumber(value);
     item.append(label, encoded);
     speciesValues.append(item);
   }
 }
 
-function sameShape(
-  previous: SceneFrame["signalGrid"],
-  next: SceneFrame["signalGrid"],
-): boolean {
-  return (
-    previous !== null &&
-    next !== null &&
-    previous.signalCount === next.signalCount &&
-    previous.shape.every((value, index) => value === next.shape[index])
-  );
-}
-
 function presentScene(
   next: SceneFrame,
   label: string,
-  { fit = true, announce = true }: { fit?: boolean; announce?: boolean } = {},
+  {
+    newDataset = false,
+    announce = true,
+  }: { newDataset?: boolean; announce?: boolean } = {},
 ): void {
-  const previous = frame;
+  if (newDataset) {
+    presentation.beginDataset();
+    scalarRanges.beginDataset();
+    speciesRangeControls.beginDataset();
+    signalRangeControls.beginDataset();
+    viewer.beginDataset();
+  }
+  const display = presentation.forFrame(next);
   frame = next;
-  viewer.setFrame(next, fit);
+  viewer.setFrame(next, newDataset);
+  deviceVisible.checked = display.deviceVisible;
+  deviceVisible.disabled = !Object.values(next.constraints).some(
+    (constraints) => constraints.length > 0,
+  );
+  viewer.setDeviceVisible(display.deviceVisible);
   fitButton.disabled = false;
   colorMode.disabled = false;
   emptyState.hidden = true;
@@ -249,10 +325,13 @@ function presentScene(
   gridShape.textContent =
     next.signalGrid === null ? "None" : next.signalGrid.shape.join(" × ");
 
-  options(speciesChannel, next.speciesCount, "Channel");
-  if (next.speciesCount === 0 && colorMode.value === "species") {
-    colorMode.value = "cell-type";
-  }
+  colorMode.value = display.colorMode;
+  options(
+    speciesChannel,
+    next.speciesCount,
+    (index) => channelLabel(next, "species", index),
+    display.speciesChannel,
+  );
   const speciesOption = colorMode.querySelector<HTMLOptionElement>(
     'option[value="species"]',
   );
@@ -261,15 +340,19 @@ function presentScene(
   }
 
   signalSection.hidden = next.signalGrid === null;
+  signalVisible.checked = display.signalVisible;
+  signalAxis.value = display.signalAxis;
   if (next.signalGrid !== null) {
-    options(signalChannel, next.signalGrid.signalCount, "Channel");
-    if (!sameShape(previous?.signalGrid ?? null, next.signalGrid)) {
-      signalVisible.checked = true;
-      signalAxis.value = "z";
-      signalRange.value = String(
-        Math.floor((next.signalGrid.shape[2] - 1) / 2),
-      );
-    }
+    options(
+      signalChannel,
+      next.signalGrid.signalCount,
+      (index) => channelLabel(next, "signals", index),
+      display.signalChannel,
+    );
+    signalRange.max = String(
+      sliceDimension(next.signalGrid, display.signalAxis) - 1,
+    );
+    signalRange.value = String(display.signalSlice);
     updateSignalRange();
   }
   updateColors();
@@ -280,6 +363,8 @@ function presentScene(
 }
 
 async function loadFile(file: File): Promise<void> {
+  const request = ++openRequest;
+  replay.close();
   if (file.size > MAX_SCENE_BYTES) {
     setStatus(
       `Scene exceeds the ${MAX_SCENE_BYTES.toLocaleString()}-byte limit`,
@@ -289,12 +374,22 @@ async function loadFile(file: File): Promise<void> {
   }
   try {
     const next = await parseScene(await file.text());
-    presentScene(next, file.name);
+    if (request === openRequest)
+      presentScene(next, file.name, { newDataset: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    setStatus(message, "error");
+    if (request === openRequest) setStatus(message, "error");
   }
 }
+
+recordingOpen.addEventListener("click", () => recordingInput.click());
+recordingInput.addEventListener("change", () => {
+  if (recordingInput.files !== null && recordingInput.files.length > 0) {
+    ++openRequest;
+    void replay.open([...recordingInput.files]);
+  }
+  recordingInput.value = "";
+});
 
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
@@ -306,15 +401,33 @@ fileInput.addEventListener("change", () => {
 
 fitButton.addEventListener("click", () => viewer.fitColony());
 clearSelection.addEventListener("click", () => viewer.selectCell(null));
-colorMode.addEventListener("change", updateColors);
-speciesChannel.addEventListener("change", updateColors);
-signalVisible.addEventListener("change", updateSignal);
-signalChannel.addEventListener("change", updateSignal);
+colorMode.addEventListener("change", () => {
+  presentation.preferences.colorMode = colorMode.value as ColorMode;
+  updateColors();
+});
+speciesChannel.addEventListener("change", () => {
+  presentation.preferences.speciesChannel = selectedInteger(speciesChannel);
+  updateColors();
+});
+deviceVisible.addEventListener("change", () => {
+  presentation.preferences.deviceVisible = deviceVisible.checked;
+  viewer.setDeviceVisible(deviceVisible.checked);
+});
+signalVisible.addEventListener("change", () => {
+  presentation.preferences.signalVisible = signalVisible.checked;
+  updateSignal();
+});
+signalChannel.addEventListener("change", () => {
+  presentation.preferences.signalChannel = selectedInteger(signalChannel);
+  updateSignal();
+});
 signalAxis.addEventListener("change", () => {
+  presentation.preferences.signalAxis = signalAxis.value as SliceAxis;
   updateSignalRange();
   updateSignal();
 });
 signalRange.addEventListener("input", () => {
+  presentation.preferences.signalSlice = selectedInteger(signalRange);
   sliceValue.value = signalRange.value;
   updateSignal();
 });
@@ -399,7 +512,7 @@ function liveFrame(message: LiveFrameMessage): void {
     liveLabel.textContent = message.playing ? "Running" : "Paused";
   }
   presentScene(message.frame, "live simulation", {
-    fit: first,
+    newDataset: first,
     announce: first,
   });
   updateLiveControls();
@@ -464,6 +577,7 @@ window.addEventListener(
   "beforeunload",
   () => {
     liveConnection?.close();
+    replay.close();
     viewer.dispose();
   },
   { once: true },

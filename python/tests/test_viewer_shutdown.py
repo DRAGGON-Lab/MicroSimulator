@@ -8,6 +8,7 @@ import signal
 import socket
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 from threading import Event
 from threading import enumerate as threads
@@ -17,9 +18,10 @@ from urllib.parse import urlsplit
 import pytest
 from aiohttp import ClientSession, ClientWebSocketResponse, WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
-from microsimulator import BackendKind, CellInit, Simulation, load_checkpoint
+from microsimulator import BackendKind, CellInit, Simulation, Vec3, load_checkpoint
 from microsimulator.checkpoint import JSONValue
 from microsimulator.viewer_server import (
+    _CONTROLLER_KEY,  # pyright: ignore[reportPrivateUsage]
     LiveCommand,
     LiveController,
     LiveSession,
@@ -233,12 +235,16 @@ def test_reconnect_observes_pause_before_disconnected_command_drains(
                 assert release.wait(10), "test did not release frame capture"
             return frame_message(session, playing=playing)
 
-        async def observe_connect(controller: LiveController, ws: web.WebSocketResponse) -> None:
+        async def observe_connect(
+            controller: LiveController,
+            ws: web.WebSocketResponse,
+            transport: asyncio.Transport | None = None,
+        ) -> None:
             nonlocal connections
             connections += 1
             if connections == 2:
                 reconnect_started.set()
-            await connect(controller, ws)
+            await connect(controller, ws, transport)
 
         monkeypatch.setattr(LiveSession, "frame_message", blocked_frame)
         monkeypatch.setattr(LiveController, "connect", observe_connect)
@@ -315,6 +321,212 @@ def test_stop_is_not_blocked_by_a_stalled_frame_send(
             await ws.close()
         finally:
             await client.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("termination", ["stop", "runner_cleanup"])
+def test_real_tcp_backpressure_releases_connections_and_reuses_port(
+    tmp_path: Path, termination: str
+) -> None:
+    def large_factory() -> tuple[Simulation, dict[str, JSONValue]]:
+        simulation = Simulation(BackendKind.CPU)
+        cell = CellInit()
+        for index in range(40_000):
+            cell.position = Vec3(index * 3.0, 0.0, 0.0)
+            simulation.add_cell(cell)
+        return simulation, {}
+
+    async def exercise() -> None:
+        dist = _dist(tmp_path)
+        app, token = create_live_app(LiveSession(large_factory, dt=0.1), dist)
+        controller = app[_CONTROLLER_KEY]
+        probe_transport: asyncio.Transport | None = None
+        probe_prepared = asyncio.Event()
+
+        async def limit_probe_send_buffer(
+            request: web.Request, response: web.StreamResponse
+        ) -> None:
+            nonlocal probe_transport
+            if request.headers.get("X-Backpressure-Probe") == "1":
+                assert response.status == 101
+                probe_transport = request.transport
+                assert probe_transport is not None
+                peer = cast(socket.socket, probe_transport.get_extra_info("socket"))
+                # Bound kernel buffering too: Windows overlapped writes may
+                # otherwise accept the whole scene before the peer consumes it.
+                peer.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16_384)
+                probe_prepared.set()
+
+        app.on_response_prepare.append(limit_probe_send_buffer)
+        server = TestServer(app, host="127.0.0.1")
+        await server.start_server()
+        port = server.make_url("/").port
+        assert port is not None
+        origin = f"http://127.0.0.1:{port}"
+        stalled: asyncio.StreamWriter | None = None
+        cleanup: asyncio.Task[None] | None = None
+        receiver: asyncio.Task[None] | None = None
+        pump: asyncio.Task[None] | None = None
+        try:
+            async with ClientSession() as client:
+                healthy = await client.ws_connect(
+                    f"{origin}/api/v1/session?token={token}",
+                    headers={"Origin": origin},
+                    max_msg_size=128 * 1024 * 1024,
+                )
+                initial = cast(dict[str, Any], await healthy.receive_json(timeout=15))
+                assert len(initial["scene"]["frame"]["cells"]) == 40_000
+                notices: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+                frames: asyncio.Queue[None] = asyncio.Queue()
+
+                async def drain_healthy() -> None:
+                    async for message in healthy:
+                        assert message.type is WSMsgType.TEXT
+                        body = cast(dict[str, Any], message.json())
+                        if body.get("type") == "frame":
+                            frames.put_nowait(None)
+                        else:
+                            notices.put_nowait(body)
+
+                receiver = asyncio.create_task(drain_healthy())
+                # Limit the receive window before TCP negotiation, then stop
+                # reading before sending the authenticated WebSocket upgrade.
+                # No send/close implementation or timeout is mocked.
+                raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                try:
+                    raw.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+                    raw.setblocking(False)
+                    await asyncio.get_running_loop().sock_connect(raw, ("127.0.0.1", port))
+                    reader, stalled = await asyncio.open_connection(sock=raw)
+                except BaseException:
+                    raw.close()
+                    raise
+                cast(asyncio.Transport, stalled.transport).pause_reading()
+                stalled.write(
+                    (
+                        f"GET /api/v1/session?token={token} HTTP/1.1\r\n"
+                        f"Host: 127.0.0.1:{port}\r\nOrigin: {origin}\r\n"
+                        "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                        "Sec-WebSocket-Key: MTIzNDU2Nzg5MDEyMzQ1Ng==\r\n"
+                        "Sec-WebSocket-Version: 13\r\nX-Backpressure-Probe: 1\r\n\r\n"
+                    ).encode("ascii")
+                )
+                await stalled.drain()
+                # Observe the server's authenticated 101 response without
+                # allowing the client to prefetch any scene payload first.
+                await asyncio.wait_for(probe_prepared.wait(), 5)
+                # Synchronize on observed backpressure instead of assuming that
+                # a delay was long enough for the initial send to fill the queue.
+                assert probe_transport is not None
+                blocked = probe_transport
+                requests_sent = 0
+
+                async def fill_windows_loopback() -> None:
+                    nonlocal requests_sent
+                    # Windows can accept the entire initial scene below the
+                    # Proactor transport while the receiver is already paused.
+                    # Exercise sustained real broadcasts on that platform;
+                    # POSIX retains the stalled-initial-delivery scenario.
+                    for _ in range(8):
+                        if blocked.get_write_buffer_size() > 1_000_000:
+                            return
+                        await healthy.send_json({"type": "frame"})
+                        requests_sent += 1
+                        # The enclosing 15-second setup budget owns this wait;
+                        # native capture is not part of the network deadline.
+                        await frames.get()
+
+                if sys.platform == "win32":
+                    pump = asyncio.create_task(fill_windows_loopback())
+                try:
+                    async with asyncio.timeout(15):
+                        while blocked.get_write_buffer_size() <= 1_000_000:
+                            assert not blocked.is_closing(), (
+                                "probe closed before backpressure observed"
+                            )
+                            if pump is not None and pump.done():
+                                await pump
+                                raise AssertionError(
+                                    "8 real Frame requests did not cause backpressure"
+                                )
+                            await asyncio.sleep(0.01)
+                except TimeoutError as error:
+                    peer = cast(socket.socket, blocked.get_extra_info("socket"))
+                    buffered = len(reader._buffer)  # pyright: ignore[reportPrivateUsage]
+                    chains: list[str] = []
+                    for task in list(asyncio.all_tasks())[:16]:
+                        current = cast(Any, task.get_coro())
+                        chain: list[str] = []
+                        for _ in range(16):
+                            if current is None:
+                                break
+                            code = getattr(current, "cr_code", None)
+                            chain.append(code.co_name if code else type(current).__name__)
+                            current = getattr(current, "cr_await", None)
+                        chains.append(" -> ".join(chain))
+                    registered = len(controller._sockets)  # pyright: ignore[reportPrivateUsage]
+                    raise AssertionError(
+                        f"no backpressure: transport={type(blocked).__name__}, "
+                        f"queued={blocked.get_write_buffer_size()}, reader_bytes={buffered}, "
+                        f"send_buffer={peer.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)}, "
+                        f"receive_buffer={raw.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)}, "
+                        f"registered={registered}, frame_requests={requests_sent}, "
+                        f"await_chains={chains}"
+                    ) from error
+                assert blocked.get_write_buffer_size() > 1_000_000
+                if pump is not None:
+                    # Only the test's request pump is canceled. Already-running
+                    # server work is still drained by cooperative shutdown.
+                    pump.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await pump
+                if termination == "stop":
+                    await healthy.send_json({"type": "stop"})
+                else:
+                    cleanup = asyncio.create_task(server.close())
+                assert await asyncio.wait_for(notices.get(), 5) == {
+                    "type": "session",
+                    "state": "stopping",
+                }
+                assert await asyncio.wait_for(notices.get(), 5) == {
+                    "type": "session",
+                    "state": "stopped",
+                }
+                await asyncio.wait_for(receiver, 5)
+                assert healthy.close_code == 1000
+                await asyncio.wait_for(controller.stopped.wait(), 5)
+                await asyncio.wait_for(cleanup or server.close(), 5)
+                # close() alone may still flush indefinitely; abort() releases
+                # queued bytes without resuming the paused receiver.
+                assert blocked.is_closing()
+                assert blocked.get_write_buffer_size() == 0
+                assert not any(t.name.startswith("microsimulator-live") for t in threads())
+                replacement, next_token = create_live_app(LiveSession(_factory, dt=0.1), dist)
+                next_server = TestServer(replacement, host="127.0.0.1", port=port)
+                await next_server.start_server()
+                try:
+                    async with client.ws_connect(
+                        f"{origin}/api/v1/session?token={next_token}",
+                        headers={"Origin": origin},
+                    ) as next_ws:
+                        frame = cast(dict[str, Any], await next_ws.receive_json(timeout=5))
+                        assert len(frame["scene"]["frame"]["cells"]) == 1
+                finally:
+                    await asyncio.wait_for(next_server.close(), 5)
+        finally:
+            tasks = [task for task in (pump, receiver) if task is not None]
+            for task in tasks:
+                task.cancel()
+            # Verification awaits failures above. Cleanup must still release
+            # real sockets if either helper had already failed.
+            await asyncio.gather(*tasks, return_exceptions=True)
+            if stalled is not None:
+                stalled.transport.abort()
+                await asyncio.wait_for(stalled.wait_closed(), 5)
+            if cleanup is not None:
+                await asyncio.wait_for(asyncio.shield(cleanup), 5)
+            await asyncio.wait_for(server.close(), 5)
 
     asyncio.run(exercise())
 

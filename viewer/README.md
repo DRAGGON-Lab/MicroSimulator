@@ -62,7 +62,7 @@ The `Windows CLI and live-session checks` GitHub Actions job builds the CPU exte
 
 - SHA-256 verification over the Python writer's RFC 8785 canonical frame;
 - strict scene v2 structural and numerical validation;
-- instanced cylinder and sphere rendering for exact spherocylinder geometry;
+- instanced open cylinders and matching hemispheres for continuous capsule surfaces;
 - device walls rendered from plane, sphere, box, and cylinder constraints;
 - orbit, pan, zoom, colony framing, raycast picking, and selection highlighting;
 - a draggable camera-synchronized flat-corner view cube with readable labels, shortest-path single-click snapping, and double-click label leveling;
@@ -85,3 +85,57 @@ pnpm --dir viewer build
 ```
 
 The unit suite includes a Python-authored scene fixture whose digest contains floating-point values that ordinary Python and JavaScript JSON serializers spell differently. Passing that test is the cross-language integrity gate.
+
+Capsule geometry tests verify the scene's cylindrical centerline length, constant radius, spherical ends, zero-length sphere case, arbitrary orientation, outward topology, exact equator positions/normals, and ray picking. The selected-cell overlay uses the same geometry with radius increased by 8%; the cap centers retain the original centerline length. Three instanced draw calls represent the colony, independent of cell count. Replacing frames disposes both geometry and instance buffers.
+
+For visual and GPU-resource checks, see [the capsule browser regression](browser/README.md). Mesh tessellation and pixel aliasing can still affect silhouettes at distant zoom levels; the shared tangent joins specifically remove overlapping end disks and mismatched sphere/cylinder boundaries. The viewer does not smooth or modify simulated cell motion.
+
+## Dataset presentation lifecycle
+
+Opening a scene file, live session, or recording begins a new dataset. Call `DatasetPresentationState.beginDataset()` and `ColonyViewer.beginDataset()` once, then present its first frame with `setFrame(frame, true)` to fit the camera. Ordinary updates, a reset of the same live model, and recording seeks use `setFrame(frame)` without beginning a dataset. Neither simulation time returning to zero nor a changed signal-grid shape identifies a new dataset.
+
+`DatasetPresentationState.datasetId` scopes numerical channel identities; display labels are not identities. Retained preferences are separate from the effective values returned by `forFrame()`. Temporarily absent channels or smaller grids use valid display indices without erasing the user's selections, signal visibility, or chosen slice. The first available signal grid initializes a default slice once. Feature-specific display state should reset only in the explicit `newDataset` block in `presentScene()`.
+
+The ground reference grid is separate from the scientific signal lattice. Its square extent and origin come from the first frame's finite device geometry (boxes, spheres, and cylinders), or from the initial cell capsule bounds when no finite device exists. Infinite plane constraints are excluded. The extent is at least 10 scene distance units with 20 equal divisions; the grid plane is 0.01 units below the lesser of the initial lower Z bound and zero. An initially empty dataset uses a 10-unit grid centered on the world origin. These values remain fixed even when cells or device geometry appear later, the colony expands beyond the grid, or all cells disappear. Opening another dataset initializes a new reference grid; camera Fit never changes its geometry.
+
+`browser/reference-grid.mjs` verifies the reference grid and presentation lifecycle in Chromium against a running Vite server. It uses Playwright (`@playwright/test`) and its installed Chromium; a shared installation can be supplied through `MICROSIMULATOR_PLAYWRIGHT_MODULE` as an absolute module filename. Set `VIEWER_URL` if the server is not on `http://127.0.0.1:4320`, and `EVIDENCE_DIR` to choose the screenshot directory. The test observes renderer transforms through test-only request instrumentation and introduces no production debug interface.
+
+## Replay a recording
+
+Record periodic checkpoints using the short native growth/division/removal example, then list the checkpoint paths in the order they should play:
+
+```sh
+uv run microsimulator run --model examples/replay_demo.py --backend cpu --seed 17 --steps 5 --dt 0.2 --checkpoint-every 1 --output run/replay.json
+uv run microsimulator export-replay run/replay.step-00000001.json run/replay.step-00000002.json run/replay.step-00000003.json run/replay.step-00000004.json run/replay.step-00000005.json --output run/replay-bundle
+pnpm --dir viewer dev
+```
+
+Open the displayed viewer URL, choose **Open recording**, and select the `run/replay-bundle` folder. Select the folder itself, containing `manifest.json` and `frames`, rather than one frame file. The standalone viewer reads the selected local files; no simulation server or source GPU is required.
+
+Use Play/Pause, Previous/Next, the frame slider and Frames/s. Slider arrow keys seek one recorded frame; the buttons also work with keyboard focus. Manual seeking pauses playback. The transport displays a one-based frame position and recorded simulation time, while the manifest uses zero-based ordinals. Equal-time frames remain individually selectable. Playback stops at the end; Play then restarts from frame one. Opening a static scene ends the recording session.
+
+Source paths are used exactly in command-line order; avoid relying on shell globs to establish chronological ordering. The final `run/replay.json` duplicates the last periodic state in this example and is intentionally omitted. Decreasing times cause an error. The exporter refuses existing destinations; choose a new bundle directory for another export. Model parameters and source are unnecessary for export, and no callbacks execute during playback.
+
+The reader loads frames on demand through a bounded three-frame/64 MiB accounting-budget LRU cache; it does not decode the whole recording. Oversized frames are uncached, and renderer/current-load allocations exist outside that cache. See the [replay format](../docs/formats/replay-v1.md) for integrity, provenance, resource bounds and failure behavior. This first implementation imports checkpoint sequences; live recording, video export and timeline-based simulation restart are separate features.
+
+For browser regression checks, generate native fixtures with `.venv/bin/python viewer/browser/replay-fixtures.py /tmp/replay-fixtures`, run the viewer on port 4326, then run `viewer/browser/replay.mjs` with `REPLAY_FIXTURES=/tmp/replay-fixtures` and `MICROSIMULATOR_PLAYWRIGHT_MODULE` pointing to an installed Playwright module. This uses the existing shared browser harness and adds no production debug API.
+
+## Concentration color ranges
+
+Species coloring and signal slices each offer Automatic and Fixed color ranges. Automatic uses the current frame's species extrema or the selected signal slice's extrema. Constant automatic data uses the midpoint color and a uniform legend; empty automatic data shows “no values” without numerical bounds. Fixed uses the entered minimum and maximum across frames and slices. Values outside that interval use endpoint colors; the underlying concentrations and inspector values remain unchanged.
+
+Switching to Fixed starts from the current extrema (with finite padding for constant data), or restores that channel's previously entered fixed bounds. Edit both bounds and choose Apply range or press Enter. Bounds accept finite decimal numbers, including negative numbers and scientific notation, with minimum strictly less than maximum. Invalid or incomplete edits show an explanation and leave the last valid range active. Legends always describe the active range rather than unsubmitted text.
+
+Settings belong to the numerical species or signal channel within the current dataset. They survive temporarily missing channels/grids, live updates, same-model reset, and frame seeking; opening another dataset restores automatic defaults. The shared `resolveScalarRange()` and `normalizeScalar()` APIs reject non-finite data explicitly, retain zero-valued and negative data, and avoid overflowing the difference between extreme finite bounds. They produce display intensity only and do not modify model data.
+
+`browser/scalar-ranges.mjs` checks actual cell instance colors, signal texture pixels, legends, validation messages, keyboard interaction, and dataset transitions in Chromium. Run it with a Vite server on port 4315, or set `VIEWER_URL`, using the same optional Playwright module and evidence-directory environment variables as the reference-grid test.
+
+### Device geometry visibility
+
+Use **Show device geometry** in the Scene panel to hide all mechanical constraint meshes and their outlines. The control is disabled when the current frame contains no geometry, while its preference is retained for later frames. Visibility persists through live updates, reset, and replay seeks, and defaults to enabled on opening another dataset. Cells, selection, the reference grid, signal slices, camera pose, and the existing Fit bounds policy are independent of this display setting. No simulation constraint or transport obstacle is changed.
+
+`browser/device-visibility.mjs` verifies all four constraint types, outlines, keyboard toggling, cell picking, sibling visibility, frame/reset retention, missing geometry, camera and Fit invariance, and new-dataset defaults against Vite on port 4323. It uses the same Playwright module and evidence-directory options as the reference-grid browser test.
+
+## Channel labels
+
+Model-defined species and signal names appear in channel selectors, the species legend, and cell inspection. Duplicate names include their channel indices; unnamed channels retain `Channel N`. Names are presentation text; indices continue to identify selected channels. Current readers accept scene v2 and v3, while writers emit v3. See the [authoring guide](../docs/models/channel-labels.md) and [scene v3 schema](../docs/formats/scene-v3.md).
