@@ -566,6 +566,10 @@ dd {
   z-index: 4;
   min-height: 46px;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: max-content;
+  max-width: calc(100% - 24px);
   align-items: center;
   gap: 13px;
   transform: translateX(-50%);
@@ -611,10 +615,13 @@ dd {
 
 .transport-actions {
   gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .transport-actions .button {
   min-width: 54px;
+  white-space: nowrap;
 }
 
 .status {
@@ -775,4 +782,63 @@ dd {
 }
 .replay-message[data-kind="error"] {
   color: var(--danger);
+}
+
+.scalar-range-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.scalar-range-fields input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.scalar-range-fields input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.scalar-range-fields > button,
+.scalar-range-message {
+  grid-column: 1 / -1;
+}
+
+.scalar-range-message,
+.legend-caption {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.scalar-range-message[data-error="true"] {
+  color: var(--danger);
+}
+
+.legend-caption {
+  margin-block: 6px;
+}
+
+.device-visibility {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.device-visibility input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--accent);
 }

@@ -32,13 +32,17 @@ The controller stores one stochastic division target per stable cell ID. On each
 
 ### Length and volume
 
-The tutorial uses centerline length as its division threshold. MicroSimulator uses the effective capsule volume
+The tutorial uses centerline length as its division threshold. MicroSimulator uses the conserved biochemical biomass volume
 
 ```text
-V = pi r^2 (length + 2r)
+B = pi r^2 (length + 2r)
 ```
 
-for concentration dilution and cell-grid exchange. If an experiment requires a volume-based division rule, compute that threshold explicitly in the regulation callback.
+for concentration dilution and cell-grid exchange. This differs from geometric capsule volume, `V_geom = pi r^2 length + (4/3) pi r^3`. A length threshold is neither of these volumes. If an experiment requires a volume-based division rule, compute that threshold explicitly in the regulation callback.
+
+During new tutorial construction, each founder target is sampled exactly once from the model random stream. The requested founder centerline length is preserved when valid and otherwise capped at that target. Native single-precision lengths are rounded downward when needed to stay at or below the sampled value; the target itself is unchanged. No threshold rejection sampling is used. Regulation retains the strict `length > target` comparison: a zero-time step does not divide a newly initialized founder, while later growth can.
+
+`UniformLengthDivision.initialize_founders(simulation, state, rng, founders)` applies this opt-in policy before adding cells. Custom policies use `capped_founder_length(requested, target)` after sampling. The culture-dish founders use the same policy, preserving each requested `3.0 + 0.2 * index` length when valid. No ordinary tutorial intentionally starts above its target. The lower-level `growth_and_division.py` demonstrates explicit division without a stochastic threshold, and `native_controller.py` permits explicit `initial_length` parameters for model experiments; its ordinary default 3.0 is below its 4.0 threshold. Existing `initialize(state, rng, cell_ids)` and raw `Simulation.add_cell()` remain available for intentionally oversized cells. Resume restores saved geometry and targets without calling a founder initializer. The existing source-digest guard still requires the exact model file recorded in a checkpoint; retain that file when continuing a run made with an older tutorial version. Conjugation uses its original Gaussian target distribution; an invalid negative target raises an error instead of being resampled or silently changed.
 
 ## 2. Two founder types
 

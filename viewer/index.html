@@ -80,8 +80,14 @@
               <span>Species channel</span>
               <select id="species-channel"></select>
             </label>
+            <div id="species-range" hidden></div>
             <div id="color-legend" class="legend" hidden>
-              <div class="legend-ramp" aria-hidden="true"></div>
+              <div
+                id="legend-ramp"
+                class="legend-ramp"
+                aria-hidden="true"
+              ></div>
+              <div id="legend-mode" class="legend-caption"></div>
               <div class="legend-labels">
                 <span id="legend-min">—</span>
                 <span id="legend-title">Value</span>
@@ -122,10 +128,28 @@
                 value="0"
               />
             </label>
+            <div id="signal-color-range"></div>
+            <div id="signal-legend" class="legend" hidden>
+              <div
+                id="signal-legend-ramp"
+                class="legend-ramp"
+                aria-hidden="true"
+              ></div>
+              <div id="signal-legend-mode" class="legend-caption"></div>
+              <div class="legend-labels">
+                <span id="signal-legend-min">—</span>
+                <span id="signal-legend-title">Signal</span>
+                <span id="signal-legend-max">—</span>
+              </div>
+            </div>
           </section>
 
           <section class="scene-notes">
             <h2>Scene</h2>
+            <label class="device-visibility">
+              <span>Show device geometry</span>
+              <input id="device-visible" type="checkbox" checked disabled />
+            </label>
             <dl>
               <div>
                 <dt>Backend</dt>
@@ -204,6 +228,14 @@
                 disabled
               >
                 Checkpoint
+              </button>
+              <button
+                id="live-stop"
+                class="button button-secondary"
+                type="button"
+                disabled
+              >
+                Stop session
               </button>
             </div>
           </div>

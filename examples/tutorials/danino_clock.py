@@ -244,9 +244,8 @@ def build(context: ModelContext) -> NativeController:
     founder.radius = CELL_RADIUS
     founder.growth_rate = 1.0
     founder.species = [context.rng.uniform(0.0, 0.2), context.rng.uniform(0.0, 0.2), 0.0]
-    founder_id = simulation.add_cell(founder)
     state: dict[str, JSONValue] = {"scope": "clock-nutrient-field-and-trap"}
-    DIVISION.initialize(state, context.rng, (founder_id,))
+    DIVISION.initialize_founders(simulation, state, context.rng, (founder,))
     return NativeController(
         simulation,
         model_id=MODEL_ID,
