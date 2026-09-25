@@ -414,11 +414,24 @@ def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
                 except TimeoutError as error:
                     peer = cast(socket.socket, blocked.get_extra_info("socket"))
                     buffered = len(reader._buffer)  # pyright: ignore[reportPrivateUsage]
+                    chains: list[str] = []
+                    for task in list(asyncio.all_tasks())[:16]:
+                        current = cast(Any, task.get_coro())
+                        chain: list[str] = []
+                        for _ in range(16):
+                            if current is None:
+                                break
+                            code = getattr(current, "cr_code", None)
+                            chain.append(code.co_name if code else type(current).__name__)
+                            current = getattr(current, "cr_await", None)
+                        chains.append(" -> ".join(chain))
+                    registered = len(controller._sockets)  # pyright: ignore[reportPrivateUsage]
                     raise AssertionError(
                         f"no backpressure: transport={type(blocked).__name__}, "
                         f"queued={blocked.get_write_buffer_size()}, reader_bytes={buffered}, "
                         f"send_buffer={peer.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)}, "
-                        f"receive_buffer={raw.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)}"
+                        f"receive_buffer={raw.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)}, "
+                        f"registered={registered}, await_chains={chains}"
                     ) from error
                 assert blocked.get_write_buffer_size() > 1_000_000
                 if termination == "stop":
