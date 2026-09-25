@@ -340,6 +340,21 @@ def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
         dist = _dist(tmp_path)
         app, token = create_live_app(LiveSession(large_factory, dt=0.1), dist)
         controller = app[_CONTROLLER_KEY]
+        probe_transport: asyncio.Transport | None = None
+
+        async def limit_probe_send_buffer(
+            request: web.Request, response: web.StreamResponse
+        ) -> None:
+            nonlocal probe_transport
+            if request.headers.get("X-Backpressure-Probe") == "1":
+                probe_transport = request.transport
+                assert probe_transport is not None
+                peer = cast(socket.socket, probe_transport.get_extra_info("socket"))
+                # Bound kernel buffering too: Windows overlapped writes may
+                # otherwise accept the whole scene before the peer consumes it.
+                peer.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16_384)
+
+        app.on_response_prepare.append(limit_probe_send_buffer)
         server = TestServer(app, host="127.0.0.1")
         await server.start_server()
         port = server.make_url("/").port
@@ -374,7 +389,7 @@ def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
                         f"Host: 127.0.0.1:{port}\r\nOrigin: {origin}\r\n"
                         "Upgrade: websocket\r\nConnection: Upgrade\r\n"
                         "Sec-WebSocket-Key: MTIzNDU2Nzg5MDEyMzQ1Ng==\r\n"
-                        "Sec-WebSocket-Version: 13\r\n\r\n"
+                        "Sec-WebSocket-Version: 13\r\nX-Backpressure-Probe: 1\r\n\r\n"
                     ).encode("ascii")
                 )
                 await stalled.drain()
@@ -383,20 +398,12 @@ def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
                 cast(asyncio.Transport, stalled.transport).pause_reading()
                 # Synchronize on observed backpressure instead of assuming that
                 # a delay was long enough for the initial send to fill the queue.
-                blocked: asyncio.Transport | None = None
+                assert probe_transport is not None
+                blocked = probe_transport
                 async with asyncio.timeout(15):
-                    while blocked is None:
-                        blocked = next(
-                            (
-                                transport
-                                for transport in controller._transports.values()  # pyright: ignore[reportPrivateUsage]
-                                if transport is not None
-                                and transport.get_write_buffer_size() > 1_000_000
-                            ),
-                            None,
-                        )
-                        if blocked is None:
-                            await asyncio.sleep(0.01)
+                    while blocked.get_write_buffer_size() <= 1_000_000:
+                        assert not blocked.is_closing(), "probe closed before backpressure observed"
+                        await asyncio.sleep(0.01)
                 assert blocked.get_write_buffer_size() > 1_000_000
                 if termination == "stop":
                     await healthy.send_json({"type": "stop"})
