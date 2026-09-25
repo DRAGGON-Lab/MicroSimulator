@@ -60,7 +60,7 @@ The `Windows live-session shutdown` GitHub Actions job builds the CPU extension 
 
 - SHA-256 verification over the Python writer's RFC 8785 canonical frame;
 - strict scene v2 structural and numerical validation;
-- instanced cylinder and sphere rendering for exact spherocylinder geometry;
+- instanced open cylinders and matching hemispheres for continuous capsule surfaces;
 - device walls rendered from plane, sphere, box, and cylinder constraints;
 - orbit, pan, zoom, colony framing, raycast picking, and selection highlighting;
 - a draggable camera-synchronized flat-corner view cube with readable labels, shortest-path single-click snapping, and double-click label leveling;
@@ -83,6 +83,10 @@ pnpm --dir viewer build
 ```
 
 The unit suite includes a Python-authored scene fixture whose digest contains floating-point values that ordinary Python and JavaScript JSON serializers spell differently. Passing that test is the cross-language integrity gate.
+
+Capsule geometry tests verify the scene's cylindrical centerline length, constant radius, spherical ends, zero-length sphere case, arbitrary orientation, outward topology, exact equator positions/normals, and ray picking. The selected-cell overlay uses the same geometry with radius increased by 8%; the cap centers retain the original centerline length. Three instanced draw calls represent the colony, independent of cell count. Replacing frames disposes both geometry and instance buffers.
+
+For visual and GPU-resource checks, see [the capsule browser regression](browser/README.md). Mesh tessellation and pixel aliasing can still affect silhouettes at distant zoom levels; the shared tangent joins specifically remove overlapping end disks and mismatched sphere/cylinder boundaries. The viewer does not smooth or modify simulated cell motion.
 
 ## Dataset presentation lifecycle
 
