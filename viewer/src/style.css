@@ -566,6 +566,10 @@ dd {
   z-index: 4;
   min-height: 46px;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: max-content;
+  max-width: calc(100% - 24px);
   align-items: center;
   gap: 13px;
   transform: translateX(-50%);
@@ -611,10 +615,13 @@ dd {
 
 .transport-actions {
   gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .transport-actions .button {
   min-width: 54px;
+  white-space: nowrap;
 }
 
 .status {
