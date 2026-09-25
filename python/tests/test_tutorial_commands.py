@@ -378,7 +378,9 @@ def test_tutorial_flags_paths_and_links() -> None:
             destination = (path.parent / filename).resolve() if filename else path
             assert destination.exists(), (path, target)
             if anchor and destination.suffix == ".md":
-                headings = re.findall(r"^#+\s+(.+)$", destination.read_text(), re.MULTILINE)
+                headings = re.findall(
+                    r"^#+\s+(.+)$", destination.read_text(encoding="utf-8"), re.MULTILINE
+                )
                 anchors = {re.sub(r"[^\w -]", "", h.lower()).replace(" ", "-") for h in headings}
                 assert anchor in anchors, (path, target)
         if path.parent == ROOT / "docs/tutorials" and path != GUIDE:
