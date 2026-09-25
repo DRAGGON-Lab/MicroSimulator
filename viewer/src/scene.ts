@@ -105,6 +105,13 @@ export interface ChannelMetadata {
   readonly signals: readonly (string | null)[];
 }
 
+// Metadata arrays are readonly. Weak keys retain no discarded frame/history;
+// resolving once also avoids rebuilding a whole group for every selector row.
+const displayChannelLabels = new WeakMap<
+  readonly (string | null)[],
+  readonly string[]
+>();
+
 /** Presentation only. Numerical indices, never labels, identify channels. */
 export function channelLabel(
   frame: SceneFrame,
@@ -115,15 +122,25 @@ export function channelLabel(
   if (!Number.isInteger(index) || index < 0 || index >= labels.length) {
     throw new RangeError(`${kind} channel ${index} is out of range`);
   }
-  const display = (label: string | null | undefined, slot: number): string =>
-    label === null || label === undefined || label.trim() === ""
-      ? `Channel ${slot}`
-      : label;
-  const label = display(labels[index], index);
-  const duplicated = labels.some(
-    (other, slot) => slot !== index && display(other, slot) === label,
-  );
-  return duplicated ? `${label} [${index}]` : label;
+  let resolved = displayChannelLabels.get(labels);
+  if (resolved === undefined) {
+    const names = labels.map((label, slot) =>
+      label === null || label.trim() === "" ? `Channel ${slot}` : label,
+    );
+    const counts = new Map<string, number>();
+    for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+    resolved = names.map((name, slot) =>
+      counts.get(name)! > 1 ? `${name} [${slot}]` : name,
+    );
+    // A supplied name can imitate an automatically indexed duplicate, e.g.
+    // ["GFP", "GFP", "GFP [0]"]. In that case index the entire group: the
+    // distinct final indices guarantee uniqueness even for nested suffixes.
+    if (new Set(resolved).size !== resolved.length) {
+      resolved = names.map((name, slot) => `${name} [${slot}]`);
+    }
+    displayChannelLabels.set(labels, resolved);
+  }
+  return resolved[index]!;
 }
 
 export interface SceneFrame {
