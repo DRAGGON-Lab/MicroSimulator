@@ -8,6 +8,7 @@ import signal
 import socket
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 from threading import Event
 from threading import enumerate as threads
@@ -325,7 +326,7 @@ def test_stop_is_not_blocked_by_a_stalled_frame_send(
 
 
 @pytest.mark.parametrize("termination", ["stop", "runner_cleanup"])
-def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
+def test_real_tcp_backpressure_releases_connections_and_reuses_port(
     tmp_path: Path, termination: str
 ) -> None:
     def large_factory() -> tuple[Simulation, dict[str, JSONValue]]:
@@ -365,6 +366,8 @@ def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
         origin = f"http://127.0.0.1:{port}"
         stalled: asyncio.StreamWriter | None = None
         cleanup: asyncio.Task[None] | None = None
+        receiver: asyncio.Task[None] | None = None
+        pump: asyncio.Task[None] | None = None
         try:
             async with ClientSession() as client:
                 healthy = await client.ws_connect(
@@ -374,6 +377,19 @@ def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
                 )
                 initial = cast(dict[str, Any], await healthy.receive_json(timeout=15))
                 assert len(initial["scene"]["frame"]["cells"]) == 40_000
+                notices: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+                frames: asyncio.Queue[None] = asyncio.Queue()
+
+                async def drain_healthy() -> None:
+                    async for message in healthy:
+                        assert message.type is WSMsgType.TEXT
+                        body = cast(dict[str, Any], message.json())
+                        if body.get("type") == "frame":
+                            frames.put_nowait(None)
+                        else:
+                            notices.put_nowait(body)
+
+                receiver = asyncio.create_task(drain_healthy())
                 # Limit the receive window before TCP negotiation, then stop
                 # reading before sending the authenticated WebSocket upgrade.
                 # No send/close implementation or timeout is mocked.
@@ -404,36 +420,78 @@ def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
                 # a delay was long enough for the initial send to fill the queue.
                 assert probe_transport is not None
                 blocked = probe_transport
+                requests_sent = 0
+
+                async def fill_windows_loopback() -> None:
+                    nonlocal requests_sent
+                    # Windows can accept the entire initial scene below the
+                    # Proactor transport while the receiver is already paused.
+                    # Exercise sustained real broadcasts on that platform;
+                    # POSIX retains the stalled-initial-delivery scenario.
+                    for _ in range(8):
+                        if blocked.get_write_buffer_size() > 1_000_000:
+                            return
+                        await healthy.send_json({"type": "frame"})
+                        requests_sent += 1
+                        await asyncio.wait_for(frames.get(), 5)
+
+                if sys.platform == "win32":
+                    pump = asyncio.create_task(fill_windows_loopback())
                 try:
                     async with asyncio.timeout(15):
                         while blocked.get_write_buffer_size() <= 1_000_000:
                             assert not blocked.is_closing(), (
                                 "probe closed before backpressure observed"
                             )
+                            if pump is not None and pump.done():
+                                await pump
+                                raise AssertionError(
+                                    "8 real Frame requests did not cause backpressure"
+                                )
                             await asyncio.sleep(0.01)
                 except TimeoutError as error:
                     peer = cast(socket.socket, blocked.get_extra_info("socket"))
                     buffered = len(reader._buffer)  # pyright: ignore[reportPrivateUsage]
+                    chains: list[str] = []
+                    for task in list(asyncio.all_tasks())[:16]:
+                        current = cast(Any, task.get_coro())
+                        chain: list[str] = []
+                        for _ in range(16):
+                            if current is None:
+                                break
+                            code = getattr(current, "cr_code", None)
+                            chain.append(code.co_name if code else type(current).__name__)
+                            current = getattr(current, "cr_await", None)
+                        chains.append(" -> ".join(chain))
+                    registered = len(controller._sockets)  # pyright: ignore[reportPrivateUsage]
                     raise AssertionError(
                         f"no backpressure: transport={type(blocked).__name__}, "
                         f"queued={blocked.get_write_buffer_size()}, reader_bytes={buffered}, "
                         f"send_buffer={peer.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)}, "
-                        f"receive_buffer={raw.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)}"
+                        f"receive_buffer={raw.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)}, "
+                        f"registered={registered}, frame_requests={requests_sent}, "
+                        f"await_chains={chains}"
                     ) from error
                 assert blocked.get_write_buffer_size() > 1_000_000
+                if pump is not None:
+                    # Only the test's request pump is canceled. Already-running
+                    # server work is still drained by cooperative shutdown.
+                    pump.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await pump
                 if termination == "stop":
                     await healthy.send_json({"type": "stop"})
                 else:
                     cleanup = asyncio.create_task(server.close())
-                assert await healthy.receive_json(timeout=5) == {
+                assert await asyncio.wait_for(notices.get(), 5) == {
                     "type": "session",
                     "state": "stopping",
                 }
-                assert await healthy.receive_json(timeout=5) == {
+                assert await asyncio.wait_for(notices.get(), 5) == {
                     "type": "session",
                     "state": "stopped",
                 }
-                assert (await healthy.receive(timeout=5)).type == WSMsgType.CLOSE
+                await asyncio.wait_for(receiver, 5)
                 assert healthy.close_code == 1000
                 await asyncio.wait_for(controller.stopped.wait(), 5)
                 await asyncio.wait_for(cleanup or server.close(), 5)
@@ -455,6 +513,12 @@ def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
                 finally:
                     await asyncio.wait_for(next_server.close(), 5)
         finally:
+            tasks = [task for task in (pump, receiver) if task is not None]
+            for task in tasks:
+                task.cancel()
+            # Verification awaits failures above. Cleanup must still release
+            # real sockets if either helper had already failed.
+            await asyncio.gather(*tasks, return_exceptions=True)
             if stalled is not None:
                 stalled.transport.abort()
                 await asyncio.wait_for(stalled.wait_closed(), 5)
