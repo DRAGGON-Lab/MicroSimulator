@@ -93,7 +93,7 @@ from .controller import (
     capture_random_state,
     restore_random_state,
 )
-from .division import UniformLengthDivision
+from .division import UniformLengthDivision, capped_founder_length
 from .legacy import LegacyCell, LegacyCompatibilityError, LegacyModelAdapter
 from .legacy_loader import build_legacy_model, resume_legacy_model
 from .legacy_pickle import LegacyPickleError, LegacyPickleImport, import_legacy_pickle
@@ -261,6 +261,7 @@ __all__ = [
     "backend_device_count",
     "build_legacy_model",
     "build_model",
+    "capped_founder_length",
     "capture_random_state",
     "capture_scene",
     "dumps_scene",

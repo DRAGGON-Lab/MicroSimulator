@@ -214,7 +214,7 @@ def build(context: ModelContext) -> NativeController:
     simulation.set_coupled_rate_plan(_rate_plan())
     _add_walls(simulation)
 
-    founder_ids: list[int] = []
+    founder_ids: list[CellInit] = []
     for x, y in FOUNDER_SITES:
         founder = CellInit()
         founder.position = Vec3(x, y, 0.0)
@@ -223,9 +223,9 @@ def build(context: ModelContext) -> NativeController:
         founder.radius = CELL_RADIUS
         founder.growth_rate = 1.0
         founder.fixed = True
-        founder_ids.append(simulation.add_cell(founder))
+        founder_ids.append(founder)
     state: dict[str, JSONValue] = {"scope": "pillar-channel"}
-    DIVISION.initialize(state, context.rng, tuple(founder_ids))
+    DIVISION.initialize_founders(simulation, state, context.rng, tuple(founder_ids))
     return NativeController(
         simulation,
         model_id=MODEL_ID,
