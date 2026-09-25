@@ -116,13 +116,29 @@ try {
   await expect(page.locator("#species-channel")).toHaveValue("1");
   await page.selectOption("#species-channel", "2");
   await expect(page.locator("#legend-title")).toHaveText("GFP [0] [2]");
+  document.frame.channel_metadata.species = [
+    " GFP\tname ",
+    "GFP name",
+    "GFP\t name [0]",
+  ];
+  await send();
+  const normalized = ["GFP name [0]", "GFP name [1]", "GFP name [0] [2]"];
+  await expect(page.locator("#species-channel option")).toHaveText(normalized);
+  assert.deepEqual(
+    await page
+      .locator("#species-channel option")
+      .evaluateAll((options) => options.map((option) => option.label)),
+    normalized,
+  );
+  await expect(page.locator("#species-channel")).toHaveValue("2");
+  await expect(page.locator("#legend-title")).toHaveText("GFP name [0] [2]");
   await page.screenshot({ path: `${evidence}/named-channels.png` });
   assert.deepEqual(errors, []);
   console.log(
     JSON.stringify({
       status: "passed",
       assertions:
-        "selector names, duplicate and generated-suffix disambiguation, HTML text safety, Unicode, inspector, legend, index-stable renamed frames, reset time",
+        "selector names, duplicate, whitespace and generated-suffix disambiguation, HTML text safety, Unicode, inspector, legend, index-stable renamed frames, reset time",
       screenshot: `${evidence}/named-channels.png`,
     }),
   );

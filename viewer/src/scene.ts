@@ -125,7 +125,9 @@ export function channelLabel(
   let resolved = displayChannelLabels.get(labels);
   if (resolved === undefined) {
     const names = labels.map((label, slot) =>
-      label === null || label.trim() === "" ? `Channel ${slot}` : label,
+      label === null || label.trim() === ""
+        ? `Channel ${slot}`
+        : label.replace(/[\t\n\f\r ]+/g, " ").replace(/^ | $/g, ""),
     );
     const counts = new Map<string, number>();
     for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);

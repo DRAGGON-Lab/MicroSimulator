@@ -95,6 +95,23 @@ describe("channel metadata", () => {
     },
   );
 
+  it.each(["species", "signals"] as const)(
+    "disambiguates %s names after browser whitespace normalization",
+    async (kind) => {
+      const frame = await parseScene(pythonScene);
+      const renamed = {
+        ...frame,
+        channelMetadata: {
+          ...frame.channelMetadata,
+          [kind]: [" GFP\tname ", "GFP name", "GFP\t name [0]"],
+        },
+      };
+      expect(
+        [0, 1, 2].map((index) => channelLabel(renamed, kind, index)),
+      ).toEqual(["GFP name [0]", "GFP name [1]", "GFP name [0] [2]"]);
+    },
+  );
+
   it("authenticates v2 without inserting metadata before digest verification", async () => {
     const old = document();
     delete old.frame.channel_metadata;
