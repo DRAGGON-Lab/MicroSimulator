@@ -341,18 +341,21 @@ def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
         app, token = create_live_app(LiveSession(large_factory, dt=0.1), dist)
         controller = app[_CONTROLLER_KEY]
         probe_transport: asyncio.Transport | None = None
+        probe_prepared = asyncio.Event()
 
         async def limit_probe_send_buffer(
             request: web.Request, response: web.StreamResponse
         ) -> None:
             nonlocal probe_transport
             if request.headers.get("X-Backpressure-Probe") == "1":
+                assert response.status == 101
                 probe_transport = request.transport
                 assert probe_transport is not None
                 peer = cast(socket.socket, probe_transport.get_extra_info("socket"))
                 # Bound kernel buffering too: Windows overlapped writes may
                 # otherwise accept the whole scene before the peer consumes it.
                 peer.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16_384)
+                probe_prepared.set()
 
         app.on_response_prepare.append(limit_probe_send_buffer)
         server = TestServer(app, host="127.0.0.1")
@@ -372,7 +375,7 @@ def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
                 initial = cast(dict[str, Any], await healthy.receive_json(timeout=15))
                 assert len(initial["scene"]["frame"]["cells"]) == 40_000
                 # Limit the receive window before TCP negotiation, then stop
-                # reading after the real authenticated WebSocket upgrade.
+                # reading before sending the authenticated WebSocket upgrade.
                 # No send/close implementation or timeout is mocked.
                 raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 try:
@@ -383,6 +386,7 @@ def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
                 except BaseException:
                     raw.close()
                     raise
+                cast(asyncio.Transport, stalled.transport).pause_reading()
                 stalled.write(
                     (
                         f"GET /api/v1/session?token={token} HTTP/1.1\r\n"
@@ -393,17 +397,29 @@ def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
                     ).encode("ascii")
                 )
                 await stalled.drain()
-                upgrade = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
-                assert upgrade.startswith(b"HTTP/1.1 101 ")
-                cast(asyncio.Transport, stalled.transport).pause_reading()
+                # Observe the server's authenticated 101 response without
+                # allowing the client to prefetch any scene payload first.
+                await asyncio.wait_for(probe_prepared.wait(), 5)
                 # Synchronize on observed backpressure instead of assuming that
                 # a delay was long enough for the initial send to fill the queue.
                 assert probe_transport is not None
                 blocked = probe_transport
-                async with asyncio.timeout(15):
-                    while blocked.get_write_buffer_size() <= 1_000_000:
-                        assert not blocked.is_closing(), "probe closed before backpressure observed"
-                        await asyncio.sleep(0.01)
+                try:
+                    async with asyncio.timeout(15):
+                        while blocked.get_write_buffer_size() <= 1_000_000:
+                            assert not blocked.is_closing(), (
+                                "probe closed before backpressure observed"
+                            )
+                            await asyncio.sleep(0.01)
+                except TimeoutError as error:
+                    peer = cast(socket.socket, blocked.get_extra_info("socket"))
+                    buffered = len(reader._buffer)  # pyright: ignore[reportPrivateUsage]
+                    raise AssertionError(
+                        f"no backpressure: transport={type(blocked).__name__}, "
+                        f"queued={blocked.get_write_buffer_size()}, reader_bytes={buffered}, "
+                        f"send_buffer={peer.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)}, "
+                        f"receive_buffer={raw.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)}"
+                    ) from error
                 assert blocked.get_write_buffer_size() > 1_000_000
                 if termination == "stop":
                     await healthy.send_json({"type": "stop"})
