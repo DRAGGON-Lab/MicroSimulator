@@ -3,6 +3,7 @@ import "./style.css";
 import { mapCellColors, type ColorMode } from "./color";
 import { ColonyViewer } from "./colony-viewer";
 import { signalSlice, sliceDimension, type SliceAxis } from "./grid";
+import { DatasetPresentationState } from "./presentation-state";
 import {
   LiveConnection,
   type LiveConnectionState,
@@ -72,6 +73,7 @@ let liveConnected = false;
 let livePlaying = false;
 let liveCheckpointEnabled = false;
 let liveConnection: LiveConnection | null = null;
+const presentation = new DatasetPresentationState();
 
 const viewer = new ColonyViewer(canvasHost, viewCubeElement, updateSelection);
 
@@ -104,8 +106,8 @@ function options(
   select: HTMLSelectElement,
   count: number,
   prefix: string,
+  selected: number,
 ): void {
-  const previous = selectedInteger(select);
   select.replaceChildren();
   for (let index = 0; index < count; index += 1) {
     const option = document.createElement("option");
@@ -113,7 +115,7 @@ function options(
     option.textContent = `${prefix} ${index}`;
     select.append(option);
   }
-  select.value = String(Math.min(previous, Math.max(count - 1, 0)));
+  select.value = String(selected);
 }
 
 function selectedInteger(
@@ -148,7 +150,7 @@ function updateSignalRange(): void {
   const axis = signalAxis.value as SliceAxis;
   const maximum = sliceDimension(frame.signalGrid, axis) - 1;
   signalRange.max = String(maximum);
-  signalRange.value = String(Math.min(selectedInteger(signalRange), maximum));
+  signalRange.value = String(presentation.forFrame(frame).signalSlice);
   sliceValue.value = signalRange.value;
 }
 
@@ -215,26 +217,21 @@ function updateSelection(cell: SceneCell | null): void {
   }
 }
 
-function sameShape(
-  previous: SceneFrame["signalGrid"],
-  next: SceneFrame["signalGrid"],
-): boolean {
-  return (
-    previous !== null &&
-    next !== null &&
-    previous.signalCount === next.signalCount &&
-    previous.shape.every((value, index) => value === next.shape[index])
-  );
-}
-
 function presentScene(
   next: SceneFrame,
   label: string,
-  { fit = true, announce = true }: { fit?: boolean; announce?: boolean } = {},
+  {
+    newDataset = false,
+    announce = true,
+  }: { newDataset?: boolean; announce?: boolean } = {},
 ): void {
-  const previous = frame;
+  if (newDataset) {
+    presentation.beginDataset();
+    viewer.beginDataset();
+  }
+  const display = presentation.forFrame(next);
   frame = next;
-  viewer.setFrame(next, fit);
+  viewer.setFrame(next, newDataset);
   fitButton.disabled = false;
   colorMode.disabled = false;
   emptyState.hidden = true;
@@ -248,10 +245,8 @@ function presentScene(
   gridShape.textContent =
     next.signalGrid === null ? "None" : next.signalGrid.shape.join(" × ");
 
-  options(speciesChannel, next.speciesCount, "Channel");
-  if (next.speciesCount === 0 && colorMode.value === "species") {
-    colorMode.value = "cell-type";
-  }
+  colorMode.value = display.colorMode;
+  options(speciesChannel, next.speciesCount, "Channel", display.speciesChannel);
   const speciesOption = colorMode.querySelector<HTMLOptionElement>(
     'option[value="species"]',
   );
@@ -260,15 +255,19 @@ function presentScene(
   }
 
   signalSection.hidden = next.signalGrid === null;
+  signalVisible.checked = display.signalVisible;
+  signalAxis.value = display.signalAxis;
   if (next.signalGrid !== null) {
-    options(signalChannel, next.signalGrid.signalCount, "Channel");
-    if (!sameShape(previous?.signalGrid ?? null, next.signalGrid)) {
-      signalVisible.checked = true;
-      signalAxis.value = "z";
-      signalRange.value = String(
-        Math.floor((next.signalGrid.shape[2] - 1) / 2),
-      );
-    }
+    options(
+      signalChannel,
+      next.signalGrid.signalCount,
+      "Channel",
+      display.signalChannel,
+    );
+    signalRange.max = String(
+      sliceDimension(next.signalGrid, display.signalAxis) - 1,
+    );
+    signalRange.value = String(display.signalSlice);
     updateSignalRange();
   }
   updateColors();
@@ -288,7 +287,7 @@ async function loadFile(file: File): Promise<void> {
   }
   try {
     const next = await parseScene(await file.text());
-    presentScene(next, file.name);
+    presentScene(next, file.name, { newDataset: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     setStatus(message, "error");
@@ -305,15 +304,29 @@ fileInput.addEventListener("change", () => {
 
 fitButton.addEventListener("click", () => viewer.fitColony());
 clearSelection.addEventListener("click", () => viewer.selectCell(null));
-colorMode.addEventListener("change", updateColors);
-speciesChannel.addEventListener("change", updateColors);
-signalVisible.addEventListener("change", updateSignal);
-signalChannel.addEventListener("change", updateSignal);
+colorMode.addEventListener("change", () => {
+  presentation.preferences.colorMode = colorMode.value as ColorMode;
+  updateColors();
+});
+speciesChannel.addEventListener("change", () => {
+  presentation.preferences.speciesChannel = selectedInteger(speciesChannel);
+  updateColors();
+});
+signalVisible.addEventListener("change", () => {
+  presentation.preferences.signalVisible = signalVisible.checked;
+  updateSignal();
+});
+signalChannel.addEventListener("change", () => {
+  presentation.preferences.signalChannel = selectedInteger(signalChannel);
+  updateSignal();
+});
 signalAxis.addEventListener("change", () => {
+  presentation.preferences.signalAxis = signalAxis.value as SliceAxis;
   updateSignalRange();
   updateSignal();
 });
 signalRange.addEventListener("input", () => {
+  presentation.preferences.signalSlice = selectedInteger(signalRange);
   sliceValue.value = signalRange.value;
   updateSignal();
 });
@@ -387,7 +400,7 @@ function liveFrame(message: LiveFrameMessage): void {
     liveLabel.textContent = message.playing ? "Running" : "Paused";
   }
   presentScene(message.frame, "live simulation", {
-    fit: first,
+    newDataset: first,
     announce: first,
   });
   updateLiveControls();
