@@ -2,6 +2,8 @@
 
 This tutorial connects device geometry, flowing media, and cell biology in runnable MicroSimulator models. The [modeling guide](../microfluidics.md) introduces the workflow and the choice of flow solver. Four examples cover the range:
 
+The microfluidic-trap, Danino, biopixel, and pillar tutorial founders request centerline length 3.5, capped at their single sampled target in [3.2, 3.8]. Attachment, position, radius, and concentrations are preserved. This affects new construction only; saved geometry is restored unchanged. See [founder initialization and volume conventions](biophysics-and-growth.md#length-and-volume).
+
 | Model | Device | Demonstrates |
 | --- | --- | --- |
 | [`examples/culture_dish.py`](../../examples/culture_dish.py) | round dish | one inside-cylinder constraint as a dish |

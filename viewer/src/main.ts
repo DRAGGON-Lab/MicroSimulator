@@ -18,6 +18,7 @@ import {
 } from "./live";
 import {
   MAX_SCENE_BYTES,
+  channelLabel,
   parseScene,
   type SceneCell,
   type SceneFrame,
@@ -51,6 +52,7 @@ const legendMaximum = required<HTMLElement>("legend-max");
 const legendTitle = required<HTMLElement>("legend-title");
 const signalSection = required<HTMLElement>("signal-section");
 const signalVisible = required<HTMLInputElement>("signal-visible");
+const deviceVisible = required<HTMLInputElement>("device-visible");
 const signalChannel = required<HTMLSelectElement>("signal-channel");
 const signalAxis = required<HTMLSelectElement>("signal-axis");
 const signalRange = required<HTMLInputElement>("signal-slice");
@@ -71,6 +73,7 @@ const livePlay = required<HTMLButtonElement>("live-play");
 const liveStep = required<HTMLButtonElement>("live-step");
 const liveReset = required<HTMLButtonElement>("live-reset");
 const liveCheckpoint = required<HTMLButtonElement>("live-checkpoint");
+const liveStop = required<HTMLButtonElement>("live-stop");
 
 let frame: SceneFrame | null = null;
 let statusToken = 0;
@@ -125,14 +128,14 @@ function setStatus(message: string, kind: "info" | "error" = "info"): void {
 function options(
   select: HTMLSelectElement,
   count: number,
-  prefix: string,
+  label: (index: number) => string,
   selected: number,
 ): void {
   select.replaceChildren();
   for (let index = 0; index < count; index += 1) {
     const option = document.createElement("option");
     option.value = String(index);
-    option.textContent = `${prefix} ${index}`;
+    option.textContent = label(index);
     select.append(option);
   }
   select.value = String(selected);
@@ -266,7 +269,10 @@ function updateSelection(cell: SceneCell | null): void {
     const item = document.createElement("li");
     const label = document.createElement("span");
     const encoded = document.createElement("code");
-    label.textContent = `Channel ${index}`;
+    label.textContent =
+      frame === null
+        ? `Channel ${index}`
+        : channelLabel(frame, "species", index);
     encoded.textContent = formatNumber(value);
     item.append(label, encoded);
     speciesValues.append(item);
@@ -291,6 +297,11 @@ function presentScene(
   const display = presentation.forFrame(next);
   frame = next;
   viewer.setFrame(next, newDataset);
+  deviceVisible.checked = display.deviceVisible;
+  deviceVisible.disabled = !Object.values(next.constraints).some(
+    (constraints) => constraints.length > 0,
+  );
+  viewer.setDeviceVisible(display.deviceVisible);
   fitButton.disabled = false;
   colorMode.disabled = false;
   emptyState.hidden = true;
@@ -305,7 +316,12 @@ function presentScene(
     next.signalGrid === null ? "None" : next.signalGrid.shape.join(" × ");
 
   colorMode.value = display.colorMode;
-  options(speciesChannel, next.speciesCount, "Channel", display.speciesChannel);
+  options(
+    speciesChannel,
+    next.speciesCount,
+    (index) => channelLabel(next, "species", index),
+    display.speciesChannel,
+  );
   const speciesOption = colorMode.querySelector<HTMLOptionElement>(
     'option[value="species"]',
   );
@@ -320,7 +336,7 @@ function presentScene(
     options(
       signalChannel,
       next.signalGrid.signalCount,
-      "Channel",
+      (index) => channelLabel(next, "signals", index),
       display.signalChannel,
     );
     signalRange.max = String(
@@ -370,6 +386,10 @@ colorMode.addEventListener("change", () => {
 speciesChannel.addEventListener("change", () => {
   presentation.preferences.speciesChannel = selectedInteger(speciesChannel);
   updateColors();
+});
+deviceVisible.addEventListener("change", () => {
+  presentation.preferences.deviceVisible = deviceVisible.checked;
+  viewer.setDeviceVisible(deviceVisible.checked);
 });
 signalVisible.addEventListener("change", () => {
   presentation.preferences.signalVisible = signalVisible.checked;
@@ -430,6 +450,7 @@ function updateLiveControls(): void {
   liveStep.disabled = !liveConnected;
   liveReset.disabled = !liveConnected;
   liveCheckpoint.disabled = !liveConnected || !liveCheckpointEnabled;
+  liveStop.disabled = !liveConnected;
   livePlay.textContent = livePlaying ? "Pause" : "Play";
 }
 
@@ -443,11 +464,21 @@ function liveState(state: LiveConnectionState): void {
       ? "Connecting"
       : state === "connected"
         ? "Live"
-        : "Disconnected";
+        : state === "stopping"
+          ? "Stopping"
+          : state === "stopped"
+            ? "Stopped"
+            : "Disconnected";
   liveTransport.dataset.state = state;
   updateLiveControls();
   if (state === "closed") {
     setStatus("Live simulation disconnected", "error");
+  } else if (state === "stopping") {
+    setStatus("Stopping session after the current operation finishes…");
+  } else if (state === "stopped") {
+    setStatus(
+      "Session stopped. You can launch another model from the terminal.",
+    );
   }
 }
 
@@ -470,14 +501,14 @@ function liveMessage(message: LiveMessage): void {
     liveFrame(message);
   } else if (message.type === "checkpoint") {
     setStatus(`Checkpoint saved to ${message.path}`);
-  } else {
+  } else if (message.type === "error") {
     setStatus(message.message, "error");
   }
 }
 
 function sendLive(
   command:
-    | { type: "play" | "pause" | "reset" | "checkpoint" }
+    | { type: "play" | "pause" | "reset" | "checkpoint" | "stop" }
     | { type: "step"; steps: number },
 ): void {
   try {
@@ -518,6 +549,7 @@ liveReset.addEventListener("click", () => sendLive({ type: "reset" }));
 liveCheckpoint.addEventListener("click", () =>
   sendLive({ type: "checkpoint" }),
 );
+liveStop.addEventListener("click", () => sendLive({ type: "stop" }));
 
 window.addEventListener(
   "beforeunload",

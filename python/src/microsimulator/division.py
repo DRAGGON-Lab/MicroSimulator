@@ -8,7 +8,9 @@ import re
 from dataclasses import dataclass
 from typing import cast
 
-from ._core import Vec3  # pyright: ignore[reportMissingModuleSource]
+import numpy as np
+
+from ._core import CellInit, Simulation, Vec3  # pyright: ignore[reportMissingModuleSource]
 from .checkpoint import JSONValue
 from .controller import ControllerStateError, ControllerStep, DivisionEvent, DivisionRequest
 
@@ -17,6 +19,23 @@ _STATE_KEY = re.compile(r"[A-Za-z][A-Za-z0-9._-]{0,127}\Z")
 
 def _valid_cell_id(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def capped_founder_length(requested: float, target: float) -> float:
+    """Return a native-representable centerline length no greater than target.
+
+    This is an opt-in model initialization policy. It never changes the sampled
+    target, and must not be applied when restoring existing cells.
+    """
+    if any(not math.isfinite(value) or value < 0.0 for value in (requested, target)):
+        raise ValueError("founder length and target must be finite and non-negative")
+    bounded = min(requested, target)
+    if bounded > float(np.finfo(np.float32).max):
+        raise ValueError("founder length exceeds native single precision range")
+    result = np.float32(bounded)
+    if float(result) > bounded:
+        result = np.nextafter(result, np.float32(0.0))
+    return float(result)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +62,32 @@ class UniformLengthDivision:
 
     def _sample(self, rng: random.Random) -> float:
         return rng.uniform(self.minimum, self.maximum)
+
+    def initialize_founders(
+        self,
+        simulation: Simulation,
+        state: dict[str, JSONValue],
+        rng: random.Random,
+        founders: tuple[CellInit, ...],
+    ) -> tuple[int, ...]:
+        """Sample once per founder, cap its length, then add it to the simulation.
+
+        Mutates only each input's length. Use ``initialize`` with existing IDs
+        instead for intentionally oversized founders. Neither initializer runs
+        during checkpoint restoration.
+        """
+        if self.state_key in state:
+            raise ControllerStateError(f"controller state already contains {self.state_key!r}")
+        targets: dict[str, JSONValue] = {}
+        ids: list[int] = []
+        for founder in founders:
+            target = self._sample(rng)
+            founder.length = capped_founder_length(founder.length, target)
+            cell_id = simulation.add_cell(founder)
+            ids.append(cell_id)
+            targets[str(cell_id)] = target
+        state[self.state_key] = {"targets": targets}
+        return tuple(ids)
 
     def initialize(
         self,

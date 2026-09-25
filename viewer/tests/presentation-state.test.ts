@@ -28,12 +28,27 @@ const frame: SceneFrame = {
     native: true,
   },
   speciesCount: 3,
+  channelMetadata: {
+    species: Array(3).fill(null),
+    signals: Array(3).fill(null),
+  },
   cells: [],
   constraints: { planes: [], spheres: [], boxes: [], cylinders: [] },
   signalGrid: grid,
 };
 
 describe("dataset presentation lifecycle", () => {
+  it("retains device preference through absent geometry and resets for a new dataset", () => {
+    const state = new DatasetPresentationState();
+    state.beginDataset();
+    state.preferences.deviceVisible = false;
+    for (const time of [0, 2, 1, 0]) {
+      expect(state.forFrame({ ...frame, time }).deviceVisible).toBe(false);
+    }
+    state.beginDataset();
+    expect(state.forFrame(frame).deviceVisible).toBe(true);
+  });
+
   it("restores the desired slice after an axis round trip", () => {
     const state = new DatasetPresentationState();
     state.beginDataset();
@@ -71,6 +86,7 @@ describe("dataset presentation lifecycle", () => {
       colorMode: "cell-type",
       speciesChannel: 0,
       signalVisible: true,
+      deviceVisible: true,
       signalChannel: 0,
       signalAxis: "z",
       signalSlice: 4,

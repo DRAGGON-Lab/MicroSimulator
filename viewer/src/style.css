@@ -566,6 +566,10 @@ dd {
   z-index: 4;
   min-height: 46px;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: max-content;
+  max-width: calc(100% - 24px);
   align-items: center;
   gap: 13px;
   transform: translateX(-50%);
@@ -611,10 +615,13 @@ dd {
 
 .transport-actions {
   gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .transport-actions .button {
   min-width: 54px;
+  white-space: nowrap;
 }
 
 .status {
@@ -755,4 +762,21 @@ dd {
 
 .legend-caption {
   margin-block: 6px;
+}
+
+.device-visibility {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.device-visibility input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--accent);
 }

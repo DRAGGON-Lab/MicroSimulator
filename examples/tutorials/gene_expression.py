@@ -112,11 +112,10 @@ def build(context: ModelContext) -> NativeController:
     founder.radius = 0.5
     founder.growth_rate = _growth_rate(scenario)
     founder.species = initial_species
-    founder_id = simulation.add_cell(founder)
 
     division, regulate = _callbacks(scenario)
     state: dict[str, JSONValue] = {"scenario": scenario}
-    division.initialize(state, context.rng, (founder_id,))
+    division.initialize_founders(simulation, state, context.rng, (founder,))
     return NativeController(
         simulation,
         model_id=MODEL_ID,

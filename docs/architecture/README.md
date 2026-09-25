@@ -24,6 +24,7 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 - [Persistent fixed rod cells](0009-fixed-cells.md)
 - [Biomass, growth, division, and uptake](0024-biomass-accounting.md)
 - [Typed species rate plans](0003-species-rates.md)
+- [Cell-occupied extracellular volume: design and CPU reference](0025-cell-occupied-volume.md)
 - [Grid signaling and cell coupling](0006-grid-signaling.md)
 - [Crank-Nicolson signal transport](0008-crank-nicolson-signals.md)
 - [Neighbor diffusion](0010-neighbor-diffusion.md)
