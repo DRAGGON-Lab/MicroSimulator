@@ -2,6 +2,8 @@
 
 CUDA is the NVIDIA backend under active development. It is implemented directly in CUDA C++ with the CUDA Runtime API: no portability layer, translated Metal source, or CPU computational fallback is used.
 
+For application commands, use the [shared CPU, Metal, and CUDA tutorial examples](../../docs/tutorials/commands.md#run-the-same-trap-on-cpu-metal-or-cuda), [device discovery](../../docs/tutorials/commands.md#prepare-and-discover-devices), and [shell quoting guide](../../docs/tutorials/commands.md#choose-a-shell). Select this backend with `--backend cuda` and an enumerated `--device-index`; the model syntax is unchanged.
+
 `CM_ENABLE_CUDA` is off by default so ordinary CPU builds do not acquire a CUDA toolchain dependency.
 
 ## Compile check
