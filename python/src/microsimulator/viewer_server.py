@@ -26,6 +26,8 @@ from .scene import capture_scene, dumps_scene
 MAX_COMMAND_BYTES = 4096
 MAX_STEP_BATCH = 10_000
 MAX_QUEUED_COMMANDS = 32
+SOCKET_SEND_TIMEOUT = 1.0
+SOCKET_CLOSE_TIMEOUT = 1.0
 
 type ModelFactory = Callable[[], tuple[RunnableModel, Mapping[str, JSONValue]]]
 type CommandName = Literal["frame", "step", "play", "pause", "reset", "checkpoint", "stop"]
@@ -188,6 +190,7 @@ class LiveController:
         self.frame_interval = 1.0 / fps
         self.playing = False
         self._sockets: set[web.WebSocketResponse] = set()
+        self._transports: dict[web.WebSocketResponse, asyncio.Transport | None] = {}
         self._play_task: asyncio.Task[None] | None = None
         self._play_wakeup = asyncio.Event()
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="microsimulator-live")
@@ -224,7 +227,8 @@ class LiveController:
         )
 
     async def _send_frame(self, socket: web.WebSocketResponse) -> None:
-        await socket.send_str(json.dumps(await self._message(), separators=(",", ":")))
+        encoded = json.dumps(await self._message(), separators=(",", ":"))
+        await asyncio.wait_for(socket.send_str(encoded), timeout=SOCKET_SEND_TIMEOUT)
 
     async def broadcast_frame(self) -> None:
         sockets = tuple(self._sockets)
@@ -235,16 +239,28 @@ class LiveController:
         # A frame captured for earlier clients must not arrive ahead of a newly
         # connected client's initial frame (or carry its stale playing flag).
         for socket in sockets:
+            if self.stopping:
+                break
             if socket.closed:
                 stale.append(socket)
                 continue
             try:
-                await asyncio.wait_for(socket.send_str(encoded), timeout=1.0)
+                await asyncio.wait_for(socket.send_str(encoded), timeout=SOCKET_SEND_TIMEOUT)
             except TimeoutError:
                 # Retain this socket for shutdown even if it cannot drain a
                 # frame; Stop must not wait indefinitely on frame delivery.
                 continue
             except (ConnectionError, RuntimeError):
+                stale.append(socket)
+            except asyncio.CancelledError:
+                # Another writer can cancel aiohttp's shared drain waiter.
+                # An externally canceled task must still propagate cancellation.
+                task = asyncio.current_task()
+                if task is not None and task.cancelling():
+                    raise
+                transport = self._transports.get(socket)
+                if transport is not None:
+                    transport.abort()
                 stale.append(socket)
         self._sockets.difference_update(stale)
 
@@ -311,7 +327,9 @@ class LiveController:
             return str(destination)
         return None
 
-    async def connect(self, socket: web.WebSocketResponse) -> None:
+    async def connect(
+        self, socket: web.WebSocketResponse, transport: asyncio.Transport | None = None
+    ) -> None:
         self._require_active()
         stale = {client for client in self._sockets if client.closed}
         if stale:
@@ -323,20 +341,33 @@ class LiveController:
                 await self.pause(broadcast=False)
                 self._require_active()
         self._sockets.add(socket)
+        self._transports[socket] = transport
         await self._send_frame(socket)
 
     async def disconnect(self, socket: web.WebSocketResponse) -> None:
         self._sockets.discard(socket)
+        self._transports.pop(socket, None)
         if not self._sockets and not self.stopping:
             await self.pause(broadcast=False)
 
     async def _broadcast(self, message: dict[str, JSONValue]) -> None:
-        for socket in tuple(self._sockets):
+        async def send(socket: web.WebSocketResponse) -> None:
             if not socket.closed:
-                with suppress(ConnectionError, RuntimeError, TimeoutError):
-                    # A stalled browser must not hold the shutdown admission
-                    # path open indefinitely while its send buffer is full.
-                    await asyncio.wait_for(socket.send_json(message), timeout=1.0)
+                try:
+                    await asyncio.wait_for(socket.send_json(message), timeout=SOCKET_SEND_TIMEOUT)
+                except (ConnectionError, RuntimeError, TimeoutError):
+                    pass
+                except asyncio.CancelledError:
+                    task = asyncio.current_task()
+                    if task is not None and task.cancelling():
+                        raise
+                    transport = self._transports.get(socket)
+                    if transport is not None:
+                        transport.abort()
+
+        # Each receiver gets the same bounded opportunity to consume a message;
+        # unresponsive clients do not add serial delays to session shutdown.
+        await asyncio.gather(*(send(socket) for socket in tuple(self._sockets)))
 
     def request_stop(self) -> None:
         """Begin idempotent shutdown outside any socket/command task."""
@@ -355,17 +386,41 @@ class LiveController:
         async with self._operation_lock:
             await asyncio.to_thread(self._worker.shutdown, wait=True, cancel_futures=True)
         await self._broadcast({"type": "session", "state": "stopped"})
-        sockets = tuple(self._sockets)
+        sockets = tuple((socket, self._transports.get(socket)) for socket in self._sockets)
         self._sockets.clear()
-        for socket in sockets:
-            with suppress(ConnectionError, RuntimeError):
-                await socket.close(code=1000, message=b"session stopped")
+        self._transports.clear()
+        await asyncio.gather(*(_close_socket(socket, transport) for socket, transport in sockets))
         self.stopped.set()
 
     async def close(self) -> None:
         self.request_stop()
         assert self._close_task is not None
         await asyncio.shield(self._close_task)
+
+
+async def _close_socket(socket: web.WebSocketResponse, transport: asyncio.Transport | None) -> None:
+    closed = False
+    try:
+        # aiohttp applies its own timeout only AFTER writing/draining the close
+        # frame. Bound the whole operation, including that preceding drain.
+        await asyncio.wait_for(
+            socket.close(code=1000, message=b"session stopped"), timeout=SOCKET_CLOSE_TIMEOUT
+        )
+        closed = True
+    except (ConnectionError, RuntimeError, TimeoutError):
+        pass
+    except asyncio.CancelledError:
+        # aiohttp shares one drain waiter between writes. A timed-out initial
+        # send may cancel that waiter, independently of this cleanup task.
+        # Treat that as a failed close, but preserve real task cancellation.
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise
+    finally:
+        if not closed and transport is not None:
+            # Transport.close() still tries to flush queued bytes; a receiver
+            # that never reads requires abort() to release the drain waiters.
+            transport.abort()
 
 
 _CONTROLLER_KEY = web.AppKey("microsimulator.controller", LiveController)
@@ -410,7 +465,7 @@ async def _websocket(request: web.Request) -> web.StreamResponse:
     # an unbounded number of tasks or blocking Stop behind queue backpressure.
     consumer = asyncio.create_task(execute_commands(), name="microsimulator-live-commands")
     try:
-        await controller.connect(socket)
+        await controller.connect(socket, request.transport)
         async for message in socket:
             if message.type is not WSMsgType.TEXT:
                 if message.type is WSMsgType.ERROR:
@@ -429,6 +484,10 @@ async def _websocket(request: web.Request) -> web.StreamResponse:
                     commands.put_nowait(command)
             except Exception as error:
                 await send_error(error)
+    except (ConnectionError, TimeoutError):
+        # Initial-frame delivery is also bounded; a stalled receiver has no
+        # authority to keep an upgraded request alive during runner cleanup.
+        pass
     finally:
         consumer.cancel()
         try:
@@ -437,8 +496,11 @@ async def _websocket(request: web.Request) -> web.StreamResponse:
             # alive because the old socket still appears to be connected.
             await controller.disconnect(socket)
         finally:
-            with suppress(asyncio.CancelledError):
-                await consumer
+            try:
+                with suppress(asyncio.CancelledError):
+                    await consumer
+            finally:
+                await _close_socket(socket, request.transport)
     return socket
 
 

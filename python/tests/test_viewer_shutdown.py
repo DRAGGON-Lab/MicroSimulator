@@ -17,9 +17,10 @@ from urllib.parse import urlsplit
 import pytest
 from aiohttp import ClientSession, ClientWebSocketResponse, WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
-from microsimulator import BackendKind, CellInit, Simulation, load_checkpoint
+from microsimulator import BackendKind, CellInit, Simulation, Vec3, load_checkpoint
 from microsimulator.checkpoint import JSONValue
 from microsimulator.viewer_server import (
+    _CONTROLLER_KEY,  # pyright: ignore[reportPrivateUsage]
     LiveCommand,
     LiveController,
     LiveSession,
@@ -233,12 +234,16 @@ def test_reconnect_observes_pause_before_disconnected_command_drains(
                 assert release.wait(10), "test did not release frame capture"
             return frame_message(session, playing=playing)
 
-        async def observe_connect(controller: LiveController, ws: web.WebSocketResponse) -> None:
+        async def observe_connect(
+            controller: LiveController,
+            ws: web.WebSocketResponse,
+            transport: asyncio.Transport | None = None,
+        ) -> None:
             nonlocal connections
             connections += 1
             if connections == 2:
                 reconnect_started.set()
-            await connect(controller, ws)
+            await connect(controller, ws, transport)
 
         monkeypatch.setattr(LiveSession, "frame_message", blocked_frame)
         monkeypatch.setattr(LiveController, "connect", observe_connect)
@@ -315,6 +320,131 @@ def test_stop_is_not_blocked_by_a_stalled_frame_send(
             await ws.close()
         finally:
             await client.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("termination", ["stop", "runner_cleanup"])
+def test_real_tcp_backpressure_releases_initial_send_and_reuses_port(
+    tmp_path: Path, termination: str
+) -> None:
+    def large_factory() -> tuple[Simulation, dict[str, JSONValue]]:
+        simulation = Simulation(BackendKind.CPU)
+        cell = CellInit()
+        for index in range(40_000):
+            cell.position = Vec3(index * 3.0, 0.0, 0.0)
+            simulation.add_cell(cell)
+        return simulation, {}
+
+    async def exercise() -> None:
+        dist = _dist(tmp_path)
+        app, token = create_live_app(LiveSession(large_factory, dt=0.1), dist)
+        controller = app[_CONTROLLER_KEY]
+        probe_transport: asyncio.Transport | None = None
+
+        async def limit_probe_send_buffer(
+            request: web.Request, response: web.StreamResponse
+        ) -> None:
+            nonlocal probe_transport
+            if request.headers.get("X-Backpressure-Probe") == "1":
+                probe_transport = request.transport
+                assert probe_transport is not None
+                peer = cast(socket.socket, probe_transport.get_extra_info("socket"))
+                # Bound kernel buffering too: Windows overlapped writes may
+                # otherwise accept the whole scene before the peer consumes it.
+                peer.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16_384)
+
+        app.on_response_prepare.append(limit_probe_send_buffer)
+        server = TestServer(app, host="127.0.0.1")
+        await server.start_server()
+        port = server.make_url("/").port
+        assert port is not None
+        origin = f"http://127.0.0.1:{port}"
+        stalled: asyncio.StreamWriter | None = None
+        cleanup: asyncio.Task[None] | None = None
+        try:
+            async with ClientSession() as client:
+                healthy = await client.ws_connect(
+                    f"{origin}/api/v1/session?token={token}",
+                    headers={"Origin": origin},
+                    max_msg_size=128 * 1024 * 1024,
+                )
+                initial = cast(dict[str, Any], await healthy.receive_json(timeout=15))
+                assert len(initial["scene"]["frame"]["cells"]) == 40_000
+                # Limit the receive window before TCP negotiation, then stop
+                # reading after the real authenticated WebSocket upgrade.
+                # No send/close implementation or timeout is mocked.
+                raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                try:
+                    raw.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+                    raw.setblocking(False)
+                    await asyncio.get_running_loop().sock_connect(raw, ("127.0.0.1", port))
+                    reader, stalled = await asyncio.open_connection(sock=raw)
+                except BaseException:
+                    raw.close()
+                    raise
+                stalled.write(
+                    (
+                        f"GET /api/v1/session?token={token} HTTP/1.1\r\n"
+                        f"Host: 127.0.0.1:{port}\r\nOrigin: {origin}\r\n"
+                        "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                        "Sec-WebSocket-Key: MTIzNDU2Nzg5MDEyMzQ1Ng==\r\n"
+                        "Sec-WebSocket-Version: 13\r\nX-Backpressure-Probe: 1\r\n\r\n"
+                    ).encode("ascii")
+                )
+                await stalled.drain()
+                upgrade = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
+                assert upgrade.startswith(b"HTTP/1.1 101 ")
+                cast(asyncio.Transport, stalled.transport).pause_reading()
+                # Synchronize on observed backpressure instead of assuming that
+                # a delay was long enough for the initial send to fill the queue.
+                assert probe_transport is not None
+                blocked = probe_transport
+                async with asyncio.timeout(15):
+                    while blocked.get_write_buffer_size() <= 1_000_000:
+                        assert not blocked.is_closing(), "probe closed before backpressure observed"
+                        await asyncio.sleep(0.01)
+                assert blocked.get_write_buffer_size() > 1_000_000
+                if termination == "stop":
+                    await healthy.send_json({"type": "stop"})
+                else:
+                    cleanup = asyncio.create_task(server.close())
+                assert await healthy.receive_json(timeout=5) == {
+                    "type": "session",
+                    "state": "stopping",
+                }
+                assert await healthy.receive_json(timeout=5) == {
+                    "type": "session",
+                    "state": "stopped",
+                }
+                assert (await healthy.receive(timeout=5)).type == WSMsgType.CLOSE
+                assert healthy.close_code == 1000
+                await asyncio.wait_for(controller.stopped.wait(), 5)
+                await asyncio.wait_for(cleanup or server.close(), 5)
+                # close() alone may still flush indefinitely; abort() releases
+                # queued bytes without resuming the paused receiver.
+                assert blocked.is_closing()
+                assert blocked.get_write_buffer_size() == 0
+                assert not any(t.name.startswith("microsimulator-live") for t in threads())
+                replacement, next_token = create_live_app(LiveSession(_factory, dt=0.1), dist)
+                next_server = TestServer(replacement, host="127.0.0.1", port=port)
+                await next_server.start_server()
+                try:
+                    async with client.ws_connect(
+                        f"{origin}/api/v1/session?token={next_token}",
+                        headers={"Origin": origin},
+                    ) as next_ws:
+                        frame = cast(dict[str, Any], await next_ws.receive_json(timeout=5))
+                        assert len(frame["scene"]["frame"]["cells"]) == 1
+                finally:
+                    await asyncio.wait_for(next_server.close(), 5)
+        finally:
+            if stalled is not None:
+                stalled.transport.abort()
+                await asyncio.wait_for(stalled.wait_closed(), 5)
+            if cleanup is not None:
+                await asyncio.wait_for(asyncio.shield(cleanup), 5)
+            await asyncio.wait_for(server.close(), 5)
 
     asyncio.run(exercise())
 
