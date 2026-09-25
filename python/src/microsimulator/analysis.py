@@ -469,7 +469,7 @@ def _load_sources(
     for index, value in enumerate(checkpoints):
         path = Path(value)
         bundle = load_checkpoint_bundle(path, backend=backend, device_index=device_index)
-        scene = capture_scene(bundle.simulation)
+        scene = capture_scene(bundle.simulation, channel_metadata=bundle.channel_metadata)
         if previous_time is not None and scene.time < previous_time:
             raise AnalysisError(
                 f"checkpoint {path} has time {scene.time:.9g}, before prior time "

@@ -36,6 +36,10 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 import { rgbBytes, viridis, type RGB } from "./color";
 import type { SignalSlice } from "./grid";
+import {
+  DatasetReferenceGrid,
+  REFERENCE_GRID_DIVISIONS,
+} from "./reference-grid";
 import type { SceneCell, SceneConstraints, SceneFrame } from "./scene";
 import {
   canonicalViewQuaternion,
@@ -99,7 +103,13 @@ export class ColonyViewer {
   private readonly device = new Group();
   private readonly signal = new Group();
   private readonly highlight = new Group();
-  private readonly grid = new GridHelper(20, 20, 0x34413c, 0x222b27);
+  private readonly grid = new GridHelper(
+    20,
+    REFERENCE_GRID_DIVISIONS,
+    0x34413c,
+    0x222b27,
+  );
+  private readonly referenceGrid = new DatasetReferenceGrid();
   private readonly raycaster = new Raycaster();
   private readonly pointer = new Vector2();
   private readonly resizeObserver: ResizeObserver;
@@ -159,6 +169,7 @@ export class ColonyViewer {
       this.device,
       this.highlight,
     );
+    this.grid.name = "reference-grid";
     this.grid.rotateX(Math.PI / 2);
     this.grid.position.z = -0.002;
     this.highlight.visible = false;
@@ -194,7 +205,16 @@ export class ColonyViewer {
     });
   }
 
-  public setFrame(frame: SceneFrame, fit = true): void {
+  /** Call once when opening a file, live session, or recording. */
+  public beginDataset(): void {
+    this.referenceGrid.beginDataset();
+    this.cancelCameraTransition();
+    this.selectCell(null);
+  }
+
+  /** Frame updates, including reset/seek, retain camera and dataset state. */
+  public setFrame(frame: SceneFrame, fit = false): void {
+    this.configureReferenceGrid(frame);
     this.viewCube.setVisible(true);
     disposeGroup(this.colony);
     this.cellMeshes = [];
@@ -209,7 +229,6 @@ export class ColonyViewer {
       this.sceneBounds = deviceBounds.isEmpty()
         ? new Box3(new Vector3(-1, -1, -1), new Vector3(1, 1, 1))
         : deviceBounds;
-      this.configureReferenceGrid(this.sceneBounds);
       if (fit) {
         this.fitColony(false);
       }
@@ -295,7 +314,6 @@ export class ColonyViewer {
     this.colony.add(...this.cellMeshes);
     this.buildDevice(frame.constraints, bounds);
     this.sceneBounds = bounds;
-    this.configureReferenceGrid(bounds);
     const selectedIndex = frame.cells.findIndex(
       (cell) => cell.id === this.selectedCellId,
     );
@@ -783,16 +801,10 @@ export class ColonyViewer {
     this.highlight.visible = true;
   }
 
-  private configureReferenceGrid(bounds: Box3): void {
-    const size = bounds.getSize(new Vector3());
-    const center = bounds.getCenter(new Vector3());
-    const extent = Math.max(size.x, size.y, 10);
-    this.grid.scale.set(extent / 20, extent / 20, extent / 20);
-    this.grid.position.set(
-      center.x,
-      center.y,
-      Math.min(bounds.min.z, 0) - 0.01,
-    );
+  private configureReferenceGrid(frame: SceneFrame): void {
+    const layout = this.referenceGrid.forFrame(frame);
+    this.grid.scale.setScalar(layout.extent / 20);
+    this.grid.position.fromArray(layout.position);
   }
 
   private resize(host: HTMLElement): void {

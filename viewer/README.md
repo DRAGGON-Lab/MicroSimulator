@@ -83,3 +83,17 @@ pnpm --dir viewer build
 ```
 
 The unit suite includes a Python-authored scene fixture whose digest contains floating-point values that ordinary Python and JavaScript JSON serializers spell differently. Passing that test is the cross-language integrity gate.
+
+## Dataset presentation lifecycle
+
+Opening a scene file, live session, or recording begins a new dataset. Call `DatasetPresentationState.beginDataset()` and `ColonyViewer.beginDataset()` once, then present its first frame with `setFrame(frame, true)` to fit the camera. Ordinary updates, a reset of the same live model, and recording seeks use `setFrame(frame)` without beginning a dataset. Neither simulation time returning to zero nor a changed signal-grid shape identifies a new dataset.
+
+`DatasetPresentationState.datasetId` scopes numerical channel identities; display labels are not identities. Retained preferences are separate from the effective values returned by `forFrame()`. Temporarily absent channels or smaller grids use valid display indices without erasing the user's selections, signal visibility, or chosen slice. The first available signal grid initializes a default slice once. Feature-specific display state should reset only in the explicit `newDataset` block in `presentScene()`.
+
+The ground reference grid is separate from the scientific signal lattice. Its square extent and origin come from the first frame's finite device geometry (boxes, spheres, and cylinders), or from the initial cell capsule bounds when no finite device exists. Infinite plane constraints are excluded. The extent is at least 10 scene distance units with 20 equal divisions; the grid plane is 0.01 units below the lesser of the initial lower Z bound and zero. An initially empty dataset uses a 10-unit grid centered on the world origin. These values remain fixed even when cells or device geometry appear later, the colony expands beyond the grid, or all cells disappear. Opening another dataset initializes a new reference grid; camera Fit never changes its geometry.
+
+`browser/reference-grid.mjs` verifies the reference grid and presentation lifecycle in Chromium against a running Vite server. It uses Playwright (`@playwright/test`) and its installed Chromium; a shared installation can be supplied through `MICROSIMULATOR_PLAYWRIGHT_MODULE` as an absolute module filename. Set `VIEWER_URL` if the server is not on `http://127.0.0.1:4320`, and `EVIDENCE_DIR` to choose the screenshot directory. The test observes renderer transforms through test-only request instrumentation and introduces no production debug interface.
+
+## Channel labels
+
+Model-defined species and signal names appear in channel selectors, the species legend, and cell inspection. Duplicate names include their channel indices; unnamed channels retain `Channel N`. Names are presentation text; indices continue to identify selected channels. Current readers accept scene v2 and v3, while writers emit v3. See the [authoring guide](../docs/models/channel-labels.md) and [scene v3 schema](../docs/formats/scene-v3.md).

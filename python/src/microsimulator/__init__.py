@@ -53,6 +53,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     backend_available,
     backend_device_count,
 )
+from .channels import ChannelMetadata, ChannelMetadataError
 from .checkpoint import (
     CHECKPOINT_FORMAT,
     CHECKPOINT_VERSION,
@@ -92,7 +93,7 @@ from .controller import (
     capture_random_state,
     restore_random_state,
 )
-from .division import UniformLengthDivision
+from .division import UniformLengthDivision, capped_founder_length
 from .legacy import LegacyCell, LegacyCompatibilityError, LegacyModelAdapter
 from .legacy_loader import build_legacy_model, resume_legacy_model
 from .legacy_pickle import LegacyPickleError, LegacyPickleImport, import_legacy_pickle
@@ -120,6 +121,7 @@ from .runner import (
 from .sbml import SBMLImportError, SBMLRateModel, load_sbml, parse_sbml
 from .scene import (
     MAX_SCENE_BYTES,
+    MAX_SCENE_CHANNELS,
     SCENE_FORMAT,
     SCENE_VERSION,
     SceneBackend,
@@ -148,6 +150,7 @@ __all__ = [
     "MAX_LEGACY_EXAMPLE_MATRIX_BYTES",
     "MAX_RUN_MANIFEST_BYTES",
     "MAX_SCENE_BYTES",
+    "MAX_SCENE_CHANNELS",
     "RUN_MANIFEST_FORMAT",
     "RUN_MANIFEST_VERSION",
     "SCENE_FORMAT",
@@ -163,6 +166,8 @@ __all__ = [
     "CellInit",
     "CellSnapshot",
     "CellUpdate",
+    "ChannelMetadata",
+    "ChannelMetadataError",
     "CheckpointBundle",
     "CheckpointError",
     "CheckpointSourceBackend",
@@ -256,6 +261,7 @@ __all__ = [
     "backend_device_count",
     "build_legacy_model",
     "build_model",
+    "capped_founder_length",
     "capture_random_state",
     "capture_scene",
     "dumps_scene",
