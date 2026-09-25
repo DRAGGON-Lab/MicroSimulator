@@ -28,6 +28,10 @@ const frame: SceneFrame = {
     native: true,
   },
   speciesCount: 3,
+  channelMetadata: {
+    species: Array(3).fill(null),
+    signals: Array(3).fill(null),
+  },
   cells: [],
   constraints: { planes: [], spheres: [], boxes: [], cylinders: [] },
   signalGrid: grid,

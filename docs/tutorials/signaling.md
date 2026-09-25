@@ -2,6 +2,8 @@
 
 This tutorial introduces extracellular grids, diffusion, cell-grid exchange, sender-receiver communication, and two-strain mutualism. Run the scenarios in `examples/tutorials/signaling.py` with a small time step such as `0.01`.
 
+Each new founder requests centerline length 3.5 and is capped at its sampled division threshold. Its radius, position, cell type, and initial concentrations are preserved. See [founder initialization](biophysics-and-growth.md#length-and-volume).
+
 ## Grid geometry and units
 
 A `SignalGridSpec` declares channel count, lattice shape, physical origin, spacing, diffusion coefficients, advection velocities, integration method, and six boundary conditions. Grid levels are concentrations. A coupled rate plan returns:

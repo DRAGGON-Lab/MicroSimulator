@@ -152,9 +152,8 @@ def build(context: ModelContext) -> NativeController:
     founder.length = 3.5
     founder.radius = CELL_RADIUS
     founder.growth_rate = 1.0
-    founder_id = simulation.add_cell(founder)
     state: dict[str, JSONValue] = {"scope": "microfluidic-trap"}
-    DIVISION.initialize(state, context.rng, (founder_id,))
+    DIVISION.initialize_founders(simulation, state, context.rng, (founder,))
     return NativeController(
         simulation,
         model_id=MODEL_ID,

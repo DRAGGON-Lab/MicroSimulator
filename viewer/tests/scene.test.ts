@@ -1,7 +1,7 @@
 import canonicalize from "canonicalize";
 import { describe, expect, it } from "vitest";
 
-import { parseScene, SceneFormatError } from "../src/scene";
+import { MAX_SCENE_CHANNELS, parseScene, SceneFormatError } from "../src/scene";
 
 const PYTHON_SCENE = `{
   "format": "microsimulator-scene",
@@ -117,7 +117,101 @@ async function digest(value: unknown): Promise<string> {
     .join("");
 }
 
+async function channelBudgetScene(
+  version: number,
+  speciesCount: number,
+  signalCount: number,
+  complete: boolean,
+): Promise<string> {
+  const boundary = { kind: "no_flux", values: [] };
+  const frame = {
+    time: 0,
+    backend: {
+      kind: "cpu",
+      name: "CPU reference",
+      device: "host",
+      device_index: 0,
+      native: false,
+    },
+    species_count: speciesCount,
+    cells: [],
+    constraints: { planes: [], spheres: [], boxes: [], cylinders: [] },
+    signal_grid: {
+      signal_count: signalCount,
+      shape: [1, 1, 1],
+      origin: [0, 0, 0],
+      spacing: [1, 1, 1],
+      boundaries: {
+        x_lower: boundary,
+        x_upper: boundary,
+        y_lower: boundary,
+        y_upper: boundary,
+        z_lower: boundary,
+        z_upper: boundary,
+      },
+      levels: Array<number>(complete ? signalCount : 1).fill(0),
+    },
+    ...(version === 3
+      ? {
+          channel_metadata: {
+            species: Array<null>(complete ? speciesCount : 0).fill(null),
+            signals: Array<null>(complete ? signalCount : 0).fill(null),
+          },
+        }
+      : {}),
+  };
+  return JSON.stringify({
+    format: "microsimulator-scene",
+    version,
+    producer: { name: "microsimulator", version: "0.1.0" },
+    frame,
+    integrity: { algorithm: "sha256", frame: await digest(frame) },
+  });
+}
+
 describe("scene reader", () => {
+  it.each([2, 3])(
+    "accepts both channel groups at the inclusive scene budget in v%i",
+    async (version) => {
+      const frame = await parseScene(
+        await channelBudgetScene(
+          version,
+          MAX_SCENE_CHANNELS,
+          MAX_SCENE_CHANNELS,
+          true,
+        ),
+      );
+      expect(frame.cells).toEqual([]);
+      expect(frame.channelMetadata.species).toEqual(
+        Array<null>(MAX_SCENE_CHANNELS).fill(null),
+      );
+      expect(frame.channelMetadata.signals).toEqual(
+        Array<null>(MAX_SCENE_CHANNELS).fill(null),
+      );
+      expect(frame.signalGrid?.levels).toHaveLength(MAX_SCENE_CHANNELS);
+    },
+  );
+
+  it.each([2, 3])(
+    "rejects tiny signed oversized channel claims before allocating v%i labels",
+    async (version) => {
+      for (const count of [MAX_SCENE_CHANNELS + 1, 2 ** 32 - 1]) {
+        for (const group of ["species", "signals"] as const) {
+          const encoded = await channelBudgetScene(
+            version,
+            group === "species" ? count : 0,
+            group === "signals" ? count : 1,
+            false,
+          );
+          expect(encoded.length).toBeLessThan(2000);
+          await expect(parseScene(encoded)).rejects.toThrow(
+            `${group === "species" ? "$.frame.species_count" : "$.frame.signal_grid.signal_count"}: exceeds scene presentation channel budget of 4096 per group`,
+          );
+        }
+      }
+    },
+  );
+
   it("verifies and reads a Python-authored RFC 8785 scene", async () => {
     const frame = await parseScene(PYTHON_SCENE);
     expect(frame.time).toBe(1);

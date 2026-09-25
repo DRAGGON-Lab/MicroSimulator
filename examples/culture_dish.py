@@ -58,7 +58,7 @@ def build(context: ModelContext) -> NativeController:
     simulation = context.simulation(reserved_capacity=20_000)
     _add_dish(simulation)
 
-    founder_ids = []
+    founders: list[CellInit] = []
     for index in range(FOUNDER_COUNT):
         placement = context.rng.uniform(0.0, 2.0 * math.pi)
         # The square root spreads founders uniformly over the seeded area
@@ -75,10 +75,10 @@ def build(context: ModelContext) -> NativeController:
         founder.length = 3.0 + 0.2 * index
         founder.radius = CELL_RADIUS
         founder.growth_rate = 1.0
-        founder_ids.append(simulation.add_cell(founder))
+        founders.append(founder)
 
     state: dict[str, JSONValue] = {"scope": "culture-dish"}
-    DIVISION.initialize(state, context.rng, tuple(founder_ids))
+    DIVISION.initialize_founders(simulation, state, context.rng, tuple(founders))
     return NativeController(
         simulation,
         model_id=MODEL_ID,
