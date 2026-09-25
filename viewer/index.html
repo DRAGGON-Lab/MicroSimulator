@@ -43,6 +43,20 @@
             Open scene
           </label>
           <input id="scene-file" type="file" accept=".json,application/json" />
+          <button
+            id="recording-open"
+            class="button button-secondary scene-open-action"
+            type="button"
+          >
+            Open recording
+          </button>
+          <input
+            id="recording-folder"
+            type="file"
+            webkitdirectory
+            multiple
+            hidden
+          />
         </div>
       </header>
 
@@ -66,8 +80,14 @@
               <span>Species channel</span>
               <select id="species-channel"></select>
             </label>
+            <div id="species-range" hidden></div>
             <div id="color-legend" class="legend" hidden>
-              <div class="legend-ramp" aria-hidden="true"></div>
+              <div
+                id="legend-ramp"
+                class="legend-ramp"
+                aria-hidden="true"
+              ></div>
+              <div id="legend-mode" class="legend-caption"></div>
               <div class="legend-labels">
                 <span id="legend-min">—</span>
                 <span id="legend-title">Value</span>
@@ -108,10 +128,28 @@
                 value="0"
               />
             </label>
+            <div id="signal-color-range"></div>
+            <div id="signal-legend" class="legend" hidden>
+              <div
+                id="signal-legend-ramp"
+                class="legend-ramp"
+                aria-hidden="true"
+              ></div>
+              <div id="signal-legend-mode" class="legend-caption"></div>
+              <div class="legend-labels">
+                <span id="signal-legend-min">—</span>
+                <span id="signal-legend-title">Signal</span>
+                <span id="signal-legend-max">—</span>
+              </div>
+            </div>
           </section>
 
           <section class="scene-notes">
             <h2>Scene</h2>
+            <label class="device-visibility">
+              <span>Show device geometry</span>
+              <input id="device-visible" type="checkbox" checked disabled />
+            </label>
             <dl>
               <div>
                 <dt>Backend</dt>
@@ -191,8 +229,75 @@
               >
                 Checkpoint
               </button>
+              <button
+                id="live-stop"
+                class="button button-secondary"
+                type="button"
+                disabled
+              >
+                Stop session
+              </button>
             </div>
           </div>
+          <section
+            id="replay-transport"
+            class="replay-transport"
+            aria-label="Recording playback"
+            hidden
+          >
+            <div class="replay-actions">
+              <button
+                id="replay-previous"
+                class="button button-secondary"
+                type="button"
+                aria-label="Previous frame"
+              >
+                Previous
+              </button>
+              <button
+                id="replay-play"
+                class="button button-primary"
+                type="button"
+              >
+                Play
+              </button>
+              <button
+                id="replay-next"
+                class="button button-secondary"
+                type="button"
+                aria-label="Next frame"
+              >
+                Next
+              </button>
+              <label class="replay-rate"
+                >Frames/s
+                <input
+                  id="replay-fps"
+                  type="number"
+                  min="1"
+                  max="120"
+                  value="10"
+                  step="1"
+              /></label>
+            </div>
+            <label class="replay-timeline"
+              >Frame <output id="replay-position">—</output
+              ><input
+                id="replay-timeline"
+                type="range"
+                min="0"
+                max="0"
+                step="1"
+                value="0"
+                aria-label="Recording frame"
+            /></label>
+            <div
+              id="replay-message"
+              class="replay-message"
+              role="status"
+              aria-live="polite"
+            ></div>
+          </section>
           <div class="viewport-help" aria-hidden="true">
             Drag to orbit · Right-drag to pan · Scroll to zoom · Click a cell to
             inspect · Cube: click shortest path · Double-click level label ·

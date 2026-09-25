@@ -18,6 +18,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     MechanicsSolveResult,
     Simulation,
 )
+from .channels import UNNAMED_CHANNELS, ChannelMetadata
 from .checkpoint import CheckpointBundle, JSONValue
 
 _RANDOM_STATE_KIND = "python-random-mt19937"
@@ -327,6 +328,7 @@ class NativeController:
         mechanics: MechanicsConfig | None = None,
         state: Mapping[str, JSONValue] | None = None,
         completed_steps: int = 0,
+        channel_metadata: ChannelMetadata = UNNAMED_CHANNELS,
     ) -> None:
         self._model_id, self._model_version = _model_identity(model_id, model_version)
         if not isinstance(cast(object, simulation), Simulation):
@@ -334,6 +336,9 @@ class NativeController:
         if not isinstance(cast(object, rng), random.Random):
             raise TypeError("native controller requires an explicit random.Random stream")
         self.simulation = simulation
+        self.channel_metadata = channel_metadata.resolved(
+            simulation.species_count, simulation.signal_count
+        )
         self._rng = rng
         self._regulate = regulate
         self._on_division = on_division
@@ -537,6 +542,7 @@ class NativeController:
         mechanics = None if mechanics_value is None else MechanicsConfig.from_json(mechanics_value)
         return cls(
             checkpoint.simulation,
+            channel_metadata=checkpoint.channel_metadata,
             model_id=model_id,
             model_version=model_version,
             rng=restore_random_state(value["random"]),

@@ -263,6 +263,8 @@ def test_version_one_checkpoint_migrates_to_an_empty_signal_state(tmp_path: Path
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 1
+    del document["channel_metadata"]
+    del document["integrity"]["channel_metadata"]
     del document["controller"]
     del document["integrity"]["controller"]
     del document["simulation"]["signal_grid"]
@@ -284,6 +286,8 @@ def test_version_two_checkpoint_migrates_without_a_coupled_plan(tmp_path: Path) 
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 2
+    del document["channel_metadata"]
+    del document["integrity"]["channel_metadata"]
     del document["controller"]
     del document["integrity"]["controller"]
     del document["simulation"]["coupled_rate_plan"]
@@ -307,6 +311,8 @@ def test_version_three_checkpoint_migrates_without_controller_state(tmp_path: Pa
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 3
+    del document["channel_metadata"]
+    del document["integrity"]["channel_metadata"]
     del document["controller"]
     del document["integrity"]["controller"]
     del document["simulation"]["signal_grid"]["spec"]["integration"]
@@ -330,6 +336,8 @@ def test_version_four_signal_grid_migrates_to_forward_euler(tmp_path: Path) -> N
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 4
+    del document["channel_metadata"]
+    del document["integrity"]["channel_metadata"]
     del document["simulation"]["signal_grid"]["spec"]["integration"]
     del document["simulation"]["signal_grid"]["spec"]["solver"]
     _remove_affine_reaction(document)
@@ -350,6 +358,8 @@ def test_version_five_cells_migrate_to_movable(tmp_path: Path) -> None:
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 5
+    del document["channel_metadata"]
+    del document["integrity"]["channel_metadata"]
     _remove_affine_reaction(document)
     _remove_fixed_fields(document)
     _remove_constraint_boxes(document)
@@ -366,6 +376,8 @@ def test_version_six_signal_grid_migrates_without_affine_reactions(tmp_path: Pat
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 6
+    del document["channel_metadata"]
+    del document["integrity"]["channel_metadata"]
     _remove_affine_reaction(document)
     _remove_constraint_boxes(document)
     _remove_grid_obstacles(document)
@@ -383,6 +395,8 @@ def test_version_seven_checkpoint_migrates_without_boxes(tmp_path: Path) -> None
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 7
+    del document["channel_metadata"]
+    del document["integrity"]["channel_metadata"]
     _remove_constraint_boxes(document)
     _remove_grid_obstacles(document)
     _rewrite_with_state_digest(path, document)

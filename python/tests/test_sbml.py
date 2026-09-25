@@ -187,3 +187,10 @@ def test_malformed_or_empty_sbml_fails_explicitly() -> None:
     )
     with pytest.raises(SBMLImportError, match="Level 3 Version 2"):
         parse_sbml(level_two)
+
+
+def test_sbml_channel_metadata_uses_names_and_identifier_fallback() -> None:
+    source = _model_xml().replace('name="substrate"', 'name=""')
+    model = parse_sbml(source)
+    assert model.channel_metadata.species == ("A", "product")
+    assert model.channel_metadata.signals is None
