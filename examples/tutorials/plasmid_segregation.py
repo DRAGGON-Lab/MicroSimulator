@@ -11,6 +11,7 @@ from microsimulator import (
     CellInit,
     ModelContext,
     Simulation,
+    capped_founder_length,
     capture_random_state,
     restore_random_state,
 )
@@ -164,10 +165,12 @@ def build(context: ModelContext) -> PlasmidController:
     first_count = copies_per_cell // 2
     second_count = copies_per_cell - first_count
     founder.species = [first_count / copies_per_cell, second_count / copies_per_cell]
+    target = context.rng.uniform(3.5, 4.0)
+    founder.length = capped_founder_length(founder.length, target)
     founder_id = simulation.add_cell(founder)
     state: dict[str, JSONValue] = {
         "plasmids": {str(founder_id): {"a": first_count, "b": second_count}},
-        "division_targets": {str(founder_id): context.rng.uniform(3.5, 4.0)},
+        "division_targets": {str(founder_id): target},
     }
     return PlasmidController(
         simulation,

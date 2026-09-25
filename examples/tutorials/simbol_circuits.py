@@ -208,9 +208,8 @@ def build(context: ModelContext) -> NativeController:
     founder.radius = 0.5
     founder.growth_rate = 1.0
     founder.species = initial_species
-    founder_id = simulation.add_cell(founder)
     state: dict[str, JSONValue] = {"circuit": circuit}
-    DIVISION.initialize(state, context.rng, (founder_id,))
+    DIVISION.initialize_founders(simulation, state, context.rng, (founder,))
     return NativeController(
         simulation,
         model_id=MODEL_ID,
