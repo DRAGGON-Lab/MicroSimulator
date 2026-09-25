@@ -2,6 +2,8 @@
 
 The MicroSimulator viewer displays cells, device walls, and signal fields so you can inspect a population in its microfluidic environment. Use it to explore saved scenes or follow a live simulation with growth-rate coloring, nutrient slices, and individual-cell inspection.
 
+See [tutorial commands by backend and shell](../docs/tutorials/commands.md#live-view-stop-and-restart) for copyable CPU/Metal/CUDA selection, PowerShell quoting, paths with spaces, checkpoint resume, and Stop/restart. Multiline commands below use POSIX shell backslashes.
+
 The viewer is a TypeScript and Three.js client for `microsimulator-scene` documents. Standalone mode reads scene files; live mode sends typed controls to a Python-owned engine session and verifies every returned scene document. Python owns the model, simulation clock, backend, and checkpoint writer.
 
 ## Run locally
@@ -33,13 +35,34 @@ uv run microsimulator view \
   --open
 ```
 
-Without `--open`, open the tokenized loopback URL printed by `microsimulator`. The live transport can play, pause, advance one step, rebuild the original model, and write to the configured checkpoint destination. Camera position, display mapping, grid slice, and selected-cell identity survive frame updates.
+Without `--open`, open the tokenized loopback URL printed by `microsimulator`. The live transport can play, pause, advance one step, rebuild the original model, write to the configured checkpoint destination, and stop the session. Camera position, display mapping, grid slice, and selected-cell identity survive frame updates.
+
+### Stop one model and start another
+
+Click **Stop session** or press **Ctrl+C** once in the terminal running the server. The current individual step or checkpoint write finishes, the browser displays **Stopped**, and the command returns to the prompt. A large playback batch does not have to finish. Start another `microsimulator view` command using the same port and open the new printed URL. Reset rebuilds the current model; Pause keeps its process available; closing the browser pauses it and allows reconnection. Stop does not automatically save a checkpoint: use Checkpoint first if you need restartable state.
+
+For example, after stopping the trap model above, launch a different model on the same default port:
+
+```console
+uv run microsimulator view --model examples/tutorials/biophysics.py --backend cpu --seed 42 --dt 0.02 --port 8765 --open
+```
+
+The command is a single line and also works in PowerShell 7.3+ where the Python/native build is available; configure [Standard argument passing](../docs/tutorials/commands.md#choose-a-shell) for JSON-valued parameters. To distinguish Windows console behavior from browser behavior, use this manual verification procedure in an attached PowerShell or Command Prompt console:
+
+1. Record the Windows version, terminal application/version, Python version, and exact launch command. Start the command above and click Stop while paused. Confirm the prompt returns, then start the second model on port 8765.
+2. Repeat with Play active and `--frame-steps 10000`. Confirm Stopping transitions to Stopped without finishing the entire batch.
+3. Repeat using Ctrl+C once, both paused and playing. Confirm the prompt returns without `taskkill`, then immediately start another model on the same port.
+4. Close only the browser tab during Play, then reopen the printed URL. Confirm the session remains available and paused.
+
+The automated `python/tests/test_viewer_shutdown.py` suite covers same-socket Stop, checkpoint completion, worker cleanup, and repeated real subprocess restarts. It sends SIGINT on POSIX. On Windows it starts each viewer in an isolated console and uses a separate attached sender to deliver a real [Windows CTRL_C_EVENT](https://learn.microsoft.com/en-us/windows/console/generateconsolectrlevent), leaving the test runner unaffected. Both paths verify orderly browser notifications, clean process exit, and three different models reusing the same port. This exercises the operating-system interruption path; use the manual procedure above to check a particular interactive terminal application and keyboard configuration.
+
+The `Windows CLI and live-session checks` GitHub Actions job builds the CPU extension on `windows-2025` and runs the server and shutdown tests, including isolated-console Ctrl+C, with dependencies from `uv.lock`. Its uploaded report records Windows, PowerShell, Python, backend availability, and individual test results.
 
 ## Capabilities
 
 - SHA-256 verification over the Python writer's RFC 8785 canonical frame;
 - strict scene v2 structural and numerical validation;
-- instanced cylinder and sphere rendering for exact spherocylinder geometry;
+- instanced open cylinders and matching hemispheres for continuous capsule surfaces;
 - device walls rendered from plane, sphere, box, and cylinder constraints;
 - orbit, pan, zoom, colony framing, raycast picking, and selection highlighting;
 - a draggable camera-synchronized flat-corner view cube with readable labels, shortest-path single-click snapping, and double-click label leveling;
@@ -87,6 +110,12 @@ Settings belong to the numerical species or signal channel within the current da
 
 Model-defined species and signal names appear in channel selectors, the species legend, and cell inspection. Duplicate names include their channel indices; unnamed channels retain `Channel N`. Names are presentation text; indices continue to identify selected channels. Current readers accept scene v2 and v3, while writers emit v3. See the [authoring guide](../docs/models/channel-labels.md) and [scene v3 schema](../docs/formats/scene-v3.md).
 
+### Device geometry visibility
+
+Use **Show device geometry** in the Scene panel to hide all mechanical constraint meshes and their outlines. The control is disabled when the current frame contains no geometry, while its preference is retained for later frames. Visibility persists through live updates, reset, and replay seeks, and defaults to enabled on opening another dataset. Cells, selection, the reference grid, signal slices, camera pose, and the existing Fit bounds policy are independent of this display setting. No simulation constraint or transport obstacle is changed.
+
+`browser/device-visibility.mjs` verifies all four constraint types, outlines, keyboard toggling, cell picking, sibling visibility, frame/reset retention, missing geometry, camera and Fit invariance, and new-dataset defaults against Vite on port 4323. It uses the same Playwright module and evidence-directory options as the reference-grid browser test.
+
 ## Composite species colors
 
 Choose Species composite to display several intracellular channels together. The first two available channels initially use red and green and are enabled; additional channels start disabled. Enable or disable each channel with its checkbox. Display settings exposes its tint (a six-digit sRGB hexadecimal color), the same Automatic/Fixed range editor used by single-species coloring, and controls for reordering the list. Tint or range changes apply when submitted, and invalid edits preserve the active value.
@@ -98,3 +127,27 @@ When all channels are disabled or unavailable, cells use neutral gray and the le
 Tints, visibility, list order, and ranges remain associated with numerical channel identity when labels change or data temporarily disappears. Single-species and composite views share each species channel's range. Same-model reset and frame seeking retain settings; opening another dataset restores defaults. The cell inspector, picking, selection highlights, and lineage values continue using the original cell state.
 
 `browser/composite-species.mjs` exercises red-only, green-only, co-expressing, and zero-expression cells in a moving colony, verifies the rendered instance colors, and checks controls, ordering, picking, highlighting, lineage, and dataset transitions. It uses a Vite server on port 4319 (or `VIEWER_URL`) and the same Playwright/evidence environment variables as the other browser checks.
+
+## Replay a recording
+
+Record periodic checkpoints using the short native growth/division/removal example, then list the checkpoint paths in the order they should play:
+
+```sh
+uv run microsimulator run --model examples/replay_demo.py --backend cpu --seed 17 --steps 5 --dt 0.2 --checkpoint-every 1 --output run/replay.json
+uv run microsimulator export-replay run/replay.step-00000001.json run/replay.step-00000002.json run/replay.step-00000003.json run/replay.step-00000004.json run/replay.step-00000005.json --output run/replay-bundle
+pnpm --dir viewer dev
+```
+
+Open the displayed viewer URL, choose **Open recording**, and select the `run/replay-bundle` folder. Select the folder itself, containing `manifest.json` and `frames`, rather than one frame file. The standalone viewer reads the selected local files; no simulation server or source GPU is required.
+
+Use Play/Pause, Previous/Next, the frame slider and Frames/s. Slider arrow keys seek one recorded frame; the buttons also work with keyboard focus. Manual seeking pauses playback. The transport displays a one-based frame position and recorded simulation time, while the manifest uses zero-based ordinals. Equal-time frames remain individually selectable. Playback stops at the end; Play then restarts from frame one. Opening a static scene ends the recording session.
+
+Source paths are used exactly in command-line order; avoid relying on shell globs to establish chronological ordering. The final `run/replay.json` duplicates the last periodic state in this example and is intentionally omitted. Decreasing times cause an error. The exporter refuses existing destinations; choose a new bundle directory for another export. Model parameters and source are unnecessary for export, and no callbacks execute during playback.
+
+The reader loads frames on demand through a bounded three-frame/64 MiB accounting-budget LRU cache; it does not decode the whole recording. Oversized frames are uncached, and renderer/current-load allocations exist outside that cache. See the [replay format](../docs/formats/replay-v1.md) for integrity, provenance, resource bounds and failure behavior. This first implementation imports checkpoint sequences; live recording, video export and timeline-based simulation restart are separate features.
+
+For browser regression checks, generate native fixtures with `.venv/bin/python viewer/browser/replay-fixtures.py /tmp/replay-fixtures`, run the viewer on port 4326, then run `viewer/browser/replay.mjs` with `REPLAY_FIXTURES=/tmp/replay-fixtures` and `MICROSIMULATOR_PLAYWRIGHT_MODULE` pointing to an installed Playwright module. This uses the existing shared browser harness and adds no production debug API.
+
+Capsule geometry tests verify the scene's cylindrical centerline length, constant radius, spherical ends, zero-length sphere case, arbitrary orientation, outward topology, exact equator positions/normals, and ray picking. The selected-cell overlay uses the same geometry with radius increased by 8%; the cap centers retain the original centerline length. Three instanced draw calls represent the colony, independent of cell count. Replacing frames disposes both geometry and instance buffers.
+
+For visual and GPU-resource checks, see [the capsule browser regression](browser/README.md). Mesh tessellation and pixel aliasing can still affect silhouettes at distant zoom levels; the shared tangent joins specifically remove overlapping end disks and mismatched sphere/cylinder boundaries. The viewer does not smooth or modify simulated cell motion.

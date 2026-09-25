@@ -11,6 +11,7 @@ import { ColonyViewer } from "./colony-viewer";
 import { CompositeSpeciesState } from "./composite-state";
 import { CompositeSpeciesControls } from "./composite-controls";
 import { signalSlice, sliceDimension, type SliceAxis } from "./grid";
+import { ReplayControls } from "./replay-controls";
 import { DatasetPresentationState } from "./presentation-state";
 import {
   LiveConnection,
@@ -37,6 +38,8 @@ function required<T extends HTMLElement>(id: string): T {
 const viewport = required<HTMLElement>("viewport");
 const canvasHost = required<HTMLElement>("canvas-host");
 const viewCubeElement = required<HTMLElement>("view-cube");
+const recordingInput = required<HTMLInputElement>("recording-folder");
+const recordingOpen = required<HTMLButtonElement>("recording-open");
 const fileInput = required<HTMLInputElement>("scene-file");
 const fitButton = required<HTMLButtonElement>("fit-button");
 const emptyState = required<HTMLElement>("empty-state");
@@ -54,6 +57,7 @@ const legendMaximum = required<HTMLElement>("legend-max");
 const legendTitle = required<HTMLElement>("legend-title");
 const signalSection = required<HTMLElement>("signal-section");
 const signalVisible = required<HTMLInputElement>("signal-visible");
+const deviceVisible = required<HTMLInputElement>("device-visible");
 const signalChannel = required<HTMLSelectElement>("signal-channel");
 const signalAxis = required<HTMLSelectElement>("signal-axis");
 const signalRange = required<HTMLInputElement>("signal-slice");
@@ -74,7 +78,9 @@ const livePlay = required<HTMLButtonElement>("live-play");
 const liveStep = required<HTMLButtonElement>("live-step");
 const liveReset = required<HTMLButtonElement>("live-reset");
 const liveCheckpoint = required<HTMLButtonElement>("live-checkpoint");
+const liveStop = required<HTMLButtonElement>("live-stop");
 
+let openRequest = 0;
 let frame: SceneFrame | null = null;
 let statusToken = 0;
 let dragDepth = 0;
@@ -108,6 +114,12 @@ const signalRangeControls = new ScalarRangeControls(
 );
 
 const viewer = new ColonyViewer(canvasHost, viewCubeElement, updateSelection);
+const replay = new ReplayControls(
+  required<HTMLElement>("replay-transport"),
+  (frame, newDataset) =>
+    presentScene(frame, "recording", { newDataset, announce: newDataset }),
+  (message) => setStatus(message, "error"),
+);
 
 function formatNumber(value: number): string {
   if (value === 0) {
@@ -319,6 +331,11 @@ function presentScene(
   const display = presentation.forFrame(next);
   frame = next;
   viewer.setFrame(next, newDataset);
+  deviceVisible.checked = display.deviceVisible;
+  deviceVisible.disabled = !Object.values(next.constraints).some(
+    (constraints) => constraints.length > 0,
+  );
+  viewer.setDeviceVisible(display.deviceVisible);
   fitButton.disabled = false;
   colorMode.disabled = false;
   emptyState.hidden = true;
@@ -370,6 +387,8 @@ function presentScene(
 }
 
 async function loadFile(file: File): Promise<void> {
+  const request = ++openRequest;
+  replay.close();
   if (file.size > MAX_SCENE_BYTES) {
     setStatus(
       `Scene exceeds the ${MAX_SCENE_BYTES.toLocaleString()}-byte limit`,
@@ -379,12 +398,22 @@ async function loadFile(file: File): Promise<void> {
   }
   try {
     const next = await parseScene(await file.text());
-    presentScene(next, file.name, { newDataset: true });
+    if (request === openRequest)
+      presentScene(next, file.name, { newDataset: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    setStatus(message, "error");
+    if (request === openRequest) setStatus(message, "error");
   }
 }
+
+recordingOpen.addEventListener("click", () => recordingInput.click());
+recordingInput.addEventListener("change", () => {
+  if (recordingInput.files !== null && recordingInput.files.length > 0) {
+    ++openRequest;
+    void replay.open([...recordingInput.files]);
+  }
+  recordingInput.value = "";
+});
 
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
@@ -403,6 +432,10 @@ colorMode.addEventListener("change", () => {
 speciesChannel.addEventListener("change", () => {
   presentation.preferences.speciesChannel = selectedInteger(speciesChannel);
   updateColors();
+});
+deviceVisible.addEventListener("change", () => {
+  presentation.preferences.deviceVisible = deviceVisible.checked;
+  viewer.setDeviceVisible(deviceVisible.checked);
 });
 signalVisible.addEventListener("change", () => {
   presentation.preferences.signalVisible = signalVisible.checked;
@@ -463,6 +496,7 @@ function updateLiveControls(): void {
   liveStep.disabled = !liveConnected;
   liveReset.disabled = !liveConnected;
   liveCheckpoint.disabled = !liveConnected || !liveCheckpointEnabled;
+  liveStop.disabled = !liveConnected;
   livePlay.textContent = livePlaying ? "Pause" : "Play";
 }
 
@@ -476,11 +510,21 @@ function liveState(state: LiveConnectionState): void {
       ? "Connecting"
       : state === "connected"
         ? "Live"
-        : "Disconnected";
+        : state === "stopping"
+          ? "Stopping"
+          : state === "stopped"
+            ? "Stopped"
+            : "Disconnected";
   liveTransport.dataset.state = state;
   updateLiveControls();
   if (state === "closed") {
     setStatus("Live simulation disconnected", "error");
+  } else if (state === "stopping") {
+    setStatus("Stopping session after the current operation finishes…");
+  } else if (state === "stopped") {
+    setStatus(
+      "Session stopped. You can launch another model from the terminal.",
+    );
   }
 }
 
@@ -503,14 +547,14 @@ function liveMessage(message: LiveMessage): void {
     liveFrame(message);
   } else if (message.type === "checkpoint") {
     setStatus(`Checkpoint saved to ${message.path}`);
-  } else {
+  } else if (message.type === "error") {
     setStatus(message.message, "error");
   }
 }
 
 function sendLive(
   command:
-    | { type: "play" | "pause" | "reset" | "checkpoint" }
+    | { type: "play" | "pause" | "reset" | "checkpoint" | "stop" }
     | { type: "step"; steps: number },
 ): void {
   try {
@@ -551,11 +595,13 @@ liveReset.addEventListener("click", () => sendLive({ type: "reset" }));
 liveCheckpoint.addEventListener("click", () =>
   sendLive({ type: "checkpoint" }),
 );
+liveStop.addEventListener("click", () => sendLive({ type: "stop" }));
 
 window.addEventListener(
   "beforeunload",
   () => {
     liveConnection?.close();
+    replay.close();
     viewer.dispose();
   },
   { once: true },

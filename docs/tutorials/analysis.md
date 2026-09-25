@@ -2,6 +2,8 @@
 
 MicroSimulator separates simulation output into three artifacts:
 
+For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
+
 - a checkpoint is an exact, integrity-checked restart artifact;
 - a scene is an immutable presentation snapshot; and
 - an analysis dataset is an immutable Parquet/Zarr projection with schemas and provenance.
@@ -13,6 +15,7 @@ Use checkpoints for resuming, scenes for viewing, and datasets for statistics.
 ```console
 uv run microsimulator run \
   --model examples/tutorials/biophysics.py \
+  --backend cpu \
   --parameter scenario='"basics"' \
   --seed 42 \
   --steps 200 \

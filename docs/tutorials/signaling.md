@@ -2,6 +2,12 @@
 
 This tutorial introduces extracellular grids, diffusion, cell-grid exchange, sender-receiver communication, and two-strain mutualism. Run the scenarios in `examples/tutorials/signaling.py` with a small time step such as `0.01`.
 
+All scenarios use XY-only division jitter with three-dimensional mechanics. `single_gene` and `communication` have lateral Y walls only; `mutualism` has no mechanical walls. Signal-grid depth does not constrain cell Z or tilt. See [division jitter and out-of-plane motion](planarity.md).
+
+For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
+
+Each new founder requests centerline length 3.5 and is capped at its sampled division threshold. Its radius, position, cell type, and initial concentrations are preserved. See [founder initialization](biophysics-and-growth.md#length-and-volume).
+
 ## Grid geometry and units
 
 A `SignalGridSpec` declares channel count, lattice shape, physical origin, spacing, diffusion coefficients, advection velocities, integration method, and six boundary conditions. Grid levels are concentrations. A coupled rate plan returns:
@@ -28,6 +34,7 @@ Both coefficient arrays must be finite and non-negative. A relaxation toward a n
 ```console
 uv run microsimulator view \
   --model examples/tutorials/signaling.py \
+  --backend cpu \
   --parameter scenario='"single_gene"' \
   --seed 42 \
   --dt 0.01 \
@@ -56,6 +63,7 @@ Two inward-facing planes at `y = -16` and `y = 16` confine cells. The signal gri
 ```console
 uv run microsimulator view \
   --model examples/tutorials/signaling.py \
+  --backend cpu \
   --parameter scenario='"communication"' \
   --seed 42 \
   --dt 0.01 \
@@ -84,6 +92,7 @@ Use cell-type coloring to identify sender and receiver lineages, species channel
 ```console
 uv run microsimulator view \
   --model examples/tutorials/signaling.py \
+  --backend cpu \
   --parameter scenario='"mutualism"' \
   --seed 42 \
   --dt 0.01 \

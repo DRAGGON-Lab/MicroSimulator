@@ -170,7 +170,7 @@ def build(context: ModelContext) -> NativeController:
         if scenario == "communication"
         else ((0, 0.0),)
     )
-    founders: list[int] = []
+    founders: list[CellInit] = []
     for cell_type, x in founder_specs:
         founder = CellInit()
         founder.position = Vec3(x, 0.0, 0.0)
@@ -179,11 +179,11 @@ def build(context: ModelContext) -> NativeController:
         founder.growth_rate = 1.0 if scenario == "mutualism" else 2.0
         founder.cell_type = cell_type
         founder.species = [0.0] * species_count
-        founders.append(simulation.add_cell(founder))
+        founders.append(founder)
 
     division, regulate = _callbacks(scenario)
     state: dict[str, JSONValue] = {"scenario": scenario}
-    division.initialize(state, context.rng, tuple(founders))
+    division.initialize_founders(simulation, state, context.rng, tuple(founders))
     return NativeController(
         simulation,
         model_id=MODEL_ID,

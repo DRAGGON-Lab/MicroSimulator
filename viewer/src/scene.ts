@@ -3,6 +3,8 @@ import canonicalize from "canonicalize";
 export const SCENE_FORMAT = "microsimulator-scene";
 export const SCENE_VERSION = 3;
 export const MAX_SCENE_BYTES = 1 << 30;
+// Presentation resource budget; this does not limit native engine counts.
+export const MAX_SCENE_CHANNELS = 4096;
 
 const UINT32_MAX = 2 ** 32 - 1;
 const UINT64_MAX = (1n << 64n) - 1n;
@@ -103,6 +105,13 @@ export interface ChannelMetadata {
   readonly signals: readonly (string | null)[];
 }
 
+// Metadata arrays are readonly. Weak keys retain no discarded frame/history;
+// resolving once also avoids rebuilding a whole group for every selector row.
+const displayChannelLabels = new WeakMap<
+  readonly (string | null)[],
+  readonly string[]
+>();
+
 /** Presentation only. Numerical indices, never labels, identify channels. */
 export function channelLabel(
   frame: SceneFrame,
@@ -113,15 +122,27 @@ export function channelLabel(
   if (!Number.isInteger(index) || index < 0 || index >= labels.length) {
     throw new RangeError(`${kind} channel ${index} is out of range`);
   }
-  const display = (label: string | null | undefined, slot: number): string =>
-    label === null || label === undefined || label.trim() === ""
-      ? `Channel ${slot}`
-      : label;
-  const label = display(labels[index], index);
-  const duplicated = labels.some(
-    (other, slot) => slot !== index && display(other, slot) === label,
-  );
-  return duplicated ? `${label} [${index}]` : label;
+  let resolved = displayChannelLabels.get(labels);
+  if (resolved === undefined) {
+    const names = labels.map((label, slot) =>
+      label === null || label.trim() === ""
+        ? `Channel ${slot}`
+        : label.replace(/[\t\n\f\r ]+/g, " ").replace(/^ | $/g, ""),
+    );
+    const counts = new Map<string, number>();
+    for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+    resolved = names.map((name, slot) =>
+      counts.get(name)! > 1 ? `${name} [${slot}]` : name,
+    );
+    // A supplied name can imitate an automatically indexed duplicate, e.g.
+    // ["GFP", "GFP", "GFP [0]"]. In that case index the entire group: the
+    // distinct final indices guarantee uniqueness even for nested suffixes.
+    if (new Set(resolved).size !== resolved.length) {
+      resolved = names.map((name, slot) => `${name} [${slot}]`);
+    }
+    displayChannelLabels.set(labels, resolved);
+  }
+  return resolved[index]!;
 }
 
 export interface SceneFrame {
@@ -248,7 +269,7 @@ function floatArray(value: unknown, path: string): readonly number[] {
   );
 }
 
-function parseBackend(value: unknown, path: string): SceneBackend {
+export function parseSceneBackend(value: unknown, path: string): SceneBackend {
   const data = record(value, path);
   exactKeys(data, path, ["kind", "name", "device", "device_index", "native"]);
   const kind = string(data.kind, `${path}.kind`);
@@ -506,11 +527,10 @@ function parseSignalGrid(value: unknown, path: string): SceneSignalGrid | null {
     "boundaries",
     "levels",
   ]);
-  const signalCount = integer(
+  const signalCount = sceneChannelCount(
     data.signal_count,
     `${path}.signal_count`,
     1,
-    UINT32_MAX,
   );
   const shapeValues = array(data.shape, `${path}.shape`);
   if (shapeValues.length !== 3) {
@@ -615,6 +635,17 @@ function parseChannelMetadata(
   };
 }
 
+function sceneChannelCount(value: unknown, path: string, minimum = 0): number {
+  const count = integer(value, path, minimum, UINT32_MAX);
+  if (count > MAX_SCENE_CHANNELS) {
+    return fail(
+      path,
+      `exceeds scene presentation channel budget of ${MAX_SCENE_CHANNELS} per group`,
+    );
+  }
+  return count;
+}
+
 function parseFrame(value: unknown, path: string, version: number): SceneFrame {
   const data = record(value, path);
   exactKeys(data, path, [
@@ -630,11 +661,9 @@ function parseFrame(value: unknown, path: string, version: number): SceneFrame {
   if (time < 0) {
     return fail(`${path}.time`, "must be non-negative");
   }
-  const speciesCount = integer(
+  const speciesCount = sceneChannelCount(
     data.species_count,
     `${path}.species_count`,
-    0,
-    UINT32_MAX,
   );
   const cells = array(data.cells, `${path}.cells`).map((item, index) =>
     parseCell(item, `${path}.cells[${index}]`, speciesCount),
@@ -670,7 +699,7 @@ function parseFrame(value: unknown, path: string, version: number): SceneFrame {
   return {
     time,
     channelMetadata,
-    backend: parseBackend(data.backend, `${path}.backend`),
+    backend: parseSceneBackend(data.backend, `${path}.backend`),
     speciesCount,
     cells,
     constraints: parseConstraints(data.constraints, `${path}.constraints`),

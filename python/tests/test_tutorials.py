@@ -240,3 +240,105 @@ def test_plasmid_tutorial_resume_is_exact(tmp_path: Path) -> None:
         )
         for cell in uninterrupted.simulation.cells()
     ]
+
+
+_FOUNDER_MODELS: tuple[tuple[str, dict[str, JSONValue], float], ...] = (
+    *_MODELS,
+    ("../culture_dish.py", {}, 0.001),
+    ("../microfluidic_trap.py", {}, 0.001),
+)
+
+
+def _founder_targets(model: SimulationController) -> dict[str, float]:
+    controller = cast(dict[str, JSONValue], model.controller_state())
+    state = cast(dict[str, JSONValue], controller["state"])
+    if "division_targets" in state:
+        return cast(dict[str, float], state["division_targets"])
+    policy = cast(dict[str, JSONValue], state["length_division"])
+    return cast(dict[str, float], policy["targets"])
+
+
+@pytest.mark.parametrize("seed", (0, 7, 17, 71))
+@pytest.mark.parametrize(("filename", "parameters", "dt"), _FOUNDER_MODELS)
+def test_tutorial_founders_do_not_divide_without_growth(
+    filename: str,
+    parameters: dict[str, JSONValue],
+    dt: float,
+    seed: int,
+) -> None:
+    model, _ = build_model(
+        _TUTORIALS / filename,
+        ModelContext(BackendKind.CPU, 0, seed=seed, parameters=parameters),
+    )
+    assert isinstance(model, SimulationController)
+    targets = _founder_targets(model)
+    ids = [cell.id for cell in model.simulation.cells()]
+    assert set(targets) == {str(cell_id) for cell_id in ids}
+    assert all(cell.length <= targets[str(cell.id)] for cell in model.simulation.cells())
+    model.step(0.0)
+    assert [cell.id for cell in model.simulation.cells()] == ids
+    # Existing strict comparison still divides each founder after its length grows.
+    for cell in model.simulation.cells():
+        model.simulation.set_cell_geometry(
+            cell.id,
+            cell.position,
+            cell.direction,
+            targets[str(cell.id)] + 0.01,
+        )
+    model.step(0.0)
+    assert not set(ids) & {cell.id for cell in model.simulation.cells()}
+
+
+@pytest.mark.parametrize(("filename", "parameters", "dt"), _FOUNDER_MODELS)
+def test_tutorial_founder_initialization_is_deterministic_and_resume_does_not_cap(
+    filename: str,
+    parameters: dict[str, JSONValue],
+    dt: float,
+    tmp_path: Path,
+) -> None:
+    context = ModelContext(BackendKind.CPU, 0, seed=71, parameters=parameters)
+    first, provenance = build_model(_TUTORIALS / filename, context)
+    second, _ = build_model(
+        _TUTORIALS / filename,
+        ModelContext(BackendKind.CPU, 0, seed=71, parameters=parameters),
+    )
+    assert isinstance(first, SimulationController)
+    assert isinstance(second, SimulationController)
+    assert first.controller_state() == second.controller_state()
+    assert [cell.length for cell in first.simulation.cells()] == [
+        cell.length for cell in second.simulation.cells()
+    ]
+    for cell in first.simulation.cells():
+        first.simulation.set_cell_geometry(cell.id, cell.position, cell.direction, 8.0)
+    path = tmp_path / "oversized.cm2.json"
+    run_simulation(first, steps=0, dt=dt, output=path, provenance=provenance)
+    restored, _ = build_model(
+        _TUTORIALS / filename,
+        ModelContext(BackendKind.CPU, 0, seed=71, parameters=parameters),
+        checkpoint=load_checkpoint_bundle(path),
+    )
+    assert isinstance(restored, SimulationController)
+    assert restored.controller_state() == first.controller_state()
+    assert all(cell.length == 8.0 for cell in restored.simulation.cells())
+
+
+def test_conjugation_rare_short_gaussian_target_is_not_resampled() -> None:
+    import random
+
+    model, _ = build_model(
+        _TUTORIALS / "conjugation.py",
+        ModelContext(BackendKind.CPU, 0, seed=3103),
+    )
+    assert isinstance(model, SimulationController)
+    expected = random.Random(3103)
+    targets = _founder_targets(model)
+    cells = model.simulation.cells()
+    # Native CellInit stores the requested 1.9 in single precision.
+    requested = 1.899999976158142
+    for cell in cells:
+        assert targets[str(cell.id)] == requested + expected.gauss(1.9, 0.45)
+        assert cell.length <= targets[str(cell.id)]
+    assert cells[0].length < requested
+    ids = [cell.id for cell in cells]
+    model.step(0.0)
+    assert [cell.id for cell in model.simulation.cells()] == ids

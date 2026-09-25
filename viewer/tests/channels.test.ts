@@ -72,6 +72,46 @@ describe("channel metadata", () => {
     expect(channelLabel(labels, "species", 1)).toBe("Channel 0 [1]");
   });
 
+  it.each(["species", "signals"] as const)(
+    "keeps %s labels unique when names imitate generated disambiguation suffixes",
+    async (kind) => {
+      const frame = await parseScene(pythonScene);
+      for (const names of [
+        ["GFP", "GFP", "GFP [0]"],
+        [null, "Channel 0", "Channel 0 [0]"],
+        ["GFP", "GFP", "GFP [0]", "GFP [0] [2]"],
+      ]) {
+        const renamed = {
+          ...frame,
+          channelMetadata: { ...frame.channelMetadata, [kind]: names },
+        };
+        const displayed = names.map((_, index) =>
+          channelLabel(renamed, kind, index),
+        );
+        expect(new Set(displayed).size).toBe(names.length);
+        expect(displayed[0]).toBe(`${names[0] ?? "Channel 0"} [0]`);
+        expect(displayed[2]).toBe(`${names[2]} [2]`);
+      }
+    },
+  );
+
+  it.each(["species", "signals"] as const)(
+    "disambiguates %s names after browser whitespace normalization",
+    async (kind) => {
+      const frame = await parseScene(pythonScene);
+      const renamed = {
+        ...frame,
+        channelMetadata: {
+          ...frame.channelMetadata,
+          [kind]: [" GFP\tname ", "GFP name", "GFP\t name [0]"],
+        },
+      };
+      expect(
+        [0, 1, 2].map((index) => channelLabel(renamed, kind, index)),
+      ).toEqual(["GFP name [0]", "GFP name [1]", "GFP name [0] [2]"]);
+    },
+  );
+
   it("authenticates v2 without inserting metadata before digest verification", async () => {
     const old = document();
     delete old.frame.channel_metadata;

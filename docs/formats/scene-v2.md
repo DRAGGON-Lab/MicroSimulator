@@ -64,4 +64,4 @@ The scene preserves all channels. A viewer chooses a channel and slice as presen
 
 ## Compatibility
 
-Current writers emit [version 3](scene-v3.md). Current readers verify version-2 frames against this original schema and digest, then supply unnamed channel metadata in memory. Backend conformance compares frame semantics while ignoring the expected backend identity fields. Pixel output is tested separately by the viewer.
+Current writers emit [version 3](scene-v3.md). Current readers verify version-2 frames against this original schema and digest, enforce the presentation budget of 4096 species and 4096 signals independently, then supply unnamed channel metadata in memory. The budget applies even to empty colonies and prevents a tiny document's claimed count from causing unbounded label allocation. It does not change native simulation or checkpoint channel limits. Backend conformance compares frame semantics while ignoring the expected backend identity fields. Pixel output is tested separately by the viewer.

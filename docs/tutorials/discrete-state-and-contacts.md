@@ -2,11 +2,18 @@
 
 This tutorial uses plasmid segregation and conjugation to show how discrete biological state, stochastic events, and contact-dependent behavior fit into a MicroSimulator model.
 
+Both models start with centers at Z=0 and axes in XY, and division adds no orientation jitter. Neither has mechanical Z confinement: daughters inherit the parent axis and contact relaxation remains three-dimensional. See [division jitter and out-of-plane motion](planarity.md).
+
+For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
+
+New founders preserve their requested length unless it exceeds the single sampled division target. This also handles the rare short Gaussian target in the conjugation model without rejection sampling. Checkpoint restoration keeps stored lengths and targets. See [founder initialization](biophysics-and-growth.md#length-and-volume).
+
 ## 1. Incompatible plasmid segregation
 
 ```console
 uv run microsimulator view \
   --model examples/tutorials/plasmid_segregation.py \
+  --backend cpu \
   --parameter copies_per_cell=10 \
   --seed 42 \
   --dt 0.02 \
@@ -69,6 +76,7 @@ Contact graphs are derived on demand and have no fixed scientific contact cap; a
 ```console
 uv run microsimulator view \
   --model examples/tutorials/conjugation.py \
+  --backend cpu \
   --parameter transfer_probability=0.1 \
   --seed 42 \
   --dt 0.02 \

@@ -1,0 +1,80 @@
+name: Windows CLI and live-session checks
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/live-shutdown-windows.yml
+      - CMakeLists.txt
+      - cpp/**
+      - python/**
+      - docs/tutorials/**
+      - docs/development/tutorial-command-validation.md
+      - environments/**/README.md
+      - viewer/README.md
+      - pyproject.toml
+      - uv.lock
+  push:
+    branches: [master, marpaia/17, marpaia/24]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-live-shutdown-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shutdown:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: "2"
+      # Exercise the host reference engine without requiring a GPU toolkit.
+      CMAKE_ARGS: -DCM_ENABLE_METAL=OFF -DCM_ENABLE_CUDA=OFF -DCM_BUILD_TESTS=OFF
+      MICROSIMULATOR_COMMAND_REPORT: build/shutdown-evidence/tutorial-commands
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Build CPU extension and install locked test dependencies
+        run: uv sync --locked --group dev
+
+      - name: Record platform, shell, interpreter, and backend
+        run: |
+          New-Item -ItemType Directory -Force build/shutdown-evidence | Out-Null
+          $PSVersionTable | Out-File build/shutdown-evidence/platform.txt
+          [System.Environment]::OSVersion | Out-File -Append build/shutdown-evidence/platform.txt
+          uv run --no-sync python --version 2>&1 | Tee-Object -Append build/shutdown-evidence/platform.txt
+          uv run --no-sync microsimulator devices --json | Tee-Object -Append build/shutdown-evidence/platform.txt
+
+      - name: Verify Stop, console Ctrl+C, worker draining, and same-port restart
+        run: >-
+          uv run --no-sync python -m pytest
+          python/tests/test_viewer_server.py python/tests/test_viewer_shutdown.py
+          -v --tb=short --junitxml=build/shutdown-evidence/tests.xml
+
+      - name: Execute the documented PowerShell CLI commands
+        run: >-
+          uv run --no-sync python -m pytest python/tests/test_tutorial_commands.py
+          -v --tb=short --junitxml=build/shutdown-evidence/tutorial-commands.xml
+
+      - name: Upload shutdown evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-live-shutdown-${{ github.sha }}
+          path: build/shutdown-evidence
+          if-no-files-found: warn
+          retention-days: 30
