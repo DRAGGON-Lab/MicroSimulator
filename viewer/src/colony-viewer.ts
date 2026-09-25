@@ -207,8 +207,14 @@ export class ColonyViewer {
   /** Call once when opening a file, live session, or recording. */
   public beginDataset(): void {
     this.referenceGrid.beginDataset();
+    this.setDeviceVisible(true);
     this.cancelCameraTransition();
     this.selectCell(null);
+  }
+
+  /** Presentation only: the group retains visibility when its children rebuild. */
+  public setDeviceVisible(visible: boolean): void {
+    this.device.visible = visible;
   }
 
   /** Frame updates, including reset/seek, retain camera and dataset state. */

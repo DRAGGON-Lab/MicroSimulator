@@ -46,6 +46,7 @@ const legendMaximum = required<HTMLElement>("legend-max");
 const legendTitle = required<HTMLElement>("legend-title");
 const signalSection = required<HTMLElement>("signal-section");
 const signalVisible = required<HTMLInputElement>("signal-visible");
+const deviceVisible = required<HTMLInputElement>("device-visible");
 const signalChannel = required<HTMLSelectElement>("signal-channel");
 const signalAxis = required<HTMLSelectElement>("signal-axis");
 const signalRange = required<HTMLInputElement>("signal-slice");
@@ -237,6 +238,11 @@ function presentScene(
   const display = presentation.forFrame(next);
   frame = next;
   viewer.setFrame(next, newDataset);
+  deviceVisible.checked = display.deviceVisible;
+  deviceVisible.disabled = !Object.values(next.constraints).some(
+    (constraints) => constraints.length > 0,
+  );
+  viewer.setDeviceVisible(display.deviceVisible);
   fitButton.disabled = false;
   colorMode.disabled = false;
   emptyState.hidden = true;
@@ -321,6 +327,10 @@ colorMode.addEventListener("change", () => {
 speciesChannel.addEventListener("change", () => {
   presentation.preferences.speciesChannel = selectedInteger(speciesChannel);
   updateColors();
+});
+deviceVisible.addEventListener("change", () => {
+  presentation.preferences.deviceVisible = deviceVisible.checked;
+  viewer.setDeviceVisible(deviceVisible.checked);
 });
 signalVisible.addEventListener("change", () => {
   presentation.preferences.signalVisible = signalVisible.checked;
