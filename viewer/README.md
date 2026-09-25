@@ -98,6 +98,16 @@ The ground reference grid is separate from the scientific signal lattice. Its sq
 
 `browser/reference-grid.mjs` verifies the reference grid and presentation lifecycle in Chromium against a running Vite server. It uses Playwright (`@playwright/test`) and its installed Chromium; a shared installation can be supplied through `MICROSIMULATOR_PLAYWRIGHT_MODULE` as an absolute module filename. Set `VIEWER_URL` if the server is not on `http://127.0.0.1:4320`, and `EVIDENCE_DIR` to choose the screenshot directory. The test observes renderer transforms through test-only request instrumentation and introduces no production debug interface.
 
+## Concentration color ranges
+
+Species coloring and signal slices each offer Automatic and Fixed color ranges. Automatic uses the current frame's species extrema or the selected signal slice's extrema. Constant automatic data uses the midpoint color and a uniform legend; empty automatic data shows “no values” without numerical bounds. Fixed uses the entered minimum and maximum across frames and slices. Values outside that interval use endpoint colors; the underlying concentrations and inspector values remain unchanged.
+
+Switching to Fixed starts from the current extrema (with finite padding for constant data), or restores that channel's previously entered fixed bounds. Edit both bounds and choose Apply range or press Enter. Bounds accept finite decimal numbers, including negative numbers and scientific notation, with minimum strictly less than maximum. Invalid or incomplete edits show an explanation and leave the last valid range active. Legends always describe the active range rather than unsubmitted text.
+
+Settings belong to the numerical species or signal channel within the current dataset. They survive temporarily missing channels/grids, live updates, same-model reset, and frame seeking; opening another dataset restores automatic defaults. The shared `resolveScalarRange()` and `normalizeScalar()` APIs reject non-finite data explicitly, retain zero-valued and negative data, and avoid overflowing the difference between extreme finite bounds. They produce display intensity only and do not modify model data.
+
+`browser/scalar-ranges.mjs` checks actual cell instance colors, signal texture pixels, legends, validation messages, keyboard interaction, and dataset transitions in Chromium. Run it with a Vite server on port 4315, or set `VIEWER_URL`, using the same optional Playwright module and evidence-directory environment variables as the reference-grid test.
+
 ### Device geometry visibility
 
 Use **Show device geometry** in the Scene panel to hide all mechanical constraint meshes and their outlines. The control is disabled when the current frame contains no geometry, while its preference is retained for later frames. Visibility persists through live updates, reset, and replay seeks, and defaults to enabled on opening another dataset. Cells, selection, the reference grid, signal slices, camera pose, and the existing Fit bounds policy are independent of this display setting. No simulation constraint or transport obstacle is changed.
