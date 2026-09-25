@@ -43,9 +43,10 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     _SphereConstraint,
     _WorldStateCheckpoint,
 )
+from .channels import UNNAMED_CHANNELS, ChannelMetadata, ChannelMetadataError
 
 CHECKPOINT_FORMAT = "microsimulator-checkpoint"
-CHECKPOINT_VERSION = 8
+CHECKPOINT_VERSION = 9
 MAX_CHECKPOINT_BYTES = 1 << 30
 _NATIVE_CHECKPOINT_VERSION = 4
 
@@ -83,6 +84,7 @@ class CheckpointBundle:
     provenance: dict[str, JSONValue]
     schema_version: int
     source_backend: CheckpointSourceBackend
+    channel_metadata: ChannelMetadata = UNNAMED_CHANNELS
 
 
 _RATE_OP_NAMES = {
@@ -336,12 +338,17 @@ def save_checkpoint(
     *,
     provenance: Mapping[str, JSONValue] | None = None,
     controller: JSONValue = None,
+    channel_metadata: ChannelMetadata = UNNAMED_CHANNELS,
 ) -> None:
     """Atomically save a complete simulation checkpoint as validated JSON."""
 
     checkpoint = simulation._checkpoint()
     checkpoint.validate()
     state = _simulation_to_json(checkpoint)
+    try:
+        labels = channel_metadata.to_json(simulation.species_count, simulation.signal_count)
+    except ChannelMetadataError as error:
+        raise CheckpointError(str(error)) from error
     digest = hashlib.sha256(_canonical_json(state)).hexdigest()
     controller_digest = hashlib.sha256(_canonical_json(controller)).hexdigest()
     backend = simulation.backend_info
@@ -361,9 +368,11 @@ def save_checkpoint(
             "algorithm": "sha256",
             "simulation": digest,
             "controller": controller_digest,
+            "channel_metadata": hashlib.sha256(_canonical_json(labels)).hexdigest(),
         },
         "simulation": state,
         "controller": controller,
+        "channel_metadata": labels,
     }
     try:
         encoded = (
@@ -704,9 +713,7 @@ def _signal_grid(value: object, path: str, schema_version: int) -> _SignalGridCh
     if schema_version >= 8:
         spec.obstacles = [
             _integer(item, f"{path}.spec.obstacles[{index}]", 0, 1)
-            for index, item in enumerate(
-                _array(spec_data["obstacles"], f"{path}.spec.obstacles")
-            )
+            for index, item in enumerate(_array(spec_data["obstacles"], f"{path}.spec.obstacles"))
         ]
         field_value = spec_data["velocity_field"]
         if field_value is not None:
@@ -958,7 +965,7 @@ def load_checkpoint_bundle(
     if "version" not in root:
         _fail("$", "missing keys ['version']")
     schema_version = _integer(root["version"], "$.version", 0, _UINT32_MAX)
-    supported_versions = {1, 2, 3, 4, 5, 6, 7, CHECKPOINT_VERSION}
+    supported_versions = {1, 2, 3, 4, 5, 6, 7, 8, CHECKPOINT_VERSION}
     if schema_version not in supported_versions:
         _fail("$.version", f"unsupported checkpoint version {schema_version}")
     required = {
@@ -972,6 +979,8 @@ def load_checkpoint_bundle(
     }
     if schema_version >= 4:
         required.add("controller")
+    if schema_version >= 9:
+        required.add("channel_metadata")
     _keys(
         root,
         "$",
@@ -1007,6 +1016,8 @@ def load_checkpoint_bundle(
     integrity_keys = {"algorithm", "simulation"}
     if schema_version >= 4:
         integrity_keys.add("controller")
+    if schema_version >= 9:
+        integrity_keys.add("channel_metadata")
     _keys(integrity, "$.integrity", integrity_keys)
     if _string(integrity["algorithm"], "$.integrity.algorithm") != "sha256":
         _fail("$.integrity.algorithm", "unsupported integrity algorithm")
@@ -1017,20 +1028,38 @@ def load_checkpoint_bundle(
 
     controller = cast(JSONValue, root["controller"]) if schema_version >= 4 else None
     if schema_version >= 4:
-        expected_controller_digest = _string(
-            integrity["controller"], "$.integrity.controller"
-        )
+        expected_controller_digest = _string(integrity["controller"], "$.integrity.controller")
         actual_controller_digest = hashlib.sha256(_canonical_json(controller)).hexdigest()
         if not hmac.compare_digest(actual_controller_digest, expected_controller_digest):
             _fail("$.integrity.controller", "controller digest does not match")
 
+    if schema_version >= 9:
+        expected_labels_digest = _string(
+            integrity["channel_metadata"], "$.integrity.channel_metadata"
+        )
+        actual_labels_digest = hashlib.sha256(_canonical_json(root["channel_metadata"])).hexdigest()
+        if not hmac.compare_digest(actual_labels_digest, expected_labels_digest):
+            _fail("$.integrity.channel_metadata", "channel metadata digest does not match")
     checkpoint = _native_checkpoint(root["simulation"], schema_version)
+    species_count = checkpoint.world.species_count
+    signal_count = checkpoint.signal_grid.spec.signal_count if checkpoint.signal_grid else 0
+    try:
+        labels = (
+            ChannelMetadata.from_json(root["channel_metadata"], species_count, signal_count)
+            if schema_version >= 9
+            # Legacy files contain no labels. Preserve that omission compactly:
+            # claimed native counts must not allocate new presentation arrays.
+            else UNNAMED_CHANNELS
+        )
+    except ChannelMetadataError as error:
+        raise CheckpointError(str(error)) from error
     return CheckpointBundle(
         simulation=Simulation(backend, checkpoint, device_index),
         controller=controller,
         provenance=provenance,
         schema_version=schema_version,
         source_backend=source_backend,
+        channel_metadata=labels,
     )
 
 
@@ -1046,5 +1075,13 @@ def load_checkpoint(
     if bundle.controller is not None:
         raise CheckpointError(
             "checkpoint contains controller state; load it with load_checkpoint_bundle"
+        )
+    if any(
+        label is not None
+        for group in (bundle.channel_metadata.species, bundle.channel_metadata.signals)
+        for label in (group or ())
+    ):
+        raise CheckpointError(
+            "checkpoint contains channel metadata; load it with load_checkpoint_bundle"
         )
     return bundle.simulation

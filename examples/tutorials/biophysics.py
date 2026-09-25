@@ -23,6 +23,7 @@ from microsimulator import (
     Simulation,
     StepPlan,
     Vec3,
+    capped_founder_length,
 )
 from microsimulator.checkpoint import CheckpointBundle, JSONValue
 
@@ -155,9 +156,11 @@ def build(context: ModelContext) -> NativeController:
         founder.radius = 0.5
         founder.growth_rate = _growth_rate(scenario, cell_type)
         founder.cell_type = cell_type
-        founder_id = simulation.add_cell(founder)
         lower, upper = _target_range(scenario, cell_type, founder=True)
-        targets[str(founder_id)] = context.rng.uniform(lower, upper)
+        target = context.rng.uniform(lower, upper)
+        founder.length = capped_founder_length(founder.length, target)
+        founder_id = simulation.add_cell(founder)
+        targets[str(founder_id)] = target
 
     regulate, divided = _callbacks(scenario)
     mechanics = MechanicsConfig(gamma=20.0 if scenario == "box" else 10.0)
