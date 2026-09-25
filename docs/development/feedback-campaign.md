@@ -97,3 +97,7 @@ Local evidence is retained under `/private/tmp/microsimulator-swarm/evidence`, i
 ## Separate existing behavior found during review
 
 A read-only review identified a possible selection jump after a roll-preserving ViewCube snap: the existing pointer-down handler restores world-up before pointer-up raycasting. A numerical projection probe reproduced a 15-degree camera change for one orientation. The relevant camera handlers and `view-cube.ts` are unchanged from master, and this was not reproduced through a browser interaction during this campaign. A future focused regression should fit, single-click Right, wait, then select an off-center cell while asserting a stable camera pose. This observation is recorded separately from campaign regressions; no additional issue was created.
+
+## Subsequent independent review
+
+The [independent review round](feedback-review.md) records acceptance maps for all 12 contributions, two reproduced and corrected defects, separate re-review verdicts, updated heads and subsequent combined validation. The source and results above remain the original campaign snapshot.
