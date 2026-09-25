@@ -53,6 +53,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     backend_available,
     backend_device_count,
 )
+from .channels import ChannelMetadata, ChannelMetadataError
 from .checkpoint import (
     CHECKPOINT_FORMAT,
     CHECKPOINT_VERSION,
@@ -120,6 +121,7 @@ from .runner import (
 from .sbml import SBMLImportError, SBMLRateModel, load_sbml, parse_sbml
 from .scene import (
     MAX_SCENE_BYTES,
+    MAX_SCENE_CHANNELS,
     SCENE_FORMAT,
     SCENE_VERSION,
     SceneBackend,
@@ -148,6 +150,7 @@ __all__ = [
     "MAX_LEGACY_EXAMPLE_MATRIX_BYTES",
     "MAX_RUN_MANIFEST_BYTES",
     "MAX_SCENE_BYTES",
+    "MAX_SCENE_CHANNELS",
     "RUN_MANIFEST_FORMAT",
     "RUN_MANIFEST_VERSION",
     "SCENE_FORMAT",
@@ -163,6 +166,8 @@ __all__ = [
     "CellInit",
     "CellSnapshot",
     "CellUpdate",
+    "ChannelMetadata",
+    "ChannelMetadataError",
     "CheckpointBundle",
     "CheckpointError",
     "CheckpointSourceBackend",
