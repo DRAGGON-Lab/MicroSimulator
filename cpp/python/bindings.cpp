@@ -8,6 +8,7 @@
 
 namespace nb = nanobind;
 using namespace nb::literals;
+void bind_occupancy(nb::module_& module);
 
 NB_MODULE(_core, module) {
   module.doc() = "MicroSimulator native simulation core";
@@ -19,6 +20,8 @@ NB_MODULE(_core, module) {
       .value("CPU", cm::BackendKind::cpu)
       .value("METAL", cm::BackendKind::metal)
       .value("CUDA", cm::BackendKind::cuda);
+
+  bind_occupancy(module);
 
   nb::enum_<cm::BackendFeature>(module, "BackendFeature")
       .value("GROWTH", cm::BackendFeature::growth)

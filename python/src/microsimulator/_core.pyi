@@ -1,6 +1,84 @@
 from enum import Enum
 from typing import overload
 
+class OccupancyCapsule:
+    def __init__(
+        self,
+        center: tuple[float, float, float],
+        direction: tuple[float, float, float],
+        length: float,
+        radius: float,
+    ) -> None: ...
+
+class OccupancyFace:
+    first: int
+    second: int
+    conductance: float
+    volume_flux: float
+    def __init__(self, first: int, second: int, conductance: float, volume_flux: float) -> None: ...
+
+class OccupancyReservoir:
+    def __init__(
+        self, site: int, concentration: float, conductance: float, volume_flux: float
+    ) -> None: ...
+
+class OccupancyBalance:
+    before: float
+    after: float
+    source: float
+    reaction: float
+    boundary: float
+
+class OccupancyStep:
+    amount: list[float]
+    balance: OccupancyBalance
+    iterations: int
+    relative_residual: float
+
+class OccupancySolver:
+    def __init__(self, backend: BackendKind, device_index: int, epsilon_cutoff: float) -> None: ...
+    def geometric_porosity(
+        self,
+        centers: list[tuple[float, float, float]],
+        spacing: tuple[float, float, float],
+        cells: list[OccupancyCapsule],
+        subdivisions: int,
+        walls: list[int],
+    ) -> list[float]: ...
+    def accessible_volumes(self, porosity: list[float], voxel_volume: float) -> list[float]: ...
+    def concentration(self, amount: list[float], volume: list[float]) -> list[float]: ...
+    def porosity_face(
+        self,
+        first: int,
+        second: int,
+        epsilon_first: float,
+        epsilon_second: float,
+        diffusion: float,
+        area: float,
+        distance: float,
+        intrinsic_velocity: float,
+    ) -> OccupancyFace: ...
+    def remap_amounts(
+        self,
+        amount: list[float],
+        old_volume: list[float],
+        new_volume: list[float],
+        neighbors: list[tuple[int, int]],
+    ) -> list[float]: ...
+    def exchange_weights(self, kernel: list[float], volume: list[float]) -> list[float]: ...
+    def backward_euler(
+        self,
+        amount: list[float],
+        volume: list[float],
+        faces: list[OccupancyFace],
+        dt: float,
+        source: list[float],
+        loss: list[float],
+        reservoirs: list[OccupancyReservoir],
+        max_iterations: int,
+        relative_tolerance: float,
+    ) -> OccupancyStep: ...
+
 class BackendKind(Enum):
     CPU: BackendKind
     METAL: BackendKind

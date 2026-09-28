@@ -23,6 +23,7 @@ add_library(cm_core STATIC
   cpp/core/constraints.cpp
   cpp/core/coupled_rates.cpp
   cpp/core/mechanics_integration.cpp
+  cpp/core/occupancy.cpp
   cpp/core/signals.cpp
   cpp/core/species.cpp
   cpp/core/world_state.cpp
@@ -58,6 +59,17 @@ if(CM_ENABLE_METAL)
   set(CM_METAL_MECHANICS_HEADER "${CM_GENERATED_DIR}/cm/metal/mechanics_source.hpp")
   set(CM_METAL_SIGNALS_HEADER "${CM_GENERATED_DIR}/cm/metal/signals_source.hpp")
   set(CM_METAL_SPECIES_HEADER "${CM_GENERATED_DIR}/cm/metal/species_source.hpp")
+  set(CM_METAL_OCCUPANCY_HEADER "${CM_GENERATED_DIR}/cm/metal/occupancy_source.hpp")
+  add_custom_command(
+    OUTPUT "${CM_METAL_OCCUPANCY_HEADER}"
+    COMMAND "${CMAKE_COMMAND}"
+      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/occupancy.metal"
+      "-DOUTPUT=${CM_METAL_OCCUPANCY_HEADER}"
+      "-DSYMBOL=occupancy_source"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedMetalSource.cmake"
+    DEPENDS cpp/metal/kernels/occupancy.metal cmake/EmbedMetalSource.cmake
+    VERBATIM
+  )
   add_custom_command(
     OUTPUT "${CM_METAL_GROWTH_HEADER}"
     COMMAND "${CMAKE_COMMAND}"
@@ -148,6 +160,8 @@ if(CM_ENABLE_METAL)
   target_sources(cm_core PRIVATE
     cpp/metal/metal_backend.mm
     cpp/metal/metal_flow.mm
+    cpp/metal/metal_occupancy.mm
+    "${CM_METAL_OCCUPANCY_HEADER}"
     "${CM_METAL_CONTACTS_HEADER}"
     "${CM_METAL_COUPLED_RATES_HEADER}"
     "${CM_METAL_GROWTH_HEADER}"
@@ -177,6 +191,8 @@ if(CM_ENABLE_CUDA)
   target_sources(cm_core PRIVATE
     cpp/cuda/cuda_backend.cu
     cpp/cuda/cuda_flow.cu
+    cpp/cuda/cuda_occupancy.cu
+    cpp/cuda/kernels/occupancy.cu
     cpp/cuda/kernels/contacts.cu
     cpp/cuda/kernels/coupled_rates.cu
     cpp/cuda/kernels/growth.cu
@@ -186,6 +202,7 @@ if(CM_ENABLE_CUDA)
     cpp/cuda/kernels/species.cu
   )
   target_compile_definitions(cm_core PRIVATE CM_HAS_CUDA=1)
+  set_source_files_properties(cpp/cuda/kernels/occupancy.cu PROPERTIES COMPILE_OPTIONS "--fmad=false")
   target_link_libraries(cm_core PRIVATE CUDA::cudart)
   set_target_properties(cm_core PROPERTIES
     CUDA_STANDARD 20
@@ -206,13 +223,17 @@ if(CM_BUILD_PYTHON)
   find_package(Python 3.12 COMPONENTS Interpreter Development.Module REQUIRED)
   find_package(nanobind CONFIG REQUIRED)
 
-  nanobind_add_module(_core cpp/python/bindings.cpp)
+  nanobind_add_module(_core cpp/python/bindings.cpp cpp/python/occupancy_bindings.cpp)
   target_link_libraries(_core PRIVATE cm::core)
   install(TARGETS _core LIBRARY DESTINATION microsimulator)
 endif()
 
 if(CM_BUILD_TESTS)
   include(CTest)
+  add_executable(cm_occupancy_conformance_test tests/conformance/occupancy_conformance_test.cpp)
+  target_link_libraries(cm_occupancy_conformance_test PRIVATE cm::core)
+  add_test(NAME occupancy_conformance COMMAND cm_occupancy_conformance_test)
+  set_tests_properties(occupancy_conformance PROPERTIES LABELS conformance SKIP_RETURN_CODE 77)
   add_executable(cm_world_state_test tests/cpp/world_state_test.cpp)
   target_link_libraries(cm_world_state_test PRIVATE cm::core)
   add_test(NAME world_state COMMAND cm_world_state_test)

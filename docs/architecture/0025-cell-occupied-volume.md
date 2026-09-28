@@ -1,8 +1,8 @@
 # ADR 0025: conservative extracellular storage with coarse geometric porosity
 
-- Status: selected numerical design; executable CPU reference only
+- Status: selected numerical design; CPU reference and standalone native Metal/CUDA primitives
 - Date: 2026-09-24
-- Scope: issue #13. Native implementation and enabling this model in simulations are separate work.
+- Scope: issue #13. Standalone numerical primitives are implemented; enabling this model in simulations remains separate work.
 
 ## Decision and current behavior
 
@@ -10,7 +10,29 @@ Select **coarse geometric porosity** as an opt-in transport model. Estimate the 
 
 Current production transport continues to use full non-wall voxel volume: `SignalGridSpec.voxel_volume()` is `hx*hy*hz`, and `cpu_coupled.cpp` divides scattered cell amount rates by that volume. `colony_volume_fraction()` deposits conserved biochemical biomass for empirical resistance; it may exceed one and is not this occupancy representation. No production defaults or checkpoint formats change in this contribution.
 
-The reference is `python/src/microsimulator/occupancy_reference.py`. It uses float64 midpoint quadrature and a dense backward-Euler solve, intentionally unsuitable for large simulations. Its interfaces carry explicit amounts, volumes, faces, and ledgers so later backends can be compared without inheriting their implementation.
+The reference is `python/src/microsimulator/occupancy_reference.py`. It uses float64 midpoint quadrature and a dense backward-Euler solve, intentionally unsuitable for large simulations. Its interfaces carry explicit amounts, volumes, faces, and ledgers. `python/src/microsimulator/occupancy.py` provides the corresponding standalone float32 Metal/CUDA API, compared against that independent reference. Neither module changes `Simulation` transport or controller staging.
+
+## Standalone native API
+
+`OccupancySolver("metal")` or `OccupancySolver("cuda", device_index=0)` explicitly selects a GPU; unavailable backends and invalid device indices raise instead of falling back to CPU. The methods mirror the reference: `geometric_porosity`, `accessible_volumes`, `concentration`, `porosity_face`, `remap_amounts`, `exchange_weights`, and `backward_euler`. They share the reference's `Capsule`, `Face`, `ReservoirFace`, and `Balance` value types, but execute no reference numerical functions. Inputs remain caller-owned and unchanged, including when a candidate fails.
+
+```python
+from microsimulator.occupancy import OccupancySolver
+
+solver = OccupancySolver("metal", epsilon_cutoff=1e-8)
+volume = solver.accessible_volumes([0.25, 0.75], voxel_volume=2.0)
+face = solver.porosity_face(0, 1, 0.25, 0.75, diffusion=1, area=1, distance=1)
+amount, balance = solver.backward_euler([4, 0], volume, [face], dt=1)
+concentration = solver.concentration(amount, volume)
+```
+
+Both backends implement their own geometry, storage, harmonic-face, exchange, connected-component, remap, sparse assembly, Jacobi, residual, and ledger kernels. GPU label propagation uses connectivity of old-or-new accessible storage. The host packs graph topology and sorted component membership; the GPU computes expelled amounts and recipient capacity in deterministic site order with compensated sums. Host float64 accumulation reports the returned per-site ledgers. The solver keeps iteration arrays on the GPU, checks the relative L1 residual of the amount equation every eight iterations, and rejects iteration-limit failures, nonfinite or negative results, and failed conservation checks. `last_report` describes only the last successful transport call. No clipping or amount renormalization is performed.
+
+Native arrays use float32. Quadrature subdivisions are limited to 1 through 256 so sample counts remain exactly representable. The constructor's cutoff is explicit and read-only. Empty arrays and all-zero storage are supported; exchange support must have positive accessible weight. Transport sources have amount/time units; callers convert accessible-fluid affine production to `W*b` once. Callers supply internal/periodic edges and reservoir coefficients explicitly, omit no-flux and degenerate-axis faces, and retain the exterior-lattice-center reservoir convention. These routines do not construct the physical cell-exchange support or certify occupancy-consistent velocity fields.
+
+This initial native implementation prioritizes deterministic numerical comparison. Geometry evaluates all capsules for each voxel's samples, component labels may require a domain-diameter number of dispatches, scalar reductions are ordered device loops, and Jacobi may converge slowly for stiff or nearly closed domains. Float32 concentration quantization also limits attainable residuals: the spatial-refinement fixture explicitly uses `relative_tolerance=2e-6`, while keeping the `5e-6` ledger gate. The default solve tolerance is `1e-7`; failure reports the measured residual and never silently relaxes the requested tolerance. It is not a throughput or large-colony performance claim. Geometry/controller transactions, uptake budgeting, automatic barriers, checkpoint conversion, weighted flow, and coupled scientific refinement still require integration work.
+
+Run `python -m pytest python/tests/test_occupancy_native.py python/tests/test_occupancy_reference.py`. The Python cases enumerate each available Metal/CUDA device and compare geometry, remapping, exchange, transport, signed ledgers, 1000-step drift, and separate quadrature/spatial/timestep refinement with the float64 reference. `occupancy_conformance` also runs through CTest and the existing Metal/CUDA conformance scripts; its checks remain active in optimized builds. A run without a GPU skips this scenario and supplies no GPU evidence. CUDA compilation alone does not establish NVIDIA runtime conformance.
 
 ## State, geometry, and units
 
@@ -91,7 +113,7 @@ Run `uv run python -m pytest python/tests/test_occupancy_reference.py -v`. The c
 | Boundaries, reactions, exchange and advection | Unequal storage, an internal advective face, inflow/outflow reservoirs, decay and cellular source all contribute to the signed ledger; residual below 1e-12. A face test verifies aperture enters Q once. |
 | Refinement | Backward-Euler timestep error approximately halves for 10/20/40 steps; the empty-limit centered operator error approximately quarters for 10/20/40 voxels. Sphere quadrature at m=8/16/32 improves the finest volume error to below 2%. |
 
-The 1e-12 reference balance tolerance applies to these order-one float64 cases. General checks scale by `max(1, |N_before|, |N_after|, sum(abs(external terms)))`; scientific units must be normalized explicitly. Initial native float32 gates: per-step relative ledger residual <=5e-6, 1000-step closed-case drift <=5e-5, and concentrations versus float64 reference within rtol 2e-4/atol 2e-6 in normalized test units. These are acceptance targets to measure, not verified GPU results.
+The 1e-12 reference balance tolerance applies to these order-one float64 cases. General checks scale by `max(1, |N_before|, |N_after|, sum(abs(external terms)))`; scientific units must be normalized explicitly. Native float32 gates are per-step relative ledger residual <=5e-6, 1000-step closed-case drift <=5e-5, and concentrations versus float64 reference within rtol 2e-4/atol 2e-6 in normalized test units. Native calls enforce the per-step ledger gate; the conformance tests measure long-run drift and reference agreement on each enumerated GPU.
 
 Subsequent native validation must run h, h/2, h/4 at fixed physical cell/device dimensions and exchange support, with m, 2m, 4m independently; also dt, dt/2, dt/4. Track occupied volume, total amount, concentration L1/Linf errors, boundary/reaction/cell ledgers, cutoff crossings, and solver residuals. Require convergence of the scientific observable, not only conservation. The midpoint geometry estimate can oscillate across resolutions; never assert a universal smooth-interface order from one placement. Test rotated/translated rods, overlapping capsules, nearly blocked passages, all-zero storage, wall contacts, division/removal, and restart at a geometry barrier. Vary epsilon_cutoff by factors of ten. Native backends must implement their own kernels and pass the same cases without CPU fallback.
 
@@ -101,4 +123,4 @@ Old checkpoints and all ordinary runs retain occupancy-disabled full-voxel seman
 
 A future checkpoint version must record model kind/version, lattice and wall geometry, quadrature resolution, cutoff, exchange-support/anchor rule, remap rule, velocity convention, authoritative per-species N and committed W/geometry revision, plus any required solver history. N and W participate in integrity checks. On restore, authenticate before migration, validate N>=0 and zero amount at W=0, verify geometry/occupancy consistency, and resume at a committed barrier without repeating remapping. Record precision/backend provenance; recomputing occupancy with another quadrature algorithm may change results and requires an explicit conversion. The current reference adds no fields to checkpoints.
 
-Required follow-up contributions are (1) native state/configuration and checkpoint conversion, (2) conservative geometry rasterization/transition connectivity, (3) CPU weighted-storage operator and atomic coupled staging, (4) independent Metal and CUDA kernels/reductions/solvers, (5) accessible cell exchange and uptake budgets, (6) weighted-flow interface/projection with explicit drift semantics, and (7) end-to-end geometry/removal/restart and refinement validation. Existing flow resistance may coexist as a calibrated closure; it must not be relabeled as geometric exclusion or counted a second time in transport porosity.
+The standalone Metal/CUDA primitives implement geometry rasterization, transition connectivity/remapping, weighted-storage transport, and exchange-weight normalization. Required follow-up contributions are native state/configuration and checkpoint conversion, a production CPU weighted-storage operator and atomic coupled staging, physical exchange-support construction and uptake budgets, weighted-flow interface/projection with explicit drift semantics, and end-to-end geometry/removal/restart and coupled refinement validation. Existing flow resistance may coexist as a calibrated closure; it must not be relabeled as geometric exclusion or counted a second time in transport porosity.
