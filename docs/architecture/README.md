@@ -14,6 +14,9 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 - [Face-staggered signal velocity fields](0019-velocity-fields.md)
 - [Depth-integrated shallow flow](0022-brinkman-flow.md)
 - [Resolved MAC Stokes-Brinkman flow and benchmarks](0023-mac-stokes.md)
+- [Resolved fluid flow and constrained bodies](0026-resolved-fluid-culture.md)
+- [Proposed separation of fluid mechanics, chemical transport, and biological media](0027-fluid-transport-biology-plan.md)
+- [Proposed code and API for fluid mechanics, chemical transport, and growth](0027-fluid-transport-biology-code.md)
 - [Finite-aspect flow drift on cells](0021-flow-drift.md)
 - [Cell removal and washout](0020-cell-removal.md)
 

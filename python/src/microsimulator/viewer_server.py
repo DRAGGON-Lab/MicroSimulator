@@ -48,18 +48,24 @@ def parse_command(encoded: str) -> LiveCommand:
 
     if len(encoded.encode("utf-8")) > MAX_COMMAND_BYTES:
         raise LiveViewerError(f"command exceeds the {MAX_COMMAND_BYTES}-byte limit")
+
     try:
         value = cast(object, json.loads(encoded))
     except (json.JSONDecodeError, RecursionError) as error:
         raise LiveViewerError("command is not valid JSON") from error
+
     if not isinstance(value, dict):
         raise LiveViewerError("command must be a JSON object")
+
     command = cast(dict[object, object], value)
     name = command.get("type")
+
     if name == "step":
         if set(command) - {"type", "steps"}:
             raise LiveViewerError("step command has unknown fields")
+
         steps = command.get("steps", 1)
+
         if (
             not isinstance(steps, int)
             or isinstance(steps, bool)
@@ -67,12 +73,17 @@ def parse_command(encoded: str) -> LiveCommand:
             or steps > MAX_STEP_BATCH
         ):
             raise LiveViewerError(f"step count must be an integer in [1, {MAX_STEP_BATCH}]")
+
         return LiveCommand("step", steps)
+
     names: set[str] = {"frame", "play", "pause", "reset", "checkpoint", "stop"}
+
     if not isinstance(name, str) or name not in names:
         raise LiveViewerError("unknown command type")
+
     if set(command) != {"type"}:
         raise LiveViewerError(f"{name} command has unknown fields")
+
     return LiveCommand(cast(CommandName, name))
 
 
@@ -88,6 +99,7 @@ class LiveSession:
     ) -> None:
         if not math.isfinite(dt) or dt <= 0.0:
             raise LiveViewerError("time step must be finite and positive")
+
         self._factory = factory
         self._dt = dt
         self._checkpoint_output = (
@@ -114,16 +126,20 @@ class LiveSession:
         model, provenance = self._factory()
         native_simulation(model).validate()
         model_channel_metadata(model)
+
         return model, dict(provenance)
 
     def step(self, steps: int = 1) -> None:
         if steps < 1 or steps > MAX_STEP_BATCH:
             raise LiveViewerError(f"step count must be in [1, {MAX_STEP_BATCH}]")
+
         completed = 0
+
         try:
             for _ in range(steps):
                 if self._stop_requested.is_set():
                     break
+
                 self._model.step(self._dt)
                 completed += 1
                 self._completed_steps += 1
@@ -140,8 +156,10 @@ class LiveSession:
 
     def checkpoint(self) -> Path:
         destination = self._checkpoint_output
+
         if destination is None:
             raise LiveViewerError("checkpoint output is not configured")
+
         provenance = dict(self._provenance)
         provenance["live_session"] = {
             "completed_steps": self._completed_steps,
@@ -155,6 +173,7 @@ class LiveSession:
             controller=controller_state(self._model),
             channel_metadata=model_channel_metadata(self._model),
         )
+
         return destination
 
     def frame_message(self, *, playing: bool) -> dict[str, JSONValue]:
@@ -167,6 +186,7 @@ class LiveSession:
                 )
             ),
         )
+
         return {
             "type": "frame",
             "revision": self._revision,
@@ -183,8 +203,10 @@ class LiveController:
     def __init__(self, session: LiveSession, *, frame_steps: int = 1, fps: float = 30.0) -> None:
         if frame_steps < 1 or frame_steps > MAX_STEP_BATCH:
             raise LiveViewerError(f"frame step count must be in [1, {MAX_STEP_BATCH}]")
+
         if not math.isfinite(fps) or fps <= 0.0 or fps > 240.0:
             raise LiveViewerError("frame rate must be finite and in (0, 240]")
+
         self.session = session
         self.frame_steps = frame_steps
         self.frame_interval = 1.0 / fps
@@ -211,6 +233,7 @@ class LiveController:
             self._require_active()
             loop = asyncio.get_running_loop()
             work = loop.run_in_executor(self._worker, operation, *arguments)
+
             try:
                 return await asyncio.shield(work)
             except asyncio.CancelledError:
@@ -218,6 +241,7 @@ class LiveController:
                 # Keep the operation lock until the worker has really finished.
                 with suppress(Exception):
                     await asyncio.shield(work)
+
                 raise
 
     async def _message(self) -> dict[str, JSONValue]:
@@ -232,18 +256,23 @@ class LiveController:
 
     async def broadcast_frame(self) -> None:
         sockets = tuple(self._sockets)
+
         if not sockets:
             return
+
         encoded = json.dumps(await self._message(), separators=(",", ":"))
         stale: list[web.WebSocketResponse] = []
+
         # A frame captured for earlier clients must not arrive ahead of a newly
         # connected client's initial frame (or carry its stale playing flag).
         for socket in sockets:
             if self.stopping:
                 break
+
             if socket.closed:
                 stale.append(socket)
                 continue
+
             try:
                 await asyncio.wait_for(socket.send_str(encoded), timeout=SOCKET_SEND_TIMEOUT)
             except TimeoutError:
@@ -256,27 +285,37 @@ class LiveController:
                 # Another writer can cancel aiohttp's shared drain waiter.
                 # An externally canceled task must still propagate cancellation.
                 task = asyncio.current_task()
+
                 if task is not None and task.cancelling():
                     raise
+
                 transport = self._transports.get(socket)
+
                 if transport is not None:
                     transport.abort()
+
                 stale.append(socket)
+
         self._sockets.difference_update(stale)
 
     async def _play(self) -> None:
         loop = asyncio.get_running_loop()
+
         try:
             while self.playing and self._sockets and not self.stopping:
                 started = loop.time()
                 await self._run(self.session.step, self.frame_steps)
+
                 if self.stopping:
                     break
+
                 await self.broadcast_frame()
                 delay = self.frame_interval - (loop.time() - started)
+
                 if delay > 0.0:
                     with suppress(TimeoutError):
                         await asyncio.wait_for(self._play_wakeup.wait(), timeout=delay)
+
                     self._play_wakeup.clear()
         except Exception as error:
             if not self.stopping:
@@ -287,8 +326,10 @@ class LiveController:
 
     async def play(self) -> None:
         self._require_active()
+
         if self.playing:
             return
+
         self.playing = True
         self._play_wakeup.clear()
         self._play_task = asyncio.create_task(self._play(), name="microsimulator-live-play")
@@ -298,16 +339,21 @@ class LiveController:
         self.playing = False
         self._play_wakeup.set()
         task = self._play_task
+
         if task is not None and task is not asyncio.current_task():
             await asyncio.shield(task)
+
         if broadcast and not self.stopping:
             await self.broadcast_frame()
 
     async def command(self, command: LiveCommand) -> str | None:
         if command.name == "stop":
             self.request_stop()
+
             return None
+
         self._require_active()
+
         if command.name == "frame":
             await self.broadcast_frame()
         elif command.name == "step":
@@ -324,7 +370,9 @@ class LiveController:
             await self.broadcast_frame()
         else:
             destination = cast(Path, await self._run(self.session.checkpoint))
+
             return str(destination)
+
         return None
 
     async def connect(
@@ -332,14 +380,17 @@ class LiveController:
     ) -> None:
         self._require_active()
         stale = {client for client in self._sockets if client.closed}
+
         if stale:
             self._sockets.difference_update(stale)
+
             if not self._sockets:
                 # The peer may receive its close handshake before the old
                 # request handler reaches finally. Honor last-client pause
                 # before admitting a replacement connection in that window.
                 await self.pause(broadcast=False)
                 self._require_active()
+
         self._sockets.add(socket)
         self._transports[socket] = transport
         await self._send_frame(socket)
@@ -347,6 +398,7 @@ class LiveController:
     async def disconnect(self, socket: web.WebSocketResponse) -> None:
         self._sockets.discard(socket)
         self._transports.pop(socket, None)
+
         if not self._sockets and not self.stopping:
             await self.pause(broadcast=False)
 
@@ -359,9 +411,12 @@ class LiveController:
                     pass
                 except asyncio.CancelledError:
                     task = asyncio.current_task()
+
                     if task is not None and task.cancelling():
                         raise
+
                     transport = self._transports.get(socket)
+
                     if transport is not None:
                         transport.abort()
 
@@ -371,8 +426,10 @@ class LiveController:
 
     def request_stop(self) -> None:
         """Begin idempotent shutdown outside any socket/command task."""
+
         if self.stopping:
             return
+
         self.session.request_stop()
         self.playing = False
         self._play_wakeup.set()
@@ -381,10 +438,12 @@ class LiveController:
     async def _close(self) -> None:
         await self._broadcast({"type": "session", "state": "stopping"})
         await self.pause(broadcast=False)
+
         # Wait for a manual batch, reset, frame capture, or atomic checkpoint.
         # New/queued operations fail the admission check inside this lock.
         async with self._operation_lock:
             await asyncio.to_thread(self._worker.shutdown, wait=True, cancel_futures=True)
+
         await self._broadcast({"type": "session", "state": "stopped"})
         sockets = tuple((socket, self._transports.get(socket)) for socket in self._sockets)
         self._sockets.clear()
@@ -400,6 +459,7 @@ class LiveController:
 
 async def _close_socket(socket: web.WebSocketResponse, transport: asyncio.Transport | None) -> None:
     closed = False
+
     try:
         # aiohttp applies its own timeout only AFTER writing/draining the close
         # frame. Bound the whole operation, including that preceding drain.
@@ -414,6 +474,7 @@ async def _close_socket(socket: web.WebSocketResponse, transport: asyncio.Transp
         # send may cancel that waiter, independently of this cleanup task.
         # Treat that as a failed close, but preserve real task cancellation.
         task = asyncio.current_task()
+
         if task is not None and task.cancelling():
             raise
     finally:
@@ -429,18 +490,24 @@ _TOKEN_KEY = web.AppKey("microsimulator.token", str)
 
 def _authorized(request: web.Request) -> bool:
     token = request.query.get("token", "")
+
     if not secrets.compare_digest(token, request.app[_TOKEN_KEY]):
         return False
+
     origin = request.headers.get("Origin")
+
     return origin == f"{request.scheme}://{request.host}"
 
 
 async def _websocket(request: web.Request) -> web.StreamResponse:
     if not _authorized(request):
         raise web.HTTPForbidden(text="invalid live-viewer authority")
+
     controller = request.app[_CONTROLLER_KEY]
+
     if controller.stopping:
         raise web.HTTPServiceUnavailable(text="live session is stopping or stopped")
+
     socket = web.WebSocketResponse(max_msg_size=MAX_COMMAND_BYTES, heartbeat=20.0)
     await socket.prepare(request)
     commands: asyncio.Queue[LiveCommand] = asyncio.Queue(maxsize=MAX_QUEUED_COMMANDS)
@@ -453,8 +520,10 @@ async def _websocket(request: web.Request) -> web.StreamResponse:
     async def execute_commands() -> None:
         while True:
             command = await commands.get()
+
             try:
                 result = await controller.command(command)
+
                 if result is not None and not socket.closed:
                     await socket.send_json({"type": "checkpoint", "path": result})
             except Exception as error:
@@ -464,23 +533,30 @@ async def _websocket(request: web.Request) -> web.StreamResponse:
     # A bounded per-client queue retains ordinary command order without creating
     # an unbounded number of tasks or blocking Stop behind queue backpressure.
     consumer = asyncio.create_task(execute_commands(), name="microsimulator-live-commands")
+
     try:
         await controller.connect(socket, request.transport)
+
         async for message in socket:
             if message.type is not WSMsgType.TEXT:
                 if message.type is WSMsgType.ERROR:
                     break
+
                 await socket.send_json({"type": "error", "message": "text commands required"})
                 continue
+
             try:
                 command = parse_command(cast(str, message.data))
+
                 if command.name == "stop":
                     controller.request_stop()
                 else:
                     if controller.stopping:
                         raise LiveViewerError("live session is stopping or stopped")
+
                     if commands.full():
                         raise LiveViewerError("too many queued commands")
+
                     commands.put_nowait(command)
             except Exception as error:
                 await send_error(error)
@@ -490,6 +566,7 @@ async def _websocket(request: web.Request) -> web.StreamResponse:
         pass
     finally:
         consumer.cancel()
+
         try:
             # Drop client authority and pause before waiting for canceled work
             # to drain. Otherwise a reconnect during that wait keeps playback
@@ -501,6 +578,7 @@ async def _websocket(request: web.Request) -> web.StreamResponse:
                     await consumer
             finally:
                 await _close_socket(socket, request.transport)
+
     return socket
 
 
@@ -517,9 +595,12 @@ def create_live_app(
     dist = Path(viewer_dist).resolve()
     index = dist / "index.html"
     assets = dist / "assets"
+
     if not index.is_file() or not assets.is_dir():
         raise LiveViewerError(f"viewer distribution is incomplete: {dist}")
+
     authority = token or secrets.token_urlsafe(32)
+
     if len(authority) < 32:
         raise LiveViewerError("live-viewer token must contain at least 32 characters")
 
@@ -533,6 +614,7 @@ def create_live_app(
         response.headers["Cache-Control"] = "no-store"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
+
         return response
 
     async def cleanup(_: web.Application) -> None:
@@ -543,6 +625,7 @@ def create_live_app(
     application.router.add_static("/assets", assets, show_index=False)
     # Stop before aiohttp waits for active WebSocket request handlers.
     application.on_shutdown.append(cleanup)
+
     return application, authority
 
 
@@ -560,8 +643,10 @@ def serve_live(
 
     if host not in {"127.0.0.1", "::1", "localhost"}:
         raise LiveViewerError("live viewer host must be a loopback address")
+
     if port < 1 or port > 65_535:
         raise LiveViewerError("live viewer port must be in [1, 65535]")
+
     application, token = create_live_app(
         session,
         viewer_dist,
@@ -574,17 +659,22 @@ def serve_live(
     async def run() -> None:
         runner = web.AppRunner(application)
         await runner.setup()
+
         try:
             site = web.TCPSite(runner, host=host, port=port)
+
             try:
                 await site.start()
             except OSError as error:
                 raise LiveViewerError(
                     f"could not bind live viewer to {host}:{port}: {error}"
                 ) from error
+
             print(f"MicroSimulator live viewer: {url}", flush=True)
+
             if open_browser:
                 webbrowser.open(url)
+
             await application[_CONTROLLER_KEY].stopped.wait()
         finally:
             await runner.cleanup()

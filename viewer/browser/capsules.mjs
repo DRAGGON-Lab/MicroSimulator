@@ -53,16 +53,19 @@ try {
     gl.createBuffer = () => {
       const b = create();
       buffers.add(b);
+
       return b;
     };
     gl.deleteBuffer = (b) => {
       buffers.delete(b);
+
       return remove(b);
     };
     globalThis.__liveBuffers = buffers;
     globalThis.__fixture = (count = 1, time = 0) => {
       const columns = count === 1 ? 1 : Math.ceil(Math.sqrt(count * 2));
       const rows = Math.ceil(count / columns);
+
       return {
         time,
         backend: {
@@ -78,6 +81,7 @@ try {
         cells: Array.from({ length: count }, (_, i) => {
           const angle = 0.4 + 0.09 * Math.sin(i * 0.7 + time);
           const tilt = 0.15 * Math.cos(i * 0.9 + time);
+
           return {
             id: String(i + 1),
             parentId: null,
@@ -116,6 +120,7 @@ try {
               : [0.45, 0.65, 0.9],
         ),
       );
+
       if (distance !== undefined) {
         v.camera.position.set(0, -distance, distance * 0.65);
         v.camera.up.set(0, 0, 1);
@@ -123,10 +128,12 @@ try {
         v.camera.lookAt(v.controls.target);
         v.controls.update();
       }
+
       v.renderer.render(v.scene, v.camera);
     };
     document.querySelector("#empty-state").hidden = true;
   });
+
   for (const [name, count, distance] of [
     ["isolated-near", 1, 6],
     ["isolated-far", 1, 18],
@@ -141,28 +148,35 @@ try {
       .locator("#canvas-host")
       .screenshot({ path: `${evidence}/${name}.png` });
   }
+
   for (let frame = 0; frame < 48; frame++) {
     await page.evaluate((time) => {
       globalThis.__present(64, time, 12);
+
       return new Promise(requestAnimationFrame);
     }, frame / 24);
+
     if (frame % 12 === 0) {
       await page
         .locator("#canvas-host")
         .screenshot({ path: `${evidence}/moving-${frame}.png` });
     }
   }
+
   const metrics = await page.evaluate(async () => {
     const v = globalThis.__testViewer;
     const samples = [];
     const resources = [];
+
     for (let frame = 0; frame < 70; frame++) {
       await new Promise(requestAnimationFrame);
       const start = performance.now();
       globalThis.__present(512, frame / 24, 60);
       // Complete GPU work so timings compare actual rendering, not only enqueue time.
       v.renderer.getContext().finish();
+
       if (frame >= 10) samples.push(performance.now() - start);
+
       if (frame === 10 || frame === 69) {
         resources.push({
           geometries: v.renderer.info.memory.geometries,
@@ -170,6 +184,7 @@ try {
         });
       }
     }
+
     const info = { ...v.renderer.info.render };
     const gl = v.renderer.getContext();
     const debug = gl.getExtension("WEBGL_debug_renderer_info");
@@ -183,6 +198,7 @@ try {
     samples.sort((a, b) => a - b);
     v.setFrame(globalThis.__fixture(0), false);
     v.renderer.render(v.scene, v.camera);
+
     return {
       samples: samples.length,
       device,
@@ -212,6 +228,7 @@ try {
     const retained = v.selectedCellId;
     const highlights = v.highlight.children.map((mesh) => {
       mesh.updateMatrixWorld(true);
+
       return { matrix: mesh.matrixWorld.elements.slice() };
     });
     const colors = v.cellMeshes.map((mesh) =>
@@ -224,6 +241,7 @@ try {
       .project(v.camera);
     const canvas = v.renderer.domElement.getBoundingClientRect();
     v.renderer.render(v.scene, v.camera);
+
     return {
       selected,
       retained,
@@ -237,8 +255,10 @@ try {
   });
   assert.equal(behavior.selected, "2");
   assert.equal(behavior.retained, "2");
+
   for (const colors of behavior.colors)
     assert.deepEqual(colors, [1, 0, 0, 0, 1, 0]);
+
   await page.mouse.click(behavior.point.x, behavior.point.y);
   assert.equal(
     await page.evaluate(() => globalThis.__testViewer.selectedCellId),
@@ -250,9 +270,11 @@ try {
     const center = v.camera.position.clone().fromArray(selected.position);
     const axis = center.clone().fromArray(selected.direction).normalize();
     let error = 0;
+
     for (const mesh of v.highlight.children) {
       mesh.updateMatrixWorld(true);
       const positions = mesh.geometry.getAttribute("position");
+
       for (let i = 0; i < positions.count; i++) {
         const point = center
           .clone()
@@ -274,19 +296,25 @@ try {
         );
       }
     }
+
     v.renderer.render(v.scene, v.camera);
+
     return error;
   });
+
   if (mode === "corrected") assert.ok(highlightError < 1e-6);
+
   await page
     .locator("#canvas-host")
     .screenshot({ path: `${evidence}/selected.png` });
   const removed = await page.evaluate(() => {
     const v = globalThis.__testViewer;
     v.setFrame(globalThis.__fixture(1), false);
+
     return { selected: v.selectedCellId, visible: v.highlight.visible };
   });
   assert.deepEqual(removed, { selected: null, visible: false });
+
   if (mode === "corrected") {
     const zero = await page.evaluate(() => {
       const v = globalThis.__testViewer;
@@ -296,6 +324,7 @@ try {
       v.setCellColors([[0.6, 0.8, 0.7]]);
       v.selectCell(0);
       v.renderer.render(v.scene, v.camera);
+
       return v.highlight.children.every((mesh) =>
         mesh.matrix.elements.every(Number.isFinite),
       );
@@ -305,6 +334,7 @@ try {
       .locator("#canvas-host")
       .screenshot({ path: `${evidence}/zero-length-selected.png` });
   }
+
   if (mode === "corrected") {
     assert.equal(
       metrics.render.calls,
@@ -322,12 +352,16 @@ try {
       "empty frame must free cell GPU buffers",
     );
   }
+
   assert.deepEqual(errors, []);
   const disposedBuffers = await page.evaluate(() => {
     globalThis.__testViewer.dispose();
+
     return globalThis.__liveBuffers.size;
   });
+
   if (mode === "corrected") assert.equal(disposedBuffers, 0);
+
   const report = {
     mode,
     browser: browser.version(),

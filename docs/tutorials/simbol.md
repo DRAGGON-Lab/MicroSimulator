@@ -24,14 +24,14 @@ uv run microsimulator view \
 
 Allowed names are `bba_0001`, `bba_0002`, `bba_0003`, `bba_0004`, `bba_0005`, and `bba_i5200`. Choose `Species` coloring and the reporter channel listed below.
 
-| Circuit | Ordered species channels | Reporter channel | Additional input |
-| --- | --- | --: | --- |
-| BBa_0001 | GFP | 0 | none |
-| BBa_0002 | RFP, TetR | 0 | `inducer_concentration`, default 0 aTc |
-| BBa_0003 | LuxR, GFP, LuxI, LuxR–AHL pool | 1 | `precursor_concentration`, default 5 |
-| BBa_0004 | LacI, GFP | 1 | `inducer_concentration`, default 1 IPTG |
-| BBa_0005 | TetR, GFP, cI, LacI | 1 | `inducer_concentration`, default 1 aTc |
-| BBa_I5200 | cI, GFP, LacI, TetR | 1 | none |
+| Circuit   | Ordered species channels       | Reporter channel | Additional input                        |
+| --------- | ------------------------------ | ---------------: | --------------------------------------- |
+| BBa_0001  | GFP                            |                0 | none                                    |
+| BBa_0002  | RFP, TetR                      |                0 | `inducer_concentration`, default 0 aTc  |
+| BBa_0003  | LuxR, GFP, LuxI, LuxR–AHL pool |                1 | `precursor_concentration`, default 5    |
+| BBa_0004  | LacI, GFP                      |                1 | `inducer_concentration`, default 1 IPTG |
+| BBa_0005  | TetR, GFP, cI, LacI            |                1 | `inducer_concentration`, default 1 aTc  |
+| BBa_I5200 | cI, GFP, LacI, TetR            |                1 | none                                    |
 
 Parameters are JSON numbers:
 

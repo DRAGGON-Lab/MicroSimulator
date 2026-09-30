@@ -92,6 +92,7 @@ def _manifest(path: Path) -> dict[str, Any]:
 
 def _recipe_simulation() -> Simulation:
     simulation = Simulation(BackendKind.CPU, species_count=1)
+
     for x, length, level in ((0.0, 1.0, 2.0), (1.0, 2.0, 4.0), (2.0, 3.0, 6.0)):
         cell = CellInit()
         cell.position = Vec3(x, 0.0, 0.0)
@@ -99,6 +100,7 @@ def _recipe_simulation() -> Simulation:
         cell.radius = 0.5
         cell.species = [level]
         simulation.add_cell(cell)
+
     return simulation
 
 
@@ -115,8 +117,10 @@ def test_previous_dataset_format_preserves_identity_and_verification(
     manifest["format"] = "cellmodeller2-analysis"
     manifest["version"] = schema_version
     identity_keys = ["format", "version", "sources", "options"]
+
     if schema_version >= 2:
         identity_keys.extend(["tables", "signals"])
+
     identity = {key: manifest[key] for key in identity_keys}
     manifest["dataset_id"] = hashlib.sha256(
         json.dumps(
@@ -131,6 +135,7 @@ def test_previous_dataset_format_preserves_identity_and_verification(
     # Changing the envelope must not silently replace the authenticated identity.
     manifest["format"] = ANALYSIS_FORMAT
     manifest_path.write_text(json.dumps(manifest))
+
     with pytest.raises(AnalysisError, match="dataset identity digest"):
         open_dataset(output)
 
@@ -284,8 +289,10 @@ def test_export_dataset_rejects_existing_output_and_reverse_time(tmp_path: Path)
     output.mkdir()
     sentinel = output / "keep.txt"
     sentinel.write_text("mine")
+
     with pytest.raises(AnalysisError, match="output already exists"):
         export_dataset([earlier], output)
+
     assert sentinel.read_text() == "mine"
 
     replaced = export_dataset([earlier], output, replace=True)
@@ -433,6 +440,7 @@ def test_dataset_reader_detects_manifest_and_table_tampering(tmp_path: Path) -> 
     export_dataset([checkpoint], table_output)
     table = table_output / "cells.parquet"
     table.write_bytes(table.read_bytes() + b"tampered")
+
     with pytest.raises(AnalysisError, match="table digest"):
         open_dataset(table_output)
 
@@ -441,6 +449,7 @@ def test_dataset_reader_detects_manifest_and_table_tampering(tmp_path: Path) -> 
     manifest = _manifest(manifest_output)
     manifest["options"]["path_provenance"] = True
     (manifest_output / "manifest.json").write_text(json.dumps(manifest))
+
     with pytest.raises(AnalysisError, match="dataset_id"):
         open_dataset(manifest_output)
 

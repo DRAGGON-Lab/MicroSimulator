@@ -2,16 +2,16 @@
 
 Nine bundled CellModeller examples define their species or signaling equations as OpenCL source and therefore cannot run through the Python callback adapter. Each has a self-contained MicroSimulator translation with typed rate equations and restartable orchestration. The table maps source models to those translations; numerical comparisons are documented separately in the recorded trajectory reference.
 
-| CellModeller example | Equation family | MicroSimulator model |
-| --- | --- | --- |
-| `ACS2012/EdgeDetectorChamber.py` | five species, one diffusive signal | `examples/legacy/ACS2012/EdgeDetectorChamber.py` |
-| `Tutorial_2/Tutorial_2a.py` | one constitutively produced species | `examples/legacy/Tutorial_2/Tutorial_2a.py` |
-| `Tutorial_2/Tutorial_2b.py` | two-species nonlinear feedback | `examples/legacy/Tutorial_2/Tutorial_2b.py` |
-| `Tutorial_3/Tutorial_3.py` | two species coupled to two diffusive signals | `examples/legacy/Tutorial_3/Tutorial_3.py` |
-| `ex2_constGene.py` | one constitutively produced species | `examples/legacy/ex2_constGene.py` |
-| `ex2a_dilution.py` | one species with growth dilution only | `examples/legacy/ex2a_dilution.py` |
-| `ex2b_diluteRepression.py` | dilution plus Hill repression | `examples/legacy/ex2b_diluteRepression.py` |
-| `ex3_simpleSignal.py` | one species coupled to one diffusive signal | `examples/legacy/ex3_simpleSignal.py` |
+| CellModeller example             | Equation family                               | MicroSimulator model                             |
+| -------------------------------- | --------------------------------------------- | ------------------------------------------------ |
+| `ACS2012/EdgeDetectorChamber.py` | five species, one diffusive signal            | `examples/legacy/ACS2012/EdgeDetectorChamber.py` |
+| `Tutorial_2/Tutorial_2a.py`      | one constitutively produced species           | `examples/legacy/Tutorial_2/Tutorial_2a.py`      |
+| `Tutorial_2/Tutorial_2b.py`      | two-species nonlinear feedback                | `examples/legacy/Tutorial_2/Tutorial_2b.py`      |
+| `Tutorial_3/Tutorial_3.py`       | two species coupled to two diffusive signals  | `examples/legacy/Tutorial_3/Tutorial_3.py`       |
+| `ex2_constGene.py`               | one constitutively produced species           | `examples/legacy/ex2_constGene.py`               |
+| `ex2a_dilution.py`               | one species with growth dilution only         | `examples/legacy/ex2a_dilution.py`               |
+| `ex2b_diluteRepression.py`       | dilution plus Hill repression                 | `examples/legacy/ex2b_diluteRepression.py`       |
+| `ex3_simpleSignal.py`            | one species coupled to one diffusive signal   | `examples/legacy/ex3_simpleSignal.py`            |
 | `ex4_simpleCellCellSignaling.py` | three species coupled to one diffusive signal | `examples/legacy/ex4_simpleCellCellSignaling.py` |
 
 ## Common modeling choices

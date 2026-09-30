@@ -120,6 +120,7 @@ def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
         outlet_values=[0.0, 0.0],
         simulation=simulation,
     )
+
     return grid
 
 
@@ -132,9 +133,11 @@ def _primed_levels(grid: SignalGridSpec) -> list[float]:
     # starts at zero everywhere.
     site_count = grid.shape.x * grid.shape.y * grid.shape.z
     levels = [0.0] * (2 * site_count)
+
     for site, solid in enumerate(grid.obstacles):
         if solid == 0:
             levels[site_count + site] = NUTRIENT_INLET
+
     return levels
 
 
@@ -147,6 +150,7 @@ def _rate_plan() -> CoupledRatePlan:
     ahl_cubed = ahl**3.0
     hill = ahl_cubed / (AHL_THRESHOLD**3.0 + ahl_cubed)
     activated = CLOCK_RATE * (0.02 + 8.0 * hill)
+
     return rates.coupled_plan(
         3,
         2,
@@ -183,21 +187,26 @@ def _ahl_removal_field(cells: Sequence[CellSnapshot]) -> SignalGridAffineReactio
     reaction = SignalGridAffineReaction()
     reaction.source_rates = _NO_SOURCES
     reaction.loss_rates = loss.tolist()
+
     return reaction
 
 
 def _nutrient_growth(simulation: Simulation, position: Vec3) -> float:
     nutrient = max(0.0, simulation.sample_signals(position)[1])
+
     return BASE_GROWTH_RATE * nutrient / (NUTRIENT_K + nutrient)
 
 
 def _regulate(step: ControllerStep) -> StepPlan:
     if step.completed_steps % REMOVAL_INTERVAL == 0:
         step.simulation.set_signal_reaction(_ahl_removal_field(step.cells))
+
     if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
         mobility = colony_mobility(
-            GRID, (cell for cell in step.cells if cell.fixed),
-            base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT
+            GRID,
+            (cell for cell in step.cells if cell.fixed),
+            base=GAP_MOBILITY,
+            drag_coefficient=DRAG_COEFFICIENT,
         )
         field, _ = solve_flow_field(
             GRID,
@@ -206,11 +215,14 @@ def _regulate(step: ControllerStep) -> StepPlan:
             simulation=step.simulation,
         )
         step.simulation.set_velocity_field(field)
+
     divisions = DIVISION.requests(step)
     washed = tuple(cell.id for cell in step.cells if abs(cell.position.y) > WASHOUT_Y)
+
     if washed:
         DIVISION.forget(step, washed)
         divisions = tuple(request for request in divisions if request.parent_id not in washed)
+
     return StepPlan(
         updates=tuple(
             CellUpdate(cell.id, growth_rate=_nutrient_growth(step.simulation, cell.position))
@@ -224,6 +236,7 @@ def _regulate(step: ControllerStep) -> StepPlan:
 
 def _divided(step: ControllerStep, event: DivisionEvent) -> None:
     DIVISION.on_division(step, event)
+
     for daughter in (event.first, event.second):
         step.simulation.set_species(
             daughter.id,
@@ -246,6 +259,7 @@ def build(context: ModelContext) -> NativeController:
     founder.species = [context.rng.uniform(0.0, 0.2), context.rng.uniform(0.0, 0.2), 0.0]
     state: dict[str, JSONValue] = {"scope": "clock-nutrient-field-and-trap"}
     DIVISION.initialize_founders(simulation, state, context.rng, (founder,))
+
     return NativeController(
         simulation,
         model_id=MODEL_ID,
@@ -260,6 +274,7 @@ def build(context: ModelContext) -> NativeController:
 
 def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeController:
     del context
+
     return NativeController.from_checkpoint(
         checkpoint,
         model_id=MODEL_ID,

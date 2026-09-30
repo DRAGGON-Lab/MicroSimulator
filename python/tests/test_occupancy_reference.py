@@ -42,9 +42,11 @@ def test_partial_closed_grid_uses_amount_and_unequal_storage() -> None:
     amount = volume * np.array([8.0, 0.0])
     face = porosity_face(0, 1, 0.25, 0.75, diffusion=1, area=1, distance=1)
     initial = amount.sum()
+
     for _ in range(100):
         amount, ledger = backward_euler(amount, volume, [face], 1.0)
         assert abs(ledger.residual) < 1e-12
+
     np.testing.assert_allclose(concentration(amount, volume), [2, 2], atol=1e-12)
     assert abs(amount.sum() - initial) < 1e-12
     assert not math.isclose(float(amount[0]), float(amount[1]))
@@ -61,12 +63,16 @@ def test_changing_occupancy_and_full_closure_conserve_without_division_by_zero()
     reopened = remap_amounts(result, new, [1, 1, 1], [(0, 1), (1, 2)])
     assert reopened[0] == 0  # no invented solute in newly exposed storage
     assert reopened.sum() == amount.sum()
+
     with pytest.raises(ValueError, match="no accessible recipient"):
         remap_amounts(amount, old, [0, 0, 0], [(0, 1), (1, 2)])
+
     np.testing.assert_array_equal(amount, [2, 3, 1])  # rejection is atomic
+
     # A persistent wall separates the only potential recipient.
     with pytest.raises(ValueError, match="no accessible recipient"):
         remap_amounts([1, 0, 0], [1, 0, 1], [0, 0, 1], [(0, 1), (1, 2)])
+
     np.testing.assert_array_equal(accessible_volumes([1e-12, 0], 1), [0, 0])
     np.testing.assert_array_equal(remap_amounts([0], [1], [0], []), [0])
 
@@ -127,6 +133,7 @@ def test_boundary_reaction_and_cell_exchange_have_explicit_amount_ledgers() -> N
     assert abs(ledger.residual) < 1e-12
     face = porosity_face(0, 1, 0.25, 0.75, diffusion=2, area=3, distance=4, intrinsic_velocity=5)
     assert face.volume_flux == 0.375 * 3 * 5  # porosity appears exactly once
+
     with pytest.raises(ValueError, match="accessible exchange"):
         exchange_weights([1, 0], [0, 1])
 
@@ -134,18 +141,24 @@ def test_boundary_reaction_and_cell_exchange_have_explicit_amount_ledgers() -> N
 def test_diffusion_timestep_refinement_and_geometric_quadrature_refinement() -> None:
     # Two-cell antisymmetric diffusion mode has eigenvalue -2 for epsilon=1.
     errors: list[float] = []
+
     for steps in (10, 20, 40):
         amount = np.array([1.5, 0.5])
+
         for _ in range(steps):
             amount, _ = backward_euler(amount, [1, 1], [Face(0, 1, 1)], 1 / steps)
+
         errors.append(abs(float(amount[0]) - (1 + 0.5 * math.exp(-2))))
+
     assert errors[2] < 0.55 * errors[1] < 0.31 * errors[0]
     sphere = Capsule((0, 0, 0), (1, 0, 0), 0, 0.5)
     exact = 4 / 3 * math.pi * 0.5**3
     geometric_errors: list[float] = []
+
     for resolution in (8, 16, 32):
         epsilon = geometric_porosity(np.zeros((1, 3)), (2, 2, 2), [sphere], subdivisions=resolution)
         geometric_errors.append(abs(float((1 - epsilon[0]) * 8) - exact))
+
     assert geometric_errors[-1] < geometric_errors[0]
     assert geometric_errors[-1] < 0.02 * exact
 
@@ -153,26 +166,33 @@ def test_diffusion_timestep_refinement_and_geometric_quadrature_refinement() -> 
 def test_invalid_reference_inputs_fail_without_silent_clipping() -> None:
     with pytest.raises(ValueError):
         accessible_volumes([1.1], 1)
+
     with pytest.raises(ValueError):
         concentration([1], [0])
+
     with pytest.raises(ValueError):
         backward_euler([0], [1], [], 1, source=[-1])
+
     with pytest.raises(ValueError):
         backward_euler([0, 1], [0, 1], [Face(0, 1, 1)], 0.1)
 
 
 def test_empty_limit_spatial_operator_is_second_order() -> None:
     errors: list[float] = []
+
     for count in (10, 20, 40):
         h = 1 / count
         centers = (np.arange(count, dtype=np.float64) + 0.5) * h
         values = 2 + np.cos(math.pi * centers)
         rate = np.zeros(count)
+
         for i in range(count - 1):
             face = porosity_face(i, i + 1, 1, 1, diffusion=1, area=1, distance=h)
             amount_flux = face.conductance * (values[i + 1] - values[i])
             rate[i] += amount_flux / h
             rate[i + 1] -= amount_flux / h
+
         exact = -(math.pi**2) * np.cos(math.pi * centers)
         errors.append(float(np.max(np.abs(rate - exact))))
+
     assert errors[2] < 0.26 * errors[1] < 0.07 * errors[0]

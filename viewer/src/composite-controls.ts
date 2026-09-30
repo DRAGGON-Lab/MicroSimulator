@@ -49,12 +49,15 @@ export class CompositeSpeciesControls {
   ): void {
     this.count = frame.speciesCount;
     const indices = this.state.indices(this.count);
+
     for (const [position, index] of indices.entries()) {
       let row = this.rows.get(index);
+
       if (row === undefined) {
         row = this.createRow(index);
         this.rows.set(index, row);
       }
+
       const name = channelLabel(frame, "species", index);
       row.label.textContent = name;
       row.root.setAttribute("aria-label", `${name} composite channel`);
@@ -74,18 +77,24 @@ export class CompositeSpeciesControls {
         ),
       );
     }
+
     const order = indices.join(",");
+
     if (order !== this.visibleOrder) {
       this.list.replaceChildren(
         ...indices.map((index) => this.rows.get(index)!.root),
       );
       this.visibleOrder = order;
     }
+
     this.legend.replaceChildren();
+
     if (channels.length === 0) {
       this.legend.textContent = "No channels active. Cells use neutral gray.";
+
       return;
     }
+
     for (const channel of channels) {
       const item = document.createElement("div");
       item.className = "composite-legend-channel";
@@ -161,6 +170,7 @@ export class CompositeSpeciesControls {
         this.rows.get(index)?.[direction === -1 ? "down" : "up"].focus();
       });
       order.append(button);
+
       return button;
     };
     const up = moveButton(-1);
@@ -173,6 +183,7 @@ export class CompositeSpeciesControls {
     });
     tintForm.addEventListener("submit", (event) => {
       event.preventDefault();
+
       try {
         this.state.setTint(index, tint.value.trim());
         tint.value = this.state.get(index).tint;
@@ -185,6 +196,7 @@ export class CompositeSpeciesControls {
           error instanceof Error ? error.message : String(error);
       }
     });
+
     return { root, label, enabled, swatch, tint, tintError, range, up, down };
   }
 }

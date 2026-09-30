@@ -37,6 +37,7 @@ def _grid() -> SignalGridSpec:
     grid.spacing = Vec3(4.0, 4.0, 4.0)
     grid.diffusion = [10.0]
     grid.advection = [Vec3()]
+
     return grid
 
 
@@ -45,6 +46,7 @@ def _rates() -> CoupledRatePlan:
     intracellular = rates.species(0)
     extracellular = rates.signal(0)
     exchange_amount = 0.1 * (extracellular - intracellular) * rates.cell_surface_area()
+
     return rates.coupled_plan(
         1,
         1,
@@ -82,6 +84,7 @@ def build(context: ModelContext) -> NativeController:
     founder_id = simulation.add_cell(founder)
     state: dict[str, JSONValue] = {}
     DIVISION.initialize(state, context.rng, (founder_id,))
+
     return NativeController(
         simulation,
         model_id=MODEL_ID,
@@ -96,6 +99,7 @@ def build(context: ModelContext) -> NativeController:
 
 def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeController:
     del context
+
     return NativeController.from_checkpoint(
         checkpoint,
         model_id=MODEL_ID,

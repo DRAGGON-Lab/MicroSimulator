@@ -13,6 +13,7 @@ constexpr float relative_tolerance = 2.0e-5F;
 
 bool close(float actual, float expected) {
   const auto tolerance = absolute_tolerance + relative_tolerance * std::abs(expected);
+
   return std::abs(actual - expected) <= tolerance;
 }
 
@@ -142,6 +143,7 @@ void compare_graphs(const cm::ExternalContactGraph& actual,
   assert(actual.size() == expected.size());
   const auto actual_contacts = actual.contacts();
   const auto expected_contacts = expected.contacts();
+
   for (std::size_t index = 0; index < expected.size(); ++index) {
     const auto& left = actual_contacts[index];
     const auto& right = expected_contacts[index];
@@ -159,10 +161,12 @@ void compare_graphs(const cm::ExternalContactGraph& actual,
     assert(close(left.signed_separation, right.signed_separation));
     assert(close(left.weight, right.weight));
   }
+
   for (std::size_t slot = 0; slot < expected.cell_count(); ++slot) {
     const auto actual_incidence = actual.incident_contact_indices(static_cast<cm::Slot>(slot));
     const auto expected_incidence = expected.incident_contact_indices(static_cast<cm::Slot>(slot));
     assert(actual_incidence.size() == expected_incidence.size());
+
     for (std::size_t index = 0; index < expected_incidence.size(); ++index) {
       assert(actual_incidence[index] == expected_incidence[index]);
     }
@@ -196,9 +200,11 @@ void run_empty_inputs(cm::BackendKind backend, std::uint32_t device_index) {
 int main() {
   cm::test::for_each_backend_device([](cm::BackendKind backend, std::uint32_t device_index) {
     cm::Simulation capability_probe(backend, 0, 0, device_index);
+
     if (!capability_probe.supports(cm::BackendFeature::external_constraints)) {
       return;
     }
+
     run_empty_inputs(backend, device_index);
     run_fixture(backend, device_index, populate_mixed_constraints);
     run_fixture(backend, device_index, populate_box_regions);
@@ -210,5 +216,6 @@ int main() {
     run_fixture(backend, device_index, populate_centered_wall_crossing);
     run_fixture(backend, device_index, populate_midspan_cylinder);
   });
+
   return 0;
 }

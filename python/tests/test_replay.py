@@ -30,6 +30,7 @@ def lifecycle_checkpoints(directory: Path) -> list[Path]:
     cell.species = [0.25]
     parent = simulation.add_cell(cell)
     paths: list[Path] = []
+
     for ordinal, name in enumerate(
         ("z-start.json", "a-growth.json", "m-division.json", "b-removal.json")
     ):
@@ -40,6 +41,7 @@ def lifecycle_checkpoints(directory: Path) -> list[Path]:
         elif ordinal == 3:
             simulation.remove_cell(2)
             simulation.step(0.1)
+
         path = directory / name
         save_checkpoint(
             simulation,
@@ -48,6 +50,7 @@ def lifecycle_checkpoints(directory: Path) -> list[Path]:
             provenance={"model": {"path": "/missing/model-that-must-not-be-imported.py"}},
         )
         paths.append(path)
+
     return paths
 
 
@@ -71,6 +74,7 @@ def test_ordered_export_preserves_topology_labels_equal_times_and_input_files(
     assert [cell.id for cell in frames[2].cells] == [2, 3]
     assert frames[3].cells[0].id == 3
     assert frames[2].time == frames[1].time
+
     for ordinal, (entry, source) in enumerate(zip(recording["frames"], paths, strict=True)):
         assert entry["ordinal"] == ordinal
         assert entry["checkpoint_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
@@ -78,6 +82,7 @@ def test_ordered_export_preserves_topology_labels_equal_times_and_input_files(
         assert entry["bytes"] == len(encoded)
         assert entry["sha256"] == hashlib.sha256(encoded).hexdigest()
         assert frames[ordinal].channel_metadata.species == ("Reporter",)
+
     assert [path.read_bytes() for path in paths] == before
 
 
@@ -106,19 +111,27 @@ def test_source_backend_preserved_while_exporting_without_original_device(tmp_pa
 def test_failure_is_attributed_to_ordinal_and_leaves_no_partial_bundle(tmp_path: Path) -> None:
     paths = lifecycle_checkpoints(tmp_path)
     output = tmp_path / "bad-order"
+
     with pytest.raises(ReplayExportError, match=r"frame 1.*precedes previous"):
         export_replay([paths[1], paths[0]], output)
+
     assert not output.exists()
     assert not list(tmp_path.glob(".bad-order.*"))
     paths[2].write_text("invalid")
+
     with pytest.raises(ReplayExportError, match=r"frame 2.*not valid"):
         export_replay(paths, output)
+
     assert not output.exists()
+
     with pytest.raises(ReplayExportError, match=r"frame 0.*missing.json"):
         export_replay([tmp_path / "missing.json"], output)
+
     output.mkdir()
+
     with pytest.raises(ReplayExportError, match="output already exists"):
         export_replay(paths[:1], output)
+
     with pytest.raises(ReplayExportError, match="ordered checkpoints"):
         export_replay([], tmp_path / "empty")
 
@@ -128,6 +141,7 @@ def test_export_rejects_checkpoint_digest_tampering(tmp_path: Path) -> None:
     document = json.loads(paths[0].read_text())
     document["simulation"]["time"] = 100
     paths[0].write_text(json.dumps(document))
+
     with pytest.raises(ReplayExportError, match="state digest does not match"):
         export_replay(paths, tmp_path / "bad")
 
@@ -150,8 +164,10 @@ def test_cli_exports_exact_argument_order_and_reports_errors(
 
 def test_signal_grid_changes_are_independent_frames(tmp_path: Path) -> None:
     paths: list[Path] = []
+
     for ordinal, size in enumerate((None, 1, 3)):
         simulation = Simulation(species_count=0)
+
         if size is not None:
             shape = GridShape()
             shape.x, shape.y, shape.z = size, size, size
@@ -162,9 +178,11 @@ def test_signal_grid_changes_are_independent_frames(tmp_path: Path) -> None:
             spec.diffusion = [0, 0]
             spec.advection = [Vec3(), Vec3()]
             simulation.configure_signal_grid(spec, [1.0] * (2 * size**3))
+
         path = tmp_path / f"{ordinal}.json"
         save_checkpoint(simulation, path)
         paths.append(path)
+
     result = export_replay(paths, tmp_path / "grid")
     frames = [
         load_scene(result.output / f"frames/{ordinal:08d}.scene.json") for ordinal in range(3)
@@ -182,14 +200,19 @@ def test_export_bounds_and_parent_io_failures_are_actionable(
     paths = lifecycle_checkpoints(tmp_path)
     parent = tmp_path / "file-parent"
     parent.write_text("preserve")
+
     with pytest.raises(ReplayExportError, match="could not prepare replay destination"):
         export_replay(paths, parent / "bundle")
+
     assert parent.read_text() == "preserve"
     monkeypatch.setattr(replay, "MAX_REPLAY_MANIFEST_BYTES", 10)
+
     with pytest.raises(ReplayExportError, match="manifest exceeds"):
         export_replay(paths, tmp_path / "bounded")
+
     assert not (tmp_path / "bounded").exists()
     assert not list(tmp_path.glob(".bounded.*"))
     monkeypatch.setattr(replay, "MAX_CHECKPOINT_BYTES", 10)
+
     with pytest.raises(ReplayExportError, match=r"frame 0.*checkpoint exceeds"):
         export_replay(paths, tmp_path / "input-limit")

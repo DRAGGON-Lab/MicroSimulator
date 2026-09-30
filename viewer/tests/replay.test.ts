@@ -19,6 +19,7 @@ function deferred<T>() {
     resolve = yes;
     reject = no;
   });
+
   return { promise, resolve, reject };
 }
 function player(loader: FrameLoader, count = 5) {
@@ -28,6 +29,7 @@ function player(loader: FrameLoader, count = 5) {
     frame: (_, ordinal) => frames.push(ordinal),
     state: (state) => states.push(state),
   });
+
   return { controller, frames, states };
 }
 afterEach(() => vi.useRealTimers());
@@ -39,14 +41,17 @@ describe("bounded replay loading", () => {
     const cache = new ReplayCache(
       async (ordinal) => {
         loads.push(ordinal);
+
         return frame;
       },
       3,
       3 * frameWeight(frame),
     );
     const signal = new AbortController().signal;
+
     for (const ordinal of [0, 1, 2, 0, 3, 0, 1])
       await cache.get(ordinal, signal);
+
     expect(loads).toEqual([0, 1, 2, 3, 1]);
     expect(cache.size).toBe(3);
     expect(cache.bytes).toBeLessThanOrEqual(cache.maxBytes);
@@ -72,6 +77,7 @@ describe("bounded replay loading", () => {
     const loads: number[] = [];
     const { controller, frames } = player(async (ordinal) => {
       loads.push(ordinal);
+
       return ordinal === 0 ? delayed.promise : frame;
     });
     controller.seek(0);
@@ -91,7 +97,9 @@ describe("bounded replay loading", () => {
     const delayed = deferred<SceneFrame>();
     const { controller, frames } = player(async (ordinal) => {
       if (ordinal === 0) return delayed.promise;
+
       if (ordinal === 2) throw new Error("damaged.scene.json digest mismatch");
+
       return frame;
     });
     controller.seek(0);
@@ -117,6 +125,7 @@ describe("bounded replay loading", () => {
     let signal: AbortSignal | undefined;
     const { controller, frames, states } = player(async (_, active) => {
       signal = active;
+
       return delayed.promise;
     });
     controller.seek(0);
@@ -142,17 +151,22 @@ describe("recorded-frame playback", () => {
       let pendingSignal: AbortSignal | undefined;
       const { controller, frames } = player(async (ordinal, signal) => {
         loads.push(ordinal);
+
         if (ordinal === 2) {
           pendingSignal = signal;
+
           return delayed.promise;
         }
+
         return frame;
       });
       const initial = displayedIndex === null ? [] : [displayedIndex];
+
       if (displayedIndex !== null) {
         controller.seek(displayedIndex);
         await flush();
       }
+
       controller.setFps(20);
       controller.seek(2);
       controller.play();
@@ -193,18 +207,23 @@ describe("recorded-frame playback", () => {
       let attempts = 0;
       const { controller, frames } = player(async (ordinal) => {
         loads.push(ordinal);
+
         if (ordinal === requested && ++attempts <= 2)
           throw new Error("temporary read failure");
+
         return frame;
       });
       const initial = displayed === null ? [] : [displayed];
+
       if (displayed !== null) {
         controller.seek(displayed);
         await flush();
       }
+
       controller.setFps(20);
       controller.seek(requested);
       await flush();
+
       for (let retry = 0; retry < 2; retry++) {
         expect(controller.state).toMatchObject({
           index: displayed,
@@ -224,6 +243,7 @@ describe("recorded-frame playback", () => {
         });
         await flush();
       }
+
       expect(loads).toEqual([...initial, requested, requested, requested]);
       expect(frames).toEqual([...initial, requested]);
       expect(controller.state).toMatchObject({
@@ -280,8 +300,10 @@ describe("recorded-frame playback", () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(controller.state.index).toBe(3);
     expect(controller.state.playing).toBe(false);
+
     for (const value of [NaN, Infinity, 0, 121])
       expect(() => controller.setFps(value)).toThrow(RangeError);
+
     expect(controller.state.fps).toBe(10);
     expect(() => controller.seek(5)).toThrow(RangeError);
     controller.dispose();

@@ -26,6 +26,7 @@ export class CompositeSpeciesState {
       throw new RangeError(
         "Channel index must be a non-negative safe integer.",
       );
+
     return (
       this.channels.get(index) ?? {
         enabled: index < 2,
@@ -43,12 +44,15 @@ export class CompositeSpeciesState {
   public indices(count: number): readonly number[] {
     for (let index = 0; index < count; index += 1)
       if (!this.order.includes(index)) this.order.push(index);
+
     return this.order.filter((index) => index < count);
   }
   public move(index: number, direction: -1 | 1, count: number): void {
     const visible = this.indices(count);
     const neighbor = visible[visible.indexOf(index) + direction];
+
     if (neighbor === undefined || !visible.includes(index)) return;
+
     const from = this.order.indexOf(index);
     const to = this.order.indexOf(neighbor);
     [this.order[from], this.order[to]] = [neighbor, index];

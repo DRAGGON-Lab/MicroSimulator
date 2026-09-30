@@ -88,8 +88,10 @@ def _install_runtime_shims() -> None:
 
     def shape_compatible_set(array: Any, source: Any, *args: Any, **kwargs: Any) -> Any:
         host = np.asarray(source)
+
         if host.size == array.size and host.shape != array.shape:
             host = host.reshape(array.shape)
+
         return original_set(array, host, *args, **kwargs)
 
     cl_array.Array.set = shape_compatible_set
@@ -110,21 +112,26 @@ def _legacy_commit(root: Path) -> str:
         capture_output=True,
         text=True,
     )
+
     return result.stdout.strip()
 
 
 def _source_digests(matrix_path: Path) -> tuple[str, dict[str, str]]:
     document = json.loads(matrix_path.read_text(encoding="utf-8"))
+
     return document["legacy_commit"], {row["path"]: row["sha256"] for row in document["examples"]}
 
 
 def _signal_statistics(simulator: Any) -> list[dict[str, float]]:
     integrator = simulator.integ
+
     if integrator is None or not hasattr(integrator, "signalLevel"):
         return []
+
     shape = tuple(int(value) for value in integrator.gridDim)
     levels = np.asarray(integrator.signalLevel, dtype=np.float64).reshape(shape)
     result: list[dict[str, float]] = []
+
     for channel in levels:
         result.append(
             {
@@ -133,7 +140,22 @@ def _signal_statistics(simulator: Any) -> list[dict[str, float]]:
                 "l2_norm": float(np.linalg.norm(channel)),
             }
         )
+
     return result
+
+
+def _cell_topology(cells: list[Any]) -> tuple[dict[str, int], set[tuple[int, int]]]:
+    type_counts: dict[str, int] = {}
+    neighbor_pairs: set[tuple[int, int]] = set()
+
+    for cell in cells:
+        key = str(int(cell.cellType))
+        type_counts[key] = type_counts.get(key, 0) + 1
+
+        for neighbor in getattr(cell, "neighbours", []):
+            neighbor_pairs.add(tuple(sorted((int(cell.id), int(neighbor)))))
+
+    return type_counts, neighbor_pairs
 
 
 def _frame(simulator: Any, step: int) -> dict[str, object]:
@@ -149,13 +171,8 @@ def _frame(simulator: Any, step: int) -> dict[str, object]:
         [[float(value) for value in getattr(cell, "species", ())] for cell in cells],
         dtype=np.float64,
     ).reshape((len(cells), species_count))
-    type_counts: dict[str, int] = {}
-    neighbor_pairs: set[tuple[int, int]] = set()
-    for cell in cells:
-        key = str(int(cell.cellType))
-        type_counts[key] = type_counts.get(key, 0) + 1
-        for neighbor in getattr(cell, "neighbours", []):
-            neighbor_pairs.add(tuple(sorted((int(cell.id), int(neighbor)))))
+    type_counts, neighbor_pairs = _cell_topology(cells)
+
     result: dict[str, object] = {
         "step": step,
         "cell_count": len(cells),
@@ -174,9 +191,11 @@ def _frame(simulator: Any, step: int) -> dict[str, object]:
         "species_maximum": [float(value) for value in species.max(axis=0)],
         "signals": _signal_statistics(simulator),
     }
+
     for value in _numbers(result):
         if not math.isfinite(value):
             raise RuntimeError(f"scenario produced a non-finite value at step {step}")
+
     return result
 
 
@@ -200,13 +219,16 @@ def _record_scenario(
     expected_digest: str,
 ) -> dict[str, object]:
     model = legacy_root / "Examples" / scenario.model
+
     if _digest(model) != expected_digest:
         raise RuntimeError(f"legacy source digest mismatch for {scenario.model}")
+
     random.seed(scenario.seed)
     np.random.seed(scenario.seed)
     from CellModeller.Simulator import Simulator
 
     quiet = io.StringIO()
+
     with contextlib.redirect_stdout(quiet):
         simulator = Simulator(
             str(model),
@@ -216,16 +238,20 @@ def _record_scenario(
             clDeviceNum=device_index,
             is_gui=False,
         )
+
     simulator.saveOutput = False
     frames: list[dict[str, object]] = []
     final_step = scenario.sample_steps[-1]
     samples = set(scenario.sample_steps)
+
     for step in range(final_step + 1):
         if step in samples:
             frames.append(_frame(simulator, step))
+
         if step != final_step:
             with contextlib.redirect_stdout(quiet):
                 simulator.step()
+
     return {
         "id": scenario.identifier,
         "role": scenario.role,
@@ -250,6 +276,7 @@ def _parser() -> argparse.ArgumentParser:
         default=project_root / "compatibility" / "legacy-examples-v1.json",
     )
     parser.add_argument("--output", type=Path, required=True)
+
     return parser
 
 
@@ -260,10 +287,12 @@ def main() -> int:
     legacy_root = arguments.legacy_root.resolve()
     expected_commit, digests = _source_digests(arguments.matrix)
     actual_commit = _legacy_commit(legacy_root)
+
     if actual_commit != expected_commit:
         raise RuntimeError(
             f"legacy commit mismatch: expected {expected_commit}, found {actual_commit}"
         )
+
     platforms = cl.get_platforms()
     opencl_platform = platforms[arguments.platform_index]
     opencl_device = opencl_platform.get_devices()[arguments.device_index]
@@ -304,6 +333,7 @@ def main() -> int:
     temporary.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(arguments.output)
     print(f"recorded {len(scenarios)} legacy trajectories: {arguments.output}")
+
     return 0
 
 

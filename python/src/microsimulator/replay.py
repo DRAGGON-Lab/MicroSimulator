@@ -33,6 +33,23 @@ class ReplayExportSummary:
     frame_count: int
 
 
+def _copy_checkpoint(checkpoint_path: Path, snapshot: Path) -> str:
+    digest = hashlib.sha256()
+    size = 0
+
+    with checkpoint_path.open("rb") as source, snapshot.open("wb") as target:
+        while chunk := source.read(1024 * 1024):
+            size += len(chunk)
+
+            if size > MAX_CHECKPOINT_BYTES:
+                raise ReplayExportError("checkpoint exceeds its byte limit")
+
+            target.write(chunk)
+            digest.update(chunk)
+
+    return digest.hexdigest()
+
+
 def export_replay(
     checkpoints: Sequence[str | os.PathLike[str]], output: str | os.PathLike[str]
 ) -> ReplayExportSummary:
@@ -44,18 +61,23 @@ def export_replay(
 
     if not 1 <= len(checkpoints) <= MAX_REPLAY_FRAMES:
         raise ReplayExportError(f"expected 1 to {MAX_REPLAY_FRAMES} ordered checkpoints")
+
     destination = Path(output).absolute()
+
     if destination.exists() or destination.is_symlink():
         raise ReplayExportError(f"output already exists: {destination}")
+
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         raise ReplayExportError(
             f"could not prepare replay destination {destination}: {error}"
         ) from error
+
     entries: list[JSONValue] = []
     previous_time = -1.0
     export_backend: JSONValue = None
+
     try:
         with tempfile.TemporaryDirectory(
             prefix=f".{destination.name}.", dir=destination.parent
@@ -64,30 +86,28 @@ def export_replay(
             frames_dir = stage / "frames"
             frames_dir.mkdir()
             snapshot = stage / ".checkpoint.json"
+
             for ordinal, checkpoint_path in enumerate(checkpoints):
                 try:
                     # Parse exactly the bytes whose digest is recorded, even if a
                     # running producer replaces the original checkpoint concurrently.
-                    digest = hashlib.sha256()
-                    size = 0
-                    with Path(checkpoint_path).open("rb") as source, snapshot.open("wb") as target:
-                        while chunk := source.read(1024 * 1024):
-                            size += len(chunk)
-                            if size > MAX_CHECKPOINT_BYTES:
-                                raise ReplayExportError("checkpoint exceeds its byte limit")
-                            target.write(chunk)
-                            digest.update(chunk)
+                    checkpoint_digest = _copy_checkpoint(Path(checkpoint_path), snapshot)
+
                     bundle = load_checkpoint_bundle(snapshot, backend=BackendKind.CPU)
                     captured = capture_scene(
                         bundle.simulation, channel_metadata=bundle.channel_metadata
                     )
+
                     if captured.time < previous_time:
                         raise ReplayExportError(
                             f"time {captured.time} precedes previous frame time {previous_time}"
                         )
+
                     previous_time = captured.time
+
                     if export_backend is None:
                         export_backend = cast(JSONValue, asdict(captured.backend))
+
                     source_backend = bundle.source_backend
                     # The displayed scene describes its source run, not the CPU
                     # used solely to deserialize portable state during export.
@@ -102,8 +122,10 @@ def export_replay(
                         ),
                     )
                     encoded = dumps_scene(frame).encode("utf-8")
+
                     if len(encoded) > MAX_SCENE_BYTES:
                         raise ReplayExportError("scene exceeds its byte limit")
+
                     relative = f"frames/{ordinal:08d}.scene.json"
                     (stage / relative).write_bytes(encoded)
                     entries.append(
@@ -113,7 +135,7 @@ def export_replay(
                             "file": relative,
                             "bytes": len(encoded),
                             "sha256": hashlib.sha256(encoded).hexdigest(),
-                            "checkpoint_sha256": digest.hexdigest(),
+                            "checkpoint_sha256": checkpoint_digest,
                             "source_backend": cast(JSONValue, asdict(source_backend)),
                         }
                     )
@@ -121,6 +143,7 @@ def export_replay(
                     raise ReplayExportError(
                         f"frame {ordinal} ({checkpoint_path}): {error}"
                     ) from error
+
             snapshot.unlink()
             recording: dict[str, JSONValue] = {"export_backend": export_backend, "frames": entries}
             document: dict[str, JSONValue] = {
@@ -135,12 +158,17 @@ def export_replay(
             encoded_manifest = (
                 json.dumps(document, allow_nan=False, ensure_ascii=False, indent=2) + "\n"
             ).encode("utf-8")
+
             if len(encoded_manifest) > MAX_REPLAY_MANIFEST_BYTES:
                 raise ReplayExportError("replay manifest exceeds the 16 MiB limit")
+
             (stage / "manifest.json").write_bytes(encoded_manifest)
+
             if destination.exists() or destination.is_symlink():
                 raise ReplayExportError(f"output already exists: {destination}")
+
             stage.rename(destination)
     except (OSError, CheckpointError) as error:
         raise ReplayExportError(f"could not export replay to {destination}: {error}") from error
+
     return ReplayExportSummary(destination, len(entries))

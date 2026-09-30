@@ -32,6 +32,7 @@ def _rate_plan() -> SpeciesRatePlan:
     rates = RatePlanBuilder()
     x0 = rates.species(0)
     repression = 4.0 / (4.0 + x0 * x0)
+
     return rates.species_plan(2, (rates.constant(0.0), repression))
 
 
@@ -46,6 +47,7 @@ def build(context: ModelContext) -> NativeController:
     founder_id = simulation.add_cell(founder)
     state: dict[str, JSONValue] = {}
     DIVISION.initialize(state, context.rng, (founder_id,))
+
     return NativeController(
         simulation,
         model_id=MODEL_ID,
@@ -60,6 +62,7 @@ def build(context: ModelContext) -> NativeController:
 
 def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeController:
     del context
+
     return NativeController.from_checkpoint(
         checkpoint,
         model_id=MODEL_ID,

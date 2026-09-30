@@ -13,11 +13,13 @@ uv sync --locked --group dev
 The commands below use `uv run --no-sync` after this installation so running a tutorial does not change the environment. Run `uv sync --locked --group dev` again after changing dependencies or checking out another version. No virtual-environment activation is required.
 
 <!-- tutorial-command: devices -->
+
 ```console
 uv run --no-sync microsimulator devices
 ```
 
 <!-- tutorial-command: devices-json -->
+
 ```console
 uv run --no-sync microsimulator devices --json
 ```
@@ -33,6 +35,7 @@ Single-line `console` commands on this page work in POSIX `sh`, Bash, Zsh, and P
 For PowerShell, open `pwsh` and set its native argument-passing mode once in that session:
 
 <!-- tutorial-command: powershell-mode -->
+
 ```powershell
 $PSNativeCommandArgumentPassing = 'Standard'
 ```
@@ -46,6 +49,7 @@ Choose one available backend. These commands all run [`examples/microfluidic_tra
 CPU:
 
 <!-- tutorial-command: trap-cpu -->
+
 ```console
 uv run --no-sync microsimulator run --model examples/microfluidic_trap.py --backend cpu --device-index 0 --seed 42 --steps 100 --dt 0.02 --checkpoint-every 20 --output "results/tutorial runs/trap-cpu.json"
 ```
@@ -53,6 +57,7 @@ uv run --no-sync microsimulator run --model examples/microfluidic_trap.py --back
 Metal:
 
 <!-- tutorial-command: trap-metal -->
+
 ```console
 uv run --no-sync microsimulator run --model examples/microfluidic_trap.py --backend metal --device-index 0 --seed 42 --steps 100 --dt 0.02 --checkpoint-every 20 --output "results/tutorial runs/trap-metal.json"
 ```
@@ -60,6 +65,7 @@ uv run --no-sync microsimulator run --model examples/microfluidic_trap.py --back
 CUDA:
 
 <!-- tutorial-command: trap-cuda -->
+
 ```console
 uv run --no-sync microsimulator run --model examples/microfluidic_trap.py --backend cuda --device-index 0 --seed 42 --steps 100 --dt 0.02 --checkpoint-every 20 --output "results/tutorial runs/trap-cuda.json"
 ```
@@ -75,12 +81,14 @@ This example copies the self-contained growth model to a path containing spaces,
 POSIX `sh`, Bash, or Zsh:
 
 <!-- tutorial-command: copy-posix -->
+
 ```sh
 mkdir -p "results/tutorial models"
 cp examples/tutorials/biophysics.py "results/tutorial models/biophysics.py"
 ```
 
 <!-- tutorial-command: basics-posix -->
+
 ```sh
 uv run --no-sync microsimulator run \
   --model "results/tutorial models/biophysics.py" \
@@ -93,12 +101,14 @@ uv run --no-sync microsimulator run \
 PowerShell 7.3+ with `Standard` argument passing:
 
 <!-- tutorial-command: copy-powershell -->
+
 ```powershell
 New-Item -ItemType Directory -Force "results/tutorial models" | Out-Null
 Copy-Item examples/tutorials/biophysics.py "results/tutorial models/biophysics.py"
 ```
 
 <!-- tutorial-command: basics-powershell -->
+
 ```powershell
 uv run --no-sync microsimulator run `
   --model "results/tutorial models/biophysics.py" `
@@ -115,6 +125,7 @@ To run this scenario on a GPU, replace `--backend cpu` with an enumerated `metal
 Resume the preceding scenario for ten additional steps:
 
 <!-- tutorial-command: resume-basics -->
+
 ```console
 uv run --no-sync microsimulator run --model "results/tutorial models/biophysics.py" --resume "results/tutorial runs/basics.json" --backend cpu --device-index 0 --steps 10 --dt 0.02 --output "results/tutorial runs/basics-resumed.json"
 ```
@@ -124,6 +135,7 @@ For native `--model ... --resume ...`, the CLI obtains the seed and parameters f
 To continue the CPU trap from above:
 
 <!-- tutorial-command: resume-trap -->
+
 ```console
 uv run --no-sync microsimulator run --model examples/microfluidic_trap.py --resume "results/tutorial runs/trap-cpu.json" --backend cpu --device-index 0 --steps 100 --dt 0.02 --output "results/tutorial runs/trap-cpu-resumed.json"
 ```
@@ -142,23 +154,25 @@ pnpm --dir viewer build
 Start a CPU trap session. Open the tokenized loopback URL printed in the terminal, or append `--open` to open it automatically. The explicit `--viewer-dist` resolves from the current directory.
 
 <!-- tutorial-command: live-trap -->
+
 ```console
 uv run --no-sync microsimulator view --model examples/microfluidic_trap.py --backend cpu --device-index 0 --seed 42 --dt 0.02 --viewer-dist viewer/dist --checkpoint-output "results/tutorial runs/live-trap.json"
 ```
 
 To use a GPU, the only simulation selection changes are `--backend metal` or `--backend cuda` and, if needed, `--device-index`. `--port` defaults to `8765`; choose another free port explicitly if it is occupied. Use the new tokenized URL after each launch.
 
-| Control or action | Effect |
-| --- | --- |
-| Pause | Stops continuous playback; keeps the model process and current state available. |
-| Reset | Rebuilds this session's original model. For a resumed session, reloads its starting checkpoint. Does not select a different model. |
-| Close the browser | Disconnects and pauses the session; the server remains available for reconnection. |
-| Checkpoint | Saves to `--checkpoint-output`; use this before Stop when restartable state is needed. |
+| Control or action                   | Effect                                                                                                                                                         |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pause                               | Stops continuous playback; keeps the model process and current state available.                                                                                |
+| Reset                               | Rebuilds this session's original model. For a resumed session, reloads its starting checkpoint. Does not select a different model.                             |
+| Close the browser                   | Disconnects and pauses the session; the server remains available for reconnection.                                                                             |
+| Checkpoint                          | Saves to `--checkpoint-output`; use this before Stop when restartable state is needed.                                                                         |
 | Stop session or one terminal Ctrl+C | Finishes the current individual step or checkpoint write, drains the worker, releases the port, and returns to the prompt. No automatic checkpoint is written. |
 
 Wait for **Stopped** and the terminal prompt before starting another command. A long `--frame-steps` batch is interrupted between individual steps; Stop does not forcibly interrupt a single model callback or solver. After stopping the trap, launch another model on the same default port:
 
 <!-- tutorial-command: live-basics -->
+
 ```console
 uv run --no-sync microsimulator view --model examples/tutorials/biophysics.py --parameter 'scenario="basics"' --backend cpu --device-index 0 --seed 42 --dt 0.02 --viewer-dist viewer/dist
 ```
@@ -166,6 +180,7 @@ uv run --no-sync microsimulator view --model examples/tutorials/biophysics.py --
 After stopping that session, the saved headless scenario can also be opened live:
 
 <!-- tutorial-command: live-resume -->
+
 ```console
 uv run --no-sync microsimulator view --model "results/tutorial models/biophysics.py" --resume "results/tutorial runs/basics.json" --backend cpu --device-index 0 --dt 0.02 --viewer-dist viewer/dist
 ```

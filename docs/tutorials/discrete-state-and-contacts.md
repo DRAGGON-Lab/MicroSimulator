@@ -85,7 +85,7 @@ uv run microsimulator view \
 
 The founders are an acceptor (type 0) and donor (type 1). At each regulation step, an acceptor independently tests every donor or transconjugant neighbor. A successful event changes it to a transconjugant (type 2), which can transmit on later steps.
 
-The default `0.1` is a probability *per simulation step*, so changing `dt` changes the implied physical hazard. For a time-calibrated rate `lambda`, replace it with
+The default `0.1` is a probability _per simulation step_, so changing `dt` changes the implied physical hazard. For a time-calibrated rate `lambda`, replace it with
 
 ```text
 p(dt) = 1 - exp(-lambda dt)

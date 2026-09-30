@@ -39,6 +39,7 @@ def _grid() -> SignalGridSpec:
     grid.advection = [Vec3()]
     grid.integration = SignalIntegrationKind.CRANK_NICOLSON
     grid.solver.absolute_tolerance = 1.0e-12
+
     return grid
 
 
@@ -57,6 +58,7 @@ def _rates() -> CoupledRatePlan:
     ahl_i_squared = ahl_i * ahl_i
     ahl_production = lux_i / (1.0 + lux_i)
     reporter = 1.0e-5 + ahl_i_squared / (5.0e-5 + ahl_i_squared)
+
     return rates.coupled_plan(
         5,
         1,
@@ -97,6 +99,7 @@ def build(context: ModelContext) -> NativeController:
     simulation.set_coupled_rate_plan(_rates())
     _add_channel(simulation)
     founders: list[int] = []
+
     for cell_type, x in ((1, -20.0), (0, 20.0)):
         founder = CellInit()
         founder.position = Vec3(x, 0.0, 0.0)
@@ -106,8 +109,10 @@ def build(context: ModelContext) -> NativeController:
         founder.cell_type = cell_type
         founder.species = [0.0] * 5
         founders.append(simulation.add_cell(founder))
+
     state: dict[str, JSONValue] = {}
     DIVISION.initialize(state, context.rng, tuple(founders))
+
     return NativeController(
         simulation,
         model_id=MODEL_ID,
@@ -122,6 +127,7 @@ def build(context: ModelContext) -> NativeController:
 
 def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeController:
     del context
+
     return NativeController.from_checkpoint(
         checkpoint,
         model_id=MODEL_ID,

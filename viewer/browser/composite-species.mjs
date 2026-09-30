@@ -92,8 +92,10 @@ const row = (index) =>
   page.locator(`.composite-channel[data-channel="${index}"]`);
 async function fixed(index, minimum, maximum) {
   const group = row(index);
+
   if (!(await group.locator("details").evaluate((details) => details.open)))
     await group.locator("summary").click();
+
   await group
     .getByRole("combobox", { name: "Species range mode", exact: true })
     .selectOption("fixed");
@@ -132,6 +134,7 @@ async function clickCell(index) {
       .fromArray(v.cells[index].position)
       .project(v.camera);
     const bounds = v.renderer.domElement.getBoundingClientRect();
+
     return {
       x: bounds.x + ((point.x + 1) * bounds.width) / 2,
       y: bounds.y + ((1 - point.y) * bounds.height) / 2,
@@ -201,6 +204,7 @@ try {
       true,
     );
   }
+
   await page.screenshot({ path: `${evidence}/moving-patterns.png` });
   await row(1)
     .getByRole("checkbox", { name: "Enable Green reporter" })
@@ -215,6 +219,7 @@ try {
     const { Color, SRGBColorSpace } =
       await import("/node_modules/.vite/deps/three.js");
     const value = new Color().setRGB(...COMPOSITE_NEUTRAL, SRGBColorSpace);
+
     return [value.r, value.g, value.b];
   });
   close(await colors(), [...neutral, ...neutral, ...neutral, ...neutral]);

@@ -18,6 +18,7 @@ def periodic_checkpoint_parts(output: Path) -> tuple[Path, str, str]:
         else _CHECKPOINT_SUFFIX
     )
     stem = name[: -len(suffix)] if name.endswith(suffix) else name
+
     return output.parent, stem, suffix
 
 
@@ -25,4 +26,5 @@ def periodic_checkpoint_path(output: Path, step: int) -> Path:
     """Derive one periodic checkpoint path while preserving legacy suffixes."""
 
     parent, stem, suffix = periodic_checkpoint_parts(output)
+
     return parent / f"{stem}.step-{step:08d}{suffix}"

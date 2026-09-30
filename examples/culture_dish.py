@@ -59,6 +59,7 @@ def build(context: ModelContext) -> NativeController:
     _add_dish(simulation)
 
     founders: list[CellInit] = []
+
     for index in range(FOUNDER_COUNT):
         placement = context.rng.uniform(0.0, 2.0 * math.pi)
         # The square root spreads founders uniformly over the seeded area
@@ -79,6 +80,7 @@ def build(context: ModelContext) -> NativeController:
 
     state: dict[str, JSONValue] = {"scope": "culture-dish"}
     DIVISION.initialize_founders(simulation, state, context.rng, tuple(founders))
+
     return NativeController(
         simulation,
         model_id=MODEL_ID,
@@ -93,6 +95,7 @@ def build(context: ModelContext) -> NativeController:
 
 def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeController:
     del context
+
     return NativeController.from_checkpoint(
         checkpoint,
         model_id=MODEL_ID,

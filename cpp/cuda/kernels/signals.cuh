@@ -43,9 +43,11 @@ __device__ inline float exterior_value(std::uint32_t kind, const float* fixed_va
   if (kind == 0) {
     return current;
   }
+
   if (kind == 1) {
     return periodic;
   }
+
   return fixed_values[face * signal_count + signal];
 }
 
@@ -59,13 +61,10 @@ struct GridFaceState {
   float upper[3];
 };
 
-__device__ inline GridFaceState grid_face_state(SignalGridShapeGpu shape,
-                                                SignalGridBoundariesGpu boundaries,
-                                                const std::uint8_t* obstacles, const float* x_faces,
-                                                const float* y_faces, const float* z_faces,
-                                                std::uint32_t has_velocity_field, float4 advection,
-                                                std::uint32_t x, std::uint32_t y, std::uint32_t z) {
-  GridFaceState faces{};
+__device__ inline void close_grid_x_faces(GridFaceState& faces, SignalGridShapeGpu shape,
+                                          SignalGridBoundariesGpu boundaries,
+                                          const std::uint8_t* obstacles, std::uint32_t x,
+                                          std::uint32_t y, std::uint32_t z) {
   faces.closed_lower[0] =
       x == 0 ? (boundaries.x_lower == 0 ||
                 (boundaries.x_lower == 1 && obstacles[site_index(shape, shape.x - 1, y, z)] != 0))
@@ -74,6 +73,12 @@ __device__ inline GridFaceState grid_face_state(SignalGridShapeGpu shape,
       x + 1 == shape.x ? (boundaries.x_upper == 0 ||
                           (boundaries.x_upper == 1 && obstacles[site_index(shape, 0, y, z)] != 0))
                        : obstacles[site_index(shape, x + 1, y, z)] != 0;
+}
+
+__device__ inline void close_grid_y_faces(GridFaceState& faces, SignalGridShapeGpu shape,
+                                          SignalGridBoundariesGpu boundaries,
+                                          const std::uint8_t* obstacles, std::uint32_t x,
+                                          std::uint32_t y, std::uint32_t z) {
   faces.closed_lower[1] =
       y == 0 ? (boundaries.y_lower == 0 ||
                 (boundaries.y_lower == 1 && obstacles[site_index(shape, x, shape.y - 1, z)] != 0))
@@ -82,6 +87,12 @@ __device__ inline GridFaceState grid_face_state(SignalGridShapeGpu shape,
       y + 1 == shape.y ? (boundaries.y_upper == 0 ||
                           (boundaries.y_upper == 1 && obstacles[site_index(shape, x, 0, z)] != 0))
                        : obstacles[site_index(shape, x, y + 1, z)] != 0;
+}
+
+__device__ inline void close_grid_z_faces(GridFaceState& faces, SignalGridShapeGpu shape,
+                                          SignalGridBoundariesGpu boundaries,
+                                          const std::uint8_t* obstacles, std::uint32_t x,
+                                          std::uint32_t y, std::uint32_t z) {
   faces.closed_lower[2] =
       z == 0 ? (boundaries.z_lower == 0 ||
                 (boundaries.z_lower == 1 && obstacles[site_index(shape, x, y, shape.z - 1)] != 0))
@@ -90,6 +101,19 @@ __device__ inline GridFaceState grid_face_state(SignalGridShapeGpu shape,
       z + 1 == shape.z ? (boundaries.z_upper == 0 ||
                           (boundaries.z_upper == 1 && obstacles[site_index(shape, x, y, 0)] != 0))
                        : obstacles[site_index(shape, x, y, z + 1)] != 0;
+}
+
+__device__ inline GridFaceState grid_face_state(SignalGridShapeGpu shape,
+                                                SignalGridBoundariesGpu boundaries,
+                                                const std::uint8_t* obstacles, const float* x_faces,
+                                                const float* y_faces, const float* z_faces,
+                                                std::uint32_t has_velocity_field, float4 advection,
+                                                std::uint32_t x, std::uint32_t y, std::uint32_t z) {
+  GridFaceState faces{};
+  close_grid_x_faces(faces, shape, boundaries, obstacles, x, y, z);
+  close_grid_y_faces(faces, shape, boundaries, obstacles, x, y, z);
+  close_grid_z_faces(faces, shape, boundaries, obstacles, x, y, z);
+
   if (has_velocity_field != 0) {
     faces.lower[0] = x_faces[x * shape.y * shape.z + y * shape.z + z];
     faces.upper[0] = x_faces[(x + 1) * shape.y * shape.z + y * shape.z + z];
@@ -99,11 +123,13 @@ __device__ inline GridFaceState grid_face_state(SignalGridShapeGpu shape,
     faces.upper[2] = z_faces[x * shape.y * (shape.z + 1) + y * (shape.z + 1) + z + 1];
   } else {
     const float velocity[3]{advection.x, advection.y, advection.z};
+
     for (std::uint32_t axis = 0; axis < 3; ++axis) {
       faces.lower[axis] = velocity[axis];
       faces.upper[axis] = velocity[axis];
     }
   }
+
   return faces;
 }
 

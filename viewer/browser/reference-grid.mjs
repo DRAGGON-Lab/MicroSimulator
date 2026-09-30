@@ -118,6 +118,7 @@ async function snapshot() {
       .set(0, 0, 0)
       .applyMatrix4(v.grid.matrixWorld)
       .project(v.camera);
+
     return {
       grid: v.grid.matrixWorld.elements.slice(),
       camera: v.camera.position.toArray(),
@@ -128,6 +129,7 @@ async function snapshot() {
 }
 function assertStationary(actual, expected, message) {
   assert.deepEqual(actual.grid, expected.grid, message);
+
   for (const key of ["camera", "target", "pixelOrigin"]) {
     actual[key].forEach((value, index) => {
       assert.ok(
@@ -219,6 +221,7 @@ try {
   const bounds = await canvas.boundingBox();
   const x = bounds.x + bounds.width / 2;
   const y = bounds.y + bounds.height / 2;
+
   for (const button of ["left", "right"]) {
     await page.mouse.move(x, y);
     await page.mouse.down({ button });
@@ -230,6 +233,7 @@ try {
       `${button} drag changes camera only`,
     );
   }
+
   await page.mouse.wheel(0, 150);
   assert.deepEqual(
     (await snapshot()).grid,
@@ -305,6 +309,7 @@ try {
     };
     v.beginDataset();
     v.setFrame(device, true);
+
     return {
       before,
       retained,

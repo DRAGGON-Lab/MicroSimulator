@@ -30,22 +30,27 @@ struct ContactRow {
       return false;
     }
   }
+
   return true;
 }
 
 [[nodiscard]] float dof_dot(const Dofs& left, const Dofs& right) {
   float result = 0.0F;
+
   for (std::size_t index = 0; index < degrees_of_freedom; ++index) {
     result += left[index] * right[index];
   }
+
   return result;
 }
 
 [[nodiscard]] float vector_dot(const DofVector& left, const DofVector& right) {
   float result = 0.0F;
+
   for (std::size_t index = 0; index < left.size(); ++index) {
     result += dof_dot(left[index], right[index]);
   }
+
   return result;
 }
 
@@ -65,6 +70,7 @@ void add_scaled(DofVector& destination, const DofVector& source, float scale) {
   if (residual.empty()) {
     return 0.0F;
   }
+
   return std::sqrt(vector_dot(residual, residual) / static_cast<float>(residual.size()));
 }
 
@@ -72,6 +78,7 @@ void add_scaled(DofVector& destination, const DofVector& source, float scale) {
                                  float total_length, float weight) {
   const auto angular = cross(arm, normal);
   const auto length = dot(axis, arm) * dot(axis, normal) / total_length;
+
   return {
       weight * normal.x,  weight * normal.y,  weight * normal.z, weight * angular.x,
       weight * angular.y, weight * angular.z, weight * length,
@@ -97,22 +104,28 @@ void add_scaled(DofVector& destination, const DofVector& source, float scale) {
 [[nodiscard]] DofVector flatten(std::span<const CellCorrection> values) {
   DofVector result;
   result.reserve(values.size());
+
   for (const auto& value : values) {
     const auto flattened = flatten(value);
+
     if (!finite(flattened)) {
       throw std::invalid_argument("mechanics input correction must be finite");
     }
+
     result.push_back(flattened);
   }
+
   return result;
 }
 
 [[nodiscard]] std::vector<CellCorrection> unflatten(const DofVector& values) {
   std::vector<CellCorrection> result;
   result.reserve(values.size());
+
   for (const auto& value : values) {
     result.push_back(unflatten(value));
   }
+
   return result;
 }
 
@@ -125,20 +138,25 @@ class CpuMechanicsSystem {
     fixed_ = state.cell_attributes().fixed;
     state.validate();
     validate_mechanics_parameters(parameters_);
+
     if (contacts.cell_count() != geometry_.size()) {
       throw std::invalid_argument("contact graph and world state cell counts disagree");
     }
+
     if (external_contacts.cell_count() != geometry_.size()) {
       throw std::invalid_argument("external contact graph and world state cell counts disagree");
     }
+
     if (external_contacts.size() > std::numeric_limits<std::size_t>::max() - contacts.size()) {
       throw std::overflow_error("mechanics contact row count overflow");
     }
 
     rows_.reserve(contacts.size() + external_contacts.size());
+
     for (const auto& contact : contacts.contacts()) {
       const auto first = static_cast<std::size_t>(contact.first_slot);
       const auto second = static_cast<std::size_t>(contact.second_slot);
+
       if (geometry_.ids[first] != contact.first_id || geometry_.ids[second] != contact.second_id) {
         throw std::invalid_argument("contact graph identifiers do not match current state slots");
       }
@@ -167,6 +185,7 @@ class CpuMechanicsSystem {
 
     for (const auto& contact : external_contacts.contacts()) {
       const auto cell = static_cast<std::size_t>(contact.cell_slot);
+
       if (geometry_.ids[cell] != contact.cell_id) {
         throw std::invalid_argument(
             "external contact graph identifiers do not match current state slots");
@@ -186,34 +205,44 @@ class CpuMechanicsSystem {
     }
   }
 
-  [[nodiscard]] std::size_t cell_count() const noexcept { return geometry_.size(); }
+  [[nodiscard]] std::size_t cell_count() const noexcept {
+    return geometry_.size();
+  }
 
   void apply(const DofVector& input, DofVector& output) const {
     auto projected = input;
+
     for (std::size_t index = 0; index < cell_count(); ++index) {
       if (fixed_[index] != 0) {
         projected[index] = {};
       }
     }
+
     output.assign(cell_count(), Dofs{});
+
     for (const auto& row : rows_) {
       const auto first = static_cast<std::size_t>(row.first_slot);
       auto row_value = dof_dot(row.first, projected[first]);
+
       if (row.second_slot != invalid_slot) {
         row_value -= dof_dot(row.second, projected[static_cast<std::size_t>(row.second_slot)]);
       }
+
       add_scaled(output[first], row.first, row_value);
+
       if (row.second_slot != invalid_slot) {
         add_scaled(output[static_cast<std::size_t>(row.second_slot)], row.second, -row_value);
       }
     }
 
     const auto regularization = 1.0F / parameters_.gamma;
+
     for (std::size_t index = 0; index < cell_count(); ++index) {
       if (fixed_[index] != 0) {
         output[index] = input[index];
         continue;
       }
+
       const Vec3 axis{geometry_.direction_x[index], geometry_.direction_y[index],
                       geometry_.direction_z[index]};
       const Vec3 rotation{input[index][3], input[index][4], input[index][5]};
@@ -239,19 +268,23 @@ class CpuMechanicsSystem {
 
   [[nodiscard]] DofVector right_hand_side() const {
     DofVector result(cell_count());
+
     for (const auto& row : rows_) {
       const auto first = static_cast<std::size_t>(row.first_slot);
       add_scaled(result[first], row.first, row.right_hand_side);
+
       if (row.second_slot != invalid_slot) {
         add_scaled(result[static_cast<std::size_t>(row.second_slot)], row.second,
                    -row.right_hand_side);
       }
     }
+
     for (std::size_t index = 0; index < cell_count(); ++index) {
       if (fixed_[index] != 0) {
         result[index] = {};
       }
     }
+
     return result;
   }
 
@@ -269,6 +302,7 @@ class CpuMechanicsSystem {
   system.apply(solution, applied);
   auto residual = right_hand_side;
   add_scaled(residual, applied, -1.0F);
+
   return residual;
 }
 
@@ -277,9 +311,11 @@ class CpuMechanicsSystem {
   if (parameters.max_iterations != 0) {
     return parameters.max_iterations;
   }
+
   if (cell_count > std::numeric_limits<std::uint32_t>::max() / degrees_of_freedom) {
     throw std::overflow_error("default mechanics iteration limit exceeds uint32");
   }
+
   return static_cast<std::uint32_t>(cell_count * degrees_of_freedom);
 }
 
@@ -289,9 +325,11 @@ void validate_mechanics_parameters(const MechanicsParameters& parameters) {
   if (!std::isfinite(parameters.mu_a) || parameters.mu_a <= 0.0F) {
     throw std::invalid_argument("mechanics mu_a must be finite and positive");
   }
+
   if (!std::isfinite(parameters.gamma) || parameters.gamma <= 0.0F) {
     throw std::invalid_argument("mechanics gamma must be finite and positive");
   }
+
   if (!std::isfinite(parameters.residual_rms_tolerance) ||
       parameters.residual_rms_tolerance < 0.0F) {
     throw std::invalid_argument("mechanics residual tolerance must be finite and non-negative");
@@ -303,12 +341,15 @@ std::vector<CellCorrection> apply_mechanics_operator_cpu(
     const ExternalContactGraph& external_contacts, std::span<const CellCorrection> input,
     const MechanicsParameters& parameters) {
   const CpuMechanicsSystem system(state, contacts, external_contacts, parameters);
+
   if (input.size() != system.cell_count()) {
     throw std::invalid_argument("mechanics input size does not match the world state");
   }
+
   const auto flat_input = flatten(input);
   DofVector output;
   system.apply(flat_input, output);
+
   return unflatten(output);
 }
 
@@ -325,6 +366,7 @@ std::vector<CellCorrection> build_mechanics_rhs_cpu(const WorldState& state,
                                                     const ExternalContactGraph& external_contacts,
                                                     const MechanicsParameters& parameters) {
   const CpuMechanicsSystem system(state, contacts, external_contacts, parameters);
+
   return unflatten(system.right_hand_side());
 }
 
@@ -348,11 +390,14 @@ MechanicsSolveResult solve_cell_mechanics_cpu(const WorldState& state, const Con
   result.corrections.resize(system.cell_count());
   result.report.initial_residual_rms = residual_rms(residual);
   result.report.final_residual_rms = result.report.initial_residual_rms;
+
   if (!std::isfinite(result.report.initial_residual_rms)) {
     result.report.status = SolverStatus::breakdown;
     result.report.breakdown = SolverBreakdown::non_finite_residual;
+
     return result;
   }
+
   if (result.report.initial_residual_rms <= parameters.residual_rms_tolerance) {
     return result;
   }
@@ -361,14 +406,17 @@ MechanicsSolveResult solve_cell_mechanics_cpu(const WorldState& state, const Con
   auto residual_squared = vector_dot(residual, residual);
   const auto maximum_iterations = iteration_limit(parameters, system.cell_count());
   DofVector applied;
+
   for (std::uint32_t iteration = 0; iteration < maximum_iterations; ++iteration) {
     system.apply(search_direction, applied);
     const auto curvature = vector_dot(search_direction, applied);
+
     if (!std::isfinite(curvature)) {
       result.report.status = SolverStatus::breakdown;
       result.report.breakdown = SolverBreakdown::non_finite_curvature;
       break;
     }
+
     if (curvature <= 0.0F) {
       result.report.status = SolverStatus::breakdown;
       result.report.breakdown = SolverBreakdown::non_positive_curvature;
@@ -383,6 +431,7 @@ MechanicsSolveResult solve_cell_mechanics_cpu(const WorldState& state, const Con
     const auto next_residual_squared = vector_dot(residual, residual);
     const auto recurrence_rms =
         std::sqrt(next_residual_squared / static_cast<float>(system.cell_count()));
+
     if (!std::isfinite(recurrence_rms)) {
       result.report.status = SolverStatus::breakdown;
       result.report.breakdown = SolverBreakdown::non_finite_residual;
@@ -392,38 +441,46 @@ MechanicsSolveResult solve_cell_mechanics_cpu(const WorldState& state, const Con
     if (recurrence_rms <= parameters.residual_rms_tolerance) {
       residual = exact_residual(system, right_hand_side, solution);
       const auto recomputed_rms = residual_rms(residual);
+
       if (!std::isfinite(recomputed_rms)) {
         result.report.status = SolverStatus::breakdown;
         result.report.breakdown = SolverBreakdown::non_finite_residual;
         break;
       }
+
       if (recomputed_rms <= parameters.residual_rms_tolerance) {
         result.report.status = SolverStatus::converged;
         break;
       }
+
       search_direction = residual;
       residual_squared = vector_dot(residual, residual);
       continue;
     }
 
     const auto beta = next_residual_squared / residual_squared;
+
     for (std::size_t index = 0; index < search_direction.size(); ++index) {
       for (std::size_t component = 0; component < degrees_of_freedom; ++component) {
         search_direction[index][component] =
             residual[index][component] + beta * search_direction[index][component];
       }
     }
+
     residual_squared = next_residual_squared;
   }
 
   residual = exact_residual(system, right_hand_side, solution);
   result.report.final_residual_rms = residual_rms(residual);
+
   if (!std::isfinite(result.report.final_residual_rms) &&
       result.report.status != SolverStatus::breakdown) {
     result.report.status = SolverStatus::breakdown;
     result.report.breakdown = SolverBreakdown::non_finite_residual;
   }
+
   result.corrections = unflatten(solution);
+
   return result;
 }
 

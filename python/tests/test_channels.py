@@ -43,6 +43,7 @@ LABELS = ChannelMetadata(
 def _build() -> tuple[NativeController, dict[str, Any]]:
     model, provenance = build_model(EXAMPLE, ModelContext(BackendKind.CPU, 0, 17))
     assert isinstance(model, NativeController)
+
     return model, provenance
 
 
@@ -52,8 +53,10 @@ def test_named_model_periodic_checkpoint_resume_and_standalone_export(tmp_path: 
     summary = run_simulation(
         model, steps=2, dt=0.01, output=output, checkpoint_every=1, provenance=provenance
     )
+
     for path in (*summary.periodic_checkpoints, output):
         assert load_checkpoint_bundle(path).channel_metadata == LABELS
+
     bundle = load_checkpoint_bundle(output)
     resumed, provenance = build_model(
         EXAMPLE, ModelContext(BackendKind.CPU, 0, 17), checkpoint=bundle
@@ -76,27 +79,34 @@ def test_named_model_periodic_checkpoint_resume_and_standalone_export(tmp_path: 
 
 def test_live_labels_survive_step_reset_and_checkpoint(tmp_path: Path) -> None:
     session = LiveSession(_build, dt=0.01, checkpoint_output=tmp_path / "live.json")
+
     for operation in (lambda: None, session.step, session.reset):
         operation()
         message = session.frame_message(playing=False)
         frame = parse_scene(json.dumps(message["scene"]))
         assert frame.channel_metadata == LABELS
+
     assert load_checkpoint_bundle(session.checkpoint()).channel_metadata == LABELS
 
 
 def test_metadata_counts_fail_before_stepping_or_writing(tmp_path: Path) -> None:
     model, _ = _build()
     model.channel_metadata = ChannelMetadata(species=("only one",))
+
     with pytest.raises(BatchError, match=r"species: expected 2 labels, got 1"):
         run_simulation(model, steps=1, dt=0.1, output=tmp_path / "bad.json")
+
     assert model.simulation.time == 0
     assert not (tmp_path / "bad.json").exists()
+
     with pytest.raises(ChannelMetadataError, match=r"species: expected 2 labels"):
         capture_scene(model.simulation, channel_metadata=model.channel_metadata)
+
     with pytest.raises(CheckpointError, match=r"species: expected 2 labels"):
         save_checkpoint(
             model.simulation, tmp_path / "bad.json", channel_metadata=model.channel_metadata
         )
+
     with pytest.raises(ChannelMetadataError, match=r"signals: expected 2 labels"):
         ChannelMetadata(signals=()).resolved(2, 2)
 
@@ -109,10 +119,13 @@ def test_missing_duplicate_unicode_empty_and_markup_labels_roundtrip(tmp_path: P
     assert bundle.channel_metadata == labels
     frame = capture_scene(bundle.simulation, channel_metadata=bundle.channel_metadata)
     assert parse_scene(dumps_scene(frame)).channel_metadata == labels
+
     with pytest.raises(CheckpointError, match="contains channel metadata"):
         load_checkpoint(tmp_path / "labels.json")
+
     with pytest.raises(ChannelMetadataError, match="invalid Unicode"):
         ChannelMetadata(species=("\ud800",))
+
     with pytest.raises(ChannelMetadataError, match="expected a string"):
         ChannelMetadata.from_json({"species": [7], "signals": []}, 1, 0)
 
@@ -126,9 +139,21 @@ def test_metadata_tampering_rejected_and_v8_migrates_only_after_verification(
     document = json.loads(path.read_text())
     document["channel_metadata"]["species"][0] = "tampered"
     path.write_text(json.dumps(document))
+
     with pytest.raises(CheckpointError, match="channel metadata digest does not match"):
         load_checkpoint_bundle(path)
+
     document["version"] = 8
+    document["simulation"].pop("culture", None)
+    document["integrity"]["simulation"] = hashlib.sha256(
+        json.dumps(
+            document["simulation"],
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
     del document["channel_metadata"]
     del document["integrity"]["channel_metadata"]
     path.write_text(json.dumps(document))
@@ -139,6 +164,7 @@ def test_metadata_tampering_rejected_and_v8_migrates_only_after_verification(
     ).channel_metadata == ChannelMetadata().resolved(2, 2)
     document["simulation"]["time"] = 999
     path.write_text(json.dumps(document))
+
     with pytest.raises(CheckpointError, match="state digest does not match"):
         load_checkpoint_bundle(path)
 
@@ -153,6 +179,16 @@ def test_legacy_checkpoint_keeps_unspecified_labels_compact_before_native_restor
     save_checkpoint(simulation, path)
     document = json.loads(path.read_text())
     document["version"] = 8
+    document["simulation"].pop("culture", None)
+    document["integrity"]["simulation"] = hashlib.sha256(
+        json.dumps(
+            document["simulation"],
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
     del document["channel_metadata"]
     del document["integrity"]["channel_metadata"]
     path.write_text(json.dumps(document))
@@ -168,12 +204,14 @@ def test_legacy_checkpoint_keeps_unspecified_labels_compact_before_native_restor
     assert bundle.channel_metadata.species is None
     assert bundle.channel_metadata.signals is None
     assert load_checkpoint(path).species_count == MAX_SCENE_CHANNELS + 1
+
     with pytest.raises(SceneError, match="scene presentation channel budget of 4096"):
         capture_scene(bundle.simulation, channel_metadata=bundle.channel_metadata)
 
     # Untrusted input must still pass its original integrity validation first.
     document["simulation"]["world"]["species_count"] = (1 << 32) - 1
     path.write_text(json.dumps(document))
+
     with pytest.raises(CheckpointError, match="state digest does not match"):
         load_checkpoint_bundle(path)
 
@@ -182,15 +220,20 @@ def test_scene_v2_verifies_original_payload_and_v3_rejects_invalid_labels() -> N
     model, _ = _build()
     document = json.loads(dumps_scene(capture_scene(model.simulation, channel_metadata=LABELS)))
     document["version"] = 2
+    document["frame"].pop("culture", None)
     del document["frame"]["channel_metadata"]
     document["integrity"]["frame"] = hashlib.sha256(rfc8785.dumps(document["frame"])).hexdigest()
     assert parse_scene(json.dumps(document)).channel_metadata == ChannelMetadata().resolved(2, 2)
     document["frame"]["time"] = 999
+
     with pytest.raises(SceneError, match="frame digest does not match"):
         parse_scene(json.dumps(document))
+
     document["version"] = 3
+    document["frame"].pop("culture", None)
     document["frame"]["channel_metadata"] = {"species": [], "signals": [None, None]}
     document["integrity"]["frame"] = hashlib.sha256(rfc8785.dumps(document["frame"])).hexdigest()
+
     with pytest.raises(SceneError, match="species: expected 2 labels"):
         parse_scene(json.dumps(document))
 
@@ -198,6 +241,7 @@ def test_scene_v2_verifies_original_payload_and_v3_rejects_invalid_labels() -> N
 def test_unnamed_native_model_and_closed_channel_schema() -> None:
     simulation = Simulation(species_count=2)
     assert model_channel_metadata(simulation) == ChannelMetadata(species=(None, None), signals=())
+
     with pytest.raises(ChannelMetadataError, match="exactly species and signals"):
         ChannelMetadata.from_json({"species": [], "signals": [], "extra": []}, 0, 0)
 

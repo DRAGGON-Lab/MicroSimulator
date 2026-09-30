@@ -116,6 +116,7 @@ describe("fixed range validation and channel state", () => {
   it("retains the last valid configuration after invalid changes", () => {
     const state = new DatasetScalarRanges();
     state.set("species", 0, fixed);
+
     for (const bounds of [
       { minimum: 2, maximum: 2 },
       { minimum: 3, maximum: 2 },

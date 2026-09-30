@@ -40,6 +40,7 @@ def _grid() -> SignalGridSpec:
     grid.advection = [Vec3()]
     grid.integration = SignalIntegrationKind.CRANK_NICOLSON
     grid.solver.absolute_tolerance = 1.0e-12
+
     return grid
 
 
@@ -51,6 +52,7 @@ def _rates() -> CoupledRatePlan:
     exchange_concentration = exchange_amount / VOXEL_VOLUME
     type_zero = rates.equal(rates.cell_type(), 0)
     x0_squared = x0 * x0
+
     return rates.coupled_plan(
         3,
         1,
@@ -85,6 +87,7 @@ def build(context: ModelContext) -> NativeController:
     simulation.set_coupled_rate_plan(_rates())
     _add_channel(simulation)
     founders: list[int] = []
+
     for cell_type, x in ((0, -10.0), (1, 10.0)):
         founder = CellInit()
         founder.position = Vec3(x, 0.0, 0.0)
@@ -94,8 +97,10 @@ def build(context: ModelContext) -> NativeController:
         founder.cell_type = cell_type
         founder.species = [0.0, 0.0, 0.0]
         founders.append(simulation.add_cell(founder))
+
     state: dict[str, JSONValue] = {}
     DIVISION.initialize(state, context.rng, tuple(founders))
+
     return NativeController(
         simulation,
         model_id=MODEL_ID,
@@ -110,6 +115,7 @@ def build(context: ModelContext) -> NativeController:
 
 def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeController:
     del context
+
     return NativeController.from_checkpoint(
         checkpoint,
         model_id=MODEL_ID,

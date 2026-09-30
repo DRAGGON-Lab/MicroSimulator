@@ -72,8 +72,10 @@ interface CameraTransition {
 function disposeGroup(group: Group): void {
   const geometries = new Set<BufferGeometry>();
   const materials = new Set<Material>();
+
   for (const child of [...group.children]) {
     group.remove(child);
+
     if (
       child instanceof Mesh ||
       child instanceof InstancedMesh ||
@@ -82,14 +84,18 @@ function disposeGroup(group: Group): void {
       // InstancedMesh owns GPU instanceMatrix/instanceColor buffers in addition
       // to its geometry. Removing it and disposing geometry alone leaks these.
       if (child instanceof InstancedMesh) child.dispose();
+
       geometries.add(child.geometry);
       const childMaterials = Array.isArray(child.material)
         ? child.material
         : [child.material];
+
       for (const material of childMaterials) materials.add(material);
     }
   }
+
   for (const geometry of geometries) geometry.dispose();
+
   for (const material of materials) material.dispose();
 }
 
@@ -199,6 +205,7 @@ export class ColonyViewer {
       if (!this.updateCameraTransition(time)) {
         this.controls.update();
       }
+
       this.renderer.render(this.scene, this.camera);
       this.viewCube.sync(this.camera);
       this.viewCube.render(this.renderer);
@@ -236,9 +243,11 @@ export class ColonyViewer {
       this.sceneBounds = deviceBounds.isEmpty()
         ? new Box3(new Vector3(-1, -1, -1), new Vector3(1, 1, 1))
         : deviceBounds;
+
       if (fit) {
         this.fitColony(false);
       }
+
       return;
     }
 
@@ -291,8 +300,10 @@ export class ColonyViewer {
     const selectedIndex = frame.cells.findIndex(
       (cell) => cell.id === this.selectedCellId,
     );
+
     if (selectedIndex >= 0) {
       const selected = frame.cells[selectedIndex];
+
       if (selected !== undefined) {
         this.buildHighlight(selected);
         this.onSelection(selected);
@@ -301,6 +312,7 @@ export class ColonyViewer {
       this.selectedCellId = null;
       this.onSelection(null);
     }
+
     if (fit) {
       this.fitColony(false);
     }
@@ -312,12 +324,15 @@ export class ColonyViewer {
         `expected ${this.cells.length} cell colors, received ${colors.length}`,
       );
     }
+
     const color = new Color();
+
     for (const mesh of this.cellMeshes) {
       for (const [index, value] of colors.entries()) {
         color.setRGB(value[0], value[1], value[2], SRGBColorSpace);
         mesh.setColorAt(index, color);
       }
+
       if (mesh.instanceColor !== null) {
         mesh.instanceColor.needsUpdate = true;
       }
@@ -331,11 +346,14 @@ export class ColonyViewer {
     this.signalTexture?.dispose();
     this.signalTexture = null;
     disposeGroup(this.signal);
+
     if (slice === null) {
       return;
     }
+
     const mapping = mapScalarColors(slice.values, range);
     const pixels = new Uint8Array(slice.width * slice.height * 4);
+
     for (const [index, value] of mapping.colors.entries()) {
       const color = rgbBytes(value);
       const offset = index * 4;
@@ -344,6 +362,7 @@ export class ColonyViewer {
       pixels[offset + 2] = color[2];
       pixels[offset + 3] = 205;
     }
+
     const texture = new DataTexture(
       pixels,
       slice.width,
@@ -385,12 +404,16 @@ export class ColonyViewer {
       disposeGroup(this.highlight);
       this.highlight.visible = false;
       this.onSelection(null);
+
       return;
     }
+
     const cell = this.cells[index];
+
     if (cell === undefined) {
       throw new RangeError(`cell slot ${index} is out of range`);
     }
+
     this.selectedCellId = cell.id;
     this.buildHighlight(cell);
     this.onSelection(cell);
@@ -443,9 +466,11 @@ export class ColonyViewer {
     const materials = Array.isArray(this.grid.material)
       ? this.grid.material
       : [this.grid.material];
+
     for (const material of materials) {
       material.dispose();
     }
+
     this.controls.dispose();
     this.viewCube.dispose();
     this.renderer.dispose();
@@ -509,11 +534,14 @@ export class ColonyViewer {
     const endOrientation =
       requestedOrientation?.clone() ??
       shortestViewQuaternion(startOrientation, endDirection);
+
     if (!animate || reducedMotion) {
       this.applyCameraPose(target, endOrientation, distance);
       this.controls.update();
+
       return;
     }
+
     this.cameraTransition = {
       startedAt: performance.now(),
       duration: 360,
@@ -528,9 +556,11 @@ export class ColonyViewer {
 
   private updateCameraTransition(time: number): boolean {
     const transition = this.cameraTransition;
+
     if (transition === null) {
       return false;
     }
+
     const linear = Math.min(
       Math.max((time - transition.startedAt) / transition.duration, 0),
       1,
@@ -550,10 +580,12 @@ export class ColonyViewer {
       transition.startDistance +
       (transition.endDistance - transition.startDistance) * fraction;
     this.applyCameraPose(target, orientation, distance);
+
     if (linear >= 1) {
       this.cameraTransition = null;
       this.controls.update();
     }
+
     return true;
   }
 
@@ -573,6 +605,7 @@ export class ColonyViewer {
     if (this.camera.up.z === 1) {
       return;
     }
+
     this.camera.up.set(0, 0, 1);
     this.camera.lookAt(this.controls.target);
     this.controls.update();
@@ -582,13 +615,16 @@ export class ColonyViewer {
     if (event.button !== 0 || this.pointerOrigin === null) {
       return;
     }
+
     const distance = this.pointerOrigin.distanceTo(
       new Vector2(event.clientX, event.clientY),
     );
     this.pointerOrigin = null;
+
     if (distance > 4) {
       return;
     }
+
     const bounds = this.renderer.domElement.getBoundingClientRect();
     this.pointer.set(
       ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
@@ -669,10 +705,30 @@ export class ColonyViewer {
       );
     }
 
+    this.buildCylinders(
+      constraints,
+      bounds,
+      edgeMaterial,
+      translucent,
+      wallColor,
+      chamberColor,
+    );
+    this.buildPlanes(constraints, bounds, translucent, wallColor);
+  }
+
+  private buildCylinders(
+    constraints: SceneConstraints,
+    bounds: Box3,
+    edgeMaterial: LineBasicMaterial,
+    translucent: (color: number, opacity: number) => MeshStandardMaterial,
+    wallColor: number,
+    chamberColor: number,
+  ): void {
     const zToAxis = new Quaternion().setFromUnitVectors(
       new Vector3(0, 1, 0),
       new Vector3(0, 0, 1),
     );
+
     for (const cylinder of constraints.cylinders) {
       const outside = cylinder.allowedRegion === "outside";
       const geometry = new CylinderGeometry(
@@ -711,7 +767,14 @@ export class ColonyViewer {
         ),
       );
     }
+  }
 
+  private buildPlanes(
+    constraints: SceneConstraints,
+    bounds: Box3,
+    translucent: (color: number, opacity: number) => MeshStandardMaterial,
+    wallColor: number,
+  ): void {
     if (constraints.planes.length > 0) {
       const focus = bounds.isEmpty()
         ? new Vector3()
@@ -719,6 +782,7 @@ export class ColonyViewer {
       const extent = bounds.isEmpty()
         ? 20
         : Math.max(bounds.getSize(new Vector3()).length() * 1.2, 10);
+
       for (const plane of constraints.planes) {
         const point = new Vector3().fromArray(plane.point);
         const normal = new Vector3().fromArray(plane.inwardNormal).normalize();
@@ -746,10 +810,13 @@ export class ColonyViewer {
     });
     const transform = new CapsuleTransform();
     transform.update(cell, 1.08);
+
     for (const [index, geometry] of capsuleGeometries().entries()) {
       const mesh = new Mesh(geometry, material);
       const matrix = transform.matrices[index];
+
       if (matrix === undefined) throw new Error("missing capsule transform");
+
       // The same topology and orientation keep highlighting on the outer
       // capsule instead of drawing the hidden halves of full spheres.
       // Copy directly: a zero-length cylinder has a singular axial scale and
@@ -758,6 +825,7 @@ export class ColonyViewer {
       mesh.matrixAutoUpdate = false;
       this.highlight.add(mesh);
     }
+
     this.highlight.visible = true;
   }
 

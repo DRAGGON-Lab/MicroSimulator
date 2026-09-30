@@ -27,14 +27,20 @@ def capped_founder_length(requested: float, target: float) -> float:
     This is an opt-in model initialization policy. It never changes the sampled
     target, and must not be applied when restoring existing cells.
     """
+
     if any(not math.isfinite(value) or value < 0.0 for value in (requested, target)):
         raise ValueError("founder length and target must be finite and non-negative")
+
     bounded = min(requested, target)
+
     if bounded > float(np.finfo(np.float32).max):
         raise ValueError("founder length exceeds native single precision range")
+
     result = np.float32(bounded)
+
     if float(result) > bounded:
         result = np.nextafter(result, np.float32(0.0))
+
     return float(result)
 
 
@@ -62,8 +68,10 @@ class UniformLengthDivision:
             or self.maximum < self.minimum
         ):
             raise ValueError("division target range must be finite, ordered, and non-negative")
+
         if self.jitter_z is not None and not isinstance(cast(object, self.jitter_z), bool):
             raise ValueError("division jitter_z must be Boolean or None")
+
         if _STATE_KEY.fullmatch(self.state_key) is None:
             raise ValueError("division state key is invalid")
 
@@ -83,17 +91,22 @@ class UniformLengthDivision:
         instead for intentionally oversized founders. Neither initializer runs
         during checkpoint restoration.
         """
+
         if self.state_key in state:
             raise ControllerStateError(f"controller state already contains {self.state_key!r}")
+
         targets: dict[str, JSONValue] = {}
         ids: list[int] = []
+
         for founder in founders:
             target = self._sample(rng)
             founder.length = capped_founder_length(founder.length, target)
             cell_id = simulation.add_cell(founder)
             ids.append(cell_id)
             targets[str(cell_id)] = target
+
         state[self.state_key] = {"targets": targets}
+
         return tuple(ids)
 
     def initialize(
@@ -106,21 +119,27 @@ class UniformLengthDivision:
 
         if self.state_key in state:
             raise ControllerStateError(f"controller state already contains {self.state_key!r}")
+
         if len(cell_ids) != len(set(cell_ids)) or any(
             not _valid_cell_id(cell_id) for cell_id in cell_ids
         ):
             raise ControllerStateError("founder cell IDs are invalid")
+
         state[self.state_key] = {
             "targets": {str(cell_id): self._sample(rng) for cell_id in cell_ids}
         }
 
     def _targets(self, step: ControllerStep) -> dict[str, JSONValue]:
         policy = step.state.get(self.state_key)
+
         if not isinstance(policy, dict) or set(policy) != {"targets"}:
             raise ControllerStateError(f"controller state {self.state_key!r} is invalid")
+
         targets = policy["targets"]
+
         if not isinstance(targets, dict):
             raise ControllerStateError(f"controller state {self.state_key!r} targets are invalid")
+
         for target in targets.values():
             if (
                 not isinstance(target, int | float)
@@ -129,14 +148,17 @@ class UniformLengthDivision:
                 or target < 0.0
             ):
                 raise ControllerStateError("division target is invalid")
+
         return targets
 
     def requests(self, step: ControllerStep) -> tuple[DivisionRequest, ...]:
         """Return stable-ID-ordered division requests for cells above target length."""
 
         targets = self._targets(step)
+
         if set(targets) != {str(cell.id) for cell in step.cells}:
             raise ControllerStateError("division targets do not match active cell identities")
+
         return tuple(
             DivisionRequest(cell.id)
             for cell in step.cells
@@ -147,6 +169,7 @@ class UniformLengthDivision:
         """Drop division targets for cells the returned plan removes."""
 
         targets = self._targets(step)
+
         for cell_id in cell_ids:
             targets.pop(str(cell_id), None)
 
@@ -161,14 +184,19 @@ class UniformLengthDivision:
         # this step's removals are still active here; targets may be a subset
         # of the pre-division identities but never contain anything else.
         expected = (active - daughter_keys) | {parent_key}
+
         if parent_key not in targets or not set(targets) <= expected:
             raise ControllerStateError("division targets do not match pre-division identities")
+
         del targets[parent_key]
+
         if self.jitter_z is not None:
             for daughter in (event.first, event.second):
                 jitter = [step.rng.uniform(-1.0e-3, 1.0e-3) for _ in range(3)]
+
                 if not self.jitter_z:
                     jitter[2] = 0.0
+
                 direction = Vec3(
                     daughter.direction.x + jitter[0],
                     daughter.direction.y + jitter[1],
@@ -180,5 +208,6 @@ class UniformLengthDivision:
                     direction,
                     daughter.length,
                 )
+
         targets[str(event.first.id)] = self._sample(step.rng)
         targets[str(event.second.id)] = self._sample(step.rng)

@@ -14,35 +14,40 @@ bool close(float actual, float expected, float tolerance = 1.0e-5F) {
   return std::abs(actual - expected) <= tolerance;
 }
 
-cm::CellId add_capsule(cm::WorldState& state, cm::Vec3 center, cm::Vec3 axis,
-                        float length = 4.0F, float radius = 0.5F) {
+cm::CellId add_capsule(cm::WorldState& state, cm::Vec3 center, cm::Vec3 axis, float length = 4.0F,
+                       float radius = 0.5F) {
   cm::CellInit cell;
   cell.position = center;
   cell.direction = axis;
   cell.length = length;
   cell.radius = radius;
+
   return state.add_cell(cell);
 }
 
 float correction_dot(const std::vector<cm::CellCorrection>& left,
                      const std::vector<cm::CellCorrection>& right) {
   float result = 0.0F;
+
   for (std::size_t index = 0; index < left.size(); ++index) {
     result += cm::dot(left[index].translation, right[index].translation);
     result += cm::dot(left[index].rotation, right[index].rotation);
     result += left[index].length * right[index].length;
   }
+
   return result;
 }
 
 std::vector<cm::CellCorrection> subtract(const std::vector<cm::CellCorrection>& left,
-                                          const std::vector<cm::CellCorrection>& right) {
+                                         const std::vector<cm::CellCorrection>& right) {
   auto result = left;
+
   for (std::size_t index = 0; index < result.size(); ++index) {
     result[index].translation = left[index].translation - right[index].translation;
     result[index].rotation = left[index].rotation - right[index].rotation;
     result[index].length = left[index].length - right[index].length;
   }
+
   return result;
 }
 
@@ -50,11 +55,11 @@ float residual_rms(const std::vector<cm::CellCorrection>& residual) {
   if (residual.empty()) {
     return 0.0F;
   }
+
   return std::sqrt(correction_dot(residual, residual) / static_cast<float>(residual.size()));
 }
 
-void assert_correction_close(const cm::CellCorrection& actual,
-                             const cm::CellCorrection& expected) {
+void assert_correction_close(const cm::CellCorrection& actual, const cm::CellCorrection& expected) {
   assert(close(actual.translation.x, expected.translation.x));
   assert(close(actual.translation.y, expected.translation.y));
   assert(close(actual.translation.z, expected.translation.z));
@@ -242,18 +247,19 @@ void test_invalid_inputs_are_rejected() {
   cm::MechanicsParameters parameters;
   parameters.gamma = 0.0F;
   bool rejected = false;
+
   try {
     static_cast<void>(cm::solve_cell_mechanics_cpu(state, cm::ContactGraph(1, {}), parameters));
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 }
 
 void test_fixed_cells_are_projected_out_of_cpu_mechanics() {
   cm::WorldState state;
-  const auto fixed_id =
-      add_capsule(state, {0.0F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F});
+  const auto fixed_id = add_capsule(state, {0.0F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F});
   add_capsule(state, {0.0F, 0.8F, 0.0F}, {1.0F, 0.0F, 0.0F});
   state.set_cell_fixed(fixed_id, true);
   const auto contacts = cm::find_cell_contacts_cpu(state);
@@ -310,5 +316,6 @@ int main() {
   test_invalid_inputs_are_rejected();
   test_fixed_cells_are_projected_out_of_cpu_mechanics();
   test_simulation_exposes_cpu_mechanics_capability();
+
   return 0;
 }

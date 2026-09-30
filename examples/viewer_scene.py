@@ -35,12 +35,15 @@ def build_scene() -> Simulation:
     grid.advection = [Vec3(), Vec3()]
     first_signal: list[float] = []
     second_signal: list[float] = []
+
     for x_index in range(shape.x):
         x = grid.origin.x + x_index * grid.spacing.x
+
         for y_index in range(shape.y):
             y = grid.origin.y + y_index * grid.spacing.y
             first_signal.append(math.exp(-((x + 3.0) ** 2 + (y - 1.5) ** 2) / 28.0))
             second_signal.append(math.exp(-((x - 4.0) ** 2 + (y + 2.0) ** 2) / 20.0))
+
     simulation.configure_signal_grid(grid, first_signal + second_signal)
 
     dish = CylinderConstraintInit()
@@ -61,6 +64,7 @@ def build_scene() -> Simulation:
         for column in range(-5, 6):
             if (column / 5.5) ** 2 + (row / 4.5) ** 2 > 1.0:
                 continue
+
             x = column * 1.62 + (0.81 if row % 2 else 0.0)
             y = row * 1.43
             angle = 0.16 * x - 0.11 * y
@@ -77,6 +81,7 @@ def build_scene() -> Simulation:
                 0.5 + 0.5 * math.cos(y * 0.41),
             ]
             simulation.add_cell(cell)
+
     return simulation
 
 

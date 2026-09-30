@@ -10,24 +10,24 @@ The MicroSimulator tutorials draw from the maintained CellModeller wiki, bundled
 
 ## Tutorial relationships
 
-| Source material | MicroSimulator model or guide |
-| --- | --- |
-| Wiki Tutorial 1a | `biophysics.py`, `basics` |
-| Wiki Tutorial 1b | `biophysics.py`, `competition` |
-| Wiki Tutorial 1c | `biophysics.py`, `box` |
-| Wiki Tutorial 2a | `gene_expression.py`, `constitutive` |
-| Wiki Tutorial 2b | `gene_expression.py`, `oscillator` |
-| Wiki Tutorial 3 | `signaling.py`, `mutualism` |
-| Old Example 1 and its exercises | `biophysics.py`, `basics`, `two_types`, `short_cells` |
-| Old Example 2 | `gene_expression.py`, `legacy_constitutive`, `dilution`, `derepression` |
-| Old Example 3 | `signaling.py`, `single_gene` |
-| Old Example 4 | `signaling.py`, `communication` |
-| Old Example 5 | `plasmid_segregation.py` |
-| Contact graph and conjugation examples | `conjugation.py` and the analysis tutorial |
-| Legacy analysis scripts | analysis tutorial and analysis recipes |
-| SimBOL `CM_BBa_01`–`05`, `CM_BBa_I5200` | `simbol_circuits.py` |
-| SimBOL `CM_Danino.py` | `danino_clock.py` |
-| SimBOL CellModeller notebook | SimBOL tutorial workflow description |
+| Source material                         | MicroSimulator model or guide                                           |
+| --------------------------------------- | ----------------------------------------------------------------------- |
+| Wiki Tutorial 1a                        | `biophysics.py`, `basics`                                               |
+| Wiki Tutorial 1b                        | `biophysics.py`, `competition`                                          |
+| Wiki Tutorial 1c                        | `biophysics.py`, `box`                                                  |
+| Wiki Tutorial 2a                        | `gene_expression.py`, `constitutive`                                    |
+| Wiki Tutorial 2b                        | `gene_expression.py`, `oscillator`                                      |
+| Wiki Tutorial 3                         | `signaling.py`, `mutualism`                                             |
+| Old Example 1 and its exercises         | `biophysics.py`, `basics`, `two_types`, `short_cells`                   |
+| Old Example 2                           | `gene_expression.py`, `legacy_constitutive`, `dilution`, `derepression` |
+| Old Example 3                           | `signaling.py`, `single_gene`                                           |
+| Old Example 4                           | `signaling.py`, `communication`                                         |
+| Old Example 5                           | `plasmid_segregation.py`                                                |
+| Contact graph and conjugation examples  | `conjugation.py` and the analysis tutorial                              |
+| Legacy analysis scripts                 | analysis tutorial and analysis recipes                                  |
+| SimBOL `CM_BBa_01`–`05`, `CM_BBa_I5200` | `simbol_circuits.py`                                                    |
+| SimBOL `CM_Danino.py`                   | `danino_clock.py`                                                       |
+| SimBOL CellModeller notebook            | SimBOL tutorial workflow description                                    |
 
 Exact equation translations used by the executable compatibility matrix remain under [`examples/legacy`](../../examples/legacy). The models under [`examples/tutorials`](../../examples/tutorials) are teaching versions: they consolidate related examples, expose parameters consistently, and support exact resume.
 

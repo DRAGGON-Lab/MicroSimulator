@@ -44,6 +44,7 @@ for ordinal, size in enumerate((3, None, 1, 3)):
     cell = CellInit()
     cell.species = [0.25, 0.75]
     cell.growth_rate = 0  # presentation fixture: keep concentrations comparable across time
+
     if size is not None:
         shape = GridShape()
         shape.x, shape.y, shape.z = size, size, size
@@ -54,11 +55,13 @@ for ordinal, size in enumerate((3, None, 1, 3)):
         spec.diffusion = [0, 0]
         spec.advection = [Vec3(), Vec3()]
         simulation.configure_signal_grid(spec, [0.25] * size**3 + [0.75] * size**3)
+
     if ordinal != 1:
         box = BoxConstraintInit()
         box.half_extents = Vec3(10, 10, 2)
         box.allowed_region = ConstraintRegion.INSIDE
         simulation.add_box_constraint(box)
+
     simulation.add_cell(cell)
     simulation.step(ordinal * 0.2)
     path = root / f"grid-{ordinal}.json"

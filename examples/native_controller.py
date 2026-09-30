@@ -26,8 +26,10 @@ MODEL_VERSION = 1
 
 def _number(parameters: Mapping[str, JSONValue], name: str, default: float) -> float:
     value = parameters.get(name, default)
+
     if not isinstance(value, int | float) or isinstance(value, bool) or not math.isfinite(value):
         raise ValueError(f"parameter {name!r} must be finite")
+
     return float(value)
 
 
@@ -37,6 +39,7 @@ def _regulation(division_length: float) -> RegulationCallback:
         divisions = tuple(
             DivisionRequest(cell.id) for cell in step.cells if cell.length >= division_length
         )
+
         return StepPlan(updates=updates, divisions=divisions)
 
     return regulate
@@ -44,9 +47,12 @@ def _regulation(division_length: float) -> RegulationCallback:
 
 def _division(step: ControllerStep, event: DivisionEvent) -> None:
     count = step.state.get("division_count", 0)
+
     if not isinstance(count, int) or isinstance(count, bool):
         raise ValueError("division_count controller state is invalid")
+
     step.state["division_count"] = count + 1
+
     for daughter in (event.first, event.second):
         jitter = step.rng.uniform(-1.0e-3, 1.0e-3)
         direction = Vec3(daughter.direction.x, daughter.direction.y + jitter, daughter.direction.z)
@@ -66,6 +72,7 @@ def build(context: ModelContext) -> NativeController:
     founder.length = _number(context.parameters, "initial_length", 3.0)
     founder.radius = 0.5
     simulation.add_cell(founder)
+
     return NativeController(
         simulation,
         model_id=MODEL_ID,
@@ -80,6 +87,7 @@ def build(context: ModelContext) -> NativeController:
 
 def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeController:
     division_length = _number(context.parameters, "division_length", 4.0)
+
     return NativeController.from_checkpoint(
         checkpoint,
         model_id=MODEL_ID,

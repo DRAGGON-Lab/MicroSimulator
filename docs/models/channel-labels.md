@@ -34,7 +34,7 @@ uv run microsimulator view --model examples/named_channels.py --resume named.jso
 
 ## Data-only export and low-level APIs
 
-Labels are stored in checkpoint version 9 independently of the controller payload, so recovering them never requires running model code. Scene version 3 carries the same ordered arrays. Use the bundle's labels explicitly when exporting or saving native state directly:
+Labels are stored in checkpoints independently of the controller payload, so recovering them never requires running model code. Scenes carry the same ordered arrays. Use the bundle's labels explicitly when exporting or saving native state directly:
 
 ```python
 from microsimulator import capture_scene, load_checkpoint_bundle, save_checkpoint, save_scene

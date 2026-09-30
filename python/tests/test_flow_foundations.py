@@ -24,6 +24,7 @@ class Rod:
 def test_parallel_depths_have_cubic_conductance(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("backend unavailable")
+
     spec = duct_grid(2, 6, 4, (1, 1, 1))
     solid = np.zeros((2, 6, 4), dtype=np.uint8)
     solid[1, :, 1:] = 1
@@ -38,6 +39,7 @@ def test_parallel_depths_have_cubic_conductance(backend: BackendKind) -> None:
 def test_variable_depth_lift_conserves_uniform_tracer(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("backend unavailable")
+
     spec = duct_grid(2, 8, 4, (1, 1, 1))
     solid = np.zeros((2, 8, 4), dtype=np.uint8)
     solid[:, 4:, 2:] = 1
@@ -57,17 +59,21 @@ def test_variable_depth_lift_conserves_uniform_tracer(backend: BackendKind) -> N
 
 def test_shallow_model_rejects_vertical_variation_and_overhangs() -> None:
     spec = duct_grid(2, 6, 3, (1, 1, 1))
+
     with pytest.raises(FlowError, match="constant through"):
         solve_flow_field(spec, mean_inlet_speed=1, mobility=[1, 2, 3] * 12)
+
     solid = [0] * 36
     solid[1] = 1
     spec.obstacles = solid
+
     with pytest.raises(FlowError, match="contiguous"):
         solve_flow_field(spec, mean_inlet_speed=1)
 
 
 def test_zero_mobility_barrier_is_rejected() -> None:
     spec = duct_grid(2, 6, 1, (1, 1, 1))
+
     with pytest.raises(FlowError, match="unreachable"):
         solve_flow_field(spec, mean_inlet_speed=1, mobility=[1, 1, 0, 1, 1, 1] * 2)
 
@@ -76,6 +82,7 @@ def test_biomass_deposition_conserves_amount_across_refinement() -> None:
     densities: list[NDArray[np.float64]] = []
     rod = Rod(Vec3(0.3, 0.1, -0.2))
     expected = 100 * biomass_volume(rod.length, rod.radius)
+
     for n in (4, 8, 16):
         h = 16 / n
         spec = duct_grid(n, n, n, (h, h, h))
@@ -83,6 +90,7 @@ def test_biomass_deposition_conserves_amount_across_refinement() -> None:
         density = colony_volume_fraction(spec, [rod] * 100, averaging_radius=4)
         assert math.isclose(float(density.sum()) * spec.voxel_volume, expected, rel_tol=2e-7)
         densities.append(density)
+
     # Exact cell integrals agree after aggregating fine voxels, even above density 0.9.
     fine_to_coarse = densities[2].reshape(4, 4, 4, 4, 4, 4).mean(axis=(1, 3, 5))
     assert float(np.max(np.abs(fine_to_coarse - densities[0]))) < 1e-10
@@ -93,6 +101,7 @@ def test_biomass_deposition_conserves_amount_across_refinement() -> None:
 def test_inexact_preconditioner_preserves_true_stokes_solution(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("backend unavailable")
+
     spec = duct_grid(5, 8, 4, (0.7, 1.1, 0.6))
     drag = [0.2 + 0.01 * i for i in range(spec.site_count)]
     expected, _ = solve_stokes_field(spec, mean_inlet_speed=1, drag=drag)

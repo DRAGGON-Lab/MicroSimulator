@@ -60,6 +60,7 @@ def test_every_legacy_renderer_has_a_closed_disposition() -> None:
     classes = [name for family in families for name in cast(list[str], family["classes"])]
     assert len(classes) == len(set(classes))
     assert set(classes) == _CLASSES
+
     for family in families:
         assert set(family) == {
             "id",
@@ -71,6 +72,7 @@ def test_every_legacy_renderer_has_a_closed_disposition() -> None:
         }
         assert family["disposition"] in {"replaced", "deliberately_retired"}
         assert isinstance(family["reason"], str) and family["reason"]
+
         if family["disposition"] == "replaced":
             assert isinstance(family["replacement"], str) and family["replacement"]
         else:
@@ -79,8 +81,10 @@ def test_every_legacy_renderer_has_a_closed_disposition() -> None:
 
 def test_pinned_legacy_renderer_source_and_call_sites() -> None:
     legacy_root_value = os.environ.get("CM_LEGACY_ROOT")
+
     if legacy_root_value is None:
         pytest.skip("CM_LEGACY_ROOT is required to authenticate legacy renderer sources")
+
     legacy_root = Path(legacy_root_value)
     document = _document()
     source = legacy_root / cast(str, document["source"])
@@ -94,6 +98,7 @@ def test_pinned_legacy_renderer_source_and_call_sites() -> None:
 
     examples = tuple((legacy_root / "Examples").rglob("*.py"))
     families = cast(list[dict[str, Any]], document["families"])
+
     for family in families:
         classes = cast(list[str], family["classes"])
         call_sites = sum(

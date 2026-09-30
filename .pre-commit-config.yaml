@@ -20,27 +20,23 @@ repos:
       - id: trailing-whitespace
         exclude: ^docs/tutorials/devices/
 
-  # Pinned to the version the project depends on, so a hook run and a local
-  # `ruff check` enforce the same rule set. Formatting is deliberately absent:
-  # the linter's rules, including import order, are what this tree follows.
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.3
-    hooks:
-      - id: ruff
-        args: [--fix]
-
-  - repo: https://github.com/pre-commit/mirrors-clang-format
-    rev: v19.1.7
-    hooks:
-      - id: clang-format
-        types_or: [c++, c, cuda, objective-c++, metal]
-        files: ^cpp/
-
   - repo: local
     hooks:
+      - id: format
+        name: Format maintained files
+        entry: uv run --isolated --locked --only-group quality python scripts/quality.py format
+        language: system
+        types: [text]
+        require_serial: true
+      - id: quality
+        name: Check formatting, lint, and complexity
+        entry: uv run --isolated --locked --only-group quality python scripts/quality.py check
+        language: system
+        types: [text]
+        require_serial: true
       - id: pyright
         name: pyright
-        entry: uv run pyright
+        entry: uv run --locked pyright
         language: system
         pass_filenames: false
         types: [python]

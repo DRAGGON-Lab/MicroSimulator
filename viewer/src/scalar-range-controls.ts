@@ -35,6 +35,7 @@ export class ScalarRangeControls {
     modeText.textContent = "Color range";
     this.mode = document.createElement("select");
     this.mode.setAttribute("aria-label", `${label} range mode`);
+
     for (const [value, text] of [
       ["automatic", "Automatic"],
       ["fixed", "Fixed"],
@@ -44,6 +45,7 @@ export class ScalarRangeControls {
       option.textContent = text;
       this.mode.append(option);
     }
+
     modeLabel.append(modeText, this.mode);
     this.fixedFields = document.createElement("div");
     this.fixedFields.className = "scalar-range-fields";
@@ -59,6 +61,7 @@ export class ScalarRangeControls {
       element.setAttribute("aria-describedby", `${root.id}-message`);
       labelElement.append(text, element);
       this.fixedFields.append(labelElement);
+
       return element;
     };
     this.minimum = input("Minimum");
@@ -76,6 +79,7 @@ export class ScalarRangeControls {
     root.append(form);
     this.mode.addEventListener("change", () => {
       if (this.channel === null || this.resolved === null) return;
+
       const config =
         this.mode.value === "automatic"
           ? { mode: "automatic" as const }
@@ -87,7 +91,9 @@ export class ScalarRangeControls {
     });
     form.addEventListener("submit", (event) => {
       event.preventDefault();
+
       if (this.channel === null || this.mode.value !== "fixed") return;
+
       try {
         const config = parseFixedScalarRange(
           this.minimum.value,
@@ -113,6 +119,7 @@ export class ScalarRangeControls {
 
   public bind(channel: number, resolved: ResolvedScalarRange): void {
     this.resolved = resolved;
+
     if (
       this.channel !== channel ||
       this.active !== this.ranges.get(this.kind, channel)
@@ -124,6 +131,7 @@ export class ScalarRangeControls {
 
   private syncFields(): void {
     if (this.channel === null || this.resolved === null) return;
+
     const active = this.ranges.get(this.kind, this.channel);
     this.active = active;
     const fixed =

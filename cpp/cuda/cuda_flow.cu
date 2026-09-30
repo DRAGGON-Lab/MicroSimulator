@@ -26,13 +26,16 @@ void check_cuda(cudaError_t result, const char* operation) {
   }
 }
 
-void check_launch(const char* operation) { check_cuda(cudaGetLastError(), operation); }
+void check_launch(const char* operation) {
+  check_cuda(cudaGetLastError(), operation);
+}
 
 std::uint32_t checked_count(std::size_t count, const char* description) {
   if (count == 0 || count > std::numeric_limits<std::uint32_t>::max()) {
     throw std::overflow_error(std::string("CUDA flow ") + description +
                               " must fit the nonzero uint32 index space");
   }
+
   return static_cast<std::uint32_t>(count);
 }
 
@@ -41,14 +44,18 @@ FlowGridParameters make_grid_parameters(const detail::FlowGridLayout& layout) {
   const auto face_count = checked_count(layout.total_face_count(), "face count");
   const auto offsets = layout.face_offsets();
   const auto counts = layout.face_counts();
+
   for (const auto value : offsets) {
     static_cast<void>(checked_count(value == 0 ? 1 : value, "face offset"));
   }
+
   for (const auto value : counts) {
     static_cast<void>(checked_count(value, "component face count"));
   }
+
   const auto spacing = layout.spacing();
   FlowGridParameters result{};
+
   for (std::size_t axis = 0; axis < 3; ++axis) {
     result.dimensions[axis] = layout.dimensions()[axis];
     result.spacing[axis] = spacing[axis];
@@ -56,11 +63,13 @@ FlowGridParameters make_grid_parameters(const detail::FlowGridLayout& layout) {
     result.face_offsets[axis] = static_cast<std::uint32_t>(offsets[axis]);
     result.face_counts[axis] = static_cast<std::uint32_t>(counts[axis]);
   }
+
   result.face_offsets[3] = face_count;
   result.face_counts[3] = face_count;
   result.flow_axis = static_cast<std::uint32_t>(layout.flow_axis());
   result.site_count = site_count;
   result.total_face_count = face_count;
+
   return result;
 }
 
@@ -71,6 +80,7 @@ class DeviceBuffer {
     if (count == 0 || count > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
       throw std::overflow_error(std::string("invalid CUDA flow buffer size for ") + description);
     }
+
     check_cuda(cudaMalloc(reinterpret_cast<void**>(&data_), count * sizeof(T)), description);
   }
 
@@ -83,9 +93,17 @@ class DeviceBuffer {
     }
   }
 
-  [[nodiscard]] T* data() noexcept { return data_; }
-  [[nodiscard]] const T* data() const noexcept { return data_; }
-  [[nodiscard]] std::size_t count() const noexcept { return count_; }
+  [[nodiscard]] T* data() noexcept {
+    return data_;
+  }
+
+  [[nodiscard]] const T* data() const noexcept {
+    return data_;
+  }
+
+  [[nodiscard]] std::size_t count() const noexcept {
+    return count_;
+  }
 
  private:
   T* data_{nullptr};
@@ -98,6 +116,7 @@ void upload(DeviceBuffer<T>& destination, std::span<const T> source, cudaStream_
   if (destination.count() != source.size()) {
     throw std::logic_error(std::string(operation) + ": buffer size mismatch");
   }
+
   check_cuda(cudaMemcpyAsync(destination.data(), source.data(), source.size_bytes(),
                              cudaMemcpyHostToDevice, stream),
              operation);
@@ -110,6 +129,7 @@ std::vector<T> download(const DeviceBuffer<T>& source, cudaStream_t stream, cons
                              cudaMemcpyDeviceToHost, stream),
              operation);
   check_cuda(cudaStreamSynchronize(stream), operation);
+
   return result;
 }
 
@@ -146,9 +166,11 @@ double dot(const float* left, const float* right, std::uint32_t count, PcgWorksp
              "failed to download CUDA flow reduction");
   check_cuda(cudaStreamSynchronize(stream), "CUDA flow reduction failed");
   double result = 0.0;
+
   for (const auto value : workspace.host_partials) {
     result += value;
   }
+
   return result;
 }
 
@@ -162,27 +184,34 @@ PcgReport solve_pcg(const float* right_hand_side, const float* diagonal, float* 
                              stream);
   check_launch("failed to launch CUDA flow PCG initialization");
   const auto rhs_norm_squared = dot(right_hand_side, right_hand_side, count, workspace, stream);
+
   if (rhs_norm_squared == 0.0) {
     return {};
   }
+
   const auto rhs_norm = std::sqrt(rhs_norm_squared);
   auto rho =
       dot(workspace.residual.data(), workspace.preconditioned.data(), count, workspace, stream);
   auto relative = 1.0;
+
   for (std::uint32_t iteration = 1; iteration <= max_iterations; ++iteration) {
     apply(workspace.direction.data(), workspace.transformed.data());
     const auto curvature =
         dot(workspace.direction.data(), workspace.transformed.data(), count, workspace, stream);
+
     if (!std::isfinite(curvature) || curvature <= 0.0) {
       throw std::runtime_error(std::string(label) +
                                " conjugate gradient encountered non-positive curvature");
     }
+
     const auto alpha_double = rho / curvature;
+
     if (!std::isfinite(alpha_double) ||
         std::abs(alpha_double) > std::numeric_limits<float>::max()) {
       throw std::runtime_error(std::string(label) +
                                " conjugate gradient produced a non-finite step");
     }
+
     const auto alpha = static_cast<float>(alpha_double);
     launch_flow_pcg_update(solution, workspace.residual.data(), workspace.direction.data(),
                            workspace.transformed.data(), alpha, count, stream);
@@ -190,32 +219,40 @@ PcgReport solve_pcg(const float* right_hand_side, const float* diagonal, float* 
     const auto residual_squared =
         dot(workspace.residual.data(), workspace.residual.data(), count, workspace, stream);
     relative = std::sqrt(std::max(0.0, residual_squared)) / rhs_norm;
+
     if (!std::isfinite(relative)) {
       throw std::runtime_error(std::string(label) +
                                " conjugate gradient produced a non-finite residual");
     }
+
     if (relative <= tolerance) {
       return {.iterations = iteration, .relative_residual = static_cast<float>(relative)};
     }
+
     launch_flow_pcg_precondition(workspace.residual.data(), diagonal,
                                  workspace.preconditioned.data(), count, stream);
     check_launch("failed to launch CUDA flow PCG preconditioner");
     const auto next_rho =
         dot(workspace.residual.data(), workspace.preconditioned.data(), count, workspace, stream);
+
     if (!std::isfinite(next_rho) || rho == 0.0) {
       throw std::runtime_error(std::string(label) +
                                " conjugate gradient encountered a preconditioner breakdown");
     }
+
     const auto beta_double = next_rho / rho;
+
     if (!std::isfinite(beta_double) || std::abs(beta_double) > std::numeric_limits<float>::max()) {
       throw std::runtime_error(std::string(label) +
                                " conjugate gradient produced a non-finite direction");
     }
+
     launch_flow_pcg_direction(workspace.preconditioned.data(), workspace.direction.data(),
                               static_cast<float>(beta_double), count, stream);
     check_launch("failed to launch CUDA flow PCG direction update");
     rho = next_rho;
   }
+
   throw std::runtime_error(std::string(label) + " conjugate gradient did not converge: relative " +
                            std::to_string(relative));
 }
@@ -259,6 +296,7 @@ DepthAveragedFlowResult solve_depth_averaged_flow(const SignalGridSpec& spec,
   const auto scaled =
       detail::scale_velocity(spec, reduction.original_layout(), reduction.lift(velocity),
                              reduction.open_inlet_faces(), parameters.mean_inlet_speed);
+
   return {
       .field = scaled.field,
       .report = {.iterations = report.iterations,
@@ -268,55 +306,84 @@ DepthAveragedFlowResult solve_depth_averaged_flow(const SignalGridSpec& spec,
   };
 }
 
+namespace {
+struct ResolvedFlowBuffers {
+  DeviceBuffer<std::uint8_t> fluid_buffer;
+  DeviceBuffer<std::uint8_t> active_buffer;
+  DeviceBuffer<std::uint8_t> exists_buffer;
+  DeviceBuffer<float> face_drag_buffer;
+  DeviceBuffer<float> face_diagonal_buffer;
+  DeviceBuffer<float> force_buffer;
+  std::vector<float> pressure_diagonal;
+  DeviceBuffer<float> pressure_diagonal_buffer;
+
+  ResolvedFlowBuffers(const detail::ResolvedFlowSystem& system, const FlowGridParameters& grid,
+                      cudaStream_t stream)
+      : fluid_buffer(grid.site_count, "failed to allocate CUDA fluid mask"),
+        active_buffer(grid.total_face_count, "failed to allocate CUDA active face mask"),
+        exists_buffer(grid.total_face_count, "failed to allocate CUDA face existence mask"),
+        face_drag_buffer(grid.total_face_count, "failed to allocate CUDA face drag"),
+        face_diagonal_buffer(grid.total_face_count, "failed to allocate CUDA momentum diagonal"),
+        force_buffer(grid.total_face_count, "failed to allocate CUDA momentum force"),
+        pressure_diagonal(system.pressure_diagonal()),
+        pressure_diagonal_buffer(grid.site_count, "failed to allocate CUDA pressure diagonal") {
+    upload(fluid_buffer, std::span<const std::uint8_t>(system.fluid()), stream,
+           "failed to upload CUDA fluid mask");
+    upload(active_buffer, std::span<const std::uint8_t>(system.active()), stream,
+           "failed to upload CUDA active face mask");
+    upload(exists_buffer, std::span<const std::uint8_t>(system.exists()), stream,
+           "failed to upload CUDA face existence mask");
+    upload(face_drag_buffer, std::span<const float>(system.face_drag()), stream,
+           "failed to upload CUDA face drag");
+    upload(face_diagonal_buffer, std::span<const float>(system.diagonal()), stream,
+           "failed to upload CUDA momentum diagonal");
+    upload(force_buffer, std::span<const float>(system.force()), stream,
+           "failed to upload CUDA momentum force");
+    upload(pressure_diagonal_buffer, std::span<const float>(pressure_diagonal), stream,
+           "failed to upload CUDA pressure diagonal");
+  }
+};
+
+void combine_krylov_vectors(const float* source, float* target, double alpha, float beta,
+                            std::uint32_t count, cudaStream_t stream) {
+  if (!std::isfinite(alpha) || std::abs(alpha) > std::numeric_limits<float>::max()) {
+    throw std::runtime_error("non-finite CUDA Krylov coefficient");
+  }
+
+  launch_flow_vector_combine(source, target, static_cast<float>(alpha), beta, count, stream);
+  check_launch("CUDA Krylov vector update");
+}
+
+}  // namespace
+
+namespace {
+struct ResolvedKrylovBlock {
+  DeviceBuffer<float> u, p;
+
+  ResolvedKrylovBlock(std::size_t nu, std::size_t np)
+      : u(nu, "CUDA Krylov velocity"), p(np, "CUDA Krylov pressure") {}
+};
+
+}  // namespace
+
 ResolvedFlowResult solve_resolved_flow(const SignalGridSpec& spec, std::span<const float> drag,
                                        const ResolvedFlowParameters& parameters,
                                        cudaStream_t stream) {
   parameters.validate();
   const detail::ResolvedFlowSystem system(spec, drag, parameters.axis);
   const auto grid = make_grid_parameters(system.layout());
-  DeviceBuffer<std::uint8_t> fluid_buffer(grid.site_count, "failed to allocate CUDA fluid mask");
-  DeviceBuffer<std::uint8_t> active_buffer(grid.total_face_count,
-                                           "failed to allocate CUDA active face mask");
-  DeviceBuffer<std::uint8_t> exists_buffer(grid.total_face_count,
-                                           "failed to allocate CUDA face existence mask");
-  DeviceBuffer<float> face_drag_buffer(grid.total_face_count, "failed to allocate CUDA face drag");
-  DeviceBuffer<float> face_diagonal_buffer(grid.total_face_count,
-                                           "failed to allocate CUDA momentum diagonal");
-  DeviceBuffer<float> force_buffer(grid.total_face_count, "failed to allocate CUDA momentum force");
-  const auto pressure_diagonal = system.pressure_diagonal();
-  DeviceBuffer<float> pressure_diagonal_buffer(grid.site_count,
-                                               "failed to allocate CUDA pressure diagonal");
-  upload(fluid_buffer, std::span<const std::uint8_t>(system.fluid()), stream,
-         "failed to upload CUDA fluid mask");
-  upload(active_buffer, std::span<const std::uint8_t>(system.active()), stream,
-         "failed to upload CUDA active face mask");
-  upload(exists_buffer, std::span<const std::uint8_t>(system.exists()), stream,
-         "failed to upload CUDA face existence mask");
-  upload(face_drag_buffer, std::span<const float>(system.face_drag()), stream,
-         "failed to upload CUDA face drag");
-  upload(face_diagonal_buffer, std::span<const float>(system.diagonal()), stream,
-         "failed to upload CUDA momentum diagonal");
-  upload(force_buffer, std::span<const float>(system.force()), stream,
-         "failed to upload CUDA momentum force");
-  upload(pressure_diagonal_buffer, std::span<const float>(pressure_diagonal), stream,
-         "failed to upload CUDA pressure diagonal");
+  ResolvedFlowBuffers buffers(system, grid, stream);
 
   DeviceBuffer<float> gradient(grid.total_face_count, "CUDA block gradient");
   PcgWorkspace inner_workspace(grid.total_face_count), outer_workspace(grid.site_count);
-  struct Block {
-    DeviceBuffer<float> u, p;
-    Block(std::size_t nu, std::size_t np)
-        : u(nu, "CUDA Krylov velocity"), p(np, "CUDA Krylov pressure") {}
-  };
+
+  using Block = ResolvedKrylovBlock;
   using Vector = std::shared_ptr<Block>;
   const double continuity_scale =
       1.0 / *std::min_element(system.layout().spacing().begin(), system.layout().spacing().end());
   const auto combine = [&](const float* source, float* target, double alpha, float beta,
                            std::uint32_t count) {
-    if (!std::isfinite(alpha) || std::abs(alpha) > std::numeric_limits<float>::max())
-      throw std::runtime_error("non-finite CUDA Krylov coefficient");
-    launch_flow_vector_combine(source, target, static_cast<float>(alpha), beta, count, stream);
-    check_launch("CUDA Krylov vector update");
+    combine_krylov_vectors(source, target, alpha, beta, count, stream);
   };
   detail::FlexibleKrylovOperations<Vector> ops;
   ops.make_zero = [&] {
@@ -325,6 +392,7 @@ ResolvedFlowResult solve_resolved_flow(const SignalGridSpec& spec, std::span<con
                "zero CUDA Krylov velocity");
     check_cuda(cudaMemsetAsync(value->p.data(), 0, grid.site_count * sizeof(float), stream),
                "zero CUDA Krylov pressure");
+
     return value;
   };
   ops.copy = [&](const Vector& source, Vector& target) {
@@ -340,32 +408,34 @@ ResolvedFlowResult solve_resolved_flow(const SignalGridSpec& spec, std::span<con
            dot(a->p.data(), b->p.data(), grid.site_count, outer_workspace, stream);
   };
   ops.apply = [&](const Vector& input, Vector& output) {
-    launch_resolved_flow_momentum(input->u.data(), active_buffer.data(), exists_buffer.data(),
-                                  face_drag_buffer.data(), output->u.data(), grid, stream);
-    launch_resolved_flow_gradient(input->p.data(), fluid_buffer.data(), active_buffer.data(),
-                                  gradient.data(), grid, stream);
+    launch_resolved_flow_momentum(input->u.data(), buffers.active_buffer.data(),
+                                  buffers.exists_buffer.data(), buffers.face_drag_buffer.data(),
+                                  output->u.data(), grid, stream);
+    launch_resolved_flow_gradient(input->p.data(), buffers.fluid_buffer.data(),
+                                  buffers.active_buffer.data(), gradient.data(), grid, stream);
     combine(gradient.data(), output->u.data(), 1, 1, grid.total_face_count);
-    launch_resolved_flow_divergence(input->u.data(), fluid_buffer.data(), output->p.data(), grid,
-                                    stream);
+    launch_resolved_flow_divergence(input->u.data(), buffers.fluid_buffer.data(), output->p.data(),
+                                    grid, stream);
     combine(output->p.data(), output->p.data(), continuity_scale, 0, grid.site_count);
   };
   std::uint64_t inner_iterations = 0;
   ops.precondition = [&](const Vector& input, Vector& output) {
     const auto report = solve_pcg(
-        input->u.data(), face_diagonal_buffer.data(), output->u.data(), inner_workspace,
+        input->u.data(), buffers.face_diagonal_buffer.data(), output->u.data(), inner_workspace,
         grid.total_face_count, parameters.inner_relative_tolerance, parameters.max_inner_iterations,
         "CUDA momentum preconditioner", stream, [&](const float* x, float* y) {
-          launch_resolved_flow_momentum(x, active_buffer.data(), exists_buffer.data(),
-                                        face_drag_buffer.data(), y, grid, stream);
+          launch_resolved_flow_momentum(x, buffers.active_buffer.data(),
+                                        buffers.exists_buffer.data(),
+                                        buffers.face_drag_buffer.data(), y, grid, stream);
           check_launch("CUDA preconditioner momentum");
         });
     inner_iterations += report.iterations;
-    launch_flow_pcg_precondition(input->p.data(), pressure_diagonal_buffer.data(), output->p.data(),
-                                 grid.site_count, stream);
+    launch_flow_pcg_precondition(input->p.data(), buffers.pressure_diagonal_buffer.data(),
+                                 output->p.data(), grid.site_count, stream);
     combine(output->p.data(), output->p.data(), -1 / continuity_scale, 0, grid.site_count);
   };
   auto rhs = ops.make_zero();
-  combine(force_buffer.data(), rhs->u.data(), 1, 0, grid.total_face_count);
+  combine(buffers.force_buffer.data(), rhs->u.data(), 1, 0, grid.total_face_count);
   const auto solution = detail::flexible_gmres(ops, rhs, parameters.relative_tolerance,
                                                parameters.max_outer_iterations);
   auto residual = ops.make_zero();
@@ -386,6 +456,7 @@ ResolvedFlowResult solve_resolved_flow(const SignalGridSpec& spec, std::span<con
   const auto velocity = download(solution.solution->u, stream, "download CUDA velocity");
   const auto scaled = detail::scale_velocity(
       spec, system.layout(), velocity, system.open_inlet_faces(), parameters.mean_inlet_speed);
+
   return {
       .field = scaled.field,
       .report = {.outer_iterations = solution.iterations,

@@ -108,6 +108,7 @@ describe("composite species blending", () => {
     const gray = mapCompositeSpecies(half, [
       { ...channels[0]!, tint: "#808080" },
     ]).colors[0]!;
+
     for (const value of gray)
       expect(Math.abs(decode(value) - 0.5 * decode(128 / 255))).toBeLessThan(
         1e-5,

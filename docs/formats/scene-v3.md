@@ -15,6 +15,6 @@ Scene presentation has a channel-count budget of **4096 species and 4096 signals
 
 The entire frame, including channel metadata, is hashed with RFC 8785 canonical JSON and SHA-256. Digests detect corruption; they do not authenticate a publisher. Labels must be rendered as text, never interpreted as HTML or executable code.
 
-Readers accept versions 2 and 3. They verify a version-2 frame's original digest and exact version-2 keys first, then return the current in-memory representation with null-filled channel arrays. A version-2 file containing a `channel_metadata` field is invalid, even with a matching digest. Readers reject all other versions. Writers emit only version 3.
+Current readers accept versions 2, 3, and [4](scene-v4.md). They verify each frame's original digest and exact versioned keys first, then supply absent fields in memory. A version-2 file containing a `channel_metadata` field is invalid, even with a matching digest. Writers emit only version 4.
 
 Python `SceneFrame.channel_metadata` and TypeScript `SceneFrame.channelMetadata` expose the same ordered values. TypeScript `channelLabel(frame, "species" | "signals", index)` provides missing-label fallback and duplicate-name disambiguation. Indices identify channels; display names never identify settings or alter stored numerical values. See the [authoring guide](../models/channel-labels.md) for native, low-level and SBML examples.

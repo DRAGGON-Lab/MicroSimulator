@@ -15,10 +15,13 @@ export const AUTOMATIC_SCALAR_RANGE: ScalarRangeConfig = Object.freeze({
 
 export function validateScalarRange(config: ScalarRangeConfig): void {
   if (config.mode === "automatic") return;
+
   if (!Number.isFinite(config.minimum))
     throw new RangeError("Minimum must be a finite number.");
+
   if (!Number.isFinite(config.maximum))
     throw new RangeError("Maximum must be a finite number.");
+
   if (config.minimum >= config.maximum)
     throw new RangeError("Minimum must be less than maximum.");
 }
@@ -31,6 +34,7 @@ export function parseFixedScalarRange(
     if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(text.trim())) {
       throw new RangeError(`${label} must be a finite number.`);
     }
+
     return Number(text);
   };
   const result = {
@@ -39,6 +43,7 @@ export function parseFixedScalarRange(
     maximum: number(maximum, "Maximum"),
   };
   validateScalarRange(result);
+
   return result;
 }
 
@@ -50,12 +55,15 @@ export function resolveScalarRange(
   validateScalarRange(config);
   let minimum: number | null = null;
   let maximum: number | null = null;
+
   for (const value of values) {
     if (!Number.isFinite(value))
       throw new RangeError("Scalar values must be finite.");
+
     minimum = minimum === null ? value : Math.min(minimum, value);
     maximum = maximum === null ? value : Math.max(maximum, value);
   }
+
   return {
     mode: config.mode,
     minimum: config.mode === "fixed" ? config.minimum : minimum,
@@ -71,18 +79,25 @@ export function normalizeScalar(
 ): number {
   if (!Number.isFinite(value))
     throw new RangeError("Scalar values must be finite.");
+
   const { minimum, maximum } = range;
+
   if (minimum === null || maximum === null)
     throw new RangeError("Cannot normalize without scalar bounds.");
+
   if (maximum === minimum) return 0.5;
+
   if (value <= minimum) return 0;
+
   if (value >= maximum) return 1;
+
   const span = maximum - minimum;
   // Extreme finite user bounds can overflow their difference. Scaling both
   // numerator and denominator preserves the ratio without overflowing.
   const normalized = Number.isFinite(span)
     ? (value - minimum) / span
     : (value / 2 - minimum / 2) / (maximum / 2 - minimum / 2);
+
   return Math.min(1, Math.max(0, normalized));
 }
 
@@ -91,10 +106,14 @@ export function suggestedFixedRange(
   range: ResolvedScalarRange,
 ): FixedScalarRange {
   const { minimum, maximum } = range;
+
   if (minimum === null || maximum === null)
     return { mode: "fixed", minimum: 0, maximum: 1 };
+
   if (minimum < maximum) return { mode: "fixed", minimum, maximum };
+
   const padding = Math.max(Math.abs(minimum) / 2, 0.5);
+
   return {
     mode: "fixed",
     minimum: Math.max(-Number.MAX_VALUE, minimum - padding),
@@ -113,6 +132,7 @@ export class DatasetScalarRanges {
       throw new RangeError(
         "Channel index must be a non-negative safe integer.",
       );
+
     return `${kind}:${index}`;
   }
   public beginDataset(): void {

@@ -36,11 +36,13 @@ def _duct(nx: int = 4, ny: int = 8, nz: int = 3) -> SignalGridSpec:
     spec.spacing = Vec3(1.0, 1.0, 1.0)
     spec.diffusion = [1.0]
     spec.advection = [Vec3()]
+
     for name in ("y_lower", "y_upper"):
         boundary = getattr(spec, name)
         boundary.kind = GridBoundaryKind.FIXED
         boundary.values = [0.0]
         setattr(spec, name, boundary)
+
     return spec
 
 
@@ -78,6 +80,7 @@ def test_uniform_duct_is_exact_plug_flow() -> None:
 def test_depth_averaged_flow_uses_the_selected_native_backend(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip(f"{backend.name} backend is unavailable")
+
     spec = _duct(nx=3, ny=5, nz=1)
     expected, _ = solve_flow_field(spec, mean_inlet_speed=2.0)
     simulation = Simulation(backend)
@@ -104,14 +107,18 @@ def test_parallel_channels_split_flux_in_the_mobility_ratio() -> None:
 def test_a_pillar_routes_flow_around_itself_conservatively() -> None:
     spec = _duct(nx=5, ny=7, nz=1)
     obstacles = [0] * (5 * 7)
+
     for y in (2, 3, 4):
         obstacles[_site(spec, 2, y, 0)] = 1
+
     spec.obstacles = obstacles
     field, _ = solve_flow_field(spec, mean_inlet_speed=6.0)
 
     fluxes = _cross_section_fluxes(spec, field)
+
     for flux in fluxes[1:]:
         assert math.isclose(flux, fluxes[0], rel_tol=1.0e-6)
+
     # Faces of the pillar carry no flow; its flanks carry more than the inlet mean.
     assert field.y_faces[_y_face(spec, 2, 3, 0)] == 0.0
     assert field.y_faces[_y_face(spec, 1, 3, 0)] > 6.0
@@ -123,26 +130,33 @@ def test_a_pillar_routes_flow_around_itself_conservatively() -> None:
 def test_brinkman_drag_diverts_flux_from_a_porous_region() -> None:
     spec = _duct(nx=2, ny=6, nz=1)
     mobility = [1.0] * (2 * 6)
+
     for y in (2, 3):
         mobility[_site(spec, 1, y, 0)] = 0.05
+
     field, _ = solve_flow_field(spec, mean_inlet_speed=4.0, mobility=mobility)
     open_flux = field.y_faces[_y_face(spec, 0, 3, 0)]
     porous_flux = field.y_faces[_y_face(spec, 1, 3, 0)]
     assert porous_flux > 0.0
     assert open_flux > 4.0 > porous_flux
     fluxes = _cross_section_fluxes(spec, field)
+
     for flux in fluxes[1:]:
         assert math.isclose(flux, fluxes[0], rel_tol=1.0e-6)
 
 
 def test_ill_posed_problems_are_rejected() -> None:
     spec = _duct()
+
     with pytest.raises(FlowError, match="one of x, y, z"):
         solve_flow_field(spec, mean_inlet_speed=1.0, axis="w")
+
     with pytest.raises(FlowError, match="finite and nonzero"):
         solve_flow_field(spec, mean_inlet_speed=0.0)
+
     with pytest.raises(FlowError, match="must be FIXED"):
         solve_flow_field(spec, mean_inlet_speed=1.0, axis="x")
+
     with pytest.raises(FlowError, match="one value per grid site"):
         solve_flow_field(spec, mean_inlet_speed=1.0, mobility=[1.0])
 
@@ -153,22 +167,29 @@ def test_ill_posed_problems_are_rejected() -> None:
     boundary = periodic.x_upper
     boundary.kind = GridBoundaryKind.PERIODIC
     periodic.x_upper = boundary
+
     with pytest.raises(FlowError, match="periodic"):
         solve_flow_field(periodic, mean_inlet_speed=1.0)
 
     blocked_inlet = _duct(nx=3, ny=4, nz=1)
     obstacles = [0] * (3 * 4)
+
     for x in range(3):
         obstacles[_site(blocked_inlet, x, 0, 0)] = 1
+
     blocked_inlet.obstacles = obstacles
+
     with pytest.raises(FlowError, match="entirely blocked"):
         solve_flow_field(blocked_inlet, mean_inlet_speed=1.0)
 
     dead_end = _duct(nx=3, ny=4, nz=1)
     obstacles = [0] * (3 * 4)
+
     for x in range(3):
         obstacles[_site(dead_end, x, 2, 0)] = 1
+
     dead_end.obstacles = obstacles
+
     with pytest.raises(FlowError, match="no through-flow"):
         solve_flow_field(dead_end, mean_inlet_speed=1.0)
 
@@ -208,8 +229,10 @@ def test_colony_mobility_adds_drag_where_cells_pack() -> None:
 
     with pytest.raises(FlowError, match="finite and positive"):
         colony_mobility(spec, [], base=0.0)
+
     with pytest.raises(FlowError, match="one value per grid site"):
         colony_mobility(spec, [], base=[1.0])
+
     with pytest.raises(FlowError, match="strictly between"):
         colony_mobility(spec, [], max_volume_fraction=1.0)
 
@@ -217,9 +240,11 @@ def test_colony_mobility_adds_drag_where_cells_pack() -> None:
 def test_gap_mobility_scales_with_the_squared_gap_height() -> None:
     spec = _duct(nx=2, ny=4, nz=4)
     obstacles = [0] * (2 * 4 * 4)
+
     for y in range(4):
         for z in range(1, 4):
             obstacles[_site(spec, 1, y, z)] = 1
+
     spec.obstacles = obstacles
     mobility = gap_mobility(spec)
     assert mobility[_site(spec, 0, 0, 0)] == 1.0
@@ -228,6 +253,7 @@ def test_gap_mobility_scales_with_the_squared_gap_height() -> None:
 
     blocked = _duct(nx=1, ny=1, nz=1)
     blocked.obstacles = [1]
+
     with pytest.raises(FlowError, match="no fluid sites"):
         gap_mobility(blocked)
 
@@ -243,8 +269,10 @@ def test_simulation_swaps_the_solved_field_at_runtime() -> None:
     invalid.x_faces = [0.0]
     invalid.y_faces = [0.0]
     invalid.z_faces = [0.0]
+
     with pytest.raises(ValueError, match="every lattice face"):
         simulation.set_velocity_field(invalid)
+
     simulation.set_velocity_field(None)
 
 
@@ -256,13 +284,17 @@ def test_a_solved_field_advects_signals_through_the_engine() -> None:
         boundary = spec.y_lower
         boundary.values = [10.0]
         spec.y_lower = boundary
+
         if with_flow:
             field, _ = solve_flow_field(spec, mean_inlet_speed=2.0)
             spec.velocity_field = field
+
         simulation = Simulation()
         simulation.configure_signal_grid(spec, [0.0] * spec.site_count)
+
         for _ in range(10):
             simulation.step(0.5)
+
         return simulation.sample_signals(Vec3(0.5, 6.0, 0.5))[0]
 
     advected = _mid_level(with_flow=True)
@@ -292,9 +324,7 @@ def test_trap_channel_device_supports_a_numerical_field() -> None:
     # dead-end trap sees only the weak recirculation at its mouth.
     mid_face = shape.y // 2
     channel_speed = max(
-        field.y_faces[_y_face(spec, x, mid_face, z)]
-        for x in range(shape.x)
-        for z in range(shape.z)
+        field.y_faces[_y_face(spec, x, mid_face, z)] for x in range(shape.x) for z in range(shape.z)
     )
     trap_column = int((0.0 - spec.origin.x) / spec.spacing.x)
     trap_speed = abs(field.y_faces[_y_face(spec, trap_column, mid_face, 1)])
@@ -320,11 +350,13 @@ def test_anisotropic_spacing_scales_the_solved_speeds() -> None:
     spec.spacing = Vec3(5.0, 0.4, 1.65)
     spec.diffusion = [1.0]
     spec.advection = [Vec3()]
+
     for name in ("y_lower", "y_upper"):
         boundary = getattr(spec, name)
         boundary.kind = GridBoundaryKind.FIXED
         boundary.values = [0.0]
         setattr(spec, name, boundary)
+
     field, _ = solve_flow_field(spec, mean_inlet_speed=7.0)
     spec.velocity_field = field
     spec.validate()
@@ -339,16 +371,19 @@ def test_reversed_and_transverse_flow_axes_solve() -> None:
     assert all(math.isclose(value, -3.0, abs_tol=2.0e-5) for value in field.y_faces)
 
     across = _duct()
+
     for name in ("y_lower", "y_upper"):
         boundary = getattr(across, name)
         boundary.kind = GridBoundaryKind.NO_FLUX
         boundary.values = []
         setattr(across, name, boundary)
+
     for name in ("x_lower", "x_upper"):
         boundary = getattr(across, name)
         boundary.kind = GridBoundaryKind.FIXED
         boundary.values = [0.0]
         setattr(across, name, boundary)
+
     sideways, _ = solve_flow_field(across, mean_inlet_speed=2.0, axis="x")
     across.velocity_field = sideways
     across.validate()
@@ -358,8 +393,10 @@ def test_reversed_and_transverse_flow_axes_solve() -> None:
 def test_partly_blocked_inlets_and_walled_off_pockets_solve() -> None:
     spec = _duct(nx=4, ny=6, nz=1)
     obstacles = [0] * 24
+
     for y in range(6):
         obstacles[_site(spec, 0, y, 0)] = 1
+
     spec.obstacles = obstacles
     field, _ = solve_flow_field(spec, mean_inlet_speed=2.0)
     spec.velocity_field = field
@@ -372,9 +409,11 @@ def test_partly_blocked_inlets_and_walled_off_pockets_solve() -> None:
 
     pocket = _duct(nx=5, ny=6, nz=1)
     sealed = [0] * 30
+
     for y in (2, 4):
         for x in (3, 4):
             sealed[_site(pocket, x, y, 0)] = 1
+
     sealed[_site(pocket, 2, 3, 0)] = 1
     pocket.obstacles = sealed
     sealed_field, _ = solve_flow_field(pocket, mean_inlet_speed=1.0)
@@ -410,6 +449,7 @@ def test_colony_species_density_rasterizes_one_channel() -> None:
     assert math.isclose(sum(density) * voxel, amount, rel_tol=1e-7)
     assert density[_site(spec, 0, 0, 0)] > 0
     assert density[_site(spec, 1, 1, 0)] > 0
+
     with pytest.raises(FlowError, match="outside the cell"):
         colony_species_density(spec, cells, species=5)
 
@@ -422,11 +462,13 @@ def test_a_running_simulation_swaps_its_signal_reaction() -> None:
     spec.x_lower.values = []
     spec.x_upper.kind = GridBoundaryKind.NO_FLUX
     spec.x_upper.values = []
+
     for name in ("y_lower", "y_upper"):
         boundary = getattr(spec, name)
         boundary.kind = GridBoundaryKind.NO_FLUX
         boundary.values = []
         setattr(spec, name, boundary)
+
     spec.diffusion = [0.0]
     spec.integration = SignalIntegrationKind.CRANK_NICOLSON
 

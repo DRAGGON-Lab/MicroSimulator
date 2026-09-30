@@ -10,25 +10,32 @@ export type FrameLoader = (
 /** Conservative accounting units, not a claim about a particular JS engine's heap. */
 export function frameWeight(frame: SceneFrame): number {
   let bytes = 1024;
+
   for (const cell of frame.cells)
     bytes +=
       512 +
       16 * cell.species.length +
       2 * (cell.id.length + (cell.parentId?.length ?? 0));
+
   for (const labels of [
     frame.channelMetadata.species,
     frame.channelMetadata.signals,
   ]) {
     for (const label of labels) bytes += 32 + 2 * (label?.length ?? 0);
   }
+
   const grid = frame.signalGrid;
+
   if (grid !== null) {
     bytes += 1024 + 16 * grid.levels.length;
+
     for (const boundary of Object.values(grid.boundaries))
       bytes += 128 + 16 * boundary.values.length;
   }
+
   for (const constraints of Object.values(frame.constraints))
     bytes += 512 * constraints.length;
+
   return bytes;
 }
 export class ReplayCache {
@@ -60,27 +67,35 @@ export class ReplayCache {
   public async get(ordinal: number, signal: AbortSignal): Promise<SceneFrame> {
     signal.throwIfAborted();
     const cached = this.values.get(ordinal);
+
     if (cached !== undefined) {
       this.values.delete(ordinal);
       this.values.set(ordinal, cached);
+
       return cached.frame;
     }
+
     const frame = await this.loader(ordinal, signal);
     signal.throwIfAborted();
     const weight = frameWeight(frame);
+
     if (weight <= this.maxBytes) {
       while (
         this.values.size >= this.maxFrames ||
         this.bytes + weight > this.maxBytes
       ) {
         const key = this.values.keys().next().value;
+
         if (key === undefined) break;
+
         this.bytes -= this.values.get(key)!.weight;
         this.values.delete(key);
       }
+
       this.values.set(ordinal, { frame, weight });
       this.bytes += weight;
     }
+
     return frame;
   }
 }
@@ -121,6 +136,7 @@ export class ReplayController {
   ) {
     if (!Number.isSafeInteger(frameCount) || frameCount < 1)
       throw new RangeError("recording must contain frames");
+
     this.cache = cache ?? new ReplayCache(loader);
   }
   public get state(): ReplayState {
@@ -138,6 +154,7 @@ export class ReplayController {
   }
   private clearTimer(): void {
     if (this.timer !== null) clearTimeout(this.timer);
+
     this.timer = null;
   }
   public pause(): void {
@@ -147,9 +164,11 @@ export class ReplayController {
   }
   public play(): void {
     if (this.disposed) return;
+
     const retryFailedFrame = this.error !== null;
     this.playing = true;
     this.error = null;
+
     // A pending or failed seek owns the requested destination, even when the
     // last successfully displayed frame was the end of the recording.
     if (!this.loading) {
@@ -158,13 +177,17 @@ export class ReplayController {
       else if (this.index === this.frameCount - 1) this.request(0);
       else this.schedule();
     }
+
     this.emit();
   }
   public setFps(fps: number): void {
     if (!Number.isFinite(fps) || fps < 1 || fps > 120)
       throw new RangeError("Playback frame rate must be between 1 and 120 fps");
+
     this.fps = fps;
+
     if (this.playing && !this.loading) this.schedule();
+
     this.emit();
   }
   public seek(ordinal: number): void {
@@ -174,6 +197,7 @@ export class ReplayController {
       ordinal >= this.frameCount
     )
       throw new RangeError(`frame ${ordinal} is out of range`);
+
     this.pause();
     this.request(ordinal);
   }
@@ -184,6 +208,7 @@ export class ReplayController {
   }
   private request(ordinal: number): void {
     if (this.disposed) return;
+
     this.clearTimer();
     this.requestedIndex = ordinal;
     this.pending = { ordinal, version: ++this.version };
@@ -195,23 +220,30 @@ export class ReplayController {
   }
   private async drain(): Promise<void> {
     if (this.running) return;
+
     this.running = true;
+
     try {
       while (this.pending !== null && !this.disposed) {
         const request = this.pending;
         this.pending = null;
         const active = new AbortController();
         this.active = active;
+
         try {
           const frame = await this.cache.get(request.ordinal, active.signal);
+
           if (this.disposed || request.version !== this.version) continue;
+
           this.index = request.ordinal;
           this.loading = false;
           this.callbacks.frame(frame, request.ordinal);
           this.emit();
+
           if (this.playing) this.schedule();
         } catch (error) {
           if (this.disposed || request.version !== this.version) continue;
+
           this.loading = false;
           this.playing = false;
           this.error = `Frame ${request.ordinal + 1} (ordinal ${request.ordinal}): ${error instanceof Error ? error.message : String(error)}`;
@@ -226,13 +258,17 @@ export class ReplayController {
   }
   private schedule(): void {
     this.clearTimer();
+
     if (this.index === null || this.loading || !this.playing || this.disposed)
       return;
+
     if (this.index >= this.frameCount - 1) {
       this.playing = false;
       this.emit();
+
       return;
     }
+
     this.timer = setTimeout(
       () => this.request((this.index ?? 0) + 1),
       1000 / this.fps,

@@ -146,6 +146,7 @@ async function snapshot() {
   return page.evaluate(() => {
     const v = globalThis.__testViewer;
     v.grid.updateMatrixWorld(true);
+
     return {
       camera: [
         ...v.camera.position.toArray(),
@@ -176,6 +177,7 @@ async function pickCell() {
     const v = globalThis.__testViewer;
     const rect = v.renderer.domElement.getBoundingClientRect();
     const p = v.camera.position.clone().set(0, 0, 0.6).project(v.camera);
+
     return [
       rect.left + ((p.x + 1) * rect.width) / 2,
       rect.top + ((1 - p.y) * rect.height) / 2,
@@ -208,6 +210,7 @@ try {
   await page.screenshot({ path: `${evidence}/hidden.png` });
   await page.locator("#clear-selection").click();
   await pickCell();
+
   for (const time of [1, 20, 3, 0]) {
     await send({ ...all, time });
     await expect(toggle).not.toBeChecked();
@@ -218,6 +221,7 @@ try {
       "updates/reset/reverse-time retain display state",
     );
   }
+
   await send({ ...base, time: 21 });
   await expect(toggle).toBeDisabled();
   await expect(toggle).not.toBeChecked();

@@ -37,6 +37,7 @@ export function mapCompositeSpecies(
 ): { colors: readonly RGB[]; channels: readonly CompositeChannelLegend[] } {
   const seen = new Set<number>();
   const active = configuration.filter((channel) => channel.enabled);
+
   for (const channel of active) {
     if (
       !Number.isSafeInteger(channel.index) ||
@@ -44,11 +45,14 @@ export function mapCompositeSpecies(
       channel.index >= frame.speciesCount
     )
       throw new RangeError(`species channel ${channel.index} is out of range`);
+
     if (seen.has(channel.index))
       throw new RangeError(`duplicate species channel ${channel.index}`);
+
     seen.add(channel.index);
     validateTint(channel.tint);
   }
+
   // Canonical summation order makes results bitwise independent of UI order.
   const resolved = active
     .toSorted((a, b) => a.index - b.index)
@@ -62,7 +66,9 @@ export function mapCompositeSpecies(
     }));
   const colors: RGB[] = frame.cells.map((cell) => {
     if (resolved.length === 0) return COMPOSITE_NEUTRAL;
+
     const linear = new Color(0, 0, 0);
+
     for (const { channel, tint, range } of resolved) {
       const intensity = normalizeScalar(
         cell.species[channel.index] ?? 0,
@@ -72,15 +78,18 @@ export function mapCompositeSpecies(
       linear.g += intensity * tint.g;
       linear.b += intensity * tint.b;
     }
+
     linear.r = Math.min(1, linear.r);
     linear.g = Math.min(1, linear.g);
     linear.b = Math.min(1, linear.b);
     const display = linear.getRGB({ r: 0, g: 0, b: 0 }, SRGBColorSpace);
+
     return [display.r, display.g, display.b];
   });
   const byIndex = new Map(
     resolved.map((value) => [value.channel.index, value]),
   );
+
   return {
     colors,
     channels: active.map(({ index, tint }) => ({

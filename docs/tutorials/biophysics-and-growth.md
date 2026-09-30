@@ -75,7 +75,7 @@ uv run microsimulator view \
   --open
 ```
 
-This scenario lowers the post-founder division length to produce short spherocylinders. It does not simulate a distinct spherical cell morphology. Sphere *constraints* are available for bounding rod cells, but they do not change cell shape.
+This scenario lowers the post-founder division length to produce short spherocylinders. It does not simulate a distinct spherical cell morphology. Sphere _constraints_ are available for bounding rod cells, but they do not change cell shape.
 
 ## 4. Type-dependent competition in a growth zone
 

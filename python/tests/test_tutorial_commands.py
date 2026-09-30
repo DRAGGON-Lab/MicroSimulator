@@ -78,6 +78,7 @@ def _run_script(
             _kill_tree(process.pid)
             stdout, stderr = process.communicate(timeout=10)
             raise AssertionError(f"command timed out: {stdout} {stderr}") from error
+
         return subprocess.CompletedProcess(arguments, process.returncode, stdout, stderr)
 
 
@@ -94,6 +95,7 @@ class CommandShell:
         environment["UV_PROJECT_ENVIRONMENT"] = sys.prefix
         environment["PYTHONUNBUFFERED"] = "1"
         environment["UV_OFFLINE"] = "1"
+
         if self.name == "pwsh":
             script = self.cwd / "command.ps1"
             script.write_text(
@@ -110,6 +112,7 @@ class CommandShell:
             script = self.cwd / "command.sh"
             script.write_text("set -e\n" + command + "\n", encoding="utf-8")
             arguments = [self.executable, str(script)]
+
         return arguments, environment
 
     def run(self, identifier: str, *, success: bool = True) -> subprocess.CompletedProcess[str]:
@@ -127,6 +130,7 @@ class CommandShell:
             }
         )
         assert (result.returncode == 0) is success, result.stdout + result.stderr
+
         return result
 
 
@@ -134,8 +138,10 @@ class CommandShell:
 def shell(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[CommandShell]:
     name = cast(str, request.param)
     executable = shutil.which(name)
+
     if executable is None:
         pytest.skip(f"{name} is not installed; no {name} coverage claimed")
+
     cwd = tmp_path / "repository with spaces"
     cwd.mkdir()
     shutil.copytree(ROOT / "examples", cwd / "examples")
@@ -158,8 +164,10 @@ def shell(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[CommandShe
     version = subprocess.run(
         [executable, *version_args], capture_output=True, text=True, timeout=60, check=True
     ).stdout.strip()
+
     if name == "pwsh":
         assert tuple(int(part) for part in version.split(".")[:2]) >= (7, 3)
+
     try:
         yield instance
     finally:
@@ -186,6 +194,7 @@ def shell(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[CommandShe
 def _document(path: Path) -> dict[str, Any]:
     # Authenticate checkpoints as well as inspecting their human-readable fields.
     load_checkpoint_bundle(path)
+
     return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
@@ -193,14 +202,17 @@ def test_documented_headless_commands(shell: CommandShell) -> None:
     shell.run("devices")
     devices = cast(list[dict[str, Any]], json.loads(shell.run("devices-json").stdout))
     assert {record["backend"] for record in devices} == {"cpu", "metal", "cuda"}
+
     for record in devices:
         backend = record["backend"]
         result = shell.run(f"trap-{backend}", success=record["available"])
         output = shell.cwd / f"results/tutorial runs/trap-{backend}.json"
+
         if not record["available"]:
             assert f"backend {backend} device 0 is unavailable" in result.stderr
             assert not output.exists()
             continue
+
         document = _document(output)
         assert document["source_backend"]["kind"] == backend
         assert document["provenance"]["model"]["seed"] == 42
@@ -208,6 +220,7 @@ def test_documented_headless_commands(shell: CommandShell) -> None:
         assert document["provenance"]["run"]["completed_steps"] == 100
         assert _same_time(document["simulation"]["time"], 2.0)
         assert len(list(output.parent.glob(f"trap-{backend}.step-*.json"))) == 5
+
     shell.run("resume-trap")
     assert _same_time(
         _document(shell.cwd / "results/tutorial runs/trap-cpu-resumed.json")["simulation"]["time"],
@@ -220,6 +233,7 @@ def test_documented_headless_commands(shell: CommandShell) -> None:
     shell.run("resume-basics")
     initial = _document(shell.cwd / "results/tutorial runs/basics.json")
     resumed = _document(shell.cwd / "results/tutorial runs/basics-resumed.json")
+
     for document in (initial, resumed):
         provenance = document["provenance"]["model"]
         assert provenance["seed"] == 42
@@ -230,6 +244,7 @@ def test_documented_headless_commands(shell: CommandShell) -> None:
                 (shell.cwd / "results/tutorial models/biophysics.py").read_bytes()
             ).hexdigest()
         )
+
     assert _same_time(initial["simulation"]["time"], 0.2)
     assert _same_time(resumed["simulation"]["time"], 0.4)
     assert (
@@ -307,12 +322,14 @@ def test_documented_live_commands(shell: CommandShell) -> None:
                 start_new_session=sys.platform != "win32",
             )
             stopped = False
+
             try:
                 assert process.stdout is not None
                 line = (await asyncio.wait_for(process.stdout.readline(), 60)).decode().strip()
                 assert line.startswith("MicroSimulator live viewer: "), line
                 url = urlsplit(line.split(": ", 1)[1])
                 assert url.port == 8765
+
                 async with (
                     ClientSession() as client,
                     client.ws_connect(
@@ -326,18 +343,24 @@ def test_documented_live_commands(shell: CommandShell) -> None:
                         frame["scene"]["frame"]["time"],
                         0.2 if identifier == "live-resume" else 0.0,
                     )
+
                     if identifier == "live-trap":
                         await ws.send_json({"type": "checkpoint"})
                         saved = await ws.receive_json(timeout=10)
                         assert saved["type"] == "checkpoint"
                         _document(shell.cwd / "results/tutorial runs/live-trap.json")
+
                     await ws.send_json({"type": "stop"})
+
                     while True:
                         message = await ws.receive(timeout=15)
+
                         if message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}:
                             break
+
                         if message.type == WSMsgType.TEXT:
                             stopped |= message.json() == {"type": "session", "state": "stopped"}
+
                 stdout, stderr = await asyncio.wait_for(process.communicate(), 15)
                 shell.records.append(
                     {
@@ -359,6 +382,23 @@ def test_documented_live_commands(shell: CommandShell) -> None:
     asyncio.run(exercise())
 
 
+def _assert_document_links(path: Path, text: str) -> None:
+    for target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", text):
+        if re.match(r"[a-z]+://", target):
+            continue
+
+        filename, _, anchor = target.partition("#")
+        destination = (path.parent / filename).resolve() if filename else path
+        assert destination.exists(), (path, target)
+
+        if anchor and destination.suffix == ".md":
+            headings = re.findall(
+                r"^#+\s+(.+)$", destination.read_text(encoding="utf-8"), re.MULTILINE
+            )
+            anchors = {re.sub(r"[^\w -]", "", h.lower()).replace(" ", "-") for h in headings}
+            assert anchor in anchors, (path, target)
+
+
 def test_tutorial_flags_paths_and_links() -> None:
     documents = [
         *sorted((ROOT / "docs/tutorials").glob("*.md")),
@@ -369,37 +409,38 @@ def test_tutorial_flags_paths_and_links() -> None:
     ]
     parser = _parser()
     checked = 0
+
     for path in documents:
         text = path.read_text(encoding="utf-8")
-        for target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", text):
-            if re.match(r"[a-z]+://", target):
-                continue
-            filename, _, anchor = target.partition("#")
-            destination = (path.parent / filename).resolve() if filename else path
-            assert destination.exists(), (path, target)
-            if anchor and destination.suffix == ".md":
-                headings = re.findall(
-                    r"^#+\s+(.+)$", destination.read_text(encoding="utf-8"), re.MULTILINE
-                )
-                anchors = {re.sub(r"[^\w -]", "", h.lower()).replace(" ", "-") for h in headings}
-                assert anchor in anchors, (path, target)
+
+        _assert_document_links(path, text)
+
         if path.parent == ROOT / "docs/tutorials" and path != GUIDE:
             assert "commands.md#" in text, path
+
         for language, block in re.findall(r"```(console|sh)\n(.*?)\n```", text, re.DOTALL):
             del language
+
             for line in block.replace("\\\n", " ").splitlines():
                 parts = shlex.split(line)
+
                 if "microsimulator" not in parts or "--help" in parts:
                     continue
+
                 # Exclude prose or output; only parse literal CLI invocations.
                 if parts[:2] != ["uv", "run"]:
                     continue
+
                 arguments = parser.parse_args(parts[parts.index("microsimulator") + 1 :])
+
                 if (model := getattr(arguments, "model", None)) is not None:
                     model = cast(Path, model)
+
                     if model != Path("results/tutorial models/biophysics.py"):
                         assert (ROOT / model).is_file(), (path, model)
+
                 checked += 1
+
     assert checked >= 35
 
 
@@ -410,6 +451,7 @@ def test_failed_command_cleanup_drains_descendant_pipes() -> None:
         "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
         "print('ready', flush=True); time.sleep(60)"
     )
+
     with subprocess.Popen(
         [sys.executable, "-c", code],
         stdout=subprocess.PIPE,
@@ -422,5 +464,6 @@ def test_failed_command_cleanup_drains_descendant_pipes() -> None:
             assert process.stdout.readline().strip() == "ready"
         finally:
             _kill_tree(process.pid)
+
         process.communicate(timeout=10)
         assert process.returncode is not None

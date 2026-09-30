@@ -41,13 +41,16 @@ def test_rectangle_extraction_is_selective_and_explicitly_scaled() -> None:
 def test_mask_reader_rejects_unusable_input(tmp_path: Path) -> None:
     empty = tmp_path / "empty.dxf"
     empty.write_text("")
+
     with pytest.raises(MaskError, match="empty"):
         load_mask_polylines(empty)
 
     no_entities = tmp_path / "no-entities.dxf"
     no_entities.write_text("  0\nSECTION\n  2\nHEADER\n  0\nENDSEC\n  0\nEOF\n")
+
     with pytest.raises(MaskError, match="no model-space polylines"):
         load_mask_polylines(no_entities)
+
     with pytest.raises(MaskError, match="byte limit"):
         load_mask_polylines(no_entities, max_bytes=8)
 

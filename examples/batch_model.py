@@ -11,4 +11,5 @@ def build(context):
     cell.radius = 0.5
     cell.growth_rate = float(context.parameters.get("growth_rate", 0.2))
     simulation.add_cell(cell)
+
     return simulation

@@ -33,6 +33,7 @@ struct OccupancyReservoir {
 
 struct OccupancyBalance {
   double before{0}, after{0}, source{0}, reaction{0}, boundary{0};
+
   [[nodiscard]] double residual() const noexcept {
     return after - before - source - reaction - boundary;
   }

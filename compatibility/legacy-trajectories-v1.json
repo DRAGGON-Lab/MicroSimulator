@@ -24,21 +24,9 @@
           "cell_type_counts": {
             "0": 1
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_minimum": [
-            0.0,
-            0.0,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [0.0, 0.0, 0.0],
+          "coordinate_minimum": [0.0, 0.0, 0.0],
           "maximum_centroid_distance": 0.0,
           "maximum_length": 3.5,
           "mechanics_substeps": 0,
@@ -56,21 +44,9 @@
           "cell_type_counts": {
             "0": 2
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            1.125,
-            0.0,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -1.125,
-            0.0,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [1.125, 0.0, 0.0],
+          "coordinate_minimum": [-1.125, 0.0, 0.0],
           "maximum_centroid_distance": 1.125,
           "maximum_length": 1.25,
           "mechanics_substeps": 2,
@@ -88,20 +64,10 @@
           "cell_type_counts": {
             "0": 2
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            1.1787338256835938,
-            9.769724783836864e-06,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [1.1787338256835938, 9.769724783836864e-6, 0.0],
           "coordinate_minimum": [
-            -1.1787338256835938,
-            -9.769724783836864e-06,
-            0.0
+            -1.1787338256835938, -9.769724783836864e-6, 0.0
           ],
           "maximum_centroid_distance": 1.178733825724081,
           "maximum_length": 1.369591236114502,
@@ -120,20 +86,10 @@
           "cell_type_counts": {
             "0": 2
           },
-          "centroid": [
-            -1.8298625946044922e-05,
-            -8.076312951743603e-09,
-            0.0
-          ],
-          "coordinate_maximum": [
-            1.3879988193511963,
-            8.990339119918644e-05,
-            0.0
-          ],
+          "centroid": [-1.8298625946044922e-5, -8.076312951743603e-9, 0.0],
+          "coordinate_maximum": [1.3879988193511963, 8.990339119918644e-5, 0.0],
           "coordinate_minimum": [
-            -1.3880354166030884,
-            -8.991954382508993e-05,
-            0.0
+            -1.3880354166030884, -8.991954382508993e-5, 0.0
           ],
           "maximum_centroid_distance": 1.3880171208892362,
           "maximum_length": 1.7977631092071533,
@@ -152,20 +108,10 @@
           "cell_type_counts": {
             "0": 3
           },
-          "centroid": [
-            -0.5973072250684103,
-            -0.00037796197769542533,
-            0.0
-          ],
-          "coordinate_maximum": [
-            1.8659186363220215,
-            0.001655560452491045,
-            0.0
-          ],
+          "centroid": [-0.5973072250684103, -0.00037796197769542533, 0.0],
+          "coordinate_maximum": [1.8659186363220215, 0.001655560452491045, 0.0],
           "coordinate_minimum": [
-            -2.7637038230895996,
-            -0.003918887581676245,
-            0.0
+            -2.7637038230895996, -0.003918887581676245, 0.0
           ],
           "maximum_centroid_distance": 2.463226700780119,
           "maximum_length": 2.8184587955474854,
@@ -184,21 +130,9 @@
           "cell_type_counts": {
             "0": 4
           },
-          "centroid": [
-            0.029776811599731445,
-            -0.005447677336633205,
-            0.0
-          ],
-          "coordinate_maximum": [
-            4.045950889587402,
-            0.15823085606098175,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -3.8627309799194336,
-            -0.340427041053772,
-            0.0
-          ],
+          "centroid": [0.029776811599731445, -0.005447677336633205, 0.0],
+          "coordinate_maximum": [4.045950889587402, 0.15823085606098175, 0.0],
+          "coordinate_minimum": [-3.8627309799194336, -0.340427041053772, 0.0],
           "maximum_centroid_distance": 4.016446305201695,
           "maximum_length": 2.508676767349243,
           "mechanics_substeps": 2,
@@ -216,14 +150,7 @@
       "model": "ex1_simpleGrowth2D.py",
       "model_sha256": "caa2caecd49b580d70a2c084f2702989c15d92d785099fc9ff32325d1ab0fde7",
       "role": "growing 2D colony",
-      "sample_steps": [
-        0,
-        1,
-        2,
-        5,
-        10,
-        20
-      ],
+      "sample_steps": [0, 1, 2, 5, 10, 20],
       "seed": 12345
     },
     {
@@ -234,21 +161,9 @@
           "cell_type_counts": {
             "0": 1
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.5
-          ],
-          "coordinate_maximum": [
-            0.0,
-            0.0,
-            0.5
-          ],
-          "coordinate_minimum": [
-            0.0,
-            0.0,
-            0.5
-          ],
+          "centroid": [0.0, 0.0, 0.5],
+          "coordinate_maximum": [0.0, 0.0, 0.5],
+          "coordinate_minimum": [0.0, 0.0, 0.5],
           "maximum_centroid_distance": 0.0,
           "maximum_length": 3.5,
           "mechanics_substeps": 0,
@@ -266,21 +181,9 @@
           "cell_type_counts": {
             "0": 2
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.5
-          ],
-          "coordinate_maximum": [
-            1.125,
-            0.0,
-            0.5
-          ],
-          "coordinate_minimum": [
-            -1.125,
-            0.0,
-            0.5
-          ],
+          "centroid": [0.0, 0.0, 0.5],
+          "coordinate_maximum": [1.125, 0.0, 0.5],
+          "coordinate_minimum": [-1.125, 0.0, 0.5],
           "maximum_centroid_distance": 1.125,
           "maximum_length": 1.25,
           "mechanics_substeps": 2,
@@ -298,20 +201,12 @@
           "cell_type_counts": {
             "0": 2
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.5003534257411957
-          ],
+          "centroid": [0.0, 0.0, 0.5003534257411957],
           "coordinate_maximum": [
-            1.153852939605713,
-            2.0638692149077542e-05,
-            0.5005413293838501
+            1.153852939605713, 2.0638692149077542e-5, 0.5005413293838501
           ],
           "coordinate_minimum": [
-            -1.153852939605713,
-            -2.0638692149077542e-05,
-            0.5001655220985413
+            -1.153852939605713, -2.0638692149077542e-5, 0.5001655220985413
           ],
           "maximum_centroid_distance": 1.15385295509024,
           "maximum_length": 1.310958743095398,
@@ -331,19 +226,13 @@
             "0": 2
           },
           "centroid": [
-            -5.960464477539062e-07,
-            -5.529727786779404e-10,
-            0.5003534257411957
+            -5.960464477539062e-7, -5.529727786779404e-10, 0.5003534257411957
           ],
           "coordinate_maximum": [
-            1.2536574602127075,
-            0.00012057296407874674,
-            0.5006194710731506
+            1.2536574602127075, 0.00012057296407874674, 0.5006194710731506
           ],
           "coordinate_minimum": [
-            -1.253658652305603,
-            -0.00012057407002430409,
-            0.5000873804092407
+            -1.253658652305603, -0.00012057407002430409, 0.5000873804092407
           ],
           "maximum_centroid_distance": 1.2536580902868115,
           "maximum_length": 1.5117474794387817,
@@ -363,19 +252,13 @@
             "0": 2
           },
           "centroid": [
-            -4.708766937255859e-06,
-            -1.04482751339674e-08,
-            0.5004732757806778
+            -4.708766937255859e-6, -1.04482751339674e-8, 0.5004732757806778
           ],
           "coordinate_maximum": [
-            1.4553123712539673,
-            0.000564709072932601,
-            0.500961422920227
+            1.4553123712539673, 0.000564709072932601, 0.500961422920227
           ],
           "coordinate_minimum": [
-            -1.4553217887878418,
-            -0.0005647299694828689,
-            0.49998512864112854
+            -1.4553217887878418, -0.0005647299694828689, 0.49998512864112854
           ],
           "maximum_centroid_distance": 1.4553172714553826,
           "maximum_length": 1.9120343923568726,
@@ -395,19 +278,13 @@
             "0": 2
           },
           "centroid": [
-            -5.0902366638183594e-05,
-            -1.8812716007232666e-06,
-            0.5024485141038895
+            -5.0902366638183594e-5, -1.8812716007232666e-6, 0.5024485141038895
           ],
           "coordinate_maximum": [
-            2.0128273963928223,
-            0.01711047813296318,
-            0.5059943199157715
+            2.0128273963928223, 0.01711047813296318, 0.5059943199157715
           ],
           "coordinate_minimum": [
-            -2.0129292011260986,
-            -0.017114240676164627,
-            0.49890270829200745
+            -2.0129292011260986, -0.017114240676164627, 0.49890270829200745
           ],
           "maximum_centroid_distance": 2.01295416023317,
           "maximum_length": 3.0500614643096924,
@@ -426,14 +303,7 @@
       "model": "Tutorial_1/Tutorial_1c.py",
       "model_sha256": "dcbae9f175a3e6e3be2de32e7a88e147b321d0513e36a12c8314c119488fd170",
       "role": "constrained 3D colony",
-      "sample_steps": [
-        0,
-        1,
-        2,
-        5,
-        10,
-        20
-      ],
+      "sample_steps": [0, 1, 2, 5, 10, 20],
       "seed": 23456
     },
     {
@@ -445,21 +315,9 @@
             "0": 1,
             "1": 1
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            5.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -5.0,
-            0.0,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [5.0, 0.0, 0.0],
+          "coordinate_minimum": [-5.0, 0.0, 0.0],
           "maximum_centroid_distance": 5.0,
           "maximum_length": 1.899999976158142,
           "mechanics_substeps": 0,
@@ -478,20 +336,10 @@
             "0": 2,
             "1": 2
           },
-          "centroid": [
-            0.0069710612297058105,
-            4.670699127018452e-06,
-            0.0
-          ],
-          "coordinate_maximum": [
-            6.333746433258057,
-            0.0005081231356598437,
-            0.0
-          ],
+          "centroid": [0.0069710612297058105, 4.670699127018452e-6, 0.0],
+          "coordinate_maximum": [6.333746433258057, 0.0005081231356598437, 0.0],
           "coordinate_minimum": [
-            -6.333854675292969,
-            -0.0004728875937871635,
-            0.0
+            -6.333854675292969, -0.0004728875937871635, 0.0
           ],
           "maximum_centroid_distance": 6.340825754506288,
           "maximum_length": 2.001861095428467,
@@ -511,21 +359,9 @@
             "0": 4,
             "1": 4
           },
-          "centroid": [
-            0.04046517610549927,
-            0.00021415343508124352,
-            0.0
-          ],
-          "coordinate_maximum": [
-            8.323914527893066,
-            0.32601243257522583,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -8.278538703918457,
-            -0.29300951957702637,
-            0.0
-          ],
+          "centroid": [0.04046517610549927, 0.00021415343508124352, 0.0],
+          "coordinate_maximum": [8.323914527893066, 0.32601243257522583, 0.0],
+          "coordinate_minimum": [-8.278538703918457, -0.29300951957702637, 0.0],
           "maximum_centroid_distance": 8.319543408050217,
           "maximum_length": 2.141984462738037,
           "mechanics_substeps": 2,
@@ -544,21 +380,9 @@
             "0": 8,
             "1": 8
           },
-          "centroid": [
-            0.05471285060048103,
-            -0.004247135017067194,
-            0.0
-          ],
-          "coordinate_maximum": [
-            9.8298921585083,
-            0.8633608222007751,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -10.011058807373047,
-            -1.1405298709869385,
-            0.0
-          ],
+          "centroid": [0.05471285060048103, -0.004247135017067194, 0.0],
+          "coordinate_maximum": [9.8298921585083, 0.8633608222007751, 0.0],
+          "coordinate_minimum": [-10.011058807373047, -1.1405298709869385, 0.0],
           "maximum_centroid_distance": 10.076708109601105,
           "maximum_length": 2.2706499099731445,
           "mechanics_substeps": 2,
@@ -578,21 +402,9 @@
             "1": 16,
             "2": 1
           },
-          "centroid": [
-            0.08140314478547342,
-            0.05852880857644543,
-            0.0
-          ],
-          "coordinate_maximum": [
-            11.269049644470215,
-            2.3627817630767822,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -11.602177619934082,
-            -2.456211805343628,
-            0.0
-          ],
+          "centroid": [0.08140314478547342, 0.05852880857644543, 0.0],
+          "coordinate_maximum": [11.269049644470215, 2.3627817630767822, 0.0],
+          "coordinate_minimum": [-11.602177619934082, -2.456211805343628, 0.0],
           "maximum_centroid_distance": 11.735984955552807,
           "maximum_length": 4.281031131744385,
           "mechanics_substeps": 2,
@@ -612,21 +424,9 @@
             "1": 31,
             "2": 3
           },
-          "centroid": [
-            0.08155597001314163,
-            -0.03697235658764839,
-            0.0
-          ],
-          "coordinate_maximum": [
-            11.751053810119629,
-            4.202713489532471,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -13.064791679382324,
-            -4.97340726852417,
-            0.0
-          ],
+          "centroid": [0.08155597001314163, -0.03697235658764839, 0.0],
+          "coordinate_maximum": [11.751053810119629, 4.202713489532471, 0.0],
+          "coordinate_minimum": [-13.064791679382324, -4.97340726852417, 0.0],
           "maximum_centroid_distance": 13.306134648234275,
           "maximum_length": 4.323599815368652,
           "mechanics_substeps": 3,
@@ -644,14 +444,7 @@
       "model": "Conjugation.py",
       "model_sha256": "f91b9b4ea3cb5bef159c958d9762737e8d35b295d8e5ad1c2761121098c79c07",
       "role": "neighbor-dependent model",
-      "sample_steps": [
-        0,
-        20,
-        40,
-        60,
-        80,
-        100
-      ],
+      "sample_steps": [0, 20, 40, 60, 80, 100],
       "seed": 34567
     },
     {
@@ -662,36 +455,18 @@
           "cell_type_counts": {
             "0": 1
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_minimum": [
-            0.0,
-            0.0,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [0.0, 0.0, 0.0],
+          "coordinate_minimum": [0.0, 0.0, 0.0],
           "maximum_centroid_distance": 0.0,
           "maximum_length": 3.5,
           "mechanics_substeps": 0,
           "minimum_length": 3.5,
           "neighbor_pair_count": 0,
           "signals": [],
-          "species_maximum": [
-            0.0
-          ],
-          "species_minimum": [
-            0.0
-          ],
-          "species_sum": [
-            0.0
-          ],
+          "species_maximum": [0.0],
+          "species_minimum": [0.0],
+          "species_sum": [0.0],
           "step": 0,
           "total_length": 3.5
         },
@@ -700,36 +475,18 @@
           "cell_type_counts": {
             "0": 2
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            1.125,
-            0.0,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -1.125,
-            0.0,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [1.125, 0.0, 0.0],
+          "coordinate_minimum": [-1.125, 0.0, 0.0],
           "maximum_centroid_distance": 1.125,
           "maximum_length": 1.25,
           "mechanics_substeps": 2,
           "minimum_length": 1.25,
           "neighbor_pair_count": 0,
           "signals": [],
-          "species_maximum": [
-            0.009999999776482582
-          ],
-          "species_minimum": [
-            0.009999999776482582
-          ],
-          "species_sum": [
-            0.019999999552965164
-          ],
+          "species_maximum": [0.009999999776482582],
+          "species_minimum": [0.009999999776482582],
+          "species_sum": [0.019999999552965164],
           "step": 1,
           "total_length": 2.5
         },
@@ -738,20 +495,10 @@
           "cell_type_counts": {
             "0": 2
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            1.1337215900421143,
-            2.257150526929763e-06,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [1.1337215900421143, 2.257150526929763e-6, 0.0],
           "coordinate_minimum": [
-            -1.1337215900421143,
-            -2.257150526929763e-06,
-            0.0
+            -1.1337215900421143, -2.257150526929763e-6, 0.0
           ],
           "maximum_centroid_distance": 1.1337215900443611,
           "maximum_length": 1.2707350254058838,
@@ -759,15 +506,9 @@
           "minimum_length": 1.270639181137085,
           "neighbor_pair_count": 0,
           "signals": [],
-          "species_maximum": [
-            0.019909102469682693
-          ],
-          "species_minimum": [
-            0.019908685237169266
-          ],
-          "species_sum": [
-            0.03981778770685196
-          ],
+          "species_maximum": [0.019909102469682693],
+          "species_minimum": [0.019908685237169266],
+          "species_sum": [0.03981778770685196],
           "step": 2,
           "total_length": 2.5413742065429688
         },
@@ -776,20 +517,10 @@
           "cell_type_counts": {
             "0": 2
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            1.164511799812317,
-            1.1096070011262782e-05,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [1.164511799812317, 1.1096070011262782e-5, 0.0],
           "coordinate_minimum": [
-            -1.164511799812317,
-            -1.1096070011262782e-05,
-            0.0
+            -1.164511799812317, -1.1096070011262782e-5, 0.0
           ],
           "maximum_centroid_distance": 1.1645117998651815,
           "maximum_length": 1.333212971687317,
@@ -797,15 +528,9 @@
           "minimum_length": 1.3327124118804932,
           "neighbor_pair_count": 0,
           "signals": [],
-          "species_maximum": [
-            0.04911075532436371
-          ],
-          "species_minimum": [
-            0.049105264246463776
-          ],
-          "species_sum": [
-            0.09821601957082748
-          ],
+          "species_maximum": [0.04911075532436371],
+          "species_minimum": [0.049105264246463776],
+          "species_sum": [0.09821601957082748],
           "step": 5,
           "total_length": 2.66592538356781
         },
@@ -814,20 +539,10 @@
           "cell_type_counts": {
             "0": 2
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            1.219545602798462,
-            3.069480226258747e-05,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [1.219545602798462, 3.069480226258747e-5, 0.0],
           "coordinate_minimum": [
-            -1.219545602798462,
-            -3.069480226258747e-05,
-            0.0
+            -1.219545602798462, -3.069480226258747e-5, 0.0
           ],
           "maximum_centroid_distance": 1.2195456031847414,
           "maximum_length": 1.444106101989746,
@@ -835,15 +550,9 @@
           "minimum_length": 1.4428004026412964,
           "neighbor_pair_count": 0,
           "signals": [],
-          "species_maximum": [
-            0.09598188102245331
-          ],
-          "species_minimum": [
-            0.09595528990030289
-          ],
-          "species_sum": [
-            0.1919371709227562
-          ],
+          "species_maximum": [0.09598188102245331],
+          "species_minimum": [0.09595528990030289],
+          "species_sum": [0.1919371709227562],
           "step": 10,
           "total_length": 2.8869065046310425
         },
@@ -852,20 +561,12 @@
           "cell_type_counts": {
             "0": 2
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
           "coordinate_maximum": [
-            1.3436744213104248,
-            0.00010022102651419118,
-            0.0
+            1.3436744213104248, 0.00010022102651419118, 0.0
           ],
           "coordinate_minimum": [
-            -1.3436744213104248,
-            -0.00010022102651419118,
-            0.0
+            -1.3436744213104248, -0.00010022102651419118, 0.0
           ],
           "maximum_centroid_distance": 1.343674425048032,
           "maximum_length": 1.6944535970687866,
@@ -873,15 +574,9 @@
           "minimum_length": 1.6909832954406738,
           "neighbor_pair_count": 0,
           "signals": [],
-          "species_maximum": [
-            0.18285886943340302
-          ],
-          "species_minimum": [
-            0.1827358901500702
-          ],
-          "species_sum": [
-            0.3655947595834732
-          ],
+          "species_maximum": [0.18285886943340302],
+          "species_minimum": [0.1827358901500702],
+          "species_sum": [0.3655947595834732],
           "step": 20,
           "total_length": 3.3854368925094604
         }
@@ -890,14 +585,7 @@
       "model": "ex2_constGene.py",
       "model_sha256": "84fa75c1916552ec8c7ad5d5775473f8263df4ea6bb98d9926a8bf79dd319f12",
       "role": "species model",
-      "sample_steps": [
-        0,
-        1,
-        2,
-        5,
-        10,
-        20
-      ],
+      "sample_steps": [0, 1, 2, 5, 10, 20],
       "seed": 45678
     },
     {
@@ -909,21 +597,9 @@
             "0": 1,
             "1": 1
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            3.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -3.0,
-            0.0,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [3.0, 0.0, 0.0],
+          "coordinate_minimum": [-3.0, 0.0, 0.0],
           "maximum_centroid_distance": 3.0,
           "maximum_length": 3.5,
           "mechanics_substeps": 0,
@@ -941,18 +617,9 @@
               "sum": 0.0
             }
           ],
-          "species_maximum": [
-            0.0,
-            0.0
-          ],
-          "species_minimum": [
-            0.0,
-            0.0
-          ],
-          "species_sum": [
-            0.0,
-            0.0
-          ],
+          "species_maximum": [0.0, 0.0],
+          "species_minimum": [0.0, 0.0],
+          "species_sum": [0.0, 0.0],
           "step": 0,
           "total_length": 7.0
         },
@@ -962,21 +629,9 @@
             "0": 1,
             "1": 1
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            3.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -3.0,
-            0.0,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [3.0, 0.0, 0.0],
+          "coordinate_minimum": [-3.0, 0.0, 0.0],
           "maximum_centroid_distance": 3.0,
           "maximum_length": 3.5,
           "mechanics_substeps": 1,
@@ -994,18 +649,9 @@
               "sum": 0.0
             }
           ],
-          "species_maximum": [
-            0.009999999776482582,
-            0.009999999776482582
-          ],
-          "species_minimum": [
-            0.0,
-            0.0
-          ],
-          "species_sum": [
-            0.009999999776482582,
-            0.009999999776482582
-          ],
+          "species_maximum": [0.009999999776482582, 0.009999999776482582],
+          "species_minimum": [0.0, 0.0],
+          "species_sum": [0.009999999776482582, 0.009999999776482582],
           "step": 1,
           "total_length": 7.0
         },
@@ -1015,21 +661,9 @@
             "0": 1,
             "1": 1
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            3.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -3.0,
-            0.0,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [3.0, 0.0, 0.0],
+          "coordinate_minimum": [-3.0, 0.0, 0.0],
           "maximum_centroid_distance": 3.0,
           "maximum_length": 3.503499984741211,
           "mechanics_substeps": 1,
@@ -1037,28 +671,19 @@
           "neighbor_pair_count": 0,
           "signals": [
             {
-              "l2_norm": 1.7463142524153607e-05,
-              "maximum": 1.656699168961495e-05,
-              "sum": 2.2089322101237485e-05
+              "l2_norm": 1.7463142524153607e-5,
+              "maximum": 1.656699168961495e-5,
+              "sum": 2.2089322101237485e-5
             },
             {
-              "l2_norm": 1.7463142524153607e-05,
-              "maximum": 1.656699168961495e-05,
-              "sum": 2.2089322101237485e-05
+              "l2_norm": 1.7463142524153607e-5,
+              "maximum": 1.656699168961495e-5,
+              "sum": 2.2089322101237485e-5
             }
           ],
-          "species_maximum": [
-            0.019970137625932693,
-            0.019970137625932693
-          ],
-          "species_minimum": [
-            0.0,
-            0.0
-          ],
-          "species_sum": [
-            0.019970137625932693,
-            0.019970137625932693
-          ],
+          "species_maximum": [0.019970137625932693, 0.019970137625932693],
+          "species_minimum": [0.0, 0.0],
+          "species_sum": [0.019970137625932693, 0.019970137625932693],
           "step": 2,
           "total_length": 7.006999969482422
         },
@@ -1068,21 +693,9 @@
             "0": 1,
             "1": 1
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            3.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -3.0,
-            0.0,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [3.0, 0.0, 0.0],
+          "coordinate_minimum": [-3.0, 0.0, 0.0],
           "maximum_centroid_distance": 3.0,
           "maximum_length": 3.5070035457611084,
           "mechanics_substeps": 1,
@@ -1090,28 +703,19 @@
           "neighbor_pair_count": 0,
           "signals": [
             {
-              "l2_norm": 5.229090056052733e-05,
-              "maximum": 4.96054271934554e-05,
-              "sum": 6.620271194240912e-05
+              "l2_norm": 5.229090056052733e-5,
+              "maximum": 4.96054271934554e-5,
+              "sum": 6.620271194240912e-5
             },
             {
-              "l2_norm": 5.229089998509932e-05,
-              "maximum": 4.96054271934554e-05,
-              "sum": 6.620271040691517e-05
+              "l2_norm": 5.229089998509932e-5,
+              "maximum": 4.96054271934554e-5,
+              "sum": 6.620271040691517e-5
             }
           ],
-          "species_maximum": [
-            0.0299104955047369,
-            0.0299104955047369
-          ],
-          "species_minimum": [
-            3.0543598761312296e-09,
-            3.0543598761312296e-09
-          ],
-          "species_sum": [
-            0.029910498559096776,
-            0.029910498559096776
-          ],
+          "species_maximum": [0.0299104955047369, 0.0299104955047369],
+          "species_minimum": [3.0543598761312296e-9, 3.0543598761312296e-9],
+          "species_sum": [0.029910498559096776, 0.029910498559096776],
           "step": 3,
           "total_length": 7.014007091522217
         },
@@ -1121,21 +725,9 @@
             "0": 1,
             "1": 1
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            3.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -3.0,
-            0.0,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [3.0, 0.0, 0.0],
+          "coordinate_minimum": [-3.0, 0.0, 0.0],
           "maximum_centroid_distance": 3.0,
           "maximum_length": 3.5140209197998047,
           "mechanics_substeps": 1,
@@ -1153,18 +745,9 @@
               "sum": 0.00022024168430575505
             }
           ],
-          "species_maximum": [
-            0.04970220476388931,
-            0.04970220476388931
-          ],
-          "species_minimum": [
-            3.046945451501415e-08,
-            3.046945451501415e-08
-          ],
-          "species_sum": [
-            0.04970223523334383,
-            0.04970223523334383
-          ],
+          "species_maximum": [0.04970220476388931, 0.04970220476388931],
+          "species_minimum": [3.046945451501415e-8, 3.046945451501415e-8],
+          "species_sum": [0.04970223523334383, 0.04970223523334383],
           "step": 5,
           "total_length": 7.028041839599609
         },
@@ -1174,21 +757,9 @@
             "0": 1,
             "1": 1
           },
-          "centroid": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_maximum": [
-            3.0,
-            0.0,
-            0.0
-          ],
-          "coordinate_minimum": [
-            -3.0,
-            0.0,
-            0.0
-          ],
+          "centroid": [0.0, 0.0, 0.0],
+          "coordinate_maximum": [3.0, 0.0, 0.0],
+          "coordinate_minimum": [-3.0, 0.0, 0.0],
           "maximum_centroid_distance": 3.0,
           "maximum_length": 3.5316262245178223,
           "mechanics_substeps": 1,
@@ -1206,18 +777,9 @@
               "sum": 0.0009862298223455167
             }
           ],
-          "species_maximum": [
-            0.09866603463888168,
-            0.09866603463888168
-          ],
-          "species_minimum": [
-            3.6341577924758894e-07,
-            3.634158360910078e-07
-          ],
-          "species_sum": [
-            0.09866639805466093,
-            0.09866639805471777
-          ],
+          "species_maximum": [0.09866603463888168, 0.09866603463888168],
+          "species_minimum": [3.6341577924758894e-7, 3.634158360910078e-7],
+          "species_sum": [0.09866639805466093, 0.09866639805471777],
           "step": 10,
           "total_length": 7.0632524490356445
         }
@@ -1226,14 +788,7 @@
       "model": "Tutorial_3/Tutorial_3.py",
       "model_sha256": "50cadae5ffac5ae7bb8bad8dfbd952461640514ac099d6a56d868a2704771693",
       "role": "coupled signaling model",
-      "sample_steps": [
-        0,
-        1,
-        2,
-        3,
-        5,
-        10
-      ],
+      "sample_steps": [0, 1, 2, 3, 5, 10],
       "seed": 56789
     }
   ],

@@ -99,6 +99,7 @@ def _simulation(backend: BackendKind = BackendKind.CPU) -> Simulation:
 
     simulation.divide_equal(parent)
     simulation.step(0.125)
+
     return simulation
 
 
@@ -118,6 +119,7 @@ def _semantic_frame(frame: SceneFrame) -> SceneFrame:
 def _resign(document: dict[str, Any]) -> str:
     canonical = rfc8785.dumps(document["frame"])
     document["integrity"]["frame"] = hashlib.sha256(canonical).hexdigest()
+
     return json.dumps(document)
 
 
@@ -163,9 +165,12 @@ def test_capture_scene_is_backend_neutral_and_complete() -> None:
     for backend in BackendKind:
         if backend is BackendKind.CPU or not backend_available(backend):
             continue
+
         probe = Simulation(backend)
+
         if not probe.supports(BackendFeature.SIGNALS):
             continue
+
         assert _semantic_frame(capture_scene(_simulation(backend))) == _semantic_frame(reference)
 
 
@@ -183,6 +188,7 @@ def test_scene_round_trip_is_exact_and_uses_decimal_identifiers(
     document["format"] = format_name
     assert parse_scene(json.dumps(document)) == frame
     document["frame"]["time"] += 1.0
+
     with pytest.raises(SceneError, match="digest"):
         parse_scene(json.dumps(document))
 
@@ -224,11 +230,13 @@ def test_scene_preserves_identifiers_outside_javascript_integer_range() -> None:
 def test_scene_rejects_tampering_unknown_fields_and_duplicate_keys() -> None:
     document = cast(dict[str, Any], json.loads(dumps_scene(capture_scene(_simulation()))))
     document["frame"]["time"] = 3.0
+
     with pytest.raises(SceneError, match="digest"):
         parse_scene(json.dumps(document))
 
     document = cast(dict[str, Any], json.loads(dumps_scene(capture_scene(_simulation()))))
     document["frame"]["cells"][0]["color"] = [1.0, 0.0, 0.0]
+
     with pytest.raises(SceneError, match=r"unknown keys.*color"):
         parse_scene(_resign(document))
 
@@ -242,11 +250,13 @@ def test_scene_rejects_invalid_geometry_and_grid_shape() -> None:
         frame,
         cells=(replace(frame.cells[0], direction=(2.0, 0.0, 0.0)), *frame.cells[1:]),
     )
+
     with pytest.raises(SceneError, match="normalized"):
         dumps_scene(bad_direction)
 
     assert frame.signal_grid is not None
     bad_levels = replace(frame, signal_grid=replace(frame.signal_grid, levels=(1.0,)))
+
     with pytest.raises(SceneError, match="expected 8 values"):
         dumps_scene(bad_levels)
 

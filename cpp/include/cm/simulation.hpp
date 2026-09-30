@@ -11,6 +11,9 @@
 #include "cm/checkpoint.hpp"
 
 namespace cm {
+namespace detail {
+class CultureSimulation;
+}
 
 class Simulation {
  public:
@@ -18,6 +21,18 @@ class Simulation {
                       std::size_t species_count = 0, std::uint32_t device_index = 0);
   Simulation(BackendKind backend, const SimulationCheckpoint& checkpoint,
              std::uint32_t device_index = 0);
+  ~Simulation();
+  Simulation(Simulation&&) noexcept;
+  Simulation& operator=(Simulation&&) noexcept;
+  void restore_checkpoint(const SimulationCheckpoint&);
+  void configure_culture(const CultureConfiguration&,
+                         const std::vector<double>& concentrations = {},
+                         const std::vector<double>& biochemical_volumes = {});
+  [[nodiscard]] bool has_culture() const noexcept;
+  [[nodiscard]] std::optional<CultureCheckpoint> culture_checkpoint() const;
+  [[nodiscard]] std::vector<FluidFragment> fluid_fragments() const;
+  void set_cell_force(CellId, std::array<double, 3> force_n, std::array<double, 3> torque_nm = {});
+  [[nodiscard]] std::vector<double> cell_surface_concentrations(CellId) const;
 
   [[nodiscard]] BackendInfo backend_info() const;
   [[nodiscard]] bool supports(BackendFeature feature) const noexcept;
@@ -81,6 +96,8 @@ class Simulation {
   void validate() const;
 
  private:
+  void validate_step_backend(std::span<const float> previous_lengths, float dt) const;
+
   WorldState state_;
   ConstraintSet constraints_;
   std::unique_ptr<ComputeBackend> backend_;
@@ -88,6 +105,7 @@ class Simulation {
   std::optional<SignalGrid> signal_grid_;
   std::optional<SignalSolveReport> last_signal_solve_report_;
   std::optional<CoupledRatePlan> coupled_rate_plan_;
+  std::unique_ptr<detail::CultureSimulation> culture_;
   double time_{0.0};
 };
 

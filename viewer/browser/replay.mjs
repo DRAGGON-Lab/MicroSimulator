@@ -66,6 +66,7 @@ try {
     page.evaluate(() => {
       const viewer = globalThis.__testViewer;
       viewer.grid.updateMatrixWorld(true);
+
       return {
         camera: viewer.camera.position.toArray(),
         target: viewer.controls.target.toArray(),
@@ -74,6 +75,7 @@ try {
     });
   function assertStationary(actual, expected) {
     assert.deepEqual(actual.grid, expected.grid);
+
     for (const key of ["camera", "target"])
       actual[key].forEach((value, index) => {
         assert.ok(
@@ -163,6 +165,7 @@ try {
   assertStationary(await snapshot(), gridInitial);
   await page.screenshot({ path: `${evidence}/grid-replay.png` });
   await page.setViewportSize({ width: 880, height: 720 });
+
   for (const id of [
     "#replay-play",
     "#replay-timeline",
@@ -175,6 +178,7 @@ try {
       `${id} fits the supported narrow layout`,
     );
   }
+
   await expect(page.locator("#replay-position")).toBeVisible();
   await page.screenshot({ path: `${evidence}/narrow-replay.png` });
   await page.setViewportSize({ width: 1440, height: 960 });

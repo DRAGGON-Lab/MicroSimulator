@@ -26,13 +26,16 @@ DIAGNOSTIC = runpy.run_path(str(ROOT / "scripts" / "diagnose_planarity.py"))
 def test_three_dimensional_diagnostic_fixtures(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip(f"{backend} runtime unavailable; no fallback")
+
     results = DIAGNOSTIC["fixtures"](backend, 17, 0.02)
+
     for name in ("separated_planar", "planar_division"):
         assert results[name]["first_out_of_plane"] is None
         assert all(
             stage["max_center_displacement_from_plane"] < 1e-6 for stage in results[name]["stages"]
         )
         assert all(stage["max_direction_z"] < 1e-6 for stage in results[name]["stages"])
+
     for name in ("crossing", "coincident_parallel"):
         result = results[name]
         assert any(abs(normal[2]) > 0.99 for normal in result["contact_normals"])
@@ -40,6 +43,7 @@ def test_three_dimensional_diagnostic_fixtures(backend: BackendKind) -> None:
         negative, positive = sorted(cell["center"][2] for cell in result["final_geometry"])
         assert math.isclose(negative, -0.4, abs_tol=1e-6)
         assert math.isclose(positive, 0.4, abs_tol=1e-6)
+
     inherited = results["inherited_tilt"]
     assert inherited["first_out_of_plane"]["stage"] == "initialization"
     assert any(
@@ -90,11 +94,14 @@ def test_diagnostics_preserve_rng_and_restore_native_methods_on_failure() -> Non
             "set_cell_geometry",
         )
     }
+
     with trace.instrument():
         for _ in range(5):
             traced.step(0.02)
+
     for _ in range(5):
         normal.step(0.02)
+
     assert dumps_scene(capture_scene(traced.simulation)) == dumps_scene(
         capture_scene(normal.simulation)
     )
@@ -102,8 +109,10 @@ def test_diagnostics_preserve_rng_and_restore_native_methods_on_failure() -> Non
     assert traced.simulation.cell_count > len(trace.initial["cells"])
     assert any(stage["stage"] == "geometry_edit" for stage in trace.events)
     assert all(getattr(Simulation, name) is method for name, method in originals.items())
+
     with pytest.raises(RuntimeError, match="probe"), trace.instrument():
         raise RuntimeError("probe")
+
     assert all(getattr(Simulation, name) is method for name, method in originals.items())
     assert trace.initial["cells"]
     assert "constraints" in trace.report()

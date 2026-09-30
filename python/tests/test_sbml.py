@@ -27,6 +27,7 @@ def _model_xml(
     reactant_id: str = "",
 ) -> str:
     reactant_id_attribute = f' id="{reactant_id}"' if reactant_id else ""
+
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
   <model id="conversion" name="A to B">
@@ -78,6 +79,7 @@ def _run_model(backend: BackendKind, *, local_rate: bool = False) -> tuple[float
     simulation.set_species_rate_plan(model.rate_plan)
     simulation.step(0.1)
     levels = simulation.cell(cell_id).species
+
     return levels[0], levels[1]
 
 
@@ -94,9 +96,12 @@ def test_sbml_compiles_to_native_rate_plan_on_available_backends() -> None:
     for backend in BackendKind:
         if not backend_available(backend):
             continue
+
         probe = Simulation(backend)
+
         if not probe.supports(BackendFeature.SPECIES):
             continue
+
         substrate, product = _run_model(backend)
         assert math.isclose(substrate, 2.85, rel_tol=1.0e-6, abs_tol=1.0e-6)
         assert math.isclose(product, 0.3, rel_tol=1.0e-6, abs_tol=1.0e-6)
@@ -179,12 +184,16 @@ def test_unsupported_sbml_semantics_fail_explicitly(source: str, message: str) -
 def test_malformed_or_empty_sbml_fails_explicitly() -> None:
     with pytest.raises(SBMLImportError, match="nonempty"):
         parse_sbml("")
+
     with pytest.raises(SBMLImportError, match="invalid"):
         parse_sbml("<sbml>")
 
-    level_two = _model_xml().replace('level="3" version="2"', 'level="2" version="5"').replace(
-        "/level3/version2/core", "/level2/version5"
+    level_two = (
+        _model_xml()
+        .replace('level="3" version="2"', 'level="2" version="5"')
+        .replace("/level3/version2/core", "/level2/version5")
     )
+
     with pytest.raises(SBMLImportError, match="Level 3 Version 2"):
         parse_sbml(level_two)
 

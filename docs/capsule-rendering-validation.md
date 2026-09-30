@@ -8,10 +8,10 @@ The replacement uses an open cylinder and two hemispheres, all sharing the cell 
 
 These are unmodified screenshots from `viewer/browser/capsules.mjs`, using the same geometry fixtures, camera, lights, colors, browser, and viewport. The baseline renderer was recorded before the implementation changed. Neither image comes from a different simulation trajectory.
 
-| Fixture | Before | After |
-| --- | --- | --- |
+| Fixture                              | Before                                                                                | After                                                              |
+| ------------------------------------ | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | Isolated rod, arbitrary 3D direction | ![Baseline isolated rod with a visible cap join](assets/capsules/isolated-before.png) | ![Continuous isolated capsule](assets/capsules/isolated-after.png) |
-| Dense colony, near view | ![Baseline cap rings throughout the colony](assets/capsules/colony-before.png) | ![Colony without the cap rings](assets/capsules/colony-after.png) |
+| Dense colony, near view              | ![Baseline cap rings throughout the colony](assets/capsules/colony-before.png)        | ![Colony without the cap rings](assets/capsules/colony-after.png)  |
 
 The cap-join lines disappear at the same camera positions in the near and distant fixtures. The browser harness also records 48 frames of prescribed changes in position and orientation, so the surface can be inspected during movement. Silhouette tessellation, pixel aliasing, and real motion remain possible; this change does not smooth simulation state or claim to eliminate every source of shimmer.
 
@@ -23,17 +23,17 @@ The Vitest geometry suite checks matched seam positions/normals, outward-facing 
 
 Both comparisons ran on macOS in headless Chromium `153.0.8010.12`, with the same browser launch configuration. The corrected run reports ANGLE/Vulkan SwiftShader: these are **software WebGL measurements**, not physical GPU performance results. The fixture uses 512 cells, ten warmup frames, and 60 measured complete frame replacements, including transforms, coloring, rendering, and `gl.finish()` synchronization. Small timing differences are within local measurement noise.
 
-| Measurement | Before | After |
-| --- | ---: | ---: |
-| Instanced draw calls for the colony | 3 | 3 |
-| Shared geometry vertices (cylinder + both caps) | 388 | 400 |
-| Triangles per cell | 504 | 576 |
-| Triangles for 512 cells | 258,048 | 294,912 |
-| Median replacement/render time | 2.2 ms | 2.1 ms |
-| p95 replacement/render time | 2.4 ms | 2.4 ms |
-| Renderer geometry count at both sampled frames | 4 | 4 |
+| Measurement                                       |    Before |   After |
+| ------------------------------------------------- | --------: | ------: |
+| Instanced draw calls for the colony               |         3 |       3 |
+| Shared geometry vertices (cylinder + both caps)   |       388 |     400 |
+| Triangles per cell                                |       504 |     576 |
+| Triangles for 512 cells                           |   258,048 | 294,912 |
+| Median replacement/render time                    |    2.2 ms |  2.1 ms |
+| p95 replacement/render time                       |    2.4 ms |  2.4 ms |
+| Renderer geometry count at both sampled frames    |         4 |       4 |
 | Tracked live WebGL buffers across 59 replacements | 390 → 744 | 18 → 18 |
-| Tracked buffers after an empty frame | 732 | 0 |
+| Tracked buffers after an empty frame              |       732 |       0 |
 
 The geometry count alone concealed an existing resource leak: removing an instanced mesh and disposing its geometry did not release `instanceMatrix` and `instanceColor` buffers. Frame replacement now calls `InstancedMesh.dispose()` as well as disposing each shared geometry/material once. Browser instrumentation observes actual WebGL buffer creation/deletion; buffers remain bounded across replacements and return to zero after clearing the colony and disposing the viewer.
 

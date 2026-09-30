@@ -50,6 +50,7 @@ def _instruction(
     instruction.second = second
     instruction.third = third
     instruction.value = value
+
     return instruction
 
 
@@ -121,6 +122,7 @@ def _make_simulation() -> tuple[Simulation, int, int]:
     simulation.step(0.125)
     daughter_a, daughter_b = simulation.divide_equal(first_id)
     simulation.step(0.03125)
+
     return simulation, daughter_a, daughter_b
 
 
@@ -132,11 +134,14 @@ def _assert_cells_exact(
     assert actual.signal_count == expected.signal_count
     assert actual.has_signal_grid == expected.has_signal_grid
     assert actual.has_coupled_rate_plan == expected.has_coupled_rate_plan
+
     if actual.has_signal_grid:
         assert actual.signal_levels == expected.signal_levels
+
     actual_cells = actual.cells()
     expected_cells = expected.cells()
     assert len(actual_cells) == len(expected_cells)
+
     for left, right in zip(actual_cells, expected_cells, strict=True):
         assert left.id == right.id
         assert left.slot == right.slot
@@ -154,8 +159,10 @@ def _assert_cells_exact(
         assert left.radius == right.radius
         assert left.growth_rate == right.growth_rate
         assert left.cell_type == right.cell_type
+
         if compare_fixed:
             assert left.fixed == right.fixed
+
         assert left.species == right.species
 
 
@@ -183,6 +190,7 @@ def _remove_fixed_fields(document: dict[str, Any]) -> None:
 
 def _remove_affine_reaction(document: dict[str, Any]) -> None:
     grid = document["simulation"]["signal_grid"]
+
     if grid is not None:
         del grid["spec"]["reaction"]
 
@@ -194,6 +202,7 @@ def _remove_constraint_boxes(document: dict[str, Any]) -> None:
 
 def _remove_grid_obstacles(document: dict[str, Any]) -> None:
     grid = document["simulation"].get("signal_grid")
+
     if grid is not None:
         del grid["spec"]["obstacles"]
         del grid["spec"]["velocity_field"]
@@ -253,6 +262,7 @@ def test_checkpoint_bundle_reports_validated_source_metadata(tmp_path: Path) -> 
     document = _document(path)
     document["source_backend"]["kind"] = "opencl"
     path.write_text(json.dumps(document), encoding="utf-8")
+
     with pytest.raises(CheckpointError, match="unknown backend kind"):
         load_checkpoint_bundle(path)
 
@@ -263,6 +273,7 @@ def test_version_one_checkpoint_migrates_to_an_empty_signal_state(tmp_path: Path
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 1
+    document["simulation"].pop("culture", None)
     del document["channel_metadata"]
     del document["integrity"]["channel_metadata"]
     del document["controller"]
@@ -286,6 +297,7 @@ def test_version_two_checkpoint_migrates_without_a_coupled_plan(tmp_path: Path) 
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 2
+    document["simulation"].pop("culture", None)
     del document["channel_metadata"]
     del document["integrity"]["channel_metadata"]
     del document["controller"]
@@ -311,6 +323,7 @@ def test_version_three_checkpoint_migrates_without_controller_state(tmp_path: Pa
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 3
+    document["simulation"].pop("culture", None)
     del document["channel_metadata"]
     del document["integrity"]["channel_metadata"]
     del document["controller"]
@@ -336,6 +349,7 @@ def test_version_four_signal_grid_migrates_to_forward_euler(tmp_path: Path) -> N
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 4
+    document["simulation"].pop("culture", None)
     del document["channel_metadata"]
     del document["integrity"]["channel_metadata"]
     del document["simulation"]["signal_grid"]["spec"]["integration"]
@@ -358,6 +372,7 @@ def test_version_five_cells_migrate_to_movable(tmp_path: Path) -> None:
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 5
+    document["simulation"].pop("culture", None)
     del document["channel_metadata"]
     del document["integrity"]["channel_metadata"]
     _remove_affine_reaction(document)
@@ -376,6 +391,7 @@ def test_version_six_signal_grid_migrates_without_affine_reactions(tmp_path: Pat
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 6
+    document["simulation"].pop("culture", None)
     del document["channel_metadata"]
     del document["integrity"]["channel_metadata"]
     _remove_affine_reaction(document)
@@ -395,6 +411,7 @@ def test_version_seven_checkpoint_migrates_without_boxes(tmp_path: Path) -> None
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 7
+    document["simulation"].pop("culture", None)
     del document["channel_metadata"]
     del document["integrity"]["channel_metadata"]
     _remove_constraint_boxes(document)
@@ -474,6 +491,7 @@ def test_affine_grid_reaction_round_trips_exactly(tmp_path: Path) -> None:
     invalid = _document(path)
     invalid["simulation"]["signal_grid"]["spec"]["reaction"]["loss_rates"][0] = -0.5
     _rewrite_with_state_digest(path, invalid)
+
     with pytest.raises(CheckpointError, match="affine loss rates"):
         load_checkpoint(path)
 
@@ -522,12 +540,14 @@ def test_controller_state_is_authenticated_and_cannot_be_silently_discarded(
     assert bundle.controller == controller
     assert bundle.provenance == {"model": "controlled-test"}
     _assert_cells_exact(bundle.simulation, simulation)
+
     with pytest.raises(CheckpointError, match="controller state"):
         load_checkpoint(path)
 
     document = _document(path)
     document["controller"]["cells"]["2"]["threshold"] = 4.0
     path.write_text(json.dumps(document), encoding="utf-8")
+
     with pytest.raises(CheckpointError, match="controller digest"):
         load_checkpoint_bundle(path)
 
@@ -575,6 +595,7 @@ def test_coupled_plan_round_trip_is_exact(tmp_path: Path) -> None:
     invalid = _document(path)
     invalid["simulation"]["coupled_rate_plan"]["signal_outputs"] = []
     _rewrite_with_state_digest(path, invalid)
+
     with pytest.raises(CheckpointError, match="coupled signal output count"):
         load_checkpoint(path)
 
@@ -587,6 +608,7 @@ def test_checkpoint_rejects_corruption_and_invalid_state(tmp_path: Path) -> None
     corrupted = _document(path)
     corrupted["simulation"]["world"]["cells"][0]["length"] = 99.0
     path.write_text(json.dumps(corrupted), encoding="utf-8")
+
     with pytest.raises(CheckpointError, match="digest"):
         load_checkpoint(path)
 
@@ -594,6 +616,7 @@ def test_checkpoint_rejects_corruption_and_invalid_state(tmp_path: Path) -> None
     invalid = _document(path)
     invalid["simulation"]["world"]["cells"][0]["slot"] = 7
     _rewrite_with_state_digest(path, invalid)
+
     with pytest.raises(CheckpointError, match="slots"):
         load_checkpoint(path)
 
@@ -601,6 +624,7 @@ def test_checkpoint_rejects_corruption_and_invalid_state(tmp_path: Path) -> None
     unsupported = _document(path)
     unsupported["version"] = CHECKPOINT_VERSION + 1
     path.write_text(json.dumps(unsupported), encoding="utf-8")
+
     with pytest.raises(CheckpointError, match="unsupported checkpoint version"):
         load_checkpoint(path)
 
@@ -608,6 +632,7 @@ def test_checkpoint_rejects_corruption_and_invalid_state(tmp_path: Path) -> None
     unknown = _document(path)
     unknown["simulation"]["world"]["mystery"] = 1
     _rewrite_with_state_digest(path, unknown)
+
     with pytest.raises(CheckpointError, match="unknown keys"):
         load_checkpoint(path)
 
@@ -615,14 +640,18 @@ def test_checkpoint_rejects_corruption_and_invalid_state(tmp_path: Path) -> None
 def test_checkpoint_rejects_executable_or_non_json_values(tmp_path: Path) -> None:
     simulation, _, _ = _make_simulation()
     path = tmp_path / "colony.cm2.json"
+
     with pytest.raises(CheckpointError, match="provenance"):
         save_checkpoint(simulation, path, provenance={"callback": object()})  # type: ignore[dict-item]
+
     assert not path.exists()
 
     path.write_text('{"format":"microsimulator-checkpoint","value":NaN}', encoding="utf-8")
+
     with pytest.raises(CheckpointError, match="non-finite"):
         load_checkpoint(path)
 
     path.write_text('{"format":"first","format":"second"}', encoding="utf-8")
+
     with pytest.raises(CheckpointError, match="duplicate key"):
         load_checkpoint(path)

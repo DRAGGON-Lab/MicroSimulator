@@ -27,6 +27,7 @@ def build(context: ModelContext) -> NativeController:
     cell.length = 2.0
     cell.species = [0.25, 0.75]
     simulation.add_cell(cell)
+
     return NativeController(
         simulation,
         model_id="named-channels",

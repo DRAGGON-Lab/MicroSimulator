@@ -55,6 +55,26 @@ class Result:
     growth_rate: list[float]
 
 
+def _penetration_half(y, profile, h: float) -> float:
+    # Boundary sample follows the ghost-center discretization above.
+    # First downstream crossing, with no assumption of monotonicity farther on.
+    previous_y, previous_c = -h / 2, 1.0
+    penetration = LENGTH
+
+    for yy, cc in zip(y, profile, strict=True):
+        coordinate, concentration = float(yy), float(cc)
+
+        if concentration <= 0.5:
+            penetration = previous_y + (coordinate - previous_y) * (previous_c - 0.5) / (
+                previous_c - concentration
+            )
+            break
+
+        previous_y, previous_c = coordinate, concentration
+
+    return penetration
+
+
 def run(h: float, dt: float, refresh: float, duration: float, backend: BackendKind) -> Result:
     nx, ny = round(WIDTH / h), round(LENGTH / h)
     spec = duct_grid(nx, ny, 1, (h, h, HEIGHT))
@@ -68,12 +88,14 @@ def run(h: float, dt: float, refresh: float, duration: float, backend: BackendKi
     spec.velocity_field = field
     sim.configure_signal_grid(spec, [0] * spec.site_count)
     ids: list[int] = []
+
     for x in (3, 6.5, 10, 13.5, 17):
         for y in (3, 7, 11, 15, 19, 23, 27, 31, 35):
             cell = CellInit()
             cell.position = Vec3(x, y, HEIGHT / 2)
             cell.length, cell.radius, cell.growth_rate, cell.fixed = 2, RADIUS, 0, True
             ids.append(sim.add_cell(cell))
+
     cells = sim.cells()
     initial = np.array([biomass_volume(c.length, c.radius) for c in cells], dtype=np.float64)
     # K_i integrates to one. The exact voxel-integrated physical kernel is
@@ -91,11 +113,14 @@ def run(h: float, dt: float, refresh: float, duration: float, backend: BackendKi
     boundary_supply = 0.0
     next_refresh = 0.0
     steps = round(duration / dt)
+
     if not math.isclose(steps * dt, duration, abs_tol=1e-7):
         raise ValueError("duration must be an integer number of steps")
+
     for step in range(steps):
         time = step * dt
         cells = sim.cells()
+
         if time + 1e-9 >= next_refresh:
             mobility = colony_mobility(
                 spec, cells, drag_coefficient=DRAG, averaging_radius=AVERAGING_RADIUS
@@ -105,6 +130,7 @@ def run(h: float, dt: float, refresh: float, duration: float, backend: BackendKi
             )
             sim.set_velocity_field(field)
             next_refresh += refresh
+
         old = np.asarray(sim.signal_levels, dtype=np.float64)
         mean = weights @ old
         cylinder = np.array([math.pi * c.radius**2 * c.length for c in cells])
@@ -116,9 +142,11 @@ def run(h: float, dt: float, refresh: float, duration: float, backend: BackendKi
         sim.step(dt)
         new = np.asarray(sim.signal_levels, dtype=np.float64)
         consumed = dt * coefficient * (weights @ new)
+
         for cid, cell, amount in zip(ids, cells, consumed, strict=True):
             length = cell.length + YIELD * float(amount) / (math.pi * cell.radius**2)
             sim.set_cell_geometry(cid, cell.position, cell.direction, length)
+
         # Exact discrete BE boundary flux convention used by engine transport:
         # boundary values are ghost-center concentrations, one h from a site.
         concentration = new.reshape(nx, ny)
@@ -126,27 +154,19 @@ def run(h: float, dt: float, refresh: float, duration: float, backend: BackendKi
         influx = DIFFUSION / h * (1 - concentration[:, 0]) + y_faces[:, 0]
         outflux = DIFFUSION / h * concentration[:, -1] + y_faces[:, -1] * concentration[:, -1]
         boundary_supply += dt * h * HEIGHT * float((influx - outflux).sum())
+
     final_cells = sim.cells()
     final = np.array([biomass_volume(c.length, c.radius) for c in final_cells])
     nutrient = np.asarray(sim.signal_levels, dtype=np.float64).reshape(nx, ny)
     profile = nutrient.mean(axis=0)
     y = (np.arange(ny) + 0.5) * h
-    # Boundary sample follows the ghost-center discretization above.
-    # First downstream crossing, with no assumption of monotonicity farther on.
-    previous_y, previous_c = -h / 2, 1.0
-    penetration = LENGTH
-    for yy, cc in zip(y, profile, strict=True):
-        coordinate, concentration = float(yy), float(cc)
-        if concentration <= 0.5:
-            penetration = previous_y + (coordinate - previous_y) * (previous_c - 0.5) / (
-                previous_c - concentration
-            )
-            break
-        previous_y, previous_c = coordinate, concentration
+    penetration = _penetration_half(y, profile, h)
+
     growth = (final - initial) / (duration * initial)
     gain = float((final - initial).sum())
     nutrient_amount = float(nutrient.sum()) * volume
     balance = abs(nutrient_amount + gain / YIELD - boundary_supply) / max(boundary_supply, 1e-12)
+
     return Result(
         h,
         dt,
@@ -183,6 +203,7 @@ def main() -> None:
         (1.0, 0.04, 0.2),
     ]
     results: list[Result] = []
+
     for case in cases:
         result = run(*case, args.duration, backend)
         print(
@@ -192,8 +213,10 @@ def main() -> None:
             flush=True,
         )
         results.append(result)
+
     base = results[1]
     comparisons: dict[str, dict[str, float]] = {}
+
     for label, other in [
         ("grid_2_to_1", results[0]),
         ("grid_1_to_half", results[2]),
@@ -205,6 +228,7 @@ def main() -> None:
             / max(abs(getattr(base, metric)), 1e-12)
             for metric in ("biomass_gain", "penetration_half", "upstream_growth")
         }
+
     checks: dict[str, bool] = {
         "mass_balance": max(r.balance_relative_error for r in results) < 2e-4,
         "spatial_growth": base.upstream_growth > 3 * base.downstream_growth,
@@ -230,6 +254,7 @@ def main() -> None:
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2) + "\n")
+
     if not all(checks.values()):
         raise SystemExit(f"Nutrient validation failed: {checks}")
 

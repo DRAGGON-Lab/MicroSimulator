@@ -32,11 +32,13 @@ def _line_spec(length: int = 3) -> SignalGridSpec:
     spec.shape = shape
     spec.diffusion = [1.0]
     spec.advection = [Vec3()]
+
     return spec
 
 
 def _assert_levels(actual: list[float], expected: list[float]) -> None:
     assert len(actual) == len(expected)
+
     for left, right in zip(actual, expected, strict=True):
         assert math.isclose(left, right, rel_tol=1.0e-6, abs_tol=1.0e-6)
 
@@ -46,6 +48,7 @@ def _instruction(operation: RateOp, *, first: int = 0, value: float = 0.0) -> Ra
     instruction.operation = operation
     instruction.first = first
     instruction.value = value
+
     return instruction
 
 
@@ -63,10 +66,13 @@ def test_cpu_signal_transport_sampling_and_stability() -> None:
     assert math.isclose(sum(simulation.signal_levels), 1.0)
     before = simulation.signal_levels
     before_time = simulation.time
+
     with pytest.raises(ValueError, match="stability"):
         simulation.step(0.51)
+
     assert simulation.signal_levels == before
     assert simulation.time == before_time
+
     with pytest.raises(IndexError, match="outside"):
         simulation.sample_signals(Vec3(3.0, 0.0, 0.0))
 
@@ -121,6 +127,7 @@ def _uptake_removed(background: float, integration: SignalIntegrationKind) -> fl
 
     before = sum(simulation.signal_levels)
     simulation.step(0.02)
+
     return (before - sum(simulation.signal_levels)) * spec.voxel_volume
 
 
@@ -159,6 +166,7 @@ def test_a_source_below_the_field_noise_commits_a_converged_step() -> None:
 def test_cell_sources_match_their_declared_amount() -> None:
     cell_volume = math.pi * 0.5**2 * (2.6 + 2.0 * 0.5)
     expected = 0.02 * 0.667 * cell_volume
+
     for integration in (
         SignalIntegrationKind.FORWARD_EULER,
         SignalIntegrationKind.CRANK_NICOLSON,
@@ -197,11 +205,14 @@ def test_gpu_signal_paths_are_native_or_fail_before_mutation() -> None:
     reference = Simulation()
     reference.configure_signal_grid(spec, [0.0, 1.0, 0.0])
     reference.step(0.25)
+
     for backend in (BackendKind.METAL, BackendKind.CUDA):
         if not backend_available(backend):
             continue
+
         simulation = Simulation(backend)
         simulation.configure_signal_grid(spec, [0.0, 1.0, 0.0])
+
         if simulation.supports(BackendFeature.SIGNALS):
             simulation.step(0.25)
             _assert_levels(simulation.signal_levels, reference.signal_levels)
@@ -209,6 +220,7 @@ def test_gpu_signal_paths_are_native_or_fail_before_mutation() -> None:
         else:
             with pytest.raises(RuntimeError, match="does not implement signal grid"):
                 simulation.step(0.25)
+
             assert simulation.time == 0.0
             assert simulation.signal_levels == [0.0, 1.0, 0.0]
 
@@ -217,6 +229,7 @@ def test_gpu_coupling_is_native_or_fails_before_growth() -> None:
     for backend in BackendKind:
         if not backend_available(backend):
             continue
+
         simulation = Simulation(backend, species_count=1)
         simulation.configure_signal_grid(_line_spec(), [0.0, 1.0, 0.0])
         cell = CellInit()
@@ -236,6 +249,7 @@ def test_gpu_coupling_is_native_or_fails_before_growth() -> None:
                 [1],
             )
         )
+
         if simulation.supports(BackendFeature.COUPLED_RATES):
             simulation.step(0.25)
             assert math.isclose(simulation.cell(cell_id).species[0], 1.25)
@@ -243,6 +257,7 @@ def test_gpu_coupling_is_native_or_fails_before_growth() -> None:
         else:
             with pytest.raises(RuntimeError, match="does not implement coupled rates"):
                 simulation.step(0.25)
+
             assert simulation.cell(cell_id).species == [1.0]
             assert simulation.signal_levels == [0.0, 1.0, 0.0]
 
@@ -251,13 +266,16 @@ def test_native_coupling_handles_empty_grids_and_atomic_failure() -> None:
     for backend in BackendKind:
         if not backend_available(backend):
             continue
+
         empty = Simulation(backend)
         empty.configure_signal_grid(_line_spec(), [0.0, 1.0, 0.0])
         empty.set_coupled_rate_plan(
             CoupledRatePlan(0, 1, [_instruction(RateOp.CONSTANT, value=0.0)], [], [0])
         )
+
         if not empty.supports(BackendFeature.COUPLED_RATES):
             continue
+
         empty.step(0.25)
         _assert_levels(empty.signal_levels, [0.25, 0.5, 0.25])
 
@@ -282,8 +300,10 @@ def test_native_coupling_handles_empty_grids_and_atomic_failure() -> None:
                 [1],
             )
         )
+
         with pytest.raises(ValueError, match=r"negative|invalid"):
             failing.step(0.25)
+
         assert failing.cell(cell_id).species == [2.0]
         assert failing.signal_levels == [0.0, 0.0, 0.0]
         assert failing.time == 0.0

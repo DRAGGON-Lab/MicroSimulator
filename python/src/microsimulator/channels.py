@@ -27,15 +27,19 @@ class ChannelMetadata:
     def __post_init__(self) -> None:
         for kind in ("species", "signals"):
             labels = cast(object, getattr(self, kind))
+
             if labels is None:
                 continue
+
             if not isinstance(labels, tuple):
                 raise ChannelMetadataError(f"channel_metadata.{kind}: expected a tuple or None")
+
             for index, label in enumerate(cast(tuple[object, ...], labels)):
                 if label is not None and not isinstance(label, str):
                     raise ChannelMetadataError(
                         f"channel_metadata.{kind}[{index}]: expected a string or None"
                     )
+
                 if isinstance(label, str):
                     try:
                         label.encode("utf-8")
@@ -48,6 +52,7 @@ class ChannelMetadata:
         """Validate explicit counts and expand unspecified groups to null labels."""
 
         groups: list[tuple[str | None, ...]] = []
+
         for kind, labels, count in (
             ("species", self.species, species_count),
             ("signals", self.signals, signal_count),
@@ -56,11 +61,14 @@ class ChannelMetadata:
                 raise ChannelMetadataError(
                     f"channel_metadata.{kind}: expected {count} labels, got {len(labels)}"
                 )
+
             groups.append((None,) * count if labels is None else labels)
+
         return ChannelMetadata(species=groups[0], signals=groups[1])
 
     def to_json(self, species_count: int, signal_count: int) -> dict[str, JSONValue]:
         labels = self.resolved(species_count, signal_count)
+
         return {"species": list(labels.species or ()), "signals": list(labels.signals or ())}
 
     @classmethod
@@ -72,13 +80,18 @@ class ChannelMetadata:
             "signals",
         }:
             raise ChannelMetadataError("channel_metadata: expected exactly species and signals")
+
         data = cast(dict[str, object], value)
         groups: list[tuple[str | None, ...]] = []
+
         for kind in ("species", "signals"):
             values = data[kind]
+
             if not isinstance(values, list):
                 raise ChannelMetadataError(f"channel_metadata.{kind}: expected an array")
+
             groups.append(cast(tuple[str | None, ...], tuple(cast(list[object], values))))
+
         return cls(species=groups[0], signals=groups[1]).resolved(species_count, signal_count)
 
 

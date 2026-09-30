@@ -43,6 +43,7 @@ const results = [];
 try {
   for (const mode of ["paused", "playing", "reconnect", "interrupt"]) {
     if (mode === "interrupt" && process.platform === "win32") continue;
+
     const child = spawn(
       python,
       [
@@ -99,6 +100,7 @@ try {
     await page.goto(url);
     await expect(page.locator("#live-label")).toHaveText("Paused");
     await expect(page.locator("#live-stop")).toBeEnabled();
+
     if (mode === "reconnect") {
       await page.close();
       // The existing viewer deliberately requires a minimum width of 880px.
@@ -113,17 +115,21 @@ try {
         (await readFile(path.join(temporary, "checkpoint.json"))).length > 100,
       );
     }
+
     if (mode === "playing") {
       await page.locator("#live-play").click();
       await expect(page.locator("#live-label")).toHaveText("Running");
     }
+
     const start = performance.now();
+
     if (mode === "interrupt") {
       child.kill("SIGINT");
     } else {
       await page.locator("#live-stop").focus();
       await page.keyboard.press("Enter");
     }
+
     await expect(page.locator("#live-label")).toHaveText("Stopped", {
       timeout: 5000,
     });
@@ -132,9 +138,11 @@ try {
     assert.ok(toolbar.x >= viewport.x);
     assert.ok(toolbar.x + toolbar.width <= viewport.x + viewport.width);
     await expect(page.locator("#status")).toContainText("Session stopped");
+
     for (const id of ["play", "step", "reset", "checkpoint", "stop"]) {
       await expect(page.locator(`#live-${id}`)).toBeDisabled();
     }
+
     const stopped = await Promise.race([
       exit,
       new Promise((_, reject) => {
@@ -157,6 +165,7 @@ try {
     lines.close();
     processUnderTest = undefined;
   }
+
   assert.deepEqual(errors, []);
   const result = {
     result: "passed",

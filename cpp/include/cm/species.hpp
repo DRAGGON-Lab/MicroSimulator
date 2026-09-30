@@ -73,7 +73,13 @@ class SpeciesRatePlan {
 [[nodiscard]] float effective_cell_volume(float length, float radius) noexcept;
 [[nodiscard]] float effective_cell_surface_area(float length, float radius) noexcept;
 
+struct BiochemicalVolumeView {
+  std::span<const float> previous, current;
+  void validate(std::size_t cell_count) const;
+};
+
 void advance_species_cpu(WorldState& state, const SpeciesRatePlan& plan,
-                         std::span<const float> previous_lengths, float dt);
+                         std::span<const float> previous_lengths, float dt,
+                         BiochemicalVolumeView volumes = {});
 
 }  // namespace cm

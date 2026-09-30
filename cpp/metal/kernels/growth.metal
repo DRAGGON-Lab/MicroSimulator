@@ -9,5 +9,6 @@ kernel void advance_growth(device float* lengths [[buffer(0)]],
   if (index >= count) {
     return;
   }
+
   lengths[index] += growth_rates[index] * lengths[index] * dt;
 }

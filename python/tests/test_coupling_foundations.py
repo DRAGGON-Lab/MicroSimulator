@@ -30,13 +30,16 @@ def linear_flow(*, rotation: bool = False) -> SignalGridSpec:
     spec.shape, spec.origin = shape, Vec3(-4, -4, 0)
     spec.spacing, spec.signal_count = Vec3(1, 1, 1), 1
     spec.diffusion, spec.advection = [0], [Vec3()]
+
     for boundary in (spec.x_lower, spec.x_upper, spec.y_lower, spec.y_upper):
         boundary.kind, boundary.values = GridBoundaryKind.FIXED, [0]
+
     field = SignalGridVelocityField()
     field.x_faces = [float((4 - y) if rotation else (y - 4)) for _ in range(10) for y in range(9)]
     field.y_faces = [float(x - 4) if rotation else 0 for x in range(9) for _ in range(10)]
     field.z_faces = [0] * 162
     spec.velocity_field = field
+
     return spec
 
 
@@ -65,6 +68,7 @@ def test_finite_aspect_jeffery_shear(length: float) -> None:
 
 def test_rigid_rotation_has_second_order_drift_convergence() -> None:
     errors: list[float] = []
+
     for n in (4, 8, 16):
         sim = Simulation()
         sim.configure_signal_grid(linear_flow(rotation=True))
@@ -73,8 +77,10 @@ def test_rigid_rotation_has_second_order_drift_convergence() -> None:
         cid = sim.add_cell(cell)
         parameters = MechanicsIntegrationParameters()
         parameters.max_rotation_radians = 0.5
+
         for _ in range(n):
             sim.apply_flow_drift(0.8 / n, parameters)
+
         final = sim.cell(cid)
         errors.append(
             math.hypot(final.position.x - math.cos(0.8), final.position.y - math.sin(0.8))
@@ -82,6 +88,7 @@ def test_rigid_rotation_has_second_order_drift_convergence() -> None:
         assert (
             math.hypot(final.direction.x - math.cos(0.8), final.direction.y - math.sin(0.8)) < 0.002
         )
+
     assert errors[0] / errors[1] > 3.5
     assert errors[1] / errors[2] > 3.5
 
@@ -93,6 +100,7 @@ def reaction_grid(integration: SignalIntegrationKind) -> SignalGridSpec:
     spec.shape, spec.signal_count = shape, 1
     spec.diffusion, spec.advection = [0], [Vec3()]
     spec.integration = integration
+
     return spec
 
 
@@ -100,6 +108,7 @@ def reaction_grid(integration: SignalIntegrationKind) -> SignalGridSpec:
 def test_backward_euler_stiff_reaction_and_restart(backend: BackendKind, tmp_path: Path) -> None:
     if not backend_available(backend):
         pytest.skip("backend unavailable")
+
     spec = reaction_grid(SignalIntegrationKind.BACKWARD_EULER)
     reaction = SignalGridAffineReaction()
     reaction.loss_rates, reaction.source_rates = [100], [3]
@@ -122,6 +131,7 @@ def test_rejected_uptake_rolls_back_growth_species_and_time(
 ) -> None:
     if not backend_available(backend):
         pytest.skip("backend unavailable")
+
     sim = Simulation(backend, species_count=1)
     sim.configure_signal_grid(reaction_grid(integration), [0.001])
     cell = CellInit()
@@ -131,8 +141,10 @@ def test_rejected_uptake_rolls_back_growth_species_and_time(
     sim.set_coupled_rate_plan(
         rates.coupled_plan(1, 1, (rates.constant(1),), (-rates.cell_volume_change_rate(),))
     )
+
     with pytest.raises((ValueError, RuntimeError)):
         sim.step(1)
+
     assert sim.time == 0
     assert sim.cell(cid).length == cell.length
     assert sim.cell(cid).species == [2]
@@ -147,6 +159,7 @@ def test_rejected_uptake_rolls_back_growth_species_and_time(
 def test_backward_euler_diffusion_is_positive_and_conservative(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("backend unavailable")
+
     spec = reaction_grid(SignalIntegrationKind.BACKWARD_EULER)
     shape = GridShape()
     shape.x, shape.y, shape.z = 2, 1, 1

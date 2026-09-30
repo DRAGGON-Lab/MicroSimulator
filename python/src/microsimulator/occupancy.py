@@ -25,17 +25,22 @@ Array = NDArray[np.float32]
 
 def _array(values: ArrayLike, name: str) -> Array:
     original = np.asarray(values, dtype=np.float64)
+
     with np.errstate(over="ignore", under="ignore", invalid="ignore"):
         result = original.astype(np.float32)
+
     if not np.isfinite(result).all() or np.any((original != 0) & (result == 0)):
         raise ValueError(f"{name} must be finite and representable in float32")
+
     return result
 
 
 def _vector(values: ArrayLike, name: str, count: int | None = None) -> list[float]:
     result = _array(values, name)
+
     if result.ndim != 1 or (count is not None and len(result) != count):
         raise ValueError(f"{name} must be a vector with matching size")
+
     return cast(list[float], result.tolist())
 
 
@@ -46,6 +51,7 @@ def _index(value: int, name: str) -> int:
         or not 0 <= value < 2**32 - 1
     ):
         raise ValueError(f"{name} must be a nonnegative integer below 2**32 - 1")
+
     return value
 
 
@@ -75,7 +81,9 @@ class OccupancySolver:
         if isinstance(backend, str):
             if backend not in ("metal", "cuda"):
                 raise ValueError("native occupancy requires 'metal' or 'cuda'")
+
             backend = BackendKind.METAL if backend == "metal" else BackendKind.CUDA
+
         self._native = NativeOccupancySolver(
             backend, _index(device_index, "device index"), epsilon_cutoff
         )
@@ -99,6 +107,7 @@ class OccupancySolver:
     @property
     def last_report(self) -> SolverReport | None:
         """Report from the last successfully returned backward-Euler candidate."""
+
         return self._last_report
 
     def geometric_porosity(
@@ -112,14 +121,20 @@ class OccupancySolver:
     ) -> Array:
         """Midpoint capsule-union quadrature; m is restricted to 1..256."""
         points = _array(centers, "centers")
+
         if points.ndim != 2 or points.shape[1] != 3:
             raise ValueError("centers must be finite N by 3 coordinates")
+
         mask: list[int] = []
+
         if walls is not None:
             solid = np.asarray(walls)
+
             if solid.shape != (len(points),) or solid.dtype != np.bool_:
                 raise ValueError("walls must contain one Boolean per voxel")
+
             mask = solid.astype(np.uint32).tolist()
+
         return np.asarray(
             self._native.geometric_porosity(
                 cast(list[tuple[float, float, float]], points.tolist()),
@@ -168,6 +183,7 @@ class OccupancySolver:
             distance,
             intrinsic_velocity,
         )
+
         return Face(face.first, face.second, face.conductance, face.volume_flux)
 
     def remap_amounts(
@@ -189,6 +205,7 @@ class OccupancySolver:
 
     def exchange_weights(self, kernel: ArrayLike, volume: ArrayLike) -> Array:
         """Normalize phi*W on caller-supplied, already connected physical support."""
+
         return np.asarray(
             self._native.exchange_weights(_vector(kernel, "kernel"), _vector(volume, "volume")),
             dtype=np.float32,
@@ -242,6 +259,7 @@ class OccupancySolver:
         )
         balance = result.balance
         self._last_report = SolverReport(result.iterations, result.relative_residual)
+
         return np.asarray(result.amount, dtype=np.float32), Balance(
             balance.before, balance.after, balance.source, balance.reaction, balance.boundary
         )

@@ -38,11 +38,13 @@ struct OccupancyParameters {
   std::uint32_t count{0}, auxiliary{0}, subdivisions{0}, absolute{0};
   float scalar{0}, cutoff{0}, hx{0}, hy{0}, hz{0};
 };
+
 static_assert(sizeof(OccupancyParameters) == 36);
 
 struct OccupancyBuffer {
   virtual ~OccupancyBuffer() = default;
 };
+
 using OccupancyBufferPtr = std::shared_ptr<OccupancyBuffer>;
 
 class OccupancyDevice {
@@ -58,10 +60,15 @@ class OccupancyDevice {
   OccupancyBufferPtr upload(const std::vector<T>& values) {
     return allocate(values.size() * sizeof(T), values.empty() ? nullptr : values.data());
   }
+
   template <class T>
   std::vector<T> download(const OccupancyBufferPtr& buffer, std::size_t count) {
     std::vector<T> result(count);
-    if (count) read(buffer, result.data(), count * sizeof(T));
+
+    if (count) {
+      read(buffer, result.data(), count * sizeof(T));
+    }
+
     return result;
   }
 };

@@ -42,9 +42,11 @@ describe("dataset presentation lifecycle", () => {
     const state = new DatasetPresentationState();
     state.beginDataset();
     state.preferences.deviceVisible = false;
+
     for (const time of [0, 2, 1, 0]) {
       expect(state.forFrame({ ...frame, time }).deviceVisible).toBe(false);
     }
+
     state.beginDataset();
     expect(state.forFrame(frame).deviceVisible).toBe(true);
   });
@@ -71,6 +73,7 @@ describe("dataset presentation lifecycle", () => {
       signalAxis: "x",
       signalSlice: 3,
     });
+
     for (const time of [1, 100, 0, 20, 2]) {
       expect(state.forFrame({ ...frame, time })).toMatchObject({
         colorMode: "growth-rate",
@@ -80,6 +83,7 @@ describe("dataset presentation lifecycle", () => {
       });
       expect(state.datasetId).toBe(1);
     }
+
     state.beginDataset();
     expect(state.datasetId).toBe(2);
     expect(state.forFrame(frame)).toEqual({

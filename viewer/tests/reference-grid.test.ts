@@ -170,6 +170,7 @@ describe("reference grid dataset lifecycle", () => {
         value.position[1] - value.extent / 2 + i * value.spacing,
         value.position[2],
       ]);
+
     for (const next of changedFrames) {
       expect(grid.forFrame(next)).toBe(initial);
       expect(intersections(grid.forFrame(next))).toEqual(

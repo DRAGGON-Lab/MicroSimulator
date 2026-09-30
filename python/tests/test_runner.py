@@ -130,9 +130,9 @@ def test_batch_library_is_deterministic_and_preflights_outputs(tmp_path: Path) -
 
     document = _document(output)
     assert document["provenance"]["model"]["seed"] == 1234
-    assert document["provenance"]["model"]["sha256"] == hashlib.sha256(
-        model.read_bytes()
-    ).hexdigest()
+    assert (
+        document["provenance"]["model"]["sha256"] == hashlib.sha256(model.read_bytes()).hexdigest()
+    )
     assert document["provenance"]["run"] == {
         "completed_steps": 3,
         "dt": 0.1,
@@ -143,8 +143,10 @@ def test_batch_library_is_deterministic_and_preflights_outputs(tmp_path: Path) -
     }
 
     original_bytes = output.read_bytes()
+
     with pytest.raises(BatchError, match="already exists"):
         run_simulation(simulation, steps=0, dt=0.1, output=output)
+
     assert output.read_bytes() == original_bytes
 
     second, second_provenance = build_model(
@@ -354,6 +356,7 @@ def test_cell_count_threshold_can_finish_before_the_first_step(
 @pytest.mark.parametrize("threshold", [0, -1, True, 1 << 64])
 def test_cell_count_threshold_must_be_positive_uint64(tmp_path: Path, threshold: int) -> None:
     simulation = ModelContext(BackendKind.CPU, 0, seed=0).simulation()
+
     with pytest.raises(BatchError, match="positive uint64"):
         run_simulation(
             simulation,
@@ -414,9 +417,10 @@ def test_cli_runs_models_resumes_and_lists_devices(
     assert status == 0
     assert math.isclose(load_checkpoint(resumed).time, 1.0)
     resume_document = _document(resumed)
-    assert resume_document["provenance"]["resume"]["sha256"] == hashlib.sha256(
-        first.read_bytes()
-    ).hexdigest()
+    assert (
+        resume_document["provenance"]["resume"]["sha256"]
+        == hashlib.sha256(first.read_bytes()).hexdigest()
+    )
     capsys.readouterr()
 
     status = main(["devices", "--json"])

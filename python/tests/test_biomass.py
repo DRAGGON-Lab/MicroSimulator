@@ -48,6 +48,7 @@ def test_realized_growth_consumes_exactly_its_yield_on_every_backend(
 ) -> None:
     if not backend_available(backend):
         pytest.skip("backend unavailable")
+
     simulation = Simulation(backend, species_count=1)
     spec = SignalGridSpec()
     spec.integration = integration
@@ -65,6 +66,7 @@ def test_realized_growth_consumes_exactly_its_yield_on_every_backend(
     cell.length, cell.radius, cell.growth_rate, cell.species = 2, 0.5, 0.7, [3]
     cid = simulation.add_cell(cell)
     initial = biomass_volume(cell.length, cell.radius)
+
     for dt in [0, 0.03, 0.1, 0.2]:
         simulation.step(dt)
         current = simulation.cell(cid)
@@ -72,6 +74,7 @@ def test_realized_growth_consumes_exactly_its_yield_on_every_backend(
         consumed = (10 - simulation.signal_levels[0]) * spec.voxel_volume
         assert math.isclose(0.4 * consumed, volume - initial, abs_tol=3e-5)
         assert math.isclose(current.species[0] * volume, 3 * initial, rel_tol=2e-6)
+
     save_checkpoint(simulation, tmp_path / "biomass.json")
     restored = load_checkpoint(tmp_path / "biomass.json", backend=backend)
     simulation.step(0.02)

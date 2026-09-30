@@ -20,6 +20,18 @@ Open the local URL printed by Vite and load `viewer-demo.scene.json`. The viewer
 
 ## Run a live session
 
+Start with the [mother-machine example](../examples/mother_machine.py). Six narrow, closed-ended growth channels open into a perfusion channel. Each starts with seven rod-shaped cells. Cells grow, divide, and push their neighbors toward the opening; descendants entering the perfusion channel move downstream and are removed near the outlet. Every cell is movable. Device walls and cell contacts retain the closed-end lineage.
+
+The growth channels use the 25 × 1.5 × 1.4 µm dimensions reported by Wang et al. (2010). The perfusion channel and array layout are compact modeling choices. A native shallow-flow solve supplies a steady velocity field, and native transport carries dye and nutrient through the device. Nutrient availability regulates growth and cells consume nutrient as they elongate. See the [mother-machine guide](../docs/tutorials/mother-machine.md) for the experimental source, parameters, lineage tracking, and numerical limits.
+
+The command below explicitly accelerates growth for interactive viewing. Without the `growth_rate` override, the maximum elongation rate is ln(2)/1800 per second. Colors under **Cell type** distinguish the tracked closed-end lineages (type 0) from other cells (type 1). Choose **Nutrient** to inspect substrate delivery or **Growth rate** to inspect cell growth. Add `--parameter cells=false` for a transport-only run.
+
+```console
+uv run --no-sync microsimulator view --model examples/mother_machine.py --parameter growth_rate=0.3 --backend cpu --seed 42 --dt 0.025 --frame-steps 2 --fps 20 --viewer-dist viewer/dist --open
+```
+
+Click **Play**, keep **Show signal grid** and **Show device geometry** enabled, and select **XY plane (Z)** at slice **1** (the growth-channel height). Dyed and clear medium alternate every three seconds: flow carries the pulses along the perfusion channel, and diffusion carries dye into the dead ends. **Reset** restores the seeded channels and restarts the pulses. The viewer displays dye transport; it does not currently draw velocity arrows or streamlines.
+
 From the repository root:
 
 ```console
@@ -77,6 +89,8 @@ Cell IDs remain decimal strings throughout the browser because their unsigned 64
 
 ## Validate
 
+`pnpm --dir viewer format` applies the shared repository formatter to the viewer. `format:check` checks formatting, logical paragraph spacing, lint, and function limits without rewriting files; see [CONTRIBUTING.md](../CONTRIBUTING.md).
+
 ```console
 pnpm --dir viewer format:check
 pnpm --dir viewer check
@@ -108,7 +122,7 @@ Settings belong to the numerical species or signal channel within the current da
 
 ## Channel labels
 
-Model-defined species and signal names appear in channel selectors, the species legend, and cell inspection. Duplicate names include their channel indices; unnamed channels retain `Channel N`. Names are presentation text; indices continue to identify selected channels. Current readers accept scene v2 and v3, while writers emit v3. See the [authoring guide](../docs/models/channel-labels.md) and [scene v3 schema](../docs/formats/scene-v3.md).
+Model-defined species and signal names appear in channel selectors, the species legend, and cell inspection. Duplicate names include their channel indices; unnamed channels retain `Channel N`. Names are presentation text; indices continue to identify selected channels. Current readers accept scene v2, v3, and v4, while writers emit v4. See the [authoring guide](../docs/models/channel-labels.md) and [scene v4 schema](../docs/formats/scene-v4.md).
 
 ### Device geometry visibility
 

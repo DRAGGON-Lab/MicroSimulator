@@ -20,13 +20,16 @@ const FRAME = {
 
 async function scene(): Promise<Record<string, unknown>> {
   const canonical = canonicalize(FRAME);
+
   if (canonical === undefined) {
     throw new Error("fixture is not canonicalizable");
   }
+
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(canonical),
   );
+
   return {
     format: "microsimulator-scene",
     version: 2,
@@ -54,6 +57,7 @@ describe("live viewer protocol", () => {
       }),
     );
     expect(message.type).toBe("frame");
+
     if (message.type === "frame") {
       expect(message.revision).toBe(2);
       expect(message.completedSteps).toBe(8);
@@ -146,6 +150,7 @@ describe("live connection lifecycle", () => {
     const connection = new LiveConnection("token", callbacks);
     connection.connect();
     Socket.current.dispatchEvent(new Event("open"));
+
     return { connection, callbacks, socket: Socket.current };
   }
 
@@ -155,6 +160,7 @@ describe("live connection lifecycle", () => {
     connection.send({ type: "stop" });
     expect(socket.sent).toEqual(['{"type":"stop"}']);
     expect(callbacks.state).toHaveBeenLastCalledWith("stopping");
+
     for (const type of ["play", "step", "reset", "checkpoint"] as const) {
       expect(() => connection.send({ type })).toThrow("stopping or stopped");
     }

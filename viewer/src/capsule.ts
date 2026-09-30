@@ -24,6 +24,7 @@ export function capsuleGeometries(
       "capsule segments require radial >= 3 and cap >= 2 integers",
     );
   }
+
   const cylinder = new CylinderGeometry(1, 1, 1, radialSegments, 1, true);
   const lower = new SphereGeometry(
     1,
@@ -44,6 +45,7 @@ export function capsuleGeometries(
     Math.PI / 2,
   );
   const ring = cylinder.getAttribute("position");
+
   for (const [cap, equator] of [
     [lower, 0],
     [upper, capSegments],
@@ -54,12 +56,14 @@ export function capsuleGeometries(
     cap.rotateY(Math.PI / 2);
     const position = cap.getAttribute("position");
     const normal = cap.getAttribute("normal");
+
     for (let index = 0; index <= radialSegments; index++) {
       const vertex = equator * (radialSegments + 1) + index;
       position.setXYZ(vertex, ring.getX(index), 0, ring.getZ(index));
       normal.setXYZ(vertex, ring.getX(index), 0, ring.getZ(index));
     }
   }
+
   return [cylinder, lower, upper];
 }
 

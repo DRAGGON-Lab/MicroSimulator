@@ -132,6 +132,7 @@ async function expectedColor(intensity) {
       await import("/node_modules/.vite/deps/three.js");
     const rgb = viridis(intensity);
     const linear = new Color().setRGB(...rgb, SRGBColorSpace);
+
     return {
       signal: [...rgbBytes(rgb), 205],
       cell: [linear.r, linear.g, linear.b].map(Math.fround),
@@ -251,6 +252,7 @@ try {
     await page.keyboard.press("a");
     await page.keyboard.press("Tab");
   }
+
   await send({
     ...base,
     time: 4,

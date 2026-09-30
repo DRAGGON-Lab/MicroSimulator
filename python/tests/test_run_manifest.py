@@ -31,6 +31,7 @@ def _write_model(path: Path, *, side_effect: Path | None = None) -> str:
         "    return simulation\n",
         encoding="utf-8",
     )
+
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -61,6 +62,7 @@ def build(context):
 """,
         encoding="utf-8",
     )
+
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -240,6 +242,7 @@ def test_manifest_rejects_duplicate_ids_and_output_collisions(tmp_path: Path) ->
     manifest_path = tmp_path / "invalid.json"
     duplicate = _job(job_id="same", model_sha256=digest, output="first.json")
     _write_manifest(manifest_path, [duplicate, {**duplicate, "output": "second.json"}])
+
     with pytest.raises(RunManifestError, match="IDs must be unique"):
         load_run_manifest(manifest_path)
 
@@ -256,18 +259,21 @@ def test_manifest_rejects_duplicate_ids_and_output_collisions(tmp_path: Path) ->
         checkpoint_every=3,
     )
     _write_manifest(manifest_path, [first, second])
+
     with pytest.raises(RunManifestError, match="colliding periodic outputs"):
         load_run_manifest(manifest_path)
 
     second["checkpoint_every"] = 0
     second["output"] = "runs/colony.step-00000002.json"
     _write_manifest(manifest_path, [first, second])
+
     with pytest.raises(RunManifestError, match="colliding final/periodic outputs"):
         load_run_manifest(manifest_path)
 
     first["output"] = "runs/legacy.cm2.json"
     second["output"] = "runs/legacy.step-00000002.cm2.json"
     _write_manifest(manifest_path, [first, second])
+
     with pytest.raises(RunManifestError, match="colliding final/periodic outputs"):
         load_run_manifest(manifest_path)
 
@@ -299,6 +305,7 @@ def test_manifest_rejects_invalid_job_fields(
 def test_manifest_rejects_duplicate_keys_and_nonfinite_parameters(tmp_path: Path) -> None:
     path = tmp_path / "invalid.json"
     path.write_text('{"format":"first","format":"second"}')
+
     with pytest.raises(RunManifestError, match="duplicate key"):
         load_run_manifest(path)
 
@@ -306,5 +313,6 @@ def test_manifest_rejects_duplicate_keys_and_nonfinite_parameters(tmp_path: Path
     job = _job(job_id="nonfinite", model_sha256=digest, output="output.cm2.json")
     job["parameters"] = {"rate": float("inf")}
     _write_manifest(path, [job])
+
     with pytest.raises(RunManifestError, match="non-finite"):
         load_run_manifest(path)

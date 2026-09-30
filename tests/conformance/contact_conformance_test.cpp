@@ -13,6 +13,7 @@ constexpr float relative_tolerance = 2.0e-5F;
 
 bool close(float actual, float expected) {
   const auto tolerance = absolute_tolerance + relative_tolerance * std::abs(expected);
+
   return std::abs(actual - expected) <= tolerance;
 }
 
@@ -29,6 +30,7 @@ void add_capsule(cm::Simulation& simulation, cm::Vec3 center, cm::Vec3 axis, flo
 void compare_graphs(const cm::ContactGraph& actual, const cm::ContactGraph& expected) {
   assert(actual.cell_count() == expected.cell_count());
   assert(actual.size() == expected.size());
+
   for (std::size_t index = 0; index < expected.size(); ++index) {
     const auto& actual_contact = actual.contacts()[index];
     const auto& expected_contact = expected.contacts()[index];
@@ -46,10 +48,12 @@ void compare_graphs(const cm::ContactGraph& actual, const cm::ContactGraph& expe
     assert(close(actual_contact.signed_separation, expected_contact.signed_separation));
     assert(close(actual_contact.weight, expected_contact.weight));
   }
+
   for (std::size_t slot = 0; slot < expected.cell_count(); ++slot) {
     const auto actual_indices = actual.incident_contact_indices(static_cast<cm::Slot>(slot));
     const auto expected_indices = expected.incident_contact_indices(static_cast<cm::Slot>(slot));
     assert(actual_indices.size() == expected_indices.size());
+
     for (std::size_t index = 0; index < expected_indices.size(); ++index) {
       assert(actual_indices[index] == expected_indices[index]);
     }
@@ -90,10 +94,12 @@ void run_empty_and_single_cell(cm::BackendKind backend, std::uint32_t device_ind
 void run_dense_geometry(cm::BackendKind backend, std::uint32_t device_index) {
   cm::Simulation reference(cm::BackendKind::cpu, 31);
   cm::Simulation candidate(backend, 31, 0, device_index);
+
   for (std::size_t index = 0; index < 31; ++index) {
     add_capsule(reference, {0.0F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F});
     add_capsule(candidate, {0.0F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F});
   }
+
   const auto expected = reference.find_cell_contacts();
   const auto actual = candidate.find_cell_contacts();
   assert(actual.size() == 930);
@@ -104,6 +110,7 @@ void run_dense_geometry(cm::BackendKind backend, std::uint32_t device_index) {
 void run_parameters_and_buffer_reuse(cm::BackendKind backend, std::uint32_t device_index) {
   cm::Simulation reference(cm::BackendKind::cpu);
   cm::Simulation candidate(backend, 0, 0, device_index);
+
   for (auto* simulation : {&reference, &candidate}) {
     add_capsule(*simulation, {0.0F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F}, 0.0F);
     add_capsule(*simulation, {1.005F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F}, 0.0F);
@@ -123,6 +130,7 @@ void run_parameters_and_buffer_reuse(cm::BackendKind backend, std::uint32_t devi
 void run_compacted_identity_geometry(cm::BackendKind backend, std::uint32_t device_index) {
   cm::Simulation reference(cm::BackendKind::cpu);
   cm::Simulation candidate(backend, 0, 0, device_index);
+
   for (auto* simulation : {&reference, &candidate}) {
     cm::CellInit first;
     first.length = 4.0F;
@@ -132,6 +140,7 @@ void run_compacted_identity_geometry(cm::BackendKind backend, std::uint32_t devi
     simulation->add_cell(second);
     simulation->divide_equal(parent);
   }
+
   compare_graphs(candidate.find_cell_contacts(), reference.find_cell_contacts());
 }
 
@@ -140,14 +149,17 @@ void run_compacted_identity_geometry(cm::BackendKind backend, std::uint32_t devi
 int main() {
   cm::test::for_each_backend_device([](cm::BackendKind backend, std::uint32_t device_index) {
     cm::Simulation capability_probe(backend, 0, 0, device_index);
+
     if (!capability_probe.supports(cm::BackendFeature::cell_contacts)) {
       return;
     }
+
     run_empty_and_single_cell(backend, device_index);
     run_mixed_geometry(backend, device_index);
     run_dense_geometry(backend, device_index);
     run_parameters_and_buffer_reuse(backend, device_index);
     run_compacted_identity_geometry(backend, device_index);
   });
+
   return 0;
 }

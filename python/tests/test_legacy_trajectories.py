@@ -91,6 +91,7 @@ def _scenarios() -> list[dict[str, Any]]:
     assert document["legacy_commit"] == "4896f543c6250f053eea2312e628cc3a96bf7408"
     scenarios = cast(list[dict[str, Any]], document["scenarios"])
     assert {scenario["id"] for scenario in scenarios} == set(_TOLERANCES)
+
     return scenarios
 
 
@@ -108,11 +109,14 @@ def _capture(model: RunnableModel, step: int) -> dict[str, Any]:
     )
     neighbor_pairs: set[tuple[int, int]] = set()
     legacy_cells = getattr(model, "cells", None)
+
     if legacy_cells is not None:
         for cell in legacy_cells.values():
             for neighbor in cell.neighbours:
                 neighbor_pairs.add(tuple(sorted((cell.id, neighbor))))
+
     signals: list[dict[str, float]] = []
+
     if simulation.has_signal_grid:
         levels = np.asarray(simulation.signal_levels, dtype=np.float64).reshape(
             (simulation.signal_count, -1)
@@ -125,6 +129,7 @@ def _capture(model: RunnableModel, step: int) -> dict[str, Any]:
             }
             for channel in levels
         ]
+
     return {
         "step": step,
         "cell_count": len(cells),
@@ -158,8 +163,10 @@ def _compare(
         relative=tolerance.total_length_relative,
         absolute=1.0e-6,
     )
+
     for value, reference in zip(actual["centroid"], expected["centroid"], strict=True):
         _close(value, reference, relative=0.0, absolute=tolerance.centroid_absolute)
+
     _close(
         actual["maximum_centroid_distance"],
         expected["maximum_centroid_distance"],
@@ -171,9 +178,12 @@ def _compare(
         + math.ceil(tolerance.neighbor_relative * expected["neighbor_pair_count"])
     )
     assert len(actual["species_sum"]) == len(expected["species_sum"])
+
     for value, reference in zip(actual["species_sum"], expected["species_sum"], strict=True):
         _close(value, reference, relative=tolerance.species_relative, absolute=1.0e-8)
+
     assert len(actual["signals"]) == len(expected["signals"])
+
     for values, references in zip(actual["signals"], expected["signals"], strict=True):
         _close(
             values["sum"],
@@ -187,8 +197,10 @@ def _compare(
             relative=tolerance.signal_maximum_relative,
             absolute=1.0e-8,
         )
+
     if identifier != "neighbor_dependent_conjugation":
         assert set(actual["cell_type_counts"]) == set(expected["cell_type_counts"])
+
         for cell_type, count in actual["cell_type_counts"].items():
             assert (
                 abs(count - expected["cell_type_counts"][cell_type])
@@ -204,8 +216,10 @@ def test_recorded_legacy_trajectory_contract(
 ) -> None:
     if _LEGACY_ROOT_VALUE is None:
         pytest.skip("CM_LEGACY_ROOT is required for recorded legacy trajectory tests")
+
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     legacy_root = Path(_LEGACY_ROOT_VALUE)
     identifier = cast(str, scenario["id"])
     kind, relative_path = _MODELS[identifier]
@@ -222,11 +236,14 @@ def test_recorded_legacy_trajectory_contract(
     }
     final_step = max(frames)
     dt = cast(float, scenario["dt"])
+
     for step in range(final_step + 1):
         if step in frames:
             _compare(identifier, _capture(model, step), frames[step])
+
         if step != final_step:
             model.step(dt)
+
     if identifier == "neighbor_dependent_conjugation":
         final_types = _capture(model, final_step)["cell_type_counts"]
         assert {"0", "1", "2"}.issubset(final_types)

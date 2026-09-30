@@ -31,6 +31,7 @@ def _grid() -> SignalGridSpec:
     grid.spacing = Vec3(4.0, 4.0, 4.0)
     grid.diffusion = [40.0]
     grid.advection = [Vec3()]
+
     return grid
 
 
@@ -56,6 +57,7 @@ def test_device_flow_runs_through_the_channel_and_rests_in_the_trap() -> None:
 
     def y_face(x: int, fy: int, z: int) -> float:
         assert grid.velocity_field is not None
+
         return grid.velocity_field.y_faces[
             x * (grid.shape.y + 1) * grid.shape.z + fy * grid.shape.z + z
         ]
@@ -117,6 +119,7 @@ def test_wall_surfaces_stay_inside_the_fluid_mask() -> None:
 
     for device, spacing, surfaces in cases:
         half = (spacing[0] * 0.5, spacing[1] * 0.5, spacing[2] * 0.5)
+
         for surface in surfaces:
             assert not device._solid(surface[0], surface[1], surface[2], half)
 
@@ -133,6 +136,7 @@ def test_biopixel_cavity_is_shallow_beside_the_model_channel() -> None:
 
 def test_planar_mask_wall_error_is_bounded_by_half_spacing() -> None:
     device = TrapChannelDevice()
+
     for h in (1.0, 2.0, 4.0):
         for shift in (0.1, 0.4, 0.9):
             spec = SignalGridSpec()
@@ -155,6 +159,7 @@ def test_trap_example_builds_steps_and_transports_nutrient() -> None:
         ModelContext(BackendKind.CPU, 0, seed=11),
     )
     assert isinstance(model, SimulationController)
+
     for _ in range(20):
         model.step(0.02)
 
@@ -166,8 +171,10 @@ def test_trap_example_builds_steps_and_transports_nutrient() -> None:
     assert upstream > 5.0
     assert trap_interior > 5.0
     assert upstream >= trap_interior - 1.0e-3
+
     with pytest.raises(ValueError, match="inside a grid obstacle"):
         simulation.sample_signals(Vec3(0.0, 100.0, 0.0))
+
     assert len(simulation.cells()) >= 1
 
 
@@ -177,6 +184,7 @@ def test_trap_example_builds_its_initial_flow_on_the_selected_backend(
 ) -> None:
     if not backend_available(backend):
         pytest.skip(f"{backend.name} backend is unavailable")
+
     model, _ = build_model(
         _EXAMPLES / "microfluidic_trap.py",
         ModelContext(backend, 0, seed=13),
@@ -210,6 +218,7 @@ def test_biopixel_example_confines_a_monolayer_under_flow() -> None:
         ModelContext(BackendKind.CPU, 0, seed=5),
     )
     assert isinstance(model, SimulationController)
+
     # 110 steps crosses the model's Brinkman re-solve cadence at step 100, so
     # the run exercises the colony-drag solve and the runtime field swap.
     for _ in range(110):
@@ -217,10 +226,12 @@ def test_biopixel_example_confines_a_monolayer_under_flow() -> None:
 
     cells = model.simulation.cells()
     assert len(cells) >= 2
+
     for cell in cells:
         assert 0.0 < cell.position.z < 1.65
         assert -50.0 < cell.position.y < 50.0
         assert cell.position.x < 95.0
+
     checkpoint = model.simulation._checkpoint()
     assert checkpoint.signal_grid is not None
     assert checkpoint.signal_grid.spec.velocity_field is not None

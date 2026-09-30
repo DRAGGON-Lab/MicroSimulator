@@ -28,6 +28,7 @@ def _snapshot_bytes(
     module = ModuleType("CellModeller.CellState")
     bases = (dict,) if dict_style else ()
     namespace: dict[str, object] = {"__module__": "CellModeller.CellState"}
+
     if dict_style:
         dict_type = cast(Any, dict)
         namespace.update(
@@ -36,6 +37,7 @@ def _snapshot_bytes(
                 "__setattr__": dict_type.__setitem__,
             }
         )
+
     cell_class = cast(type[Any], type("CellState", bases, namespace))
     module.CellState = cell_class  # type: ignore[attr-defined]
     package.CellState = module  # type: ignore[attr-defined]
@@ -69,8 +71,10 @@ def _snapshot_bytes(
 
     cells = {7: second, 3: first}
     lineage = {3: 1, 7: 1}
+
     if tuple_format:
         return pickle.dumps((cells, lineage), protocol=2)
+
     return pickle.dumps(
         {
             "cellStates": cells,
@@ -130,6 +134,7 @@ def test_tuple_snapshot_requires_explicit_time(
             trusted=True,
             native_state_only=True,
         )
+
     imported = import_legacy_pickle(
         source,
         time=12.5,
@@ -148,6 +153,7 @@ def test_restricted_unpickler_rejects_executable_global(tmp_path: Path) -> None:
 
     source = tmp_path / "malicious.pickle"
     source.write_bytes(pickle.dumps(Malicious(), protocol=4))
+
     with pytest.raises(LegacyPickleError, match="forbidden global"):
         import_legacy_pickle(
             source,
@@ -155,6 +161,7 @@ def test_restricted_unpickler_rejects_executable_global(tmp_path: Path) -> None:
             trusted=True,
             native_state_only=True,
         )
+
     assert not sentinel.exists()
 
 

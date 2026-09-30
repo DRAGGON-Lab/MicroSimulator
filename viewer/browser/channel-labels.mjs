@@ -107,7 +107,9 @@ try {
   await expect(page.locator("#species-channel")).toHaveValue("1");
   // Literal labels may imitate automatically generated duplicate suffixes.
   document.frame.species_count = 3;
+
   for (const cell of document.frame.cells) cell.species.push(0.25);
+
   document.frame.channel_metadata.species = ["GFP", "GFP", "GFP [0]"];
   await send();
   const indexed = ["GFP [0]", "GFP [1]", "GFP [0] [2]"];

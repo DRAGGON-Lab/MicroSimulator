@@ -15,8 +15,10 @@ from microsimulator import (
 def regulate(step: ControllerStep) -> StepPlan:
     if step.completed_steps == 1:
         return StepPlan(divisions=(DivisionRequest(step.cells[0].id),))
+
     if step.completed_steps == 2:
         return StepPlan(removals=(step.cells[0].id,))
+
     return StepPlan()
 
 
@@ -27,6 +29,7 @@ def build(context: ModelContext) -> NativeController:
     cell.growth_rate = 0.5
     cell.species = [0.25]
     simulation.add_cell(cell)
+
     return NativeController(
         simulation,
         model_id="replay-demo",

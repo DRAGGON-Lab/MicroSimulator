@@ -50,6 +50,7 @@ async function sign(value: Awaited<ReturnType<typeof document>>) {
   value.integrity.recording = await sha256(
     new TextEncoder().encode(canonicalize(value.recording)),
   );
+
   return JSON.stringify(value);
 }
 const read = async (file: File) => new Uint8Array(await file.arrayBuffer());
@@ -126,6 +127,7 @@ describe("on-demand scene loading", () => {
     ]);
     const bundle = new ReplayBundle(manifest, files, async (file) => {
       reads++;
+
       return read(file);
     });
     expect(reads).toBe(0);

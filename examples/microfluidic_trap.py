@@ -81,6 +81,7 @@ def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
         outlet_values=[0.0],
         simulation=simulation,
     )
+
     return grid
 
 
@@ -91,27 +92,28 @@ GAP_MOBILITY = gap_mobility(GRID)
 def _rate_plan() -> CoupledRatePlan:
     rates = RatePlanBuilder()
     uptake = -rates.cell_volume_change_rate() / NUTRIENT_YIELD
+
     return rates.coupled_plan(0, 1, (), (uptake,))
 
 
 def _primed_levels(grid: SignalGridSpec) -> list[float]:
     # The device is loaded flooded with fresh media before flow starts.
-    return [
-        NUTRIENT_INLET if solid == 0 else 0.0
-        for solid in grid.obstacles
-    ]
+    return [NUTRIENT_INLET if solid == 0 else 0.0 for solid in grid.obstacles]
 
 
 def _nutrient_growth(simulation: Simulation, position: Vec3) -> float:
     nutrient = max(0.0, simulation.sample_signals(position)[0])
+
     return BASE_GROWTH_RATE * nutrient / (NUTRIENT_K + nutrient)
 
 
 def _regulate(step: ControllerStep) -> StepPlan:
     if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
         mobility = colony_mobility(
-            GRID, (cell for cell in step.cells if cell.fixed),
-            base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT
+            GRID,
+            (cell for cell in step.cells if cell.fixed),
+            base=GAP_MOBILITY,
+            drag_coefficient=DRAG_COEFFICIENT,
         )
         field, _ = solve_flow_field(
             GRID,
@@ -120,11 +122,14 @@ def _regulate(step: ControllerStep) -> StepPlan:
             simulation=step.simulation,
         )
         step.simulation.set_velocity_field(field)
+
     divisions = DIVISION.requests(step)
     washed = tuple(cell.id for cell in step.cells if abs(cell.position.y) > WASHOUT_Y)
+
     if washed:
         DIVISION.forget(step, washed)
         divisions = tuple(request for request in divisions if request.parent_id not in washed)
+
     return StepPlan(
         updates=tuple(
             CellUpdate(cell.id, growth_rate=_nutrient_growth(step.simulation, cell.position))
@@ -154,6 +159,7 @@ def build(context: ModelContext) -> NativeController:
     founder.growth_rate = 1.0
     state: dict[str, JSONValue] = {"scope": "microfluidic-trap"}
     DIVISION.initialize_founders(simulation, state, context.rng, (founder,))
+
     return NativeController(
         simulation,
         model_id=MODEL_ID,
@@ -168,6 +174,7 @@ def build(context: ModelContext) -> NativeController:
 
 def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeController:
     del context
+
     return NativeController.from_checkpoint(
         checkpoint,
         model_id=MODEL_ID,

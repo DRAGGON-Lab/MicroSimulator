@@ -11,6 +11,7 @@ MechanicsDofs zero_dofs() {
   MechanicsDofs result;
   result.linear_length = 0.0f;
   result.rotation = 0.0f;
+
   return result;
 }
 
@@ -22,6 +23,7 @@ MechanicsDofs scaled(const MechanicsDofs value, float scale) {
   MechanicsDofs result;
   result.linear_length = value.linear_length * scale;
   result.rotation = value.rotation * scale;
+
   return result;
 }
 
@@ -29,6 +31,7 @@ MechanicsDofs added(const MechanicsDofs left, const MechanicsDofs right) {
   MechanicsDofs result;
   result.linear_length = left.linear_length + right.linear_length;
   result.rotation = left.rotation + right.rotation;
+
   return result;
 }
 
@@ -38,6 +41,7 @@ MechanicsDofs contact_jacobian(float3 normal, float3 arm, float3 axis, float tot
   result.linear_length =
       float4(weight * normal, weight * dot(axis, arm) * dot(axis, normal) / total_length);
   result.rotation = float4(weight * cross(arm, normal), 0.0f);
+
   return result;
 }
 
@@ -52,6 +56,7 @@ kernel void build_mechanics_rows(
   if (index >= contact_count) {
     return;
   }
+
   uint first = first_slots[index];
   uint second = second_slots[index];
   float weight = weights[index];
@@ -79,10 +84,12 @@ kernel void apply_mechanics_b(device const MechanicsDofs* first_rows [[buffer(0)
   if (index >= contact_count) {
     return;
   }
+
   uint first = first_slots[index];
   uint second = second_slots[index];
   MechanicsDofs first_input = fixed[first] == 0 ? input[first] : zero_dofs();
   row_values[index] = dof_dot(first_rows[index], first_input);
+
   if (second != 0xffffffffu) {
     MechanicsDofs second_input = fixed[second] == 0 ? input[second] : zero_dofs();
     row_values[index] -= dof_dot(second_rows[index], second_input);
@@ -101,7 +108,9 @@ kernel void apply_mechanics_transpose(device const MechanicsDofs* first_rows [[b
   if (cell >= cell_count) {
     return;
   }
+
   MechanicsDofs result = zero_dofs();
+
   for (uint offset = incidence_offsets[cell]; offset < incidence_offsets[cell + 1]; ++offset) {
     uint row = incidence_indices[offset];
     bool is_first = first_slots[row] == cell;
@@ -109,6 +118,7 @@ kernel void apply_mechanics_transpose(device const MechanicsDofs* first_rows [[b
     float sign = is_first ? 1.0f : -1.0f;
     result = added(result, scaled(jacobian, sign * row_values[row]));
   }
+
   output[cell] = result;
 }
 
@@ -120,10 +130,13 @@ kernel void add_mechanics_regularizer(
   if (cell >= cell_count) {
     return;
   }
+
   if (fixed[cell] != 0) {
     output[cell] = input[cell];
+
     return;
   }
+
   float mu_a = parameters.x;
   float gamma = parameters.y;
   float total_length = geometry[cell].x + 2.0f * geometry[cell].y;
@@ -154,6 +167,7 @@ kernel void initialize_mechanics_vectors(device MechanicsDofs* right_hand_side [
   if (cell >= cell_count) {
     return;
   }
+
   solution[cell] = zero_dofs();
   MechanicsDofs projected_rhs = fixed[cell] == 0 ? right_hand_side[cell] : zero_dofs();
   right_hand_side[cell] = projected_rhs;
@@ -169,6 +183,7 @@ kernel void update_mechanics_solution_residual(
   if (cell >= cell_count) {
     return;
   }
+
   solution[cell] = added(solution[cell], scaled(search_direction[cell], alpha));
   residual[cell] = added(residual[cell], scaled(applied[cell], -alpha));
 }
@@ -181,6 +196,7 @@ kernel void update_mechanics_search_direction(device const MechanicsDofs* residu
   if (cell >= cell_count) {
     return;
   }
+
   search_direction[cell] = added(residual[cell], scaled(search_direction[cell], beta));
 }
 
@@ -192,6 +208,7 @@ kernel void subtract_mechanics_vectors(device const MechanicsDofs* left [[buffer
   if (cell >= cell_count) {
     return;
   }
+
   output[cell] = added(left[cell], scaled(right[cell], -1.0f));
 }
 
@@ -203,6 +220,7 @@ kernel void mechanics_dot_terms(device const MechanicsDofs* left [[buffer(0)]],
   if (cell >= cell_count) {
     return;
   }
+
   terms[cell] = dof_dot(left[cell], right[cell]);
 }
 
@@ -211,12 +229,16 @@ kernel void reduce_sum_pairs(device const float* input [[buffer(0)]],
                              constant uint& element_count [[buffer(2)]],
                              uint index [[thread_position_in_grid]]) {
   uint first = index * 2;
+
   if (first >= element_count) {
     return;
   }
+
   float value = input[first];
+
   if (first + 1 < element_count) {
     value += input[first + 1];
   }
+
   output[index] = value;
 }

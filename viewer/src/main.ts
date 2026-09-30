@@ -29,9 +29,11 @@ import {
 
 function required<T extends HTMLElement>(id: string): T {
   const value = document.querySelector<T>(`#${id}`);
+
   if (value === null) {
     throw new Error(`missing required element #${id}`);
   }
+
   return value;
 }
 
@@ -125,7 +127,9 @@ function formatNumber(value: number): string {
   if (value === 0) {
     return "0";
   }
+
   const magnitude = Math.abs(value);
+
   return magnitude >= 10_000 || magnitude < 0.001
     ? value.toExponential(4)
     : value.toLocaleString(undefined, { maximumSignificantDigits: 7 });
@@ -153,12 +157,14 @@ function options(
   selected: number,
 ): void {
   select.replaceChildren();
+
   for (let index = 0; index < count; index += 1) {
     const option = document.createElement("option");
     option.value = String(index);
     option.textContent = label(index);
     select.append(option);
   }
+
   select.value = String(selected);
 }
 
@@ -166,6 +172,7 @@ function selectedInteger(
   control: HTMLSelectElement | HTMLInputElement,
 ): number {
   const value = Number.parseInt(control.value, 10);
+
   return Number.isFinite(value) ? value : 0;
 }
 
@@ -173,6 +180,7 @@ function updateColors(): void {
   if (frame === null) {
     return;
   }
+
   const mode = colorMode.value as ColorMode;
   speciesField.hidden = mode !== "species";
   speciesRangeRoot.hidden = mode !== "species";
@@ -187,12 +195,16 @@ function updateColors(): void {
     ),
   });
   viewer.setCellColors(mapping.colors);
+
   if (mapping.composite !== undefined)
     compositeControls.update(frame, mapping.composite);
+
   colorLegend.hidden = mapping.range === null;
+
   if (mapping.range !== null) {
     if (mode === "species")
       speciesRangeControls.bind(selectedInteger(speciesChannel), mapping.range);
+
     legendTitle.textContent = mapping.title;
     legendMinimum.textContent =
       mapping.minimum === null ? "—" : formatNumber(mapping.minimum);
@@ -221,6 +233,7 @@ function updateSignalRange(): void {
   if (frame?.signalGrid === null || frame === null) {
     return;
   }
+
   const axis = signalAxis.value as SliceAxis;
   const maximum = sliceDimension(frame.signalGrid, axis) - 1;
   signalRange.max = String(maximum);
@@ -230,11 +243,14 @@ function updateSignalRange(): void {
 
 function updateSignal(): void {
   const legend = required<HTMLElement>("signal-legend");
+
   if (frame?.signalGrid === null || frame === null) {
     viewer.setSignalSlice(null);
     legend.hidden = true;
+
     return;
   }
+
   const axis = signalAxis.value as SliceAxis;
   const index = selectedInteger(signalChannel);
   const value = signalSlice(
@@ -267,20 +283,24 @@ function detail(label: string, value: string): HTMLDivElement {
   term.textContent = label;
   description.textContent = value;
   row.append(term, description);
+
   return row;
 }
 
 function updateSelection(cell: SceneCell | null): void {
   cellDetails.replaceChildren();
   speciesValues.replaceChildren();
+
   if (cell === null) {
     selectionTitle.textContent = "No cell selected";
     selectionHint.hidden = false;
     cellDetails.hidden = true;
     speciesDetails.hidden = true;
     clearSelection.disabled = true;
+
     return;
   }
+
   selectionTitle.textContent = `Cell ${cell.id}`;
   selectionHint.hidden = true;
   clearSelection.disabled = false;
@@ -293,10 +313,34 @@ function updateSelection(cell: SceneCell | null): void {
     detail("Direction", cell.direction.map(formatNumber).join(", ")),
     detail("Length", formatNumber(cell.length)),
     detail("Radius", formatNumber(cell.radius)),
-    detail("Growth", formatNumber(cell.growthRate)),
+    detail("Elongation rate", formatNumber(cell.growthRate)),
     detail("Fixed", cell.fixed ? "Yes" : "No"),
   );
+  const culture = frame?.culture?.cells.find(
+    (candidate) => candidate.id === cell.id,
+  );
+
+  if (culture?.dryBiomassG != null) {
+    cellDetails.append(
+      detail("Dry biomass (g)", culture.dryBiomassG.toExponential(4)),
+      detail(
+        "Specific growth (1/h)",
+        formatNumber(culture.realizedSpecificRatePerHour),
+      ),
+    );
+
+    for (const [index, amount] of culture.uptakeTotals.entries()) {
+      cellDetails.append(
+        detail(
+          `Uptake: ${frame?.culture?.solutes[index] ?? index} (${frame?.culture?.soluteAmountUnits[index] ?? "model"})`,
+          amount.toExponential(4),
+        ),
+      );
+    }
+  }
+
   speciesDetails.hidden = cell.species.length === 0;
+
   for (const [index, value] of cell.species.entries()) {
     const item = document.createElement("li");
     const label = document.createElement("span");
@@ -328,6 +372,7 @@ function presentScene(
     signalRangeControls.beginDataset();
     viewer.beginDataset();
   }
+
   const display = presentation.forFrame(next);
   frame = next;
   viewer.setFrame(next, newDataset);
@@ -349,6 +394,12 @@ function presentScene(
   gridShape.textContent =
     next.signalGrid === null ? "None" : next.signalGrid.shape.join(" × ");
 
+  if (next.culture) gridShape.textContent += " · extracellular mean";
+
+  gridShape.title = next.culture
+    ? `Fluid domain: ${next.culture.lengthUnitM} m per model length; ${next.culture.timeUnitS} s per model time. Displayed concentrations are fluid-volume-weighted voxel means.`
+    : "";
+
   colorMode.value = display.colorMode;
   options(
     speciesChannel,
@@ -359,6 +410,7 @@ function presentScene(
   const speciesOption = colorMode.querySelector<HTMLOptionElement>(
     'option[value="species"]',
   );
+
   if (speciesOption !== null) {
     speciesOption.disabled = next.speciesCount === 0;
   }
@@ -366,6 +418,7 @@ function presentScene(
   signalSection.hidden = next.signalGrid === null;
   signalVisible.checked = display.signalVisible;
   signalAxis.value = display.signalAxis;
+
   if (next.signalGrid !== null) {
     options(
       signalChannel,
@@ -379,8 +432,10 @@ function presentScene(
     signalRange.value = String(display.signalSlice);
     updateSignalRange();
   }
+
   updateColors();
   updateSignal();
+
   if (announce) {
     setStatus(`Opened ${label}`);
   }
@@ -389,19 +444,24 @@ function presentScene(
 async function loadFile(file: File): Promise<void> {
   const request = ++openRequest;
   replay.close();
+
   if (file.size > MAX_SCENE_BYTES) {
     setStatus(
       `Scene exceeds the ${MAX_SCENE_BYTES.toLocaleString()}-byte limit`,
       "error",
     );
+
     return;
   }
+
   try {
     const next = await parseScene(await file.text());
+
     if (request === openRequest)
       presentScene(next, file.name, { newDataset: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+
     if (request === openRequest) setStatus(message, "error");
   }
 }
@@ -412,14 +472,17 @@ recordingInput.addEventListener("change", () => {
     ++openRequest;
     void replay.open([...recordingInput.files]);
   }
+
   recordingInput.value = "";
 });
 
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
+
   if (file !== undefined) {
     void loadFile(file);
   }
+
   fileInput.value = "";
 });
 
@@ -459,15 +522,18 @@ signalRange.addEventListener("input", () => {
 for (const eventName of ["dragenter", "dragover"] as const) {
   viewport.addEventListener(eventName, (event) => {
     event.preventDefault();
+
     if (eventName === "dragenter") {
       dragDepth += 1;
     }
+
     viewport.dataset.dragging = "true";
   });
 }
 viewport.addEventListener("dragleave", (event) => {
   event.preventDefault();
   dragDepth = Math.max(0, dragDepth - 1);
+
   if (dragDepth === 0) {
     delete viewport.dataset.dragging;
   }
@@ -476,10 +542,13 @@ viewport.addEventListener("drop", (event) => {
   event.preventDefault();
   dragDepth = 0;
   delete viewport.dataset.dragging;
+
   if (liveConnection !== null) {
     return;
   }
+
   const file = event.dataTransfer?.files[0];
+
   if (file !== undefined) {
     void loadFile(file);
   }
@@ -502,9 +571,11 @@ function updateLiveControls(): void {
 
 function liveState(state: LiveConnectionState): void {
   liveConnected = state === "connected";
+
   if (!liveConnected) {
     livePlaying = false;
   }
+
   liveLabel.textContent =
     state === "connecting"
       ? "Connecting"
@@ -517,6 +588,7 @@ function liveState(state: LiveConnectionState): void {
             : "Disconnected";
   liveTransport.dataset.state = state;
   updateLiveControls();
+
   if (state === "closed") {
     setStatus("Live simulation disconnected", "error");
   } else if (state === "stopping") {
@@ -532,9 +604,11 @@ function liveFrame(message: LiveFrameMessage): void {
   const first = frame === null;
   livePlaying = message.playing;
   liveCheckpointEnabled = message.checkpointEnabled;
+
   if (liveConnected) {
     liveLabel.textContent = message.playing ? "Running" : "Paused";
   }
+
   presentScene(message.frame, "live simulation", {
     newDataset: first,
     announce: first,
@@ -567,18 +641,22 @@ function sendLive(
 const liveToken = new URL(window.location.href).searchParams.get("token");
 if (liveToken !== null) {
   liveTransport.hidden = false;
+
   for (const action of document.querySelectorAll<HTMLElement>(
     ".scene-open-action",
   )) {
     action.hidden = true;
   }
+
   const emptyTitle = emptyState.querySelector<HTMLElement>("h1");
   const emptyDescription = emptyState.querySelector<HTMLElement>("p");
+
   if (emptyTitle !== null && emptyDescription !== null) {
     emptyTitle.textContent = "Connecting to simulation";
     emptyDescription.textContent =
       "Waiting for the first verified scene frame from the local engine.";
   }
+
   liveConnection = new LiveConnection(liveToken, {
     message: liveMessage,
     state: liveState,

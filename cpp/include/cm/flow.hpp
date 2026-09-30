@@ -7,12 +7,6 @@
 
 namespace cm {
 
-enum class FlowAxis : std::uint8_t {
-  x,
-  y,
-  z,
-};
-
 struct DepthAveragedFlowParameters {
   float mean_inlet_speed{1.0F};
   FlowAxis axis{FlowAxis::y};

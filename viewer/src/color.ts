@@ -61,11 +61,14 @@ function interpolate(left: RGB, right: RGB, fraction: number): RGB {
 
 export function viridis(value: number): RGB {
   const clamped = Math.min(1, Math.max(0, value));
+
   for (let index = 1; index < VIRIDIS.length; index += 1) {
     const right = VIRIDIS[index];
     const left = VIRIDIS[index - 1];
+
     if (left !== undefined && right !== undefined && clamped <= right[0]) {
       const span = right[0] - left[0];
+
       return interpolate(
         left[1],
         right[1],
@@ -73,6 +76,7 @@ export function viridis(value: number): RGB {
       );
     }
   }
+
   return VIRIDIS.at(-1)?.[1] ?? [1, 1, 1];
 }
 
@@ -81,6 +85,7 @@ export function mapScalarColors(
   config: ScalarRangeConfig = AUTOMATIC_SCALAR_RANGE,
 ): { colors: readonly RGB[]; range: ResolvedScalarRange } {
   const range = resolveScalarRange(values, config);
+
   return {
     colors: values.map((value) => viridis(normalizeScalar(value, range))),
     range,
@@ -93,6 +98,7 @@ function scalarMapping(
   config: ScalarRangeConfig = AUTOMATIC_SCALAR_RANGE,
 ): ColorMapping {
   const mapping = mapScalarColors(values, config);
+
   return {
     ...mapping,
     title,
@@ -111,6 +117,7 @@ export function mapCellColors(
         frame,
         config.compositeChannels ?? [],
       );
+
       return {
         colors: mapping.colors,
         title: "Species composite",
@@ -126,6 +133,7 @@ export function mapCellColors(
           const index =
             ((cell.cellType % TYPE_PALETTE.length) + TYPE_PALETTE.length) %
             TYPE_PALETTE.length;
+
           return TYPE_PALETTE[index] ?? [1, 1, 1];
         }),
         title: "Cell type",
@@ -157,6 +165,7 @@ export function mapCellColors(
           `species channel ${config.speciesIndex} is out of range`,
         );
       }
+
       return scalarMapping(
         frame.cells.map((cell) => cell.species[config.speciesIndex] ?? 0),
         channelLabel(frame, "species", config.speciesIndex),

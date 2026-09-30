@@ -20,16 +20,19 @@ import rfc8785
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendKind,
     ConstraintRegion,
+    CultureCheckpoint,
+    FluidFragment,
     GridBoundary,
     GridBoundaryKind,
     Simulation,
     Vec3,
+    _SimulationCheckpoint,
 )
 from .channels import UNNAMED_CHANNELS, ChannelMetadata, ChannelMetadataError
 from .checkpoint import JSONValue
 
 SCENE_FORMAT = "microsimulator-scene"
-SCENE_VERSION = 3
+SCENE_VERSION = 5
 MAX_SCENE_BYTES = 1 << 30
 # Presentation resource budget, independent of native simulation channel counts.
 MAX_SCENE_CHANNELS = 4096
@@ -157,6 +160,53 @@ class SceneConstraints:
 
 
 @dataclass(frozen=True, slots=True)
+class SceneCultureCell:
+    id: int
+    orientation: tuple[float, float, float, float]
+    biochemical_volume: float
+    species_amounts: tuple[float, ...]
+    dry_biomass_g: float | None = None
+    realized_specific_rate_per_hour: float = 0.0
+    biomass_produced_g: float = 0.0
+    uptake_totals: tuple[float, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SceneFluidFragment:
+    site: int
+    component: int
+    volume: float
+    centroid: tuple[float, float, float]
+    amounts: tuple[float, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SceneChemicalTransfer:
+    name: str
+    amounts: tuple[float, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SceneCulture:
+    length_unit_m: float
+    time_unit_s: float
+    viscosity_pa_s: float
+    density_kg_m3: float
+    shape: tuple[int, int, int]
+    origin: tuple[float, float, float]
+    spacing: float
+    obstacles: tuple[int, ...]
+    solutes: tuple[str, ...]
+    cells: tuple[SceneCultureCell, ...]
+    fragments: tuple[SceneFluidFragment, ...]
+    reservoirs: tuple[SceneChemicalTransfer, ...]
+    max_speed_m_s: float
+    flow_relative_residual: float
+    maximum_volume_residual: float
+    solute_amount_units: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SceneFrame:
     time: float
     backend: SceneBackend
@@ -165,13 +215,16 @@ class SceneFrame:
     constraints: SceneConstraints
     signal_grid: SceneSignalGrid | None
     channel_metadata: ChannelMetadata = UNNAMED_CHANNELS
+    culture: SceneCulture | None = None
 
     def __post_init__(self) -> None:
         _scene_channel_count(self.species_count, "$.frame.species_count")
+
         if self.signal_grid is not None:
             _scene_channel_count(
                 self.signal_grid.signal_count, "$.frame.signal_grid.signal_count", 1
             )
+
         object.__setattr__(
             self,
             "channel_metadata",
@@ -199,34 +252,7 @@ def _capture_boundary(boundary: GridBoundary) -> SceneGridBoundary:
     )
 
 
-def capture_scene(
-    simulation: Simulation, *, channel_metadata: ChannelMetadata = UNNAMED_CHANNELS
-) -> SceneFrame:
-    """Capture a complete immutable presentation frame after a simulation step."""
-
-    # Reject before copying native state or expanding omitted channel labels.
-    _scene_channel_count(simulation.species_count, "$.frame.species_count")
-    _scene_channel_count(simulation.signal_count, "$.frame.signal_grid.signal_count")
-    checkpoint = simulation._checkpoint()
-    checkpoint.validate()
-    backend = simulation.backend_info
-    lineage = {entry.child: entry.parent for entry in checkpoint.world.lineage}
-    cells = tuple(
-        SceneCell(
-            id=cell.id,
-            parent_id=lineage.get(cell.id),
-            slot=cell.slot,
-            position=_tuple3(cell.position),
-            direction=_tuple3(cell.direction),
-            length=cell.length,
-            radius=cell.radius,
-            growth_rate=cell.growth_rate,
-            cell_type=cell.cell_type,
-            fixed=cell.fixed,
-            species=tuple(cell.species),
-        )
-        for cell in checkpoint.world.cells
-    )
+def _capture_constraints(checkpoint: _SimulationCheckpoint) -> SceneConstraints:
     constraints = SceneConstraints(
         planes=tuple(
             ScenePlaneConstraint(
@@ -269,7 +295,139 @@ def capture_scene(
             for cylinder in checkpoint.constraints.cylinders
         ),
     )
+
+    return constraints
+
+
+def _culture_display_grid(
+    state: CultureCheckpoint, fragments: list[FluidFragment], culture: SceneCulture
+) -> SceneSignalGrid:
+    spec = state.configuration.grid
+    ns = len(state.configuration.solutes)
+    # Presentation averages only. The fragment amounts/volumes above
+    # remain the authoritative values for analysis and conservation.
+    volumes = [0.0] * spec.site_count
+    display = [0.0] * (spec.site_count * ns)
+
+    for i, fragment in enumerate(fragments):
+        volumes[fragment.site] += fragment.volume
+
+        for s in range(ns):
+            display[s * spec.site_count + fragment.site] += state.extracellular_amounts[i * ns + s]
+
+    for s in range(ns):
+        for site, volume in enumerate(volumes):
+            if volume:
+                display[s * spec.site_count + site] /= volume
+
+    boundary = SceneGridBoundary("no_flux", ())
+    signal_grid = SceneSignalGrid(
+        ns,
+        culture.shape,
+        culture.origin,
+        (spec.spacing, spec.spacing, spec.spacing),
+        boundary,
+        boundary,
+        boundary,
+        boundary,
+        boundary,
+        boundary,
+        tuple(display),
+    )
+
+    return signal_grid
+
+
+def _capture_culture(
+    simulation: Simulation, state: CultureCheckpoint, signal_grid: SceneSignalGrid | None
+) -> tuple[SceneCulture, SceneSignalGrid | None]:
+    config = state.configuration
+    spec = config.grid
+    ns = len(config.solutes)
+    fragments = simulation.fluid_fragments
+    growth_models = {m.cell_id: m for m in config.growth}
+    culture = SceneCulture(
+        length_unit_m=spec.length_unit_m,
+        time_unit_s=spec.time_unit_s,
+        viscosity_pa_s=config.fluid.viscosity_pa_s,
+        density_kg_m3=config.fluid.density_kg_m3,
+        shape=(spec.shape.x, spec.shape.y, spec.shape.z),
+        origin=_tuple3(spec.origin),
+        spacing=spec.spacing,
+        obstacles=tuple(spec.obstacles),
+        solutes=tuple(s.name for s in config.solutes),
+        solute_amount_units=tuple(s.amount_unit for s in config.solutes),
+        cells=tuple(
+            SceneCultureCell(
+                c.body.id,
+                c.body.orientation,
+                c.biochemical_volume,
+                tuple(c.species_amounts),
+                c.biochemical_volume * growth_models[c.body.id].biomass_density
+                if c.body.id in growth_models
+                else None,
+                c.realized_specific_rate * 3600 / spec.time_unit_s,
+                c.biomass_produced,
+                tuple(c.uptake_totals),
+            )
+            for c in state.cells
+        ),
+        fragments=tuple(
+            SceneFluidFragment(
+                f.site,
+                f.component,
+                f.volume,
+                f.centroid,
+                tuple(state.extracellular_amounts[i * ns : (i + 1) * ns]),
+            )
+            for i, f in enumerate(fragments)
+        ),
+        reservoirs=tuple(
+            SceneChemicalTransfer(t.port, tuple(t.amounts)) for t in state.reservoir_totals
+        ),
+        max_speed_m_s=state.last_report.flow.max_speed_m_s,
+        flow_relative_residual=state.last_report.flow.relative_residual,
+        maximum_volume_residual=state.last_report.transport.maximum_volume_residual,
+    )
+
+    if ns:
+        signal_grid = _culture_display_grid(state, fragments, culture)
+
+    return culture, signal_grid
+
+
+def capture_scene(
+    simulation: Simulation, *, channel_metadata: ChannelMetadata = UNNAMED_CHANNELS
+) -> SceneFrame:
+    """Capture a complete immutable presentation frame after a simulation step."""
+
+    # Reject before copying native state or expanding omitted channel labels.
+    _scene_channel_count(simulation.species_count, "$.frame.species_count")
+    _scene_channel_count(simulation.signal_count, "$.frame.signal_grid.signal_count")
+    checkpoint = simulation._checkpoint()
+    checkpoint.validate()
+    backend = simulation.backend_info
+    lineage = {entry.child: entry.parent for entry in checkpoint.world.lineage}
+    cells = tuple(
+        SceneCell(
+            id=cell.id,
+            parent_id=lineage.get(cell.id),
+            slot=cell.slot,
+            position=_tuple3(cell.position),
+            direction=_tuple3(cell.direction),
+            length=cell.length,
+            radius=cell.radius,
+            growth_rate=cell.growth_rate,
+            cell_type=cell.cell_type,
+            fixed=cell.fixed,
+            species=tuple(cell.species),
+        )
+        for cell in checkpoint.world.cells
+    )
+    constraints = _capture_constraints(checkpoint)
     signal_grid = None
+    culture = None
+
     if checkpoint.signal_grid is not None:
         grid = checkpoint.signal_grid
         spec = grid.spec
@@ -286,6 +444,10 @@ def capture_scene(
             z_upper=_capture_boundary(spec.z_upper),
             levels=tuple(grid.levels),
         )
+
+    if checkpoint.culture is not None:
+        culture, signal_grid = _capture_culture(simulation, checkpoint.culture, signal_grid)
+
     frame = SceneFrame(
         time=checkpoint.time,
         backend=SceneBackend(
@@ -299,11 +461,13 @@ def capture_scene(
         cells=cells,
         constraints=constraints,
         signal_grid=signal_grid,
+        culture=culture,
         channel_metadata=channel_metadata.resolved(
             simulation.species_count, simulation.signal_count
         ),
     )
     _validate_frame(frame)
+
     return frame
 
 
@@ -329,6 +493,7 @@ def _frame_to_json(frame: SceneFrame) -> dict[str, JSONValue]:
         for cell in frame.cells
     ]
     grid: JSONValue = None
+
     if frame.signal_grid is not None:
         value = frame.signal_grid
         grid = {
@@ -346,6 +511,7 @@ def _frame_to_json(frame: SceneFrame) -> dict[str, JSONValue]:
             },
             "levels": list(value.levels),
         }
+
     constraints: JSONValue = {
         "planes": [
             {
@@ -388,6 +554,7 @@ def _frame_to_json(frame: SceneFrame) -> dict[str, JSONValue]:
             for cylinder in frame.constraints.cylinders
         ],
     }
+
     return {
         "time": frame.time,
         "backend": {
@@ -401,6 +568,7 @@ def _frame_to_json(frame: SceneFrame) -> dict[str, JSONValue]:
         "cells": cells,
         "constraints": constraints,
         "signal_grid": grid,
+        "culture": _culture_to_json(frame.culture),
         "channel_metadata": frame.channel_metadata.to_json(
             frame.species_count, frame.signal_grid.signal_count if frame.signal_grid else 0
         ),
@@ -429,6 +597,7 @@ def dumps_scene(frame: SceneFrame) -> str:
         },
         "frame": payload,
     }
+
     return (
         json.dumps(
             document,
@@ -445,10 +614,13 @@ def save_scene(frame: SceneFrame, path: str | os.PathLike[str]) -> None:
     """Atomically save an immutable scene frame."""
 
     encoded = dumps_scene(frame).encode("utf-8")
+
     if len(encoded) > MAX_SCENE_BYTES:
         raise SceneError(f"scene exceeds the {MAX_SCENE_BYTES}-byte limit")
+
     destination = Path(path)
     temporary: Path | None = None
+
     try:
         with tempfile.NamedTemporaryFile(
             mode="wb",
@@ -461,6 +633,7 @@ def save_scene(frame: SceneFrame, path: str | os.PathLike[str]) -> None:
             stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
+
         os.replace(temporary, destination)
         temporary = None
     except OSError as error:
@@ -476,8 +649,10 @@ def _fail(path: str, message: str) -> NoReturn:
 
 def _scene_channel_count(value: object, path: str, minimum: int = 0) -> int:
     count = _integer(value, path, minimum, _UINT32_MAX)
+
     if count > MAX_SCENE_CHANNELS:
         _fail(path, f"exceeds scene presentation channel budget of {MAX_SCENE_CHANNELS} per group")
+
     return count
 
 
@@ -487,33 +662,42 @@ def _reject_constant(value: str) -> NoReturn:
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
+
     for key, value in pairs:
         if key in result:
             raise SceneError(f"scene contains duplicate key {key!r}")
+
         result[key] = value
+
     return result
 
 
 def _object(value: object, path: str) -> dict[str, object]:
     if not isinstance(value, dict):
         _fail(path, "expected an object")
+
     mapping = cast(dict[object, object], value)
+
     if not all(isinstance(key, str) for key in mapping):
         _fail(path, "expected string object keys")
+
     return cast(dict[str, object], mapping)
 
 
 def _array(value: object, path: str) -> list[object]:
     if not isinstance(value, list):
         _fail(path, "expected an array")
+
     return cast(list[object], value)
 
 
 def _keys(value: dict[str, object], path: str, required: set[str]) -> None:
     missing = required - value.keys()
     unknown = value.keys() - required
+
     if missing:
         _fail(path, f"missing keys {sorted(missing)}")
+
     if unknown:
         _fail(path, f"unknown keys {sorted(unknown)}")
 
@@ -521,51 +705,65 @@ def _keys(value: dict[str, object], path: str, required: set[str]) -> None:
 def _string(value: object, path: str) -> str:
     if not isinstance(value, str):
         _fail(path, "expected a string")
+
     return value
 
 
 def _boolean(value: object, path: str) -> bool:
     if not isinstance(value, bool):
         _fail(path, "expected a boolean")
+
     return value
 
 
 def _integer(value: object, path: str, minimum: int, maximum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         _fail(path, "expected an integer")
+
     if value < minimum or value > maximum:
         _fail(path, f"integer is outside [{minimum}, {maximum}]")
+
     return value
 
 
 def _identifier(value: object, path: str) -> int:
     encoded = _string(value, path)
+
     if not encoded.isascii() or not encoded.isdecimal() or encoded.startswith("0"):
         _fail(path, "expected a canonical positive decimal uint64 string")
+
     result = int(encoded)
+
     if result <= 0 or result > _UINT64_MAX:
         _fail(path, "identifier is outside the positive uint64 range")
+
     return result
 
 
 def _number(value: object, path: str, *, float32: bool = False) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         _fail(path, "expected a number")
+
     try:
         result = float(value)
     except (OverflowError, ValueError):
         _fail(path, "number is outside the finite float64 range")
+
     if not math.isfinite(result):
         _fail(path, "number must be finite")
+
     if float32 and abs(result) > _FLOAT32_MAX:
         _fail(path, "number is outside the finite float32 range")
+
     return result
 
 
 def _tuple3_from_json(value: object, path: str) -> tuple[float, float, float]:
     items = _array(value, path)
+
     if len(items) != 3:
         _fail(path, "expected exactly three values")
+
     return (
         _number(items[0], f"{path}[0]", float32=True),
         _number(items[1], f"{path}[1]", float32=True),
@@ -584,13 +782,17 @@ def _boundary(value: object, path: str, signal_count: int) -> SceneGridBoundary:
     data = _object(value, path)
     _keys(data, path, {"kind", "values"})
     kind_value = _string(data["kind"], f"{path}.kind")
+
     if kind_value not in _BOUNDARY_KINDS:
         _fail(f"{path}.kind", f"unknown boundary kind {kind_value!r}")
+
     kind = kind_value
     values = _float_tuple(data["values"], f"{path}.values")
     expected = signal_count if kind == "fixed" else 0
+
     if len(values) != expected:
         _fail(f"{path}.values", f"expected {expected} values for {kind} boundary")
+
     return SceneGridBoundary(kind=kind, values=values)
 
 
@@ -598,14 +800,19 @@ def _backend(value: object, path: str) -> SceneBackend:
     data = _object(value, path)
     _keys(data, path, {"kind", "name", "device", "device_index", "native"})
     kind_value = _string(data["kind"], f"{path}.kind")
+
     if kind_value not in _BACKEND_KINDS:
         _fail(f"{path}.kind", f"unknown backend kind {kind_value!r}")
+
     name = _string(data["name"], f"{path}.name")
     device = _string(data["device"], f"{path}.device")
+
     if not name:
         _fail(f"{path}.name", "must not be empty")
+
     if not device:
         _fail(f"{path}.device", "must not be empty")
+
     return SceneBackend(
         kind=kind_value,
         name=name,
@@ -638,8 +845,10 @@ def _cell(value: object, path: str, species_count: int) -> SceneCell:
     parent_value = data["parent_id"]
     parent_id = None if parent_value is None else _identifier(parent_value, f"{path}.parent_id")
     species = _float_tuple(data["species"], f"{path}.species")
+
     if len(species) != species_count:
         _fail(f"{path}.species", f"expected {species_count} values")
+
     return SceneCell(
         id=identifier,
         parent_id=parent_id,
@@ -657,21 +866,26 @@ def _cell(value: object, path: str, species_count: int) -> SceneCell:
 
 def _region(value: object, path: str) -> SceneRegionKind:
     name = _string(value, path)
+
     if name not in _REGION_KINDS:
         _fail(path, f"unknown region kind {name!r}")
+
     return name
 
 
 def _positive_number(value: object, path: str) -> float:
     result = _number(value, path, float32=True)
+
     if result <= 0.0:
         _fail(path, "must be positive")
+
     return result
 
 
 def _plane_constraint(value: object, path: str) -> ScenePlaneConstraint:
     data = _object(value, path)
     _keys(data, path, {"id", "point", "inward_normal", "coefficient"})
+
     return ScenePlaneConstraint(
         id=_identifier(data["id"], f"{path}.id"),
         point=_tuple3_from_json(data["point"], f"{path}.point"),
@@ -683,6 +897,7 @@ def _plane_constraint(value: object, path: str) -> ScenePlaneConstraint:
 def _sphere_constraint(value: object, path: str) -> SceneSphereConstraint:
     data = _object(value, path)
     _keys(data, path, {"id", "center", "radius", "coefficient", "allowed_region"})
+
     return SceneSphereConstraint(
         id=_identifier(data["id"], f"{path}.id"),
         center=_tuple3_from_json(data["center"], f"{path}.center"),
@@ -696,8 +911,10 @@ def _box_constraint(value: object, path: str) -> SceneBoxConstraint:
     data = _object(value, path)
     _keys(data, path, {"id", "center", "half_extents", "coefficient", "allowed_region"})
     half_extents = _tuple3_from_json(data["half_extents"], f"{path}.half_extents")
+
     if any(extent <= 0.0 for extent in half_extents):
         _fail(f"{path}.half_extents", "values must be positive")
+
     return SceneBoxConstraint(
         id=_identifier(data["id"], f"{path}.id"),
         center=_tuple3_from_json(data["center"], f"{path}.center"),
@@ -710,6 +927,7 @@ def _box_constraint(value: object, path: str) -> SceneBoxConstraint:
 def _cylinder_constraint(value: object, path: str) -> SceneCylinderConstraint:
     data = _object(value, path)
     _keys(data, path, {"id", "center", "radius", "half_height", "coefficient", "allowed_region"})
+
     return SceneCylinderConstraint(
         id=_identifier(data["id"], f"{path}.id"),
         center=_tuple3_from_json(data["center"], f"{path}.center"),
@@ -723,6 +941,7 @@ def _cylinder_constraint(value: object, path: str) -> SceneCylinderConstraint:
 def _constraints(value: object, path: str) -> SceneConstraints:
     data = _object(value, path)
     _keys(data, path, {"planes", "spheres", "boxes", "cylinders"})
+
     return SceneConstraints(
         planes=tuple(
             _plane_constraint(item, f"{path}.planes[{index}]")
@@ -746,6 +965,7 @@ def _constraints(value: object, path: str) -> SceneConstraints:
 def _signal_grid(value: object, path: str) -> SceneSignalGrid | None:
     if value is None:
         return None
+
     data = _object(value, path)
     _keys(
         data,
@@ -754,8 +974,10 @@ def _signal_grid(value: object, path: str) -> SceneSignalGrid | None:
     )
     signal_count = _scene_channel_count(data["signal_count"], f"{path}.signal_count", 1)
     shape_values = _array(data["shape"], f"{path}.shape")
+
     if len(shape_values) != 3:
         _fail(f"{path}.shape", "expected exactly three dimensions")
+
     shape = cast(
         tuple[int, int, int],
         tuple(
@@ -768,8 +990,10 @@ def _signal_grid(value: object, path: str) -> SceneSignalGrid | None:
     _keys(boundaries, f"{path}.boundaries", boundary_names)
     levels = _float_tuple(data["levels"], f"{path}.levels")
     expected_levels = signal_count * shape[0] * shape[1] * shape[2]
+
     if len(levels) != expected_levels:
         _fail(f"{path}.levels", f"expected {expected_levels} values")
+
     return SceneSignalGrid(
         signal_count=signal_count,
         shape=shape,
@@ -785,15 +1009,310 @@ def _signal_grid(value: object, path: str) -> SceneSignalGrid | None:
     )
 
 
+def _culture_to_json(culture: SceneCulture | None) -> JSONValue:
+    if culture is None:
+        return None
+
+    return cast(
+        JSONValue,
+        {
+            "length_unit_m": culture.length_unit_m,
+            "time_unit_s": culture.time_unit_s,
+            "viscosity_pa_s": culture.viscosity_pa_s,
+            "density_kg_m3": culture.density_kg_m3,
+            "shape": list(culture.shape),
+            "origin": list(culture.origin),
+            "spacing": culture.spacing,
+            "obstacles": list(culture.obstacles),
+            "solutes": list(culture.solutes),
+            "solute_amount_units": list(culture.solute_amount_units)
+            if culture.solute_amount_units
+            else ["model"] * len(culture.solutes),
+            "cells": [
+                {
+                    "id": str(c.id),
+                    "orientation": list(c.orientation),
+                    "biochemical_volume": c.biochemical_volume,
+                    "species_amounts": list(c.species_amounts),
+                    "dry_biomass_g": c.dry_biomass_g,
+                    "realized_specific_rate_per_hour": c.realized_specific_rate_per_hour,
+                    "biomass_produced_g": c.biomass_produced_g,
+                    "uptake_totals": list(c.uptake_totals)
+                    if c.uptake_totals
+                    else [0.0] * len(culture.solutes),
+                }
+                for c in culture.cells
+            ],
+            "fragments": [
+                {
+                    "site": f.site,
+                    "component": f.component,
+                    "volume": f.volume,
+                    "centroid": list(f.centroid),
+                    "amounts": list(f.amounts),
+                }
+                for f in culture.fragments
+            ],
+            "reservoirs": [
+                {"name": r.name, "amounts": list(r.amounts)} for r in culture.reservoirs
+            ],
+            "max_speed_m_s": culture.max_speed_m_s,
+            "flow_relative_residual": culture.flow_relative_residual,
+            "maximum_volume_residual": culture.maximum_volume_residual,
+        },
+    )
+
+
+def _culture_positive(data: dict[str, object], path: str, key: str) -> float:
+    number = _number(data[key], f"{path}.{key}")
+
+    if number <= 0:
+        _fail(f"{path}.{key}", "must be positive")
+
+    return number
+
+
+def _culture_amounts(
+    value: object, field: str, count: int, signed: bool = False
+) -> tuple[float, ...]:
+    result = tuple(_number(x, f"{field}[{i}]") for i, x in enumerate(_array(value, field)))
+
+    if len(result) != count or (not signed and any(x < 0 for x in result)):
+        _fail(field, "invalid culture amount array")
+
+    return result
+
+
+def _culture_lattice(data: dict[str, object], path: str) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    shape_items = _array(data["shape"], f"{path}.shape")
+
+    if len(shape_items) != 3:
+        _fail(f"{path}.shape", "expected three dimensions")
+
+    shape = tuple(
+        _integer(x, f"{path}.shape[{i}]", 2, _UINT32_MAX) for i, x in enumerate(shape_items)
+    )
+    site_count = math.prod(shape)
+    obstacles = tuple(
+        _integer(x, f"{path}.obstacles[{i}]", 0, 1)
+        for i, x in enumerate(_array(data["obstacles"], f"{path}.obstacles"))
+    )
+
+    if obstacles and len(obstacles) != site_count:
+        _fail(f"{path}.obstacles", "obstacle count differs from grid")
+
+    return shape, obstacles
+
+
+def _culture_cell(
+    item: object, field: str, species_count: int, signal_count: int, version: int
+) -> SceneCultureCell:
+    c = _object(item, field)
+    _keys(
+        c,
+        field,
+        {"id", "orientation", "biochemical_volume", "species_amounts"}
+        | (
+            {
+                "dry_biomass_g",
+                "realized_specific_rate_per_hour",
+                "biomass_produced_g",
+                "uptake_totals",
+            }
+            if version >= 5
+            else set()
+        ),
+    )
+    mass = (
+        None
+        if version < 5 or c["dry_biomass_g"] is None
+        else _number(c["dry_biomass_g"], f"{field}.dry_biomass_g")
+    )
+    rate = (
+        _number(c["realized_specific_rate_per_hour"], f"{field}.realized_specific_rate_per_hour")
+        if version >= 5
+        else 0.0
+    )
+    produced = (
+        _number(c["biomass_produced_g"], f"{field}.biomass_produced_g") if version >= 5 else 0.0
+    )
+
+    if (mass is not None and mass <= 0) or rate < 0 or produced < 0:
+        _fail(field, "invalid biomass or realized growth")
+
+    q = _culture_amounts(c["orientation"], f"{field}.orientation", 4, True)
+
+    if abs(sum(x * x for x in q) - 1) > 1e-10:
+        _fail(f"{field}.orientation", "quaternion must have unit norm")
+
+    biomass = _number(c["biochemical_volume"], f"{field}.biochemical_volume")
+
+    if biomass <= 0:
+        _fail(f"{field}.biochemical_volume", "must be positive")
+
+    return SceneCultureCell(
+        _identifier(c["id"], f"{field}.id"),
+        cast(tuple[float, float, float, float], q),
+        biomass,
+        _culture_amounts(c["species_amounts"], f"{field}.species_amounts", species_count),
+        mass,
+        rate,
+        produced,
+        _culture_amounts(c["uptake_totals"], f"{field}.uptake_totals", signal_count)
+        if version >= 5
+        else (0.0,) * signal_count,
+    )
+
+
+def _culture_fragments(
+    data: dict[str, object], path: str, site_count: int, signal_count: int
+) -> list[SceneFluidFragment]:
+    fragments: list[SceneFluidFragment] = []
+
+    for i, item in enumerate(_array(data["fragments"], f"{path}.fragments")):
+        field = f"{path}.fragments[{i}]"
+        f = _object(item, field)
+        _keys(f, field, {"site", "component", "volume", "centroid", "amounts"})
+        volume = _number(f["volume"], f"{field}.volume")
+
+        if volume <= 0:
+            _fail(f"{field}.volume", "must be positive")
+
+        fragments.append(
+            SceneFluidFragment(
+                _integer(f["site"], f"{field}.site", 0, site_count - 1),
+                _integer(f["component"], f"{field}.component", 0, _UINT32_MAX),
+                volume,
+                cast(
+                    tuple[float, float, float],
+                    _culture_amounts(f["centroid"], f"{field}.centroid", 3, True),
+                ),
+                _culture_amounts(f["amounts"], f"{field}.amounts", signal_count),
+            )
+        )
+
+    return fragments
+
+
+def _culture_solutes(data: dict[str, object], path: str, signal_count: int) -> tuple[str, ...]:
+    solutes = tuple(
+        _string(x, f"{path}.solutes[{i}]")
+        for i, x in enumerate(_array(data["solutes"], f"{path}.solutes"))
+    )
+
+    if (
+        len(solutes) != signal_count
+        or len(set(solutes)) != len(solutes)
+        or any(not x for x in solutes)
+    ):
+        _fail(f"{path}.solutes", "invalid culture solute names")
+
+    return solutes
+
+
+def _culture(
+    value: object, path: str, species_count: int, signal_count: int, version: int = 5
+) -> SceneCulture | None:
+    if value is None:
+        return None
+
+    data = _object(value, path)
+    _keys(
+        data,
+        path,
+        {
+            "length_unit_m",
+            "time_unit_s",
+            "viscosity_pa_s",
+            "density_kg_m3",
+            "shape",
+            "origin",
+            "spacing",
+            "obstacles",
+            "solutes",
+            "cells",
+            "fragments",
+            "reservoirs",
+            "max_speed_m_s",
+            "flow_relative_residual",
+            "maximum_volume_residual",
+        }
+        | ({"solute_amount_units"} if version >= 5 else set()),
+    )
+
+    shape, obstacles = _culture_lattice(data, path)
+    site_count = math.prod(shape)
+
+    solutes = _culture_solutes(data, path, signal_count)
+
+    if version >= 5:
+        units = _array(data["solute_amount_units"], f"{path}.solute_amount_units")
+
+        if len(units) != signal_count or any(u not in ("mol", "g", "model") for u in units):
+            _fail(f"{path}.solute_amount_units", "invalid solute amount units")
+
+    cells: list[SceneCultureCell] = []
+
+    for i, item in enumerate(_array(data["cells"], f"{path}.cells")):
+        cells.append(
+            _culture_cell(item, f"{path}.cells[{i}]", species_count, signal_count, version)
+        )
+
+    fragments = _culture_fragments(data, path, site_count, signal_count)
+
+    reservoirs: list[SceneChemicalTransfer] = []
+
+    for i, item in enumerate(_array(data["reservoirs"], f"{path}.reservoirs")):
+        field = f"{path}.reservoirs[{i}]"
+        r = _object(item, field)
+        _keys(r, field, {"name", "amounts"})
+        reservoirs.append(
+            SceneChemicalTransfer(
+                _string(r["name"], f"{field}.name"),
+                _culture_amounts(r["amounts"], f"{field}.amounts", signal_count, True),
+            )
+        )
+
+    return SceneCulture(
+        _culture_positive(data, path, "length_unit_m"),
+        _culture_positive(data, path, "time_unit_s"),
+        _culture_positive(data, path, "viscosity_pa_s"),
+        _culture_positive(data, path, "density_kg_m3"),
+        cast(tuple[int, int, int], shape),
+        _tuple3_from_json(data["origin"], f"{path}.origin"),
+        _culture_positive(data, path, "spacing"),
+        obstacles,
+        solutes,
+        tuple(cells),
+        tuple(fragments),
+        tuple(reservoirs),
+        _number(data["max_speed_m_s"], f"{path}.max_speed_m_s"),
+        _number(data["flow_relative_residual"], f"{path}.flow_relative_residual"),
+        _number(data["maximum_volume_residual"], f"{path}.maximum_volume_residual"),
+        tuple(
+            _string(x, f"{path}.solute_amount_units")
+            for x in _array(data["solute_amount_units"], f"{path}.solute_amount_units")
+        )
+        if version >= 5
+        else ("model",) * signal_count,
+    )
+
+
 def _frame(value: object, path: str, schema_version: int) -> SceneFrame:
     data = _object(value, path)
     keys = {"time", "backend", "species_count", "cells", "constraints", "signal_grid"}
+
     if schema_version >= 3:
         keys.add("channel_metadata")
+
+    if schema_version >= 4:
+        keys.add("media" if schema_version == 4 else "culture")
+
     _keys(data, path, keys)
     species_count = _scene_channel_count(data["species_count"], f"{path}.species_count")
     signal_grid = _signal_grid(data["signal_grid"], f"{path}.signal_grid")
     signal_count = signal_grid.signal_count if signal_grid else 0
+
     try:
         labels = (
             ChannelMetadata.from_json(data["channel_metadata"], species_count, signal_count)
@@ -802,6 +1321,7 @@ def _frame(value: object, path: str, schema_version: int) -> SceneFrame:
         )
     except ChannelMetadataError as error:
         raise SceneError(str(error)) from error
+
     frame = SceneFrame(
         channel_metadata=labels,
         time=_number(data["time"], f"{path}.time"),
@@ -813,166 +1333,271 @@ def _frame(value: object, path: str, schema_version: int) -> SceneFrame:
         ),
         constraints=_constraints(data["constraints"], f"{path}.constraints"),
         signal_grid=signal_grid,
+        culture=_culture(
+            data["media" if schema_version == 4 else "culture"],
+            f"{path}.culture",
+            species_count,
+            signal_count,
+            schema_version,
+        )
+        if schema_version >= 4
+        else None,
     )
     _validate_frame(frame)
+
     return frame
 
 
 def _validate_boundary(boundary: SceneGridBoundary, signal_count: int, path: str) -> None:
     if boundary.kind not in _BOUNDARY_KINDS:
         _fail(f"{path}.kind", f"unknown boundary kind {boundary.kind!r}")
+
     expected = signal_count if boundary.kind == "fixed" else 0
+
     if len(boundary.values) != expected:
         _fail(f"{path}.values", f"expected {expected} values for {boundary.kind} boundary")
+
     for index, value in enumerate(boundary.values):
         _number(value, f"{path}.values[{index}]", float32=True)
 
 
-def _validate_frame(frame: SceneFrame) -> None:
-    _scene_channel_count(frame.species_count, "$.frame.species_count")
-    if frame.signal_grid is not None:
-        _scene_channel_count(frame.signal_grid.signal_count, "$.frame.signal_grid.signal_count", 1)
-    try:
-        frame.channel_metadata.resolved(
-            frame.species_count, frame.signal_grid.signal_count if frame.signal_grid else 0
-        )
-    except ChannelMetadataError as error:
-        raise SceneError(str(error)) from error
-    _number(frame.time, "$.frame.time")
-    if frame.time < 0.0:
-        _fail("$.frame.time", "must be non-negative")
-    if frame.backend.kind not in _BACKEND_KINDS:
-        _fail("$.frame.backend.kind", f"unknown backend kind {frame.backend.kind!r}")
-    if not frame.backend.name or not frame.backend.device:
-        _fail("$.frame.backend", "name and device must not be empty")
-    _integer(frame.backend.device_index, "$.frame.backend.device_index", 0, _UINT32_MAX)
-    _boolean(frame.backend.native, "$.frame.backend.native")
-    _integer(frame.species_count, "$.frame.species_count", 0, _UINT32_MAX)
+def _validate_scene_cell(
+    cell: SceneCell, index: int, identifiers: set[int], species_count: int
+) -> None:
+    path = f"$.frame.cells[{index}]"
 
-    identifiers: set[int] = set()
-    for index, cell in enumerate(frame.cells):
-        path = f"$.frame.cells[{index}]"
-        if cell.slot != index:
-            _fail(f"{path}.slot", "cells must be compact and ordered by slot")
-        _integer(cell.id, f"{path}.id", 1, _UINT64_MAX)
-        if cell.id in identifiers:
-            _fail(f"{path}.id", "duplicate cell identifier")
-        identifiers.add(cell.id)
-        if cell.parent_id is not None:
-            _integer(cell.parent_id, f"{path}.parent_id", 1, _UINT64_MAX)
-            if cell.parent_id >= cell.id:
-                _fail(f"{path}.parent_id", "must precede the child identifier")
-        for vector_name, vector in (("position", cell.position), ("direction", cell.direction)):
-            if len(vector) != 3:
-                _fail(f"{path}.{vector_name}", "expected exactly three values")
-            for component, value in enumerate(vector):
-                _number(value, f"{path}.{vector_name}[{component}]", float32=True)
-        direction_norm = math.sqrt(sum(value * value for value in cell.direction))
-        if abs(direction_norm - 1.0) > 1.0e-5:
-            _fail(f"{path}.direction", "must be normalized")
-        length = _number(cell.length, f"{path}.length", float32=True)
-        radius = _number(cell.radius, f"{path}.radius", float32=True)
-        if length < 0.0:
-            _fail(f"{path}.length", "must be non-negative")
-        if radius <= 0.0:
-            _fail(f"{path}.radius", "must be positive")
-        _number(cell.growth_rate, f"{path}.growth_rate", float32=True)
-        _integer(cell.cell_type, f"{path}.cell_type", _INT32_MIN, _INT32_MAX)
-        _boolean(cell.fixed, f"{path}.fixed")
-        if len(cell.species) != frame.species_count:
-            _fail(f"{path}.species", f"expected {frame.species_count} values")
-        for species_index, level in enumerate(cell.species):
-            _number(level, f"{path}.species[{species_index}]", float32=True)
+    if cell.slot != index:
+        _fail(f"{path}.slot", "cells must be compact and ordered by slot")
 
-    constraint_ids: set[int] = set()
+    _integer(cell.id, f"{path}.id", 1, _UINT64_MAX)
 
-    def _check_constraint_id(identifier: int, path: str) -> None:
-        _integer(identifier, path, 1, _UINT64_MAX)
-        if identifier in constraint_ids:
-            _fail(path, "duplicate constraint identifier")
-        constraint_ids.add(identifier)
+    if cell.id in identifiers:
+        _fail(f"{path}.id", "duplicate cell identifier")
 
-    def _check_tuple3(vector: tuple[float, float, float], path: str) -> None:
+    identifiers.add(cell.id)
+
+    if cell.parent_id is not None:
+        _integer(cell.parent_id, f"{path}.parent_id", 1, _UINT64_MAX)
+
+        if cell.parent_id >= cell.id:
+            _fail(f"{path}.parent_id", "must precede the child identifier")
+
+    for vector_name, vector in (("position", cell.position), ("direction", cell.direction)):
         if len(vector) != 3:
-            _fail(path, "expected exactly three values")
-        for component, value in enumerate(vector):
-            _number(value, f"{path}[{component}]", float32=True)
+            _fail(f"{path}.{vector_name}", "expected exactly three values")
 
-    for index, plane in enumerate(frame.constraints.planes):
+        for component, value in enumerate(vector):
+            _number(value, f"{path}.{vector_name}[{component}]", float32=True)
+
+    direction_norm = math.sqrt(sum(value * value for value in cell.direction))
+
+    if abs(direction_norm - 1.0) > 1.0e-5:
+        _fail(f"{path}.direction", "must be normalized")
+
+    length = _number(cell.length, f"{path}.length", float32=True)
+    radius = _number(cell.radius, f"{path}.radius", float32=True)
+
+    if length < 0.0:
+        _fail(f"{path}.length", "must be non-negative")
+
+    if radius <= 0.0:
+        _fail(f"{path}.radius", "must be positive")
+
+    _number(cell.growth_rate, f"{path}.growth_rate", float32=True)
+    _integer(cell.cell_type, f"{path}.cell_type", _INT32_MIN, _INT32_MAX)
+    _boolean(cell.fixed, f"{path}.fixed")
+
+    if len(cell.species) != species_count:
+        _fail(f"{path}.species", f"expected {species_count} values")
+
+    for species_index, level in enumerate(cell.species):
+        _number(level, f"{path}.species[{species_index}]", float32=True)
+
+
+def _check_constraint_id(identifier: int, path: str, constraint_ids: set[int]) -> None:
+    _integer(identifier, path, 1, _UINT64_MAX)
+
+    if identifier in constraint_ids:
+        _fail(path, "duplicate constraint identifier")
+
+    constraint_ids.add(identifier)
+
+
+def _check_tuple3(vector: tuple[float, float, float], path: str) -> None:
+    if len(vector) != 3:
+        _fail(path, "expected exactly three values")
+
+    for component, value in enumerate(vector):
+        _number(value, f"{path}[{component}]", float32=True)
+
+
+def _validate_scene_planes(constraints: SceneConstraints, constraint_ids: set[int]) -> None:
+    for index, plane in enumerate(constraints.planes):
         path = f"$.frame.constraints.planes[{index}]"
-        _check_constraint_id(plane.id, f"{path}.id")
+        _check_constraint_id(plane.id, f"{path}.id", constraint_ids)
         _check_tuple3(plane.point, f"{path}.point")
         _check_tuple3(plane.inward_normal, f"{path}.inward_normal")
         normal_norm = math.sqrt(sum(value * value for value in plane.inward_normal))
+
         if abs(normal_norm - 1.0) > 1.0e-5:
             _fail(f"{path}.inward_normal", "must be normalized")
+
         if _number(plane.coefficient, f"{path}.coefficient", float32=True) <= 0.0:
             _fail(f"{path}.coefficient", "must be positive")
-    for index, sphere in enumerate(frame.constraints.spheres):
+
+
+def _validate_scene_spheres(constraints: SceneConstraints, constraint_ids: set[int]) -> None:
+    for index, sphere in enumerate(constraints.spheres):
         path = f"$.frame.constraints.spheres[{index}]"
-        _check_constraint_id(sphere.id, f"{path}.id")
+        _check_constraint_id(sphere.id, f"{path}.id", constraint_ids)
         _check_tuple3(sphere.center, f"{path}.center")
+
         if _number(sphere.radius, f"{path}.radius", float32=True) <= 0.0:
             _fail(f"{path}.radius", "must be positive")
+
         if _number(sphere.coefficient, f"{path}.coefficient", float32=True) <= 0.0:
             _fail(f"{path}.coefficient", "must be positive")
+
         if sphere.allowed_region not in _REGION_KINDS:
             _fail(f"{path}.allowed_region", f"unknown region kind {sphere.allowed_region!r}")
-    for index, box in enumerate(frame.constraints.boxes):
+
+
+def _validate_scene_boxes(constraints: SceneConstraints, constraint_ids: set[int]) -> None:
+    for index, box in enumerate(constraints.boxes):
         path = f"$.frame.constraints.boxes[{index}]"
-        _check_constraint_id(box.id, f"{path}.id")
+        _check_constraint_id(box.id, f"{path}.id", constraint_ids)
         _check_tuple3(box.center, f"{path}.center")
         _check_tuple3(box.half_extents, f"{path}.half_extents")
+
         if any(extent <= 0.0 for extent in box.half_extents):
             _fail(f"{path}.half_extents", "values must be positive")
+
         if _number(box.coefficient, f"{path}.coefficient", float32=True) <= 0.0:
             _fail(f"{path}.coefficient", "must be positive")
+
         if box.allowed_region not in _REGION_KINDS:
             _fail(f"{path}.allowed_region", f"unknown region kind {box.allowed_region!r}")
 
-    for index, cylinder in enumerate(frame.constraints.cylinders):
+
+def _validate_scene_cylinders(constraints: SceneConstraints, constraint_ids: set[int]) -> None:
+    for index, cylinder in enumerate(constraints.cylinders):
         path = f"$.frame.constraints.cylinders[{index}]"
-        _check_constraint_id(cylinder.id, f"{path}.id")
+        _check_constraint_id(cylinder.id, f"{path}.id", constraint_ids)
         _check_tuple3(cylinder.center, f"{path}.center")
+
         if _number(cylinder.radius, f"{path}.radius", float32=True) <= 0.0:
             _fail(f"{path}.radius", "must be positive")
+
         if _number(cylinder.half_height, f"{path}.half_height", float32=True) <= 0.0:
             _fail(f"{path}.half_height", "must be positive")
+
         if _number(cylinder.coefficient, f"{path}.coefficient", float32=True) <= 0.0:
             _fail(f"{path}.coefficient", "must be positive")
+
         if cylinder.allowed_region not in _REGION_KINDS:
             _fail(f"{path}.allowed_region", f"unknown region kind {cylinder.allowed_region!r}")
 
-    grid = frame.signal_grid
+
+def _validate_scene_grid(grid: SceneSignalGrid | None) -> None:
+
     if grid is None:
         return
+
     _integer(grid.signal_count, "$.frame.signal_grid.signal_count", 1, _UINT32_MAX)
+
     if len(grid.shape) != 3:
         _fail("$.frame.signal_grid.shape", "expected exactly three dimensions")
+
     for index, dimension in enumerate(grid.shape):
         _integer(dimension, f"$.frame.signal_grid.shape[{index}]", 1, _UINT32_MAX)
+
     for vector_name, vector in (("origin", grid.origin), ("spacing", grid.spacing)):
         if len(vector) != 3:
             _fail(f"$.frame.signal_grid.{vector_name}", "expected exactly three values")
+
         for component, value in enumerate(vector):
             number = _number(
                 value,
                 f"$.frame.signal_grid.{vector_name}[{component}]",
                 float32=True,
             )
+
             if vector_name == "spacing" and number <= 0.0:
                 _fail(f"$.frame.signal_grid.{vector_name}[{component}]", "must be positive")
+
     for name in ("x_lower", "x_upper", "y_lower", "y_upper", "z_lower", "z_upper"):
         _validate_boundary(
             cast(SceneGridBoundary, getattr(grid, name)),
             grid.signal_count,
             f"$.frame.signal_grid.boundaries.{name}",
         )
+
     expected_levels = grid.signal_count * grid.shape[0] * grid.shape[1] * grid.shape[2]
+
     if len(grid.levels) != expected_levels:
         _fail("$.frame.signal_grid.levels", f"expected {expected_levels} values")
+
     for index, level in enumerate(grid.levels):
         _number(level, f"$.frame.signal_grid.levels[{index}]", float32=True)
+
+
+def _validate_frame(frame: SceneFrame) -> None:
+    if frame.culture is not None:
+        checked = _culture(
+            _culture_to_json(frame.culture),
+            "$.frame.culture",
+            frame.species_count,
+            frame.signal_grid.signal_count if frame.signal_grid else 0,
+        )
+
+        if checked is None or tuple(c.id for c in checked.cells) != tuple(
+            c.id for c in frame.cells
+        ):
+            _fail("$.frame.culture.cells", "culture cells must match frame cells")
+
+    _scene_channel_count(frame.species_count, "$.frame.species_count")
+
+    if frame.signal_grid is not None:
+        _scene_channel_count(frame.signal_grid.signal_count, "$.frame.signal_grid.signal_count", 1)
+
+    try:
+        frame.channel_metadata.resolved(
+            frame.species_count, frame.signal_grid.signal_count if frame.signal_grid else 0
+        )
+    except ChannelMetadataError as error:
+        raise SceneError(str(error)) from error
+
+    _number(frame.time, "$.frame.time")
+
+    if frame.time < 0.0:
+        _fail("$.frame.time", "must be non-negative")
+
+    if frame.backend.kind not in _BACKEND_KINDS:
+        _fail("$.frame.backend.kind", f"unknown backend kind {frame.backend.kind!r}")
+
+    if not frame.backend.name or not frame.backend.device:
+        _fail("$.frame.backend", "name and device must not be empty")
+
+    _integer(frame.backend.device_index, "$.frame.backend.device_index", 0, _UINT32_MAX)
+    _boolean(frame.backend.native, "$.frame.backend.native")
+    _integer(frame.species_count, "$.frame.species_count", 0, _UINT32_MAX)
+
+    identifiers: set[int] = set()
+
+    for index, cell in enumerate(frame.cells):
+        _validate_scene_cell(cell, index, identifiers, frame.species_count)
+
+    constraint_ids: set[int] = set()
+
+    _validate_scene_planes(frame.constraints, constraint_ids)
+
+    _validate_scene_spheres(frame.constraints, constraint_ids)
+
+    _validate_scene_boxes(frame.constraints, constraint_ids)
+
+    _validate_scene_cylinders(frame.constraints, constraint_ids)
+
+    _validate_scene_grid(frame.signal_grid)
 
 
 def parse_scene(source: str | bytes) -> SceneFrame:
@@ -980,8 +1605,10 @@ def parse_scene(source: str | bytes) -> SceneFrame:
 
     if not source:
         raise SceneError("scene is empty")
+
     if len(source) > MAX_SCENE_BYTES:
         raise SceneError(f"scene exceeds the {MAX_SCENE_BYTES}-byte limit")
+
     try:
         decoded = json.loads(
             source,
@@ -995,23 +1622,31 @@ def parse_scene(source: str | bytes) -> SceneFrame:
 
     root = _object(cast(object, decoded), "$")
     _keys(root, "$", {"format", "version", "producer", "integrity", "frame"})
+
     if _string(root["format"], "$.format") not in (SCENE_FORMAT, "cellmodeller2-scene"):
         _fail("$.format", "not a MicroSimulator scene")
+
     schema_version = _integer(root["version"], "$.version", 0, _UINT32_MAX)
-    if schema_version not in {2, SCENE_VERSION}:
+
+    if schema_version not in {2, 3, 4, SCENE_VERSION}:
         _fail("$.version", f"unsupported scene version {schema_version}")
+
     producer = _object(root["producer"], "$.producer")
     _keys(producer, "$.producer", {"name", "version"})
     _string(producer["name"], "$.producer.name")
     _string(producer["version"], "$.producer.version")
     integrity = _object(root["integrity"], "$.integrity")
     _keys(integrity, "$.integrity", {"algorithm", "frame"})
+
     if _string(integrity["algorithm"], "$.integrity.algorithm") != "sha256":
         _fail("$.integrity.algorithm", "unsupported integrity algorithm")
+
     expected_digest = _string(integrity["frame"], "$.integrity.frame")
     actual_digest = hashlib.sha256(_canonical_json(cast(JSONValue, root["frame"]))).hexdigest()
+
     if not hmac.compare_digest(actual_digest, expected_digest):
         _fail("$.integrity.frame", "frame digest does not match")
+
     return _frame(root["frame"], "$.frame", schema_version)
 
 
@@ -1019,13 +1654,17 @@ def load_scene(path: str | os.PathLike[str]) -> SceneFrame:
     """Load and validate a bounded scene document."""
 
     source = Path(path)
+
     try:
         with source.open("rb") as stream:
             encoded = stream.read(MAX_SCENE_BYTES + 1)
+
         if not encoded:
             raise SceneError("scene is empty")
+
         if len(encoded) > MAX_SCENE_BYTES:
             raise SceneError(f"scene exceeds the {MAX_SCENE_BYTES}-byte limit")
     except OSError as error:
         raise SceneError(f"could not read scene {source}") from error
+
     return parse_scene(encoded)

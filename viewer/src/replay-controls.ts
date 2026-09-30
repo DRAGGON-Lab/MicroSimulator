@@ -20,7 +20,9 @@ export class ReplayControls {
   ) {
     const element = <T extends HTMLElement>(id: string): T => {
       const found = host.querySelector<T>(`#${id}`);
+
       if (found === null) throw new Error(`missing replay control ${id}`);
+
       return found;
     };
     this.timeline = element("replay-timeline");
@@ -62,9 +64,12 @@ export class ReplayControls {
     this.close();
     const opening = new AbortController();
     this.opening = opening;
+
     try {
       const bundle = await ReplayBundle.open(files, opening.signal);
+
       if (opening.signal.aborted) return;
+
       let first = true;
       const player = new ReplayController(
         bundle.manifest.frames.length,

@@ -39,6 +39,7 @@ def build(context: ModelContext) -> NativeController:
     founder_id = simulation.add_cell(founder)
     state: dict[str, JSONValue] = {}
     DIVISION.initialize(state, context.rng, (founder_id,))
+
     return NativeController(
         simulation,
         model_id=MODEL_ID,
@@ -53,6 +54,7 @@ def build(context: ModelContext) -> NativeController:
 
 def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeController:
     del context
+
     return NativeController.from_checkpoint(
         checkpoint,
         model_id=MODEL_ID,

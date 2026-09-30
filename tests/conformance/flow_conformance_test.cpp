@@ -24,6 +24,7 @@ cm::SignalGridSpec duct(std::uint32_t nx, std::uint32_t ny, std::uint32_t nz,
   spec.advection = {{0.0F, 0.0F, 0.0F}};
   spec.y_lower = {.kind = cm::GridBoundaryKind::fixed, .values = {0.0F}};
   spec.y_upper = {.kind = cm::GridBoundaryKind::fixed, .values = {0.0F}};
+
   return spec;
 }
 
@@ -35,6 +36,7 @@ std::size_t site_index(const cm::SignalGridSpec& spec, std::uint32_t x, std::uin
 bool close(float actual, float expected) {
   constexpr float absolute_tolerance = 8.0e-4F;
   constexpr float relative_tolerance = 8.0e-4F;
+
   return std::abs(actual - expected) <=
          absolute_tolerance + relative_tolerance * std::abs(expected);
 }
@@ -42,6 +44,7 @@ bool close(float actual, float expected) {
 void compare_component(std::span<const float> actual, std::span<const float> expected,
                        std::string_view scenario, std::string_view component) {
   assert(actual.size() == expected.size());
+
   for (std::size_t index = 0; index < actual.size(); ++index) {
     if (!close(actual[index], expected[index])) {
       std::cerr << scenario << ' ' << component << " face " << index << ": actual=" << actual[index]
@@ -61,10 +64,13 @@ void compare_fields(const cm::SignalGridVelocityField& actual,
 void run_depth_case(cm::BackendKind backend, std::uint32_t device_index) {
   auto spec = duct(5, 8, 2, {0.7F, 1.1F, 0.6F});
   spec.obstacles.assign(spec.site_count(), 0);
+
   for (std::uint32_t y = 3; y <= 4; ++y) {
     spec.obstacles[site_index(spec, 2, y, 1)] = 1;
   }
+
   std::vector<float> mobility(spec.site_count(), 1.0F);
+
   for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
     for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
       for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
@@ -73,6 +79,7 @@ void run_depth_case(cm::BackendKind backend, std::uint32_t device_index) {
       }
     }
   }
+
   cm::DepthAveragedFlowParameters parameters;
   parameters.mean_inlet_speed = 3.5F;
   parameters.relative_tolerance = 1.0e-6F;
@@ -87,6 +94,7 @@ void run_depth_case(cm::BackendKind backend, std::uint32_t device_index) {
 void run_resolved_case(cm::BackendKind backend, std::uint32_t device_index) {
   auto spec = duct(6, 7, 2, {0.2F, 0.35F, 0.3F});
   std::vector<float> drag(spec.site_count(), 0.0F);
+
   for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
     for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
       for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
@@ -96,6 +104,7 @@ void run_resolved_case(cm::BackendKind backend, std::uint32_t device_index) {
       }
     }
   }
+
   cm::ResolvedFlowParameters parameters;
   parameters.mean_inlet_speed = 2.0F;
   parameters.relative_tolerance = 1.0e-6F;

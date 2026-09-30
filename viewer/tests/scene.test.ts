@@ -105,13 +105,16 @@ const PYTHON_SCENE = `{
 
 async function digest(value: unknown): Promise<string> {
   const encoded = canonicalize(value);
+
   if (encoded === undefined) {
     throw new Error("fixture is not canonicalizable");
   }
+
   const result = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(encoded),
   );
+
   return [...new Uint8Array(result)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
@@ -160,6 +163,7 @@ async function channelBudgetScene(
         }
       : {}),
   };
+
   return JSON.stringify({
     format: "microsimulator-scene",
     version,
@@ -259,9 +263,11 @@ describe("scene reader", () => {
       integrity: { frame: string };
     };
     const cell = document.frame.cells[0];
+
     if (cell === undefined) {
       throw new Error("fixture cell is missing");
     }
+
     cell.color = [1, 0, 0];
     document.integrity.frame = await digest(document.frame);
     await expect(parseScene(JSON.stringify(document))).rejects.toThrow(

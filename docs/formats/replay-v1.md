@@ -13,15 +13,15 @@ The manifest envelope has exactly `format`, `version`, `integrity`, and `recordi
 
 Each entry contains exactly:
 
-| Field | Meaning |
-| --- | --- |
-| `ordinal` | Zero-based contiguous ordinal equal to the entry's array index |
-| `time` | Finite nonnegative recorded simulation time |
-| `file` | Safe relative path to a `.scene.json` document |
-| `bytes` | Exact positive UTF-8 file byte length |
-| `sha256` | Lowercase SHA-256 of the exact scene file bytes, including whitespace |
-| `checkpoint_sha256` | Lowercase SHA-256 of the exact source checkpoint bytes consumed |
-| `source_backend` | Backend identity recorded by that checkpoint's producer |
+| Field               | Meaning                                                               |
+| ------------------- | --------------------------------------------------------------------- |
+| `ordinal`           | Zero-based contiguous ordinal equal to the entry's array index        |
+| `time`              | Finite nonnegative recorded simulation time                           |
+| `file`              | Safe relative path to a `.scene.json` document                        |
+| `bytes`             | Exact positive UTF-8 file byte length                                 |
+| `sha256`            | Lowercase SHA-256 of the exact scene file bytes, including whitespace |
+| `checkpoint_sha256` | Lowercase SHA-256 of the exact source checkpoint bytes consumed       |
+| `source_backend`    | Backend identity recorded by that checkpoint's producer               |
 
 The entry order is authoritative. Paths and checkpoint names are never sorted. Times must be nondecreasing. Equal times remain distinct frames and receive distinct ordinals; they are useful for topology events or separate observations at the same physical time. The exporter does not interpolate, merge, or drop snapshots. Supply checkpoints from the same run when stable cell identity across frames is required; the exporter cannot infer common ancestry from arbitrary checkpoint provenance.
 

@@ -12,6 +12,7 @@ async function sign(frame: unknown, version = 3): Promise<string> {
   ]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+
   return JSON.stringify({
     format: "microsimulator-scene",
     version,
@@ -76,6 +77,7 @@ describe("channel metadata", () => {
     "keeps %s labels unique when names imitate generated disambiguation suffixes",
     async (kind) => {
       const frame = await parseScene(pythonScene);
+
       for (const names of [
         ["GFP", "GFP", "GFP [0]"],
         [null, "Channel 0", "Channel 0 [0]"],

@@ -20,6 +20,7 @@ from microsimulator import (
 def test_sampling_and_scatter_do_not_bridge_disconnected_corners(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("backend unavailable")
+
     spec = SignalGridSpec()
     shape = GridShape()
     shape.x = shape.y = 2
@@ -50,21 +51,26 @@ def _periodic_error(backend: BackendKind, n: int) -> float:
     spec.shape, spec.signal_count = shape, 1
     spec.spacing = Vec3(h, 1, 1)
     spec.diffusion, spec.advection = [diffusion], [Vec3(speed, 0, 0)]
+
     for name in ["x_lower", "x_upper"]:
         boundary = getattr(spec, name)
         boundary.kind = GridBoundaryKind.PERIODIC
         setattr(spec, name, boundary)
+
     initial = [1 + 0.25 * math.sin(2 * math.pi * i * h) for i in range(n)]
     simulation = Simulation(backend)
     simulation.configure_signal_grid(spec, initial)
     steps = math.ceil(duration / (0.12 * h * h / diffusion))
+
     for _ in range(steps):
         simulation.step(duration / steps)
+
     values = simulation.signal_levels
     assert min(values) >= 0
     assert math.isclose(sum(values) * h, sum(initial) * h, abs_tol=2e-6)
     amplitude = 0.25 * math.exp(-diffusion * (2 * math.pi) ** 2 * duration)
     exact = [1 + amplitude * math.sin(2 * math.pi * (i * h - speed * duration)) for i in range(n)]
+
     return math.sqrt(sum((a - b) ** 2 for a, b in zip(values, exact, strict=True)) / n)
 
 
@@ -72,6 +78,7 @@ def _periodic_error(backend: BackendKind, n: int) -> float:
 def test_periodic_advection_diffusion_converges_and_conserves(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("backend unavailable")
+
     errors = [_periodic_error(backend, n) for n in (16, 32, 64)]
     assert errors[0] / errors[1] > 1.7
     assert errors[1] / errors[2] > 1.7

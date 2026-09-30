@@ -86,9 +86,12 @@ class Trace:
             ),
             default=0.0,
         )
+
         if requested_z is not None:
             entry["requested_direction_delta_z"] = requested_z
+
         self.events.append(entry)
+
         if (
             self.first_event is None
             and max(entry["max_center_displacement_from_plane"], entry["max_direction_z"])
@@ -113,16 +116,21 @@ class Trace:
             def call(simulation, *args, **kwargs):
                 if simulation is not self.simulation:
                     return original(simulation, *args, **kwargs)
+
                 before = cells(simulation)
                 requested_z = None
+
                 if name == "set_cell_geometry":
                     cell_id = args[0] if args else kwargs.get("cell_id")
                     direction = args[2] if len(args) >= 3 else kwargs.get("direction")
+
                     if cell_id is not None and direction is not None:
                         previous = simulation.cell(cell_id)
                         requested_z = direction.z - previous.direction.z
+
                 result = original(simulation, *args, **kwargs)
                 self.record(names[name], before, cells(simulation), requested_z)
+
                 return result
 
             return call
@@ -131,6 +139,7 @@ class Trace:
             for name in names:
                 originals[name] = getattr(Simulation, name)
                 setattr(Simulation, name, wrapped(name, originals[name]))
+
             yield
         finally:
             for name, original in originals.items():
@@ -153,11 +162,13 @@ def add(simulation, position=(0, 0, 0), direction=(1, 0, 0), length=4.0, radius=
     cell = CellInit()
     cell.position, cell.direction = Vec3(*position), Vec3(*direction)
     cell.length, cell.radius, cell.growth_rate = length, radius, 0.0
+
     return simulation.add_cell(cell)
 
 
 def fixtures(backend, seed, dt):
     results = {}
+
     for name in ("separated_planar", "crossing", "coincident_parallel"):
         simulation = Simulation(backend)
         add(simulation)
@@ -170,14 +181,17 @@ def fixtures(backend, seed, dt):
             [c.normal.x, c.normal.y, c.normal.z] for c in simulation.find_cell_contacts().contacts
         ]
         trace = Trace(simulation)
+
         with trace.instrument():
             simulation.relax_cell_mechanics(*MechanicsConfig().native_parameters())
+
         results[name] = dict(
             classification="expected 3D contact behavior",
             mechanics=MechanicsConfig().to_json(),
             contact_normals=normals,
             **trace.report(),
         )
+
     for name, direction in (("planar_division", (1, 0, 0)), ("inherited_tilt", (1, 0, 0.2))):
         simulation = Simulation(backend)
         founder = add(simulation, direction=direction)
@@ -195,8 +209,10 @@ def fixtures(backend, seed, dt):
             on_division=policy.on_division,
         )
         trace = Trace(simulation)
+
         with trace.instrument():
             controller.step(0.0)
+
         results[name] = dict(
             classification="expected inherited geometry and normalized XY jitter",
             controller_step_dt=0.0,
@@ -205,16 +221,20 @@ def fixtures(backend, seed, dt):
             mechanics=MechanicsConfig().to_json(),
             **trace.report(),
         )
+
     simulation = Simulation(backend)
     add(simulation, position=(0, 0, 0.8))
+
     for height, normal in ((-1.0, 1.0), (1.0, -1.0)):
         plane = PlaneConstraintInit()
         plane.point, plane.inward_normal = Vec3(0, 0, height), Vec3(0, 0, normal)
         simulation.add_plane_constraint(plane)
+
     trace = Trace(simulation, plane_z=0.8)
 
     def relax_to_tolerance(config):
         residuals = []
+
         for _ in range(20):
             residuals.append(
                 max(
@@ -225,17 +245,22 @@ def fixtures(backend, seed, dt):
                     default=0.0,
                 )
             )
+
             if residuals[-1] <= 1e-6 or (len(residuals) > 1 and residuals[-1] == residuals[-2]):
                 break
+
             simulation.relax_cell_mechanics(*config.native_parameters())
+
         return residuals
 
     default_config = MechanicsConfig()
     tight_config = MechanicsConfig(residual_rms_tolerance=1e-8)
+
     with trace.instrument():
         default_residuals = relax_to_tolerance(default_config)
         default_geometry = cells(simulation)
         tight_residuals = relax_to_tolerance(tight_config)
+
     results["finite_height_constraints"] = dict(
         classification="expected 3D wall relaxation; finite height is not strict 2D",
         default_mechanics=default_config.to_json(),
@@ -259,15 +284,41 @@ def fixtures(backend, seed, dt):
     simulation.configure_signal_grid(spec)
     add(simulation, position=(0, 0, 1), length=1.0)
     trace = Trace(simulation, plane_z=1.0)
+
     with trace.instrument():
         simulation.apply_flow_drift(dt)
+
     results["vertical_flow"] = dict(
         classification="expected prescribed 3D advection",
         prescribed_velocity=[0.0, 0.0, 0.2],
         drift_dt=dt,
         **trace.report(),
     )
+
     return results
+
+
+def model_parameters(args, parser):
+    parameters = {}
+
+    for parameter in args.parameter:
+        try:
+            key, value = parameter.split("=", 1)
+
+            if not key or key in parameters:
+                raise ValueError("parameter names must be nonempty and unique")
+
+            parameters[key] = json.loads(value)
+        except (ValueError, json.JSONDecodeError) as error:
+            parser.error(f"invalid parameter {parameter!r}: {error}")
+
+    if args.scenario is not None:
+        if "scenario" in parameters:
+            parser.error("provide scenario once, using --scenario or --parameter")
+
+        parameters["scenario"] = args.scenario
+
+    return parameters
 
 
 def main():
@@ -283,15 +334,21 @@ def main():
     parser.add_argument("--plane-z", type=float, default=0.0)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+
     if not math.isfinite(args.dt) or args.dt <= 0 or args.steps < 1 or args.max_cells < 1:
         parser.error("dt, steps and max-cells must be positive and finite")
+
     if not math.isfinite(args.plane_z):
         parser.error("plane-z must be finite")
+
     if not args.model and (args.scenario is not None or args.parameter):
         parser.error("scenario and parameters require a model")
+
     backend = getattr(BackendKind, args.backend.upper())
+
     if not backend_available(backend):
         parser.error(f"{args.backend} backend unavailable; no fallback performed")
+
     result = dict(
         diagnostic_version=1,
         seed=args.seed,
@@ -299,32 +356,25 @@ def main():
         backend=args.backend,
         fixtures=fixtures(backend, args.seed, args.dt),
     )
+
     if args.model:
-        parameters = {}
-        for parameter in args.parameter:
-            try:
-                key, value = parameter.split("=", 1)
-                if not key or key in parameters:
-                    raise ValueError("parameter names must be nonempty and unique")
-                parameters[key] = json.loads(value)
-            except (ValueError, json.JSONDecodeError) as error:
-                parser.error(f"invalid parameter {parameter!r}: {error}")
-        if args.scenario is not None:
-            if "scenario" in parameters:
-                parser.error("provide scenario once, using --scenario or --parameter")
-            parameters["scenario"] = args.scenario
+        parameters = model_parameters(args, parser)
+
         model, provenance = build_model(
             args.model,
             ModelContext(backend, 0, seed=args.seed, parameters=parameters),
         )
         trace = Trace(model.simulation, args.plane_z)
         completed = 0
+
         with trace.instrument():
             for _ in range(args.steps):
                 if model.simulation.cell_count >= args.max_cells:
                     break
+
                 model.step(args.dt)
                 completed += 1
+
         result["tutorial"] = dict(
             model=str(args.model),
             parameters=parameters,
@@ -338,7 +388,9 @@ def main():
             max_cells=args.max_cells,
             **trace.report(),
         )
+
     encoded = json.dumps(result, indent=2, allow_nan=False) + "\n"
+
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(encoded)

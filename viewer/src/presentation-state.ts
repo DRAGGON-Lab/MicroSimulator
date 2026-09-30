@@ -39,11 +39,13 @@ export class DatasetPresentationState {
     signalSlice: number;
   } {
     const grid = frame.signalGrid;
+
     if (grid !== null && this.preferences.signalSlice === null) {
       this.preferences.signalSlice = Math.floor(
         (sliceDimension(grid, this.preferences.signalAxis) - 1) / 2,
       );
     }
+
     return {
       ...this.preferences,
       colorMode:

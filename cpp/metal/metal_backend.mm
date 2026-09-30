@@ -95,29 +95,37 @@ static_assert(sizeof(MetalRateInstruction) == 20);
 id<MTLLibrary> compile_library(id<MTLDevice> device, const char* source_text,
                                const char* operation) {
   NSString* source = [NSString stringWithUTF8String:source_text];
+
   if (source == nil) {
     throw std::runtime_error(std::string(operation) + ": source is not valid UTF-8");
   }
+
   NSError* error = nil;
   id<MTLLibrary> library = [device newLibraryWithSource:source options:nil error:&error];
+
   if (library == nil) {
     throw_metal_error(operation, error);
   }
+
   return library;
 }
 
 id<MTLComputePipelineState> compile_pipeline(id<MTLDevice> device, id<MTLLibrary> library,
                                              NSString* function_name, const char* operation) {
   id<MTLFunction> function = [library newFunctionWithName:function_name];
+
   if (function == nil) {
     throw std::runtime_error(std::string(operation) + ": function is missing from the library");
   }
+
   NSError* error = nil;
   id<MTLComputePipelineState> pipeline = [device newComputePipelineStateWithFunction:function
                                                                                error:&error];
+
   if (pipeline == nil) {
     throw_metal_error(operation, error);
   }
+
   return pipeline;
 }
 
@@ -125,15 +133,18 @@ id<MTLBuffer> allocate_shared_buffer(id<MTLDevice> device, std::size_t byte_coun
                                      const char* description) {
   id<MTLBuffer> buffer = [device newBufferWithLength:byte_count
                                              options:MTLResourceStorageModeShared];
+
   if (buffer == nil) {
     throw std::runtime_error(std::string("failed to allocate Metal ") + description);
   }
+
   return buffer;
 }
 
 void wait_for_command(id<MTLCommandBuffer> command_buffer, const char* operation) {
   [command_buffer commit];
   [command_buffer waitUntilCompleted];
+
   if (command_buffer.status == MTLCommandBufferStatusError) {
     throw_metal_error(operation, command_buffer.error);
   }
@@ -147,18 +158,23 @@ void dispatch_1d(id<MTLComputeCommandEncoder> encoder, id<MTLComputePipelineStat
 
 id<MTLDevice> select_metal_device(std::uint32_t device_index) {
   NSArray<id<MTLDevice>>* devices = MTLCopyAllDevices();
+
   if (devices.count == 0) {
     id<MTLDevice> default_device = MTLCreateSystemDefaultDevice();
+
     if (device_index == 0 && default_device != nil) {
       return default_device;
     }
+
     if (default_device == nil) {
       throw std::runtime_error("Metal is unavailable on this system");
     }
   }
+
   if (static_cast<NSUInteger>(device_index) >= devices.count) {
     throw std::out_of_range("Metal device index is unavailable");
   }
+
   return devices[device_index];
 }
 
@@ -168,6 +184,7 @@ class MetalBackend final : public ComputeBackend {
     @autoreleasepool {
       device_ = select_metal_device(device_index_);
       queue_ = [device_ newCommandQueue];
+
       if (queue_ == nil) {
         throw std::runtime_error("failed to create a Metal command queue");
       }
@@ -260,6 +277,7 @@ class MetalBackend final : public ComputeBackend {
   [[nodiscard]] BackendInfo info() const override {
     @autoreleasepool {
       const char* device_name = device_.name.UTF8String;
+
       return {
           .kind = BackendKind::metal,
           .name = "metal",
@@ -276,17 +294,20 @@ class MetalBackend final : public ComputeBackend {
            feature == BackendFeature::external_constraints || feature == BackendFeature::signals ||
            feature == BackendFeature::coupled_rates ||
            feature == BackendFeature::depth_averaged_flow ||
-           feature == BackendFeature::resolved_flow;
+           feature == BackendFeature::resolved_flow || feature == BackendFeature::culture;
   }
 
   void advance_growth(WorldState& state, float dt) override {
     auto view = state.growth_state();
+
     if (view.lengths.empty()) {
       return;
     }
+
     if (view.lengths.size() > std::numeric_limits<std::uint32_t>::max()) {
       throw std::overflow_error("Metal growth launch exceeds the uint32 index space");
     }
+
     ensure_growth_capacity(view.lengths.size());
 
     const auto byte_count = view.lengths.size_bytes();
@@ -318,49 +339,29 @@ class MetalBackend final : public ComputeBackend {
   }
 
   void advance_species(WorldState& state, const SpeciesRatePlan& plan,
-                       std::span<const float> previous_lengths, float dt) override {
+                       std::span<const float> previous_lengths, float dt,
+                       BiochemicalVolumeView volumes = {}) override {
     if (!std::isfinite(dt) || dt < 0.0F) {
       throw std::invalid_argument("species time step must be finite and non-negative");
     }
+
     state.validate();
+    volumes.validate(state.size());
     plan.validate();
+
     if (plan.species_count() != state.species_count()) {
       throw std::invalid_argument("species rate plan and world state species counts disagree");
     }
+
     if (previous_lengths.size() != state.size()) {
       throw std::invalid_argument("previous cell lengths and world state cell counts disagree");
     }
+
     if (state.empty() || state.species_count() == 0) {
       return;
     }
-    if (state.size() > std::numeric_limits<std::uint32_t>::max() ||
-        state.species_count() > std::numeric_limits<std::uint32_t>::max() ||
-        plan.instructions().size() > std::numeric_limits<std::uint32_t>::max()) {
-      throw std::overflow_error("Metal species launch exceeds the uint32 index space");
-    }
-    if (!std::ranges::all_of(previous_lengths,
-                             [](float value) { return std::isfinite(value) && value >= 0.0F; })) {
-      throw std::invalid_argument("previous cell lengths must be finite and non-negative");
-    }
-    if (state.size() > std::numeric_limits<std::size_t>::max() / state.species_count() ||
-        state.size() > std::numeric_limits<std::size_t>::max() / plan.instructions().size()) {
-      throw std::overflow_error("Metal species buffer size overflow");
-    }
 
-    const auto level_count = state.size() * state.species_count();
-    const auto workspace_count = state.size() * plan.instructions().size();
-    if (level_count > std::numeric_limits<std::uint32_t>::max() ||
-        workspace_count > std::numeric_limits<std::uint32_t>::max()) {
-      throw std::overflow_error("Metal flattened species storage exceeds the uint32 index space");
-    }
-    if (level_count > std::numeric_limits<std::size_t>::max() / sizeof(float) ||
-        workspace_count > std::numeric_limits<std::size_t>::max() / sizeof(float) ||
-        plan.instructions().size() >
-            std::numeric_limits<std::size_t>::max() / sizeof(MetalRateInstruction)) {
-      throw std::overflow_error("Metal species allocation size overflow");
-    }
-    ensure_species_capacity(state.size(), level_count, plan.instructions().size(),
-                            state.species_count(), workspace_count);
+    prepare_species_storage(state, plan, previous_lengths);
 
     const auto geometry = state.geometry_state();
     const auto attributes = state.cell_attributes();
@@ -375,12 +376,17 @@ class MetalBackend final : public ComputeBackend {
                 attributes.cell_types.size_bytes());
     auto* centers = static_cast<MetalFloat4*>(species_centers_.contents);
     auto* shapes = static_cast<MetalFloat4*>(species_geometry_.contents);
+
     for (std::size_t index = 0; index < state.size(); ++index) {
       centers[index] = {geometry.position_x[index], geometry.position_y[index],
                         geometry.position_z[index], 0.0F};
-      shapes[index] = {geometry.lengths[index], geometry.radii[index], 0.0F, 0.0F};
+      shapes[index] = {geometry.lengths[index], geometry.radii[index],
+                       volumes.current.empty() ? 0.0F : volumes.current[index],
+                       volumes.previous.empty() ? 0.0F : volumes.previous[index]};
     }
+
     auto* instructions = static_cast<MetalRateInstruction*>(species_instructions_.contents);
+
     for (std::size_t index = 0; index < plan.instructions().size(); ++index) {
       const auto& instruction = plan.instructions()[index];
       instructions[index] = {
@@ -391,6 +397,7 @@ class MetalBackend final : public ComputeBackend {
           .value = instruction.value,
       };
     }
+
     std::memcpy(species_outputs_.contents, plan.outputs().data(), plan.outputs().size_bytes());
     *static_cast<std::uint32_t*>(species_error_.contents) = 0;
 
@@ -432,60 +439,19 @@ class MetalBackend final : public ComputeBackend {
   SignalSolveReport advance_signal_grid(SignalGrid& grid, float dt) override {
     grid.validate();
     grid.validate_step(dt);
+
     if (dt == 0.0F) {
       return {};
     }
+
     const auto& spec = grid.spec();
     const auto levels = grid.levels();
     const auto level_count = static_cast<std::uint32_t>(levels.size());
     const auto signal_count = spec.signal_count;
     ensure_signal_capacity(levels.size(), signal_count);
 
-    std::memcpy(signal_levels_.contents, levels.data(), levels.size_bytes());
-    std::memcpy(signal_diffusion_.contents, spec.diffusion.data(),
-                spec.diffusion.size() * sizeof(float));
-    auto* reaction_source = static_cast<float*>(signal_reaction_source_.contents);
-    auto* reaction_loss = static_cast<float*>(signal_reaction_loss_.contents);
-    if (spec.reaction.has_value()) {
-      std::memcpy(reaction_source, spec.reaction->source_rates.data(), levels.size_bytes());
-      std::memcpy(reaction_loss, spec.reaction->loss_rates.data(), levels.size_bytes());
-    } else {
-      std::fill_n(reaction_source, levels.size(), 0.0F);
-      std::fill_n(reaction_loss, levels.size(), 0.0F);
-    }
-    auto* obstacles = static_cast<std::uint8_t*>(signal_obstacles_.contents);
-    if (spec.has_obstacles()) {
-      std::memcpy(obstacles, spec.obstacles.data(), spec.obstacles.size());
-    } else {
-      std::fill_n(obstacles, spec.site_count(), std::uint8_t{0});
-    }
-    ensure_signal_face_capacity(largest_face_count(spec));
-    fill_velocity_faces(spec, signal_x_faces_, signal_y_faces_, signal_z_faces_);
+    const auto boundary_kinds = upload_signal_inputs(spec, levels);
     const auto has_velocity_field = static_cast<std::uint32_t>(spec.velocity_field.has_value());
-    auto* advection = static_cast<MetalFloat4*>(signal_advection_.contents);
-    for (std::size_t signal = 0; signal < signal_count; ++signal) {
-      advection[signal] = {
-          spec.advection[signal].x,
-          spec.advection[signal].y,
-          spec.advection[signal].z,
-          0.0F,
-      };
-    }
-
-    const std::array<const GridBoundary*, 6> boundaries{
-        &spec.x_lower, &spec.x_upper, &spec.y_lower, &spec.y_upper, &spec.z_lower, &spec.z_upper,
-    };
-    auto* fixed_values = static_cast<float*>(signal_fixed_values_.contents);
-    std::fill_n(fixed_values, static_cast<std::size_t>(6) * signal_count, 0.0F);
-    std::array<std::uint32_t, 6> boundary_kinds{};
-    for (std::size_t face = 0; face < boundaries.size(); ++face) {
-      boundary_kinds[face] = static_cast<std::uint32_t>(boundaries[face]->kind);
-      if (boundaries[face]->kind == GridBoundaryKind::fixed) {
-        std::copy(boundaries[face]->values.begin(), boundaries[face]->values.end(),
-                  fixed_values + (face * signal_count));
-      }
-    }
-    *static_cast<std::uint32_t*>(signal_error_.contents) = 0;
 
     const MetalUInt4 shape{spec.shape.x, spec.shape.y, spec.shape.z,
                            static_cast<std::uint32_t>(spec.site_count())};
@@ -539,6 +505,7 @@ class MetalBackend final : public ComputeBackend {
           level_count, spec.solver);
       result_buffer = solve.first;
       report = solve.second;
+
       if (!report.converged) {
         throw std::runtime_error("Metal Implicit signal solve did not converge after " +
                                  std::to_string(report.iterations) + " iterations");
@@ -557,6 +524,7 @@ class MetalBackend final : public ComputeBackend {
       if (right != 0 && left > std::numeric_limits<std::size_t>::max() / right) {
         throw std::overflow_error(std::string("Metal coupled ") + name + " size overflow");
       }
+
       return left * right;
     };
     const auto cell_count_size = state.size();
@@ -570,6 +538,7 @@ class MetalBackend final : public ComputeBackend {
     const auto cell_signal_count =
         checked_product(cell_count_size, signal_count_size, "cell signal");
     const auto grid_level_count = grid.levels().size();
+
     for (const auto count :
          {cell_count_size, species_count_size, signal_count_size, instruction_count_size,
           species_level_count, workspace_count, cell_signal_count, grid_level_count}) {
@@ -577,91 +546,18 @@ class MetalBackend final : public ComputeBackend {
         throw std::overflow_error("Metal coupled launch exceeds the uint32 index space");
       }
     }
+
     ensure_coupled_capacity(cell_count_size, species_level_count, instruction_count_size,
                             species_count_size, signal_count_size, workspace_count,
                             cell_signal_count, grid_level_count);
 
-    const auto geometry = state.geometry_state();
-    const auto attributes = state.cell_attributes();
+    upload_coupled_cells(state, plan, previous_lengths);
     auto species_state = state.species_state();
     const auto& spec = grid.spec();
     const auto grid_levels = grid.levels();
-    if (!species_state.levels.empty()) {
-      std::memcpy(coupled_species_levels_.contents, species_state.levels.data(),
-                  species_state.levels.size_bytes());
-    }
-    if (!previous_lengths.empty()) {
-      std::memcpy(coupled_previous_lengths_.contents, previous_lengths.data(),
-                  previous_lengths.size_bytes());
-      std::memcpy(coupled_growth_rates_.contents, attributes.growth_rates.data(),
-                  attributes.growth_rates.size_bytes());
-      std::memcpy(coupled_cell_types_.contents, attributes.cell_types.data(),
-                  attributes.cell_types.size_bytes());
-    }
-    auto* centers = static_cast<MetalFloat4*>(coupled_centers_.contents);
-    auto* cell_geometry = static_cast<MetalFloat4*>(coupled_geometry_.contents);
-    for (std::size_t index = 0; index < cell_count_size; ++index) {
-      centers[index] = {geometry.position_x[index], geometry.position_y[index],
-                        geometry.position_z[index], 0.0F};
-      cell_geometry[index] = {geometry.lengths[index], geometry.radii[index], 0.0F, 0.0F};
-    }
-    auto* instructions = static_cast<MetalRateInstruction*>(coupled_instructions_.contents);
-    for (std::size_t index = 0; index < instruction_count_size; ++index) {
-      const auto& instruction = plan.instructions()[index];
-      instructions[index] = {
-          .operation = static_cast<std::uint32_t>(instruction.operation),
-          .first = instruction.first,
-          .second = instruction.second,
-          .third = instruction.third,
-          .value = instruction.value,
-      };
-    }
-    if (!plan.species_outputs().empty()) {
-      std::memcpy(coupled_species_outputs_.contents, plan.species_outputs().data(),
-                  plan.species_outputs().size_bytes());
-    }
-    std::memcpy(coupled_signal_outputs_.contents, plan.signal_outputs().data(),
-                plan.signal_outputs().size_bytes());
-    std::memcpy(coupled_grid_levels_.contents, grid_levels.data(), grid_levels.size_bytes());
-    std::memcpy(coupled_diffusion_.contents, spec.diffusion.data(),
-                spec.diffusion.size() * sizeof(float));
-    auto* reaction_source = static_cast<float*>(coupled_reaction_source_.contents);
-    auto* reaction_loss = static_cast<float*>(coupled_reaction_loss_.contents);
-    if (spec.reaction.has_value()) {
-      std::memcpy(reaction_source, spec.reaction->source_rates.data(), grid_levels.size_bytes());
-      std::memcpy(reaction_loss, spec.reaction->loss_rates.data(), grid_levels.size_bytes());
-    } else {
-      std::fill_n(reaction_source, grid_level_count, 0.0F);
-      std::fill_n(reaction_loss, grid_level_count, 0.0F);
-    }
-    auto* obstacles = static_cast<std::uint8_t*>(coupled_obstacles_.contents);
-    if (spec.has_obstacles()) {
-      std::memcpy(obstacles, spec.obstacles.data(), spec.obstacles.size());
-    } else {
-      std::fill_n(obstacles, spec.site_count(), std::uint8_t{0});
-    }
-    ensure_coupled_face_capacity(largest_face_count(spec));
-    fill_velocity_faces(spec, coupled_x_faces_, coupled_y_faces_, coupled_z_faces_);
+
+    const auto boundary_kinds = upload_coupled_grid(spec, grid_levels);
     const auto has_velocity_field = static_cast<std::uint32_t>(spec.velocity_field.has_value());
-    auto* advection = static_cast<MetalFloat4*>(coupled_advection_.contents);
-    for (std::size_t signal = 0; signal < signal_count_size; ++signal) {
-      advection[signal] = {spec.advection[signal].x, spec.advection[signal].y,
-                           spec.advection[signal].z, 0.0F};
-    }
-    const std::array<const GridBoundary*, 6> boundaries{
-        &spec.x_lower, &spec.x_upper, &spec.y_lower, &spec.y_upper, &spec.z_lower, &spec.z_upper,
-    };
-    auto* fixed_values = static_cast<float*>(coupled_fixed_values_.contents);
-    std::fill_n(fixed_values, static_cast<std::size_t>(6) * signal_count_size, 0.0F);
-    std::array<std::uint32_t, 6> boundary_kinds{};
-    for (std::size_t face = 0; face < boundaries.size(); ++face) {
-      boundary_kinds[face] = static_cast<std::uint32_t>(boundaries[face]->kind);
-      if (boundaries[face]->kind == GridBoundaryKind::fixed) {
-        std::copy(boundaries[face]->values.begin(), boundaries[face]->values.end(),
-                  fixed_values + (face * signal_count_size));
-      }
-    }
-    *static_cast<std::uint32_t*>(coupled_error_.contents) = 0;
 
     const auto cell_count = static_cast<std::uint32_t>(cell_count_size);
     const auto species_count = static_cast<std::uint32_t>(species_count_size);
@@ -673,6 +569,497 @@ class MetalBackend final : public ComputeBackend {
     const MetalFloat4 origin{spec.origin.x, spec.origin.y, spec.origin.z, 0.0F};
     const MetalFloat4 spacing{spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F};
     const auto crank_nicolson = static_cast<std::uint32_t>(spec.integration);
+    dispatch_coupled(shape, origin, spacing, boundary_kinds, dt, cell_count, species_count,
+                     signal_count, instruction_count, level_count, crank_nicolson,
+                     has_velocity_field);
+
+    const auto error = *static_cast<const std::uint32_t*>(coupled_error_.contents);
+
+    if (error != 0) {
+      throw std::domain_error("Metal coupled-rate kernel produced an invalid value");
+    }
+
+    id<MTLBuffer> result_buffer = coupled_grid_output_;
+    SignalSolveReport report;
+
+    if (crank_nicolson != 0) {
+      const auto solve = solve_signal_crank_nicolson(
+          coupled_grid_levels_, coupled_grid_output_, coupled_diffusion_, coupled_advection_,
+          coupled_fixed_values_, coupled_reaction_source_, coupled_reaction_loss_,
+          coupled_obstacles_, coupled_x_faces_, coupled_y_faces_, coupled_z_faces_,
+          has_velocity_field, coupled_error_, boundary_kinds, shape, spacing,
+          (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count, level_count, spec.solver);
+      result_buffer = solve.first;
+      report = solve.second;
+
+      if (!report.converged) {
+        throw std::runtime_error("Metal Implicit coupled signal solve did not converge after " +
+                                 std::to_string(report.iterations) + " iterations");
+      }
+    }
+
+    const auto* output = static_cast<const float*>(result_buffer.contents);
+    std::vector<float> next_grid(output, output + grid_level_count);
+    SignalGridCheckpoint{.spec = spec, .levels = next_grid}.validate();
+
+    if (!species_state.levels.empty()) {
+      std::memcpy(species_state.levels.data(), coupled_species_levels_.contents,
+                  species_state.levels.size_bytes());
+    }
+
+    grid.replace_levels(std::move(next_grid));
+
+    return report;
+  }
+
+  [[nodiscard]] ContactGraph find_cell_contacts(const WorldState& state,
+                                                const ContactParameters& parameters) override {
+    validate_contact_parameters(parameters);
+    const auto geometry = state.geometry_state();
+
+    if (geometry.size() == 0) {
+      return ContactGraph{};
+    }
+
+    if (geometry.size() > std::numeric_limits<std::uint32_t>::max()) {
+      throw std::overflow_error("Metal contact launch exceeds the uint32 cell index space");
+    }
+
+    const auto candidates = find_cell_contact_candidates(state, parameters);
+
+    if (candidates.empty()) {
+      return ContactGraph(geometry.size(), {});
+    }
+
+    if (candidates.size() > std::numeric_limits<std::uint32_t>::max() / 2) {
+      throw std::overflow_error("Metal contact candidates exceed the uint32 scan space");
+    }
+
+    ensure_contact_cell_capacity(geometry.size());
+    ensure_contact_candidate_capacity(candidates.size());
+    ensure_contact_pair_capacity(candidates.size());
+    upload_contact_cells(geometry);
+    upload_contact_candidates(candidates);
+    const auto candidate_count = static_cast<std::uint32_t>(candidates.size());
+    const auto contact_count = count_contacts(candidate_count, parameters);
+
+    if (contact_count == 0) {
+      return ContactGraph(geometry.size(), {});
+    }
+
+    ensure_contact_output_capacity(contact_count);
+    fill_contacts(candidate_count, parameters);
+
+    return download_contacts(geometry.size(), contact_count);
+  }
+
+  [[nodiscard]] ExternalContactGraph find_external_contacts(
+      const WorldState& state, const ConstraintSet& constraints,
+      const ConstraintContactParameters& parameters) override {
+    validate_constraint_contact_parameters(parameters);
+    state.validate();
+    const auto geometry = state.geometry_state();
+
+    if (geometry.size() == 0 || constraints.empty()) {
+      return ExternalContactGraph(geometry.size(), {});
+    }
+
+    if (geometry.size() > std::numeric_limits<std::uint32_t>::max() ||
+        constraints.size() > std::numeric_limits<std::uint32_t>::max()) {
+      throw std::overflow_error("Metal external-contact launch exceeds the uint32 index space");
+    }
+
+    if (geometry.size() > std::numeric_limits<std::size_t>::max() / constraints.size()) {
+      throw std::overflow_error("Metal external-contact pair count overflow");
+    }
+
+    const auto pair_count = geometry.size() * constraints.size();
+
+    if (pair_count > std::numeric_limits<std::uint32_t>::max() / 2) {
+      throw std::overflow_error("Metal external-contact staging exceeds the uint32 scan space");
+    }
+
+    ensure_contact_cell_capacity(geometry.size());
+    ensure_external_constraint_capacity(constraints.size());
+    ensure_contact_pair_capacity(pair_count);
+    upload_contact_cells(geometry);
+    upload_external_constraints(constraints);
+    const auto contact_count = count_external_contacts(
+        static_cast<std::uint32_t>(geometry.size()), static_cast<std::uint32_t>(constraints.size()),
+        static_cast<std::uint32_t>(pair_count), parameters);
+
+    if (contact_count == 0) {
+      return ExternalContactGraph(geometry.size(), {});
+    }
+
+    ensure_contact_output_capacity(contact_count);
+    fill_external_contacts(static_cast<std::uint32_t>(geometry.size()),
+                           static_cast<std::uint32_t>(constraints.size()), parameters);
+
+    return download_external_contacts(geometry.size(), contact_count);
+  }
+
+  [[nodiscard]] MechanicsSolveResult solve_cell_mechanics(
+      const WorldState& state, const ContactGraph& contacts,
+      const ExternalContactGraph& external_contacts,
+      const MechanicsParameters& parameters) override {
+    validate_mechanics_parameters(parameters);
+    state.validate();
+    const auto geometry = state.geometry_state();
+
+    if (contacts.cell_count() != geometry.size()) {
+      throw std::invalid_argument("contact graph and world state cell counts disagree");
+    }
+
+    if (external_contacts.cell_count() != geometry.size()) {
+      throw std::invalid_argument("external contact graph and world state cell counts disagree");
+    }
+
+    if (external_contacts.size() > std::numeric_limits<std::size_t>::max() - contacts.size()) {
+      throw std::overflow_error("Metal mechanics row count overflow");
+    }
+
+    const auto row_count = contacts.size() + external_contacts.size();
+
+    if (geometry.size() > std::numeric_limits<std::uint32_t>::max() ||
+        row_count > std::numeric_limits<std::uint32_t>::max() / 2) {
+      throw std::overflow_error("Metal mechanics exceeds the uint32 index space");
+    }
+
+    MechanicsSolveResult result;
+    result.corrections.resize(geometry.size());
+
+    if (geometry.size() == 0 || row_count == 0) {
+      return result;
+    }
+
+    validate_mechanics_contacts(geometry, contacts);
+    validate_external_mechanics_contacts(geometry, external_contacts);
+    ensure_contact_cell_capacity(geometry.size());
+    ensure_contact_output_capacity(row_count);
+    ensure_mechanics_capacity(geometry.size(), row_count);
+    upload_contact_cells(geometry);
+    upload_mechanics_fixed(state.cell_attributes().fixed);
+    upload_mechanics_contacts(contacts, external_contacts);
+    upload_mechanics_incidence(contacts, external_contacts);
+
+    const auto cell_count = static_cast<std::uint32_t>(geometry.size());
+    const auto contact_count = static_cast<std::uint32_t>(row_count);
+    auto residual_squared = initialize_mechanics(cell_count, contact_count);
+    result.report.initial_residual_rms =
+        std::sqrt(residual_squared / static_cast<float>(cell_count));
+    result.report.final_residual_rms = result.report.initial_residual_rms;
+
+    if (!std::isfinite(result.report.initial_residual_rms)) {
+      result.report.status = SolverStatus::breakdown;
+      result.report.breakdown = SolverBreakdown::non_finite_residual;
+
+      return result;
+    }
+
+    if (result.report.initial_residual_rms <= parameters.residual_rms_tolerance) {
+      return result;
+    }
+
+    result.report.status = SolverStatus::iteration_limit;
+    const auto maximum_iterations = mechanics_iteration_limit(parameters, geometry.size());
+
+    iterate_mechanics(cell_count, contact_count, maximum_iterations, parameters, residual_squared,
+                      result.report);
+
+    residual_squared = recompute_residual(cell_count, contact_count, parameters);
+    result.report.final_residual_rms = std::sqrt(residual_squared / static_cast<float>(cell_count));
+
+    if (!std::isfinite(result.report.final_residual_rms) &&
+        result.report.status != SolverStatus::breakdown) {
+      result.report.status = SolverStatus::breakdown;
+      result.report.breakdown = SolverBreakdown::non_finite_residual;
+    }
+
+    result.corrections = download_mechanics_solution(geometry.size());
+
+    return result;
+  }
+
+  [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(
+      const SignalGridSpec& spec, std::span<const float> mobility,
+      const DepthAveragedFlowParameters& parameters) override {
+    return flow_solver_->solve_depth_averaged(spec, mobility, parameters);
+  }
+
+  [[nodiscard]] ResolvedFlowResult solve_resolved_flow(
+      const SignalGridSpec& spec, std::span<const float> drag,
+      const ResolvedFlowParameters& parameters) override {
+    return flow_solver_->solve_resolved(spec, drag, parameters);
+  }
+
+ private:
+  void prepare_species_storage(const WorldState& state, const SpeciesRatePlan& plan,
+                               std::span<const float> previous_lengths) {
+    if (state.size() > std::numeric_limits<std::uint32_t>::max() ||
+        state.species_count() > std::numeric_limits<std::uint32_t>::max() ||
+        plan.instructions().size() > std::numeric_limits<std::uint32_t>::max()) {
+      throw std::overflow_error("Metal species launch exceeds the uint32 index space");
+    }
+
+    if (!std::ranges::all_of(previous_lengths, [](float value) {
+          return std::isfinite(value) && value >= 0.0F;
+        })) {
+      throw std::invalid_argument("previous cell lengths must be finite and non-negative");
+    }
+
+    if (state.size() > std::numeric_limits<std::size_t>::max() / state.species_count() ||
+        state.size() > std::numeric_limits<std::size_t>::max() / plan.instructions().size()) {
+      throw std::overflow_error("Metal species buffer size overflow");
+    }
+
+    const auto level_count = state.size() * state.species_count();
+    const auto workspace_count = state.size() * plan.instructions().size();
+
+    if (level_count > std::numeric_limits<std::uint32_t>::max() ||
+        workspace_count > std::numeric_limits<std::uint32_t>::max()) {
+      throw std::overflow_error("Metal flattened species storage exceeds the uint32 index space");
+    }
+
+    if (level_count > std::numeric_limits<std::size_t>::max() / sizeof(float) ||
+        workspace_count > std::numeric_limits<std::size_t>::max() / sizeof(float) ||
+        plan.instructions().size() >
+            std::numeric_limits<std::size_t>::max() / sizeof(MetalRateInstruction)) {
+      throw std::overflow_error("Metal species allocation size overflow");
+    }
+
+    ensure_species_capacity(state.size(), level_count, plan.instructions().size(),
+                            state.species_count(), workspace_count);
+  }
+
+  void iterate_mechanics(std::uint32_t cell_count, std::uint32_t contact_count,
+                         std::uint32_t maximum_iterations, const MechanicsParameters& parameters,
+                         float& residual_squared, SolverReport& report) {
+    for (std::uint32_t iteration = 0; iteration < maximum_iterations; ++iteration) {
+      const auto curvature = apply_search_direction(cell_count, contact_count, parameters);
+
+      if (!std::isfinite(curvature)) {
+        report.status = SolverStatus::breakdown;
+        report.breakdown = SolverBreakdown::non_finite_curvature;
+        break;
+      }
+
+      if (curvature <= 0.0F) {
+        report.status = SolverStatus::breakdown;
+        report.breakdown = SolverBreakdown::non_positive_curvature;
+        break;
+      }
+
+      const auto alpha = residual_squared / curvature;
+      const auto next_residual_squared = update_solution_residual(cell_count, alpha);
+      report.iterations = iteration + 1;
+      const auto recurrence_rms = std::sqrt(next_residual_squared / static_cast<float>(cell_count));
+
+      if (!std::isfinite(recurrence_rms)) {
+        report.status = SolverStatus::breakdown;
+        report.breakdown = SolverBreakdown::non_finite_residual;
+        break;
+      }
+
+      if (recurrence_rms <= parameters.residual_rms_tolerance) {
+        residual_squared = recompute_residual(cell_count, contact_count, parameters);
+        const auto recomputed_rms = std::sqrt(residual_squared / static_cast<float>(cell_count));
+
+        if (!std::isfinite(recomputed_rms)) {
+          report.status = SolverStatus::breakdown;
+          report.breakdown = SolverBreakdown::non_finite_residual;
+          break;
+        }
+
+        if (recomputed_rms <= parameters.residual_rms_tolerance) {
+          report.status = SolverStatus::converged;
+          break;
+        }
+
+        update_search_direction(cell_count, 0.0F);
+        continue;
+      }
+
+      const auto beta = next_residual_squared / residual_squared;
+      update_search_direction(cell_count, beta);
+      residual_squared = next_residual_squared;
+    }
+  }
+
+  std::array<std::uint32_t, 6> upload_signal_inputs(const SignalGridSpec& spec,
+                                                    std::span<const float> levels) {
+    const auto signal_count = spec.signal_count;
+    std::memcpy(signal_levels_.contents, levels.data(), levels.size_bytes());
+    std::memcpy(signal_diffusion_.contents, spec.diffusion.data(),
+                spec.diffusion.size() * sizeof(float));
+    auto* reaction_source = static_cast<float*>(signal_reaction_source_.contents);
+    auto* reaction_loss = static_cast<float*>(signal_reaction_loss_.contents);
+
+    if (spec.reaction.has_value()) {
+      std::memcpy(reaction_source, spec.reaction->source_rates.data(), levels.size_bytes());
+      std::memcpy(reaction_loss, spec.reaction->loss_rates.data(), levels.size_bytes());
+    } else {
+      std::fill_n(reaction_source, levels.size(), 0.0F);
+      std::fill_n(reaction_loss, levels.size(), 0.0F);
+    }
+
+    auto* obstacles = static_cast<std::uint8_t*>(signal_obstacles_.contents);
+
+    if (spec.has_obstacles()) {
+      std::memcpy(obstacles, spec.obstacles.data(), spec.obstacles.size());
+    } else {
+      std::fill_n(obstacles, spec.site_count(), std::uint8_t{0});
+    }
+
+    ensure_signal_face_capacity(largest_face_count(spec));
+    fill_velocity_faces(spec, signal_x_faces_, signal_y_faces_, signal_z_faces_);
+    auto* advection = static_cast<MetalFloat4*>(signal_advection_.contents);
+
+    for (std::size_t signal = 0; signal < signal_count; ++signal) {
+      advection[signal] = {
+          spec.advection[signal].x,
+          spec.advection[signal].y,
+          spec.advection[signal].z,
+          0.0F,
+      };
+    }
+
+    const std::array<const GridBoundary*, 6> boundaries{
+        &spec.x_lower, &spec.x_upper, &spec.y_lower, &spec.y_upper, &spec.z_lower, &spec.z_upper,
+    };
+    auto* fixed_values = static_cast<float*>(signal_fixed_values_.contents);
+    std::fill_n(fixed_values, static_cast<std::size_t>(6) * signal_count, 0.0F);
+    std::array<std::uint32_t, 6> boundary_kinds{};
+
+    for (std::size_t face = 0; face < boundaries.size(); ++face) {
+      boundary_kinds[face] = static_cast<std::uint32_t>(boundaries[face]->kind);
+
+      if (boundaries[face]->kind == GridBoundaryKind::fixed) {
+        std::copy(boundaries[face]->values.begin(), boundaries[face]->values.end(),
+                  fixed_values + (face * signal_count));
+      }
+    }
+
+    *static_cast<std::uint32_t*>(signal_error_.contents) = 0;
+
+    return boundary_kinds;
+  }
+
+  void upload_coupled_cells(WorldState& state, const CoupledRatePlan& plan,
+                            std::span<const float> previous_lengths) {
+    const auto cell_count_size = state.size(), instruction_count_size = plan.instructions().size();
+    const auto geometry = state.geometry_state();
+    const auto attributes = state.cell_attributes();
+    auto species_state = state.species_state();
+
+    if (!species_state.levels.empty()) {
+      std::memcpy(coupled_species_levels_.contents, species_state.levels.data(),
+                  species_state.levels.size_bytes());
+    }
+
+    if (!previous_lengths.empty()) {
+      std::memcpy(coupled_previous_lengths_.contents, previous_lengths.data(),
+                  previous_lengths.size_bytes());
+      std::memcpy(coupled_growth_rates_.contents, attributes.growth_rates.data(),
+                  attributes.growth_rates.size_bytes());
+      std::memcpy(coupled_cell_types_.contents, attributes.cell_types.data(),
+                  attributes.cell_types.size_bytes());
+    }
+
+    auto* centers = static_cast<MetalFloat4*>(coupled_centers_.contents);
+    auto* cell_geometry = static_cast<MetalFloat4*>(coupled_geometry_.contents);
+
+    for (std::size_t index = 0; index < cell_count_size; ++index) {
+      centers[index] = {geometry.position_x[index], geometry.position_y[index],
+                        geometry.position_z[index], 0.0F};
+      cell_geometry[index] = {geometry.lengths[index], geometry.radii[index], 0.0F, 0.0F};
+    }
+
+    auto* instructions = static_cast<MetalRateInstruction*>(coupled_instructions_.contents);
+
+    for (std::size_t index = 0; index < instruction_count_size; ++index) {
+      const auto& instruction = plan.instructions()[index];
+      instructions[index] = {
+          .operation = static_cast<std::uint32_t>(instruction.operation),
+          .first = instruction.first,
+          .second = instruction.second,
+          .third = instruction.third,
+          .value = instruction.value,
+      };
+    }
+
+    if (!plan.species_outputs().empty()) {
+      std::memcpy(coupled_species_outputs_.contents, plan.species_outputs().data(),
+                  plan.species_outputs().size_bytes());
+    }
+
+    std::memcpy(coupled_signal_outputs_.contents, plan.signal_outputs().data(),
+                plan.signal_outputs().size_bytes());
+  }
+
+  std::array<std::uint32_t, 6> upload_coupled_grid(const SignalGridSpec& spec,
+                                                   std::span<const float> grid_levels) {
+    const auto signal_count_size = spec.signal_count;
+    const auto grid_level_count = grid_levels.size();
+    std::memcpy(coupled_grid_levels_.contents, grid_levels.data(), grid_levels.size_bytes());
+    std::memcpy(coupled_diffusion_.contents, spec.diffusion.data(),
+                spec.diffusion.size() * sizeof(float));
+    auto* reaction_source = static_cast<float*>(coupled_reaction_source_.contents);
+    auto* reaction_loss = static_cast<float*>(coupled_reaction_loss_.contents);
+
+    if (spec.reaction.has_value()) {
+      std::memcpy(reaction_source, spec.reaction->source_rates.data(), grid_levels.size_bytes());
+      std::memcpy(reaction_loss, spec.reaction->loss_rates.data(), grid_levels.size_bytes());
+    } else {
+      std::fill_n(reaction_source, grid_level_count, 0.0F);
+      std::fill_n(reaction_loss, grid_level_count, 0.0F);
+    }
+
+    auto* obstacles = static_cast<std::uint8_t*>(coupled_obstacles_.contents);
+
+    if (spec.has_obstacles()) {
+      std::memcpy(obstacles, spec.obstacles.data(), spec.obstacles.size());
+    } else {
+      std::fill_n(obstacles, spec.site_count(), std::uint8_t{0});
+    }
+
+    ensure_coupled_face_capacity(largest_face_count(spec));
+    fill_velocity_faces(spec, coupled_x_faces_, coupled_y_faces_, coupled_z_faces_);
+    auto* advection = static_cast<MetalFloat4*>(coupled_advection_.contents);
+
+    for (std::size_t signal = 0; signal < signal_count_size; ++signal) {
+      advection[signal] = {spec.advection[signal].x, spec.advection[signal].y,
+                           spec.advection[signal].z, 0.0F};
+    }
+
+    const std::array<const GridBoundary*, 6> boundaries{
+        &spec.x_lower, &spec.x_upper, &spec.y_lower, &spec.y_upper, &spec.z_lower, &spec.z_upper,
+    };
+    auto* fixed_values = static_cast<float*>(coupled_fixed_values_.contents);
+    std::fill_n(fixed_values, static_cast<std::size_t>(6) * signal_count_size, 0.0F);
+    std::array<std::uint32_t, 6> boundary_kinds{};
+
+    for (std::size_t face = 0; face < boundaries.size(); ++face) {
+      boundary_kinds[face] = static_cast<std::uint32_t>(boundaries[face]->kind);
+
+      if (boundaries[face]->kind == GridBoundaryKind::fixed) {
+        std::copy(boundaries[face]->values.begin(), boundaries[face]->values.end(),
+                  fixed_values + (face * signal_count_size));
+      }
+    }
+
+    *static_cast<std::uint32_t*>(coupled_error_.contents) = 0;
+
+    return boundary_kinds;
+  }
+
+  void dispatch_coupled(const MetalUInt4& shape, const MetalFloat4& origin,
+                        const MetalFloat4& spacing,
+                        const std::array<std::uint32_t, 6>& boundary_kinds, float dt,
+                        std::uint32_t cell_count, std::uint32_t species_count,
+                        std::uint32_t signal_count, std::uint32_t instruction_count,
+                        std::uint32_t level_count, std::uint32_t crank_nicolson,
+                        std::uint32_t has_velocity_field) {
     @autoreleasepool {
       id<MTLCommandBuffer> command_buffer = [queue_ commandBuffer];
       id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
@@ -738,235 +1125,8 @@ class MetalBackend final : public ComputeBackend {
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal coupled-rate command failed");
     }
-
-    const auto error = *static_cast<const std::uint32_t*>(coupled_error_.contents);
-    if (error != 0) {
-      throw std::domain_error("Metal coupled-rate kernel produced an invalid value");
-    }
-    id<MTLBuffer> result_buffer = coupled_grid_output_;
-    SignalSolveReport report;
-    if (crank_nicolson != 0) {
-      const auto solve = solve_signal_crank_nicolson(
-          coupled_grid_levels_, coupled_grid_output_, coupled_diffusion_, coupled_advection_,
-          coupled_fixed_values_, coupled_reaction_source_, coupled_reaction_loss_,
-          coupled_obstacles_, coupled_x_faces_, coupled_y_faces_, coupled_z_faces_,
-          has_velocity_field, coupled_error_, boundary_kinds, shape, spacing,
-          (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count, level_count, spec.solver);
-      result_buffer = solve.first;
-      report = solve.second;
-      if (!report.converged) {
-        throw std::runtime_error(
-            "Metal Implicit coupled signal solve did not converge after " +
-            std::to_string(report.iterations) + " iterations");
-      }
-    }
-    const auto* output = static_cast<const float*>(result_buffer.contents);
-    std::vector<float> next_grid(output, output + grid_level_count);
-    SignalGridCheckpoint{.spec = spec, .levels = next_grid}.validate();
-    if (!species_state.levels.empty()) {
-      std::memcpy(species_state.levels.data(), coupled_species_levels_.contents,
-                  species_state.levels.size_bytes());
-    }
-    grid.replace_levels(std::move(next_grid));
-    return report;
   }
 
-  [[nodiscard]] ContactGraph find_cell_contacts(const WorldState& state,
-                                                const ContactParameters& parameters) override {
-    validate_contact_parameters(parameters);
-    const auto geometry = state.geometry_state();
-    if (geometry.size() == 0) {
-      return ContactGraph{};
-    }
-    if (geometry.size() > std::numeric_limits<std::uint32_t>::max()) {
-      throw std::overflow_error("Metal contact launch exceeds the uint32 cell index space");
-    }
-    const auto candidates = find_cell_contact_candidates(state, parameters);
-    if (candidates.empty()) {
-      return ContactGraph(geometry.size(), {});
-    }
-    if (candidates.size() > std::numeric_limits<std::uint32_t>::max() / 2) {
-      throw std::overflow_error("Metal contact candidates exceed the uint32 scan space");
-    }
-
-    ensure_contact_cell_capacity(geometry.size());
-    ensure_contact_candidate_capacity(candidates.size());
-    ensure_contact_pair_capacity(candidates.size());
-    upload_contact_cells(geometry);
-    upload_contact_candidates(candidates);
-    const auto candidate_count = static_cast<std::uint32_t>(candidates.size());
-    const auto contact_count = count_contacts(candidate_count, parameters);
-    if (contact_count == 0) {
-      return ContactGraph(geometry.size(), {});
-    }
-
-    ensure_contact_output_capacity(contact_count);
-    fill_contacts(candidate_count, parameters);
-    return download_contacts(geometry.size(), contact_count);
-  }
-
-  [[nodiscard]] ExternalContactGraph find_external_contacts(
-      const WorldState& state, const ConstraintSet& constraints,
-      const ConstraintContactParameters& parameters) override {
-    validate_constraint_contact_parameters(parameters);
-    state.validate();
-    const auto geometry = state.geometry_state();
-    if (geometry.size() == 0 || constraints.empty()) {
-      return ExternalContactGraph(geometry.size(), {});
-    }
-    if (geometry.size() > std::numeric_limits<std::uint32_t>::max() ||
-        constraints.size() > std::numeric_limits<std::uint32_t>::max()) {
-      throw std::overflow_error("Metal external-contact launch exceeds the uint32 index space");
-    }
-    if (geometry.size() > std::numeric_limits<std::size_t>::max() / constraints.size()) {
-      throw std::overflow_error("Metal external-contact pair count overflow");
-    }
-    const auto pair_count = geometry.size() * constraints.size();
-    if (pair_count > std::numeric_limits<std::uint32_t>::max() / 2) {
-      throw std::overflow_error("Metal external-contact staging exceeds the uint32 scan space");
-    }
-
-    ensure_contact_cell_capacity(geometry.size());
-    ensure_external_constraint_capacity(constraints.size());
-    ensure_contact_pair_capacity(pair_count);
-    upload_contact_cells(geometry);
-    upload_external_constraints(constraints);
-    const auto contact_count = count_external_contacts(
-        static_cast<std::uint32_t>(geometry.size()), static_cast<std::uint32_t>(constraints.size()),
-        static_cast<std::uint32_t>(pair_count), parameters);
-    if (contact_count == 0) {
-      return ExternalContactGraph(geometry.size(), {});
-    }
-
-    ensure_contact_output_capacity(contact_count);
-    fill_external_contacts(static_cast<std::uint32_t>(geometry.size()),
-                           static_cast<std::uint32_t>(constraints.size()), parameters);
-    return download_external_contacts(geometry.size(), contact_count);
-  }
-
-  [[nodiscard]] MechanicsSolveResult solve_cell_mechanics(
-      const WorldState& state, const ContactGraph& contacts,
-      const ExternalContactGraph& external_contacts,
-      const MechanicsParameters& parameters) override {
-    validate_mechanics_parameters(parameters);
-    state.validate();
-    const auto geometry = state.geometry_state();
-    if (contacts.cell_count() != geometry.size()) {
-      throw std::invalid_argument("contact graph and world state cell counts disagree");
-    }
-    if (external_contacts.cell_count() != geometry.size()) {
-      throw std::invalid_argument("external contact graph and world state cell counts disagree");
-    }
-    if (external_contacts.size() > std::numeric_limits<std::size_t>::max() - contacts.size()) {
-      throw std::overflow_error("Metal mechanics row count overflow");
-    }
-    const auto row_count = contacts.size() + external_contacts.size();
-    if (geometry.size() > std::numeric_limits<std::uint32_t>::max() ||
-        row_count > std::numeric_limits<std::uint32_t>::max() / 2) {
-      throw std::overflow_error("Metal mechanics exceeds the uint32 index space");
-    }
-
-    MechanicsSolveResult result;
-    result.corrections.resize(geometry.size());
-    if (geometry.size() == 0 || row_count == 0) {
-      return result;
-    }
-
-    validate_mechanics_contacts(geometry, contacts);
-    validate_external_mechanics_contacts(geometry, external_contacts);
-    ensure_contact_cell_capacity(geometry.size());
-    ensure_contact_output_capacity(row_count);
-    ensure_mechanics_capacity(geometry.size(), row_count);
-    upload_contact_cells(geometry);
-    upload_mechanics_fixed(state.cell_attributes().fixed);
-    upload_mechanics_contacts(contacts, external_contacts);
-    upload_mechanics_incidence(contacts, external_contacts);
-
-    const auto cell_count = static_cast<std::uint32_t>(geometry.size());
-    const auto contact_count = static_cast<std::uint32_t>(row_count);
-    auto residual_squared = initialize_mechanics(cell_count, contact_count);
-    result.report.initial_residual_rms =
-        std::sqrt(residual_squared / static_cast<float>(cell_count));
-    result.report.final_residual_rms = result.report.initial_residual_rms;
-    if (!std::isfinite(result.report.initial_residual_rms)) {
-      result.report.status = SolverStatus::breakdown;
-      result.report.breakdown = SolverBreakdown::non_finite_residual;
-      return result;
-    }
-    if (result.report.initial_residual_rms <= parameters.residual_rms_tolerance) {
-      return result;
-    }
-
-    result.report.status = SolverStatus::iteration_limit;
-    const auto maximum_iterations = mechanics_iteration_limit(parameters, geometry.size());
-    for (std::uint32_t iteration = 0; iteration < maximum_iterations; ++iteration) {
-      const auto curvature = apply_search_direction(cell_count, contact_count, parameters);
-      if (!std::isfinite(curvature)) {
-        result.report.status = SolverStatus::breakdown;
-        result.report.breakdown = SolverBreakdown::non_finite_curvature;
-        break;
-      }
-      if (curvature <= 0.0F) {
-        result.report.status = SolverStatus::breakdown;
-        result.report.breakdown = SolverBreakdown::non_positive_curvature;
-        break;
-      }
-
-      const auto alpha = residual_squared / curvature;
-      const auto next_residual_squared = update_solution_residual(cell_count, alpha);
-      result.report.iterations = iteration + 1;
-      const auto recurrence_rms = std::sqrt(next_residual_squared / static_cast<float>(cell_count));
-      if (!std::isfinite(recurrence_rms)) {
-        result.report.status = SolverStatus::breakdown;
-        result.report.breakdown = SolverBreakdown::non_finite_residual;
-        break;
-      }
-
-      if (recurrence_rms <= parameters.residual_rms_tolerance) {
-        residual_squared = recompute_residual(cell_count, contact_count, parameters);
-        const auto recomputed_rms = std::sqrt(residual_squared / static_cast<float>(cell_count));
-        if (!std::isfinite(recomputed_rms)) {
-          result.report.status = SolverStatus::breakdown;
-          result.report.breakdown = SolverBreakdown::non_finite_residual;
-          break;
-        }
-        if (recomputed_rms <= parameters.residual_rms_tolerance) {
-          result.report.status = SolverStatus::converged;
-          break;
-        }
-        update_search_direction(cell_count, 0.0F);
-        continue;
-      }
-
-      const auto beta = next_residual_squared / residual_squared;
-      update_search_direction(cell_count, beta);
-      residual_squared = next_residual_squared;
-    }
-
-    residual_squared = recompute_residual(cell_count, contact_count, parameters);
-    result.report.final_residual_rms = std::sqrt(residual_squared / static_cast<float>(cell_count));
-    if (!std::isfinite(result.report.final_residual_rms) &&
-        result.report.status != SolverStatus::breakdown) {
-      result.report.status = SolverStatus::breakdown;
-      result.report.breakdown = SolverBreakdown::non_finite_residual;
-    }
-    result.corrections = download_mechanics_solution(geometry.size());
-    return result;
-  }
-
-  [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(
-      const SignalGridSpec& spec, std::span<const float> mobility,
-      const DepthAveragedFlowParameters& parameters) override {
-    return flow_solver_->solve_depth_averaged(spec, mobility, parameters);
-  }
-
-  [[nodiscard]] ResolvedFlowResult solve_resolved_flow(
-      const SignalGridSpec& spec, std::span<const float> drag,
-      const ResolvedFlowParameters& parameters) override {
-    return flow_solver_->solve_resolved(spec, drag, parameters);
-  }
-
- private:
   void ensure_growth_capacity(std::size_t count) {
     if (count <= growth_capacity_) {
       return;
@@ -993,27 +1153,32 @@ class MetalBackend final : public ComputeBackend {
       species_cell_types_ = allocate_shared_buffer(
           device_, species_cell_capacity_ * sizeof(std::int32_t), "species cell types");
     }
+
     if (level_count > species_level_capacity_) {
       species_level_capacity_ = std::bit_ceil(level_count);
       species_levels_ = allocate_shared_buffer(device_, species_level_capacity_ * sizeof(float),
                                                "species levels");
     }
+
     if (instruction_count > species_instruction_capacity_) {
       species_instruction_capacity_ = std::bit_ceil(instruction_count);
       species_instructions_ = allocate_shared_buffer(
           device_, species_instruction_capacity_ * sizeof(MetalRateInstruction),
           "species rate instructions");
     }
+
     if (species_count > species_output_capacity_) {
       species_output_capacity_ = std::bit_ceil(species_count);
       species_outputs_ = allocate_shared_buffer(
           device_, species_output_capacity_ * sizeof(std::uint32_t), "species rate outputs");
     }
+
     if (workspace_count > species_workspace_capacity_) {
       species_workspace_capacity_ = std::bit_ceil(workspace_count);
       species_workspace_ = allocate_shared_buffer(
           device_, species_workspace_capacity_ * sizeof(float), "species rate workspace");
     }
+
     if (species_error_ == nil) {
       species_error_ = allocate_shared_buffer(device_, sizeof(std::uint32_t), "species error flag");
     }
@@ -1029,6 +1194,7 @@ class MetalBackend final : public ComputeBackend {
     if (!spec.velocity_field.has_value()) {
       return;
     }
+
     const auto& field = *spec.velocity_field;
     std::memcpy(x_buffer.contents, field.x_faces.data(), field.x_faces.size() * sizeof(float));
     std::memcpy(y_buffer.contents, field.y_faces.data(), field.y_faces.size() * sizeof(float));
@@ -1048,6 +1214,7 @@ class MetalBackend final : public ComputeBackend {
       signal_obstacles_ =
           allocate_shared_buffer(device_, signal_level_capacity_, "signal-grid obstacles");
     }
+
     if (signal_count > signal_count_capacity_) {
       signal_count_capacity_ = std::bit_ceil(signal_count);
       signal_diffusion_ = allocate_shared_buffer(device_, signal_count_capacity_ * sizeof(float),
@@ -1057,6 +1224,7 @@ class MetalBackend final : public ComputeBackend {
       signal_fixed_values_ = allocate_shared_buffer(
           device_, 6 * signal_count_capacity_ * sizeof(float), "signal-grid boundary values");
     }
+
     if (signal_error_ == nil) {
       signal_error_ =
           allocate_shared_buffer(device_, sizeof(std::uint32_t), "signal-grid error flag");
@@ -1087,6 +1255,7 @@ class MetalBackend final : public ComputeBackend {
     if (level_count <= signal_solve_capacity_) {
       return;
     }
+
     signal_solve_capacity_ = std::bit_ceil(static_cast<std::size_t>(level_count));
     const auto byte_count = signal_solve_capacity_ * sizeof(float);
     signal_cn_a_ = allocate_shared_buffer(device_, byte_count, "signal Jacobi field A");
@@ -1101,6 +1270,7 @@ class MetalBackend final : public ComputeBackend {
     id<MTLBuffer> input = signal_cn_terms_;
     id<MTLBuffer> output = signal_cn_reduce_a_;
     auto count = element_count;
+
     while (count > 1) {
       const auto output_count = (count + 1) / 2;
       [encoder setComputePipelineState:signals_reduce_pipeline_];
@@ -1113,6 +1283,7 @@ class MetalBackend final : public ComputeBackend {
       output = output == signal_cn_reduce_a_ ? signal_cn_reduce_b_ : signal_cn_reduce_a_;
       count = output_count;
     }
+
     return input;
   }
 
@@ -1148,6 +1319,7 @@ class MetalBackend final : public ComputeBackend {
     [encoder setBytes:&has_velocity_field length:sizeof(has_velocity_field) atIndex:18];
     dispatch_1d(encoder, signals_cn_residual_pipeline_, level_count);
     [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+
     return encode_signal_reduction(encoder, level_count);
   }
 
@@ -1174,6 +1346,7 @@ class MetalBackend final : public ComputeBackend {
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal signal residual failed");
       const auto sum = *static_cast<const float*>(reduction.contents);
+
       return std::sqrt(sum / static_cast<float>(level_count));
     }
   }
@@ -1195,6 +1368,7 @@ class MetalBackend final : public ComputeBackend {
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal signal norm failed");
       const auto sum = *static_cast<const float*>(reduction.contents);
+
       return std::sqrt(sum / static_cast<float>(level_count));
     }
   }
@@ -1226,16 +1400,20 @@ class MetalBackend final : public ComputeBackend {
         std::numeric_limits<float>::epsilon() * signal_rhs_rms(right_hand_side, level_count);
     const auto threshold = std::max(parameters.absolute_tolerance, floor) +
                            (parameters.relative_tolerance * report.residual_rms);
+
     if (std::isfinite(report.residual_rms) && report.residual_rms <= threshold) {
       return {initial, report};
     }
+
     if (!std::isfinite(report.residual_rms) || !std::isfinite(threshold)) {
       report.converged = false;
+
       return {initial, report};
     }
 
     *static_cast<std::uint32_t*>(error.contents) = 0;
     id<MTLBuffer> current = initial;
+
     for (std::uint32_t iteration = 1; iteration <= parameters.max_iterations; ++iteration) {
       id<MTLBuffer> output = current == signal_cn_a_ ? signal_cn_b_ : signal_cn_a_;
       @autoreleasepool {
@@ -1278,15 +1456,20 @@ class MetalBackend final : public ComputeBackend {
         const auto sum = *static_cast<const float*>(reduction.contents);
         report.residual_rms = std::sqrt(sum / static_cast<float>(level_count));
       }
+
       report.iterations = iteration;
       current = output;
+
       if (*static_cast<const std::uint32_t*>(error.contents) != 0 ||
           !std::isfinite(report.residual_rms)) {
         report.converged = false;
+
         return {current, report};
       }
+
       if (report.residual_rms <= threshold) {
         report.converged = true;
+
         return {current, report};
       }
     }
@@ -1298,8 +1481,11 @@ class MetalBackend final : public ComputeBackend {
                                std::size_t instruction_count, std::size_t species_count,
                                std::size_t signal_count, std::size_t workspace_count,
                                std::size_t cell_signal_count, std::size_t grid_level_count) {
-    const auto at_least_one = [](std::size_t count) { return std::max<std::size_t>(count, 1); };
+    const auto at_least_one = [](std::size_t count) {
+      return std::max<std::size_t>(count, 1);
+    };
     const auto requested_cells = at_least_one(cell_count);
+
     if (requested_cells > coupled_cell_capacity_) {
       coupled_cell_capacity_ = std::bit_ceil(requested_cells);
       coupled_previous_lengths_ = allocate_shared_buffer(
@@ -1313,27 +1499,35 @@ class MetalBackend final : public ComputeBackend {
       coupled_cell_types_ = allocate_shared_buffer(
           device_, coupled_cell_capacity_ * sizeof(std::int32_t), "coupled cell types");
     }
+
     const auto requested_species_levels = at_least_one(species_level_count);
+
     if (requested_species_levels > coupled_species_level_capacity_) {
       coupled_species_level_capacity_ = std::bit_ceil(requested_species_levels);
       coupled_species_levels_ = allocate_shared_buffer(
           device_, coupled_species_level_capacity_ * sizeof(float), "coupled species levels");
     }
+
     const auto requested_instructions = at_least_one(instruction_count);
+
     if (requested_instructions > coupled_instruction_capacity_) {
       coupled_instruction_capacity_ = std::bit_ceil(requested_instructions);
       coupled_instructions_ = allocate_shared_buffer(
           device_, coupled_instruction_capacity_ * sizeof(MetalRateInstruction),
           "coupled rate instructions");
     }
+
     const auto requested_species_outputs = at_least_one(species_count);
+
     if (requested_species_outputs > coupled_species_output_capacity_) {
       coupled_species_output_capacity_ = std::bit_ceil(requested_species_outputs);
       coupled_species_outputs_ =
           allocate_shared_buffer(device_, coupled_species_output_capacity_ * sizeof(std::uint32_t),
                                  "coupled species outputs");
     }
+
     const auto requested_signal_outputs = at_least_one(signal_count);
+
     if (requested_signal_outputs > coupled_signal_output_capacity_) {
       coupled_signal_output_capacity_ = std::bit_ceil(requested_signal_outputs);
       coupled_signal_outputs_ =
@@ -1346,18 +1540,23 @@ class MetalBackend final : public ComputeBackend {
       coupled_fixed_values_ = allocate_shared_buffer(
           device_, 6 * coupled_signal_output_capacity_ * sizeof(float), "coupled boundary values");
     }
+
     const auto requested_workspace = at_least_one(workspace_count);
+
     if (requested_workspace > coupled_workspace_capacity_) {
       coupled_workspace_capacity_ = std::bit_ceil(requested_workspace);
       coupled_workspace_ = allocate_shared_buffer(
           device_, coupled_workspace_capacity_ * sizeof(float), "coupled workspace");
     }
+
     const auto requested_cell_signals = at_least_one(cell_signal_count);
+
     if (requested_cell_signals > coupled_cell_signal_capacity_) {
       coupled_cell_signal_capacity_ = std::bit_ceil(requested_cell_signals);
       coupled_cell_signal_rates_ = allocate_shared_buffer(
           device_, coupled_cell_signal_capacity_ * sizeof(float), "coupled cell signal rates");
     }
+
     if (grid_level_count > coupled_grid_level_capacity_) {
       coupled_grid_level_capacity_ = std::bit_ceil(grid_level_count);
       const auto byte_count = coupled_grid_level_capacity_ * sizeof(float);
@@ -1369,6 +1568,7 @@ class MetalBackend final : public ComputeBackend {
       coupled_obstacles_ =
           allocate_shared_buffer(device_, coupled_grid_level_capacity_, "coupled grid obstacles");
     }
+
     if (coupled_error_ == nil) {
       coupled_error_ = allocate_shared_buffer(device_, sizeof(std::uint32_t), "coupled error flag");
     }
@@ -1378,6 +1578,7 @@ class MetalBackend final : public ComputeBackend {
     if (count <= contact_cell_capacity_) {
       return;
     }
+
     contact_cell_capacity_ = std::bit_ceil(count);
     contact_ids_ = allocate_shared_buffer(device_, contact_cell_capacity_ * sizeof(std::uint64_t),
                                           "contact cell IDs");
@@ -1393,6 +1594,7 @@ class MetalBackend final : public ComputeBackend {
     if (count <= contact_pair_capacity_) {
       return;
     }
+
     contact_pair_capacity_ = std::bit_ceil(count);
     const auto byte_count = contact_pair_capacity_ * sizeof(std::uint32_t);
     contact_counts_ = allocate_shared_buffer(device_, byte_count, "contact counts");
@@ -1404,6 +1606,7 @@ class MetalBackend final : public ComputeBackend {
     if (count <= contact_candidate_capacity_) {
       return;
     }
+
     contact_candidate_capacity_ = std::bit_ceil(count);
     contact_candidates_ = allocate_shared_buffer(
         device_, contact_candidate_capacity_ * sizeof(MetalUInt2), "contact candidates");
@@ -1413,6 +1616,7 @@ class MetalBackend final : public ComputeBackend {
     if (count <= external_constraint_capacity_) {
       return;
     }
+
     external_constraint_capacity_ = std::bit_ceil(count);
     external_constraints_ = allocate_shared_buffer(
         device_, external_constraint_capacity_ * sizeof(MetalExternalConstraint),
@@ -1423,6 +1627,7 @@ class MetalBackend final : public ComputeBackend {
     if (count <= contact_output_capacity_) {
       return;
     }
+
     contact_output_capacity_ = std::bit_ceil(count);
     const auto id_bytes = contact_output_capacity_ * sizeof(std::uint64_t);
     const auto index_bytes = contact_output_capacity_ * sizeof(std::uint32_t);
@@ -1444,6 +1649,7 @@ class MetalBackend final : public ComputeBackend {
     auto* centers = static_cast<MetalFloat4*>(contact_centers_.contents);
     auto* axes = static_cast<MetalFloat4*>(contact_axes_.contents);
     auto* shapes = static_cast<MetalFloat4*>(contact_geometry_.contents);
+
     for (std::size_t index = 0; index < geometry.size(); ++index) {
       centers[index] = {
           geometry.position_x[index],
@@ -1463,6 +1669,7 @@ class MetalBackend final : public ComputeBackend {
 
   void upload_contact_candidates(std::span<const ContactCandidate> candidates) {
     auto* output = static_cast<MetalUInt2*>(contact_candidates_.contents);
+
     for (std::size_t index = 0; index < candidates.size(); ++index) {
       output[index] = {candidates[index].first_slot, candidates[index].second_slot};
     }
@@ -1471,6 +1678,7 @@ class MetalBackend final : public ComputeBackend {
   void upload_external_constraints(const ConstraintSet& constraints) {
     std::vector<MetalExternalConstraint> values;
     values.reserve(constraints.size());
+
     for (const auto& plane : constraints.planes()) {
       values.push_back({
           .id = plane.id,
@@ -1481,6 +1689,7 @@ class MetalBackend final : public ComputeBackend {
                          plane.coefficient},
       });
     }
+
     for (const auto& sphere : constraints.spheres()) {
       values.push_back({
           .id = sphere.id,
@@ -1490,6 +1699,7 @@ class MetalBackend final : public ComputeBackend {
           .parameters = {0.0F, 0.0F, 0.0F, sphere.coefficient},
       });
     }
+
     for (const auto& box : constraints.boxes()) {
       values.push_back({
           .id = box.id,
@@ -1500,6 +1710,7 @@ class MetalBackend final : public ComputeBackend {
                          box.coefficient},
       });
     }
+
     for (const auto& cylinder : constraints.cylinders()) {
       values.push_back({
           .id = cylinder.id,
@@ -1509,6 +1720,7 @@ class MetalBackend final : public ComputeBackend {
           .parameters = {cylinder.half_height, 0.0F, 0.0F, cylinder.coefficient},
       });
     }
+
     std::ranges::sort(values, {}, &MetalExternalConstraint::id);
     std::memcpy(external_constraints_.contents, values.data(),
                 values.size() * sizeof(MetalExternalConstraint));
@@ -1518,6 +1730,7 @@ class MetalBackend final : public ComputeBackend {
     id<MTLBuffer> scan_input = contact_counts_;
     id<MTLBuffer> scan_output = contact_scan_a_;
     std::uint32_t offset = 1;
+
     while (offset < element_count) {
       [encoder setComputePipelineState:contact_scan_pipeline_];
       [encoder setBuffer:scan_input offset:0 atIndex:0];
@@ -1528,11 +1741,14 @@ class MetalBackend final : public ComputeBackend {
       [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
       scan_input = scan_output;
       scan_output = scan_output == contact_scan_a_ ? contact_scan_b_ : contact_scan_a_;
+
       if (offset > element_count / 2) {
         break;
       }
+
       offset *= 2;
     }
+
     contact_inclusive_counts_ = scan_input;
   }
 
@@ -1628,10 +1844,12 @@ class MetalBackend final : public ComputeBackend {
 
     std::vector<CellContact> contacts;
     contacts.reserve(contact_count);
+
     for (std::uint32_t index = 0; index < contact_count; ++index) {
       if (ordinals[index] > 1) {
         throw std::runtime_error("Metal contact kernel produced an invalid ordinal");
       }
+
       contacts.push_back({
           .first_id = first_ids[index],
           .second_id = second_ids[index],
@@ -1644,9 +1862,11 @@ class MetalBackend final : public ComputeBackend {
           .weight = weights[index],
       });
     }
+
     std::ranges::sort(contacts, {}, [](const CellContact& contact) {
       return std::tuple{contact.first_id, contact.second_id, contact.ordinal};
     });
+
     return ContactGraph(cell_count, std::move(contacts));
   }
 
@@ -1736,11 +1956,13 @@ class MetalBackend final : public ComputeBackend {
 
     std::vector<ExternalContact> contacts;
     contacts.reserve(contact_count);
+
     for (std::uint32_t index = 0; index < contact_count; ++index) {
       if (constraint_kinds[index] > static_cast<std::uint32_t>(ExternalConstraintKind::cylinder) ||
           locations[index] > static_cast<std::uint32_t>(RodContactLocation::interior)) {
         throw std::runtime_error("Metal external-contact kernel produced an invalid tag");
       }
+
       contacts.push_back({
           .cell_id = cell_ids[index],
           .cell_slot = cell_slots[index],
@@ -1753,9 +1975,11 @@ class MetalBackend final : public ComputeBackend {
           .weight = weights[index],
       });
     }
+
     std::ranges::sort(contacts, {}, [](const ExternalContact& contact) {
       return std::tuple{contact.cell_id, contact.constraint_id, contact.location};
     });
+
     return ExternalContactGraph(cell_count, std::move(contacts));
   }
 
@@ -1764,6 +1988,7 @@ class MetalBackend final : public ComputeBackend {
     for (const auto& contact : contacts.contacts()) {
       const auto first = static_cast<std::size_t>(contact.first_slot);
       const auto second = static_cast<std::size_t>(contact.second_slot);
+
       if (geometry.ids[first] != contact.first_id || geometry.ids[second] != contact.second_id) {
         throw std::invalid_argument("contact graph identifiers do not match current state slots");
       }
@@ -1774,6 +1999,7 @@ class MetalBackend final : public ComputeBackend {
                                                    const ExternalContactGraph& contacts) {
     for (const auto& contact : contacts.contacts()) {
       const auto cell = static_cast<std::size_t>(contact.cell_slot);
+
       if (geometry.ids[cell] != contact.cell_id) {
         throw std::invalid_argument(
             "external contact graph identifiers do not match current state slots");
@@ -1786,10 +2012,13 @@ class MetalBackend final : public ComputeBackend {
     if (parameters.max_iterations != 0) {
       return parameters.max_iterations;
     }
+
     constexpr std::size_t degrees_of_freedom = 7;
+
     if (cell_count > std::numeric_limits<std::uint32_t>::max() / degrees_of_freedom) {
       throw std::overflow_error("default mechanics iteration limit exceeds uint32");
     }
+
     return static_cast<std::uint32_t>(cell_count * degrees_of_freedom);
   }
 
@@ -1812,6 +2041,7 @@ class MetalBackend final : public ComputeBackend {
       mechanics_reduce_a_ = allocate_shared_buffer(device_, scalar_bytes, "mechanics reduction A");
       mechanics_reduce_b_ = allocate_shared_buffer(device_, scalar_bytes, "mechanics reduction B");
     }
+
     if (contact_count > mechanics_contact_capacity_) {
       mechanics_contact_capacity_ = std::bit_ceil(contact_count);
       const auto dof_bytes = mechanics_contact_capacity_ * sizeof(MetalDofs);
@@ -1841,6 +2071,7 @@ class MetalBackend final : public ComputeBackend {
     auto* normals = static_cast<MetalFloat4*>(contact_normals_.contents);
     auto* separations = static_cast<float*>(contact_separations_.contents);
     auto* weights = static_cast<float*>(contact_weights_.contents);
+
     for (std::size_t index = 0; index < contacts.size(); ++index) {
       const auto& contact = contacts.contacts()[index];
       first_slots[index] = contact.first_slot;
@@ -1851,6 +2082,7 @@ class MetalBackend final : public ComputeBackend {
       separations[index] = contact.signed_separation;
       weights[index] = contact.weight;
     }
+
     for (std::size_t index = 0; index < external_contacts.size(); ++index) {
       const auto output_index = contacts.size() + index;
       const auto& contact = external_contacts.contacts()[index];
@@ -1869,17 +2101,22 @@ class MetalBackend final : public ComputeBackend {
     auto* offsets = static_cast<std::uint32_t*>(mechanics_incidence_offsets_.contents);
     auto* indices = static_cast<std::uint32_t*>(mechanics_incidence_indices_.contents);
     std::uint32_t cursor = 0;
+
     for (std::size_t slot = 0; slot < contacts.cell_count(); ++slot) {
       offsets[slot] = cursor;
+
       for (const auto contact_index : contacts.incident_contact_indices(static_cast<Slot>(slot))) {
         indices[cursor++] = static_cast<std::uint32_t>(contact_index);
       }
+
       for (const auto contact_index :
            external_contacts.incident_contact_indices(static_cast<Slot>(slot))) {
         indices[cursor++] = static_cast<std::uint32_t>(contacts.size() + contact_index);
       }
     }
+
     offsets[contacts.cell_count()] = cursor;
+
     if (cursor != contacts.size() * 2 + external_contacts.size()) {
       throw std::logic_error("contact incidence size is inconsistent");
     }
@@ -1962,6 +2199,7 @@ class MetalBackend final : public ComputeBackend {
     id<MTLBuffer> input = mechanics_dot_terms_;
     id<MTLBuffer> output = mechanics_reduce_a_;
     auto element_count = cell_count;
+
     while (element_count > 1) {
       const auto output_count = (element_count + 1) / 2;
       [encoder setComputePipelineState:mechanics_reduce_pipeline_];
@@ -1974,6 +2212,7 @@ class MetalBackend final : public ComputeBackend {
       output = output == mechanics_reduce_a_ ? mechanics_reduce_b_ : mechanics_reduce_a_;
       element_count = output_count;
     }
+
     return input;
   }
 
@@ -2007,6 +2246,7 @@ class MetalBackend final : public ComputeBackend {
           encode_mechanics_dot(encoder, mechanics_residual_, mechanics_residual_, cell_count);
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal mechanics initialization failed");
+
       return read_reduction(reduction);
     }
   }
@@ -2026,6 +2266,7 @@ class MetalBackend final : public ComputeBackend {
           encode_mechanics_dot(encoder, mechanics_search_, mechanics_applied_, cell_count);
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal mechanics operator application failed");
+
       return read_reduction(reduction);
     }
   }
@@ -2050,6 +2291,7 @@ class MetalBackend final : public ComputeBackend {
           encode_mechanics_dot(encoder, mechanics_residual_, mechanics_residual_, cell_count);
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal mechanics update failed");
+
       return read_reduction(reduction);
     }
   }
@@ -2095,6 +2337,7 @@ class MetalBackend final : public ComputeBackend {
           encode_mechanics_dot(encoder, mechanics_residual_, mechanics_residual_, cell_count);
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal mechanics residual recomputation failed");
+
       return read_reduction(reduction);
     }
   }
@@ -2104,6 +2347,7 @@ class MetalBackend final : public ComputeBackend {
     const auto* values = static_cast<const MetalDofs*>(mechanics_solution_.contents);
     std::vector<CellCorrection> result;
     result.reserve(cell_count);
+
     for (std::size_t index = 0; index < cell_count; ++index) {
       result.push_back({
           .translation = {values[index].linear_length.x, values[index].linear_length.y,
@@ -2113,6 +2357,7 @@ class MetalBackend final : public ComputeBackend {
           .length = values[index].linear_length.w,
       });
     }
+
     return result;
   }
 
@@ -2277,6 +2522,7 @@ std::unique_ptr<ComputeBackend> make_metal_backend(std::uint32_t device_index) {
 std::size_t metal_backend_device_count() noexcept {
   @autoreleasepool {
     const auto count = MTLCopyAllDevices().count;
+
     return count == 0 && MTLCreateSystemDefaultDevice() != nil ? 1 : count;
   }
 }

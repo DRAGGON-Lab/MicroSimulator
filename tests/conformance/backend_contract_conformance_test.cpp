@@ -21,6 +21,7 @@ constexpr std::array required_features{
 
 void require_complete_backend(cm::BackendKind backend, std::uint32_t device_index) {
   cm::Simulation simulation(backend, 0, 0, device_index);
+
   for (const auto feature : required_features) {
     assert(simulation.supports(feature));
   }
@@ -30,5 +31,6 @@ void require_complete_backend(cm::BackendKind backend, std::uint32_t device_inde
 
 int main() {
   cm::test::for_each_backend_device(require_complete_backend);
+
   return 0;
 }

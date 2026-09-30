@@ -21,12 +21,15 @@ function initialBounds(frame: SceneFrame): Box3 {
       new Box3(origin.clone().sub(radius), origin.clone().add(radius)),
     );
   };
+
   for (const box of frame.constraints.boxes) {
     include(box.center, box.halfExtents);
   }
+
   for (const sphere of frame.constraints.spheres) {
     include(sphere.center, [sphere.radius, sphere.radius, sphere.radius]);
   }
+
   for (const cylinder of frame.constraints.cylinders) {
     include(cylinder.center, [
       cylinder.radius,
@@ -34,11 +37,14 @@ function initialBounds(frame: SceneFrame): Box3 {
       cylinder.halfHeight,
     ]);
   }
+
   // Planes are infinite. Their visualization extent must never size the grid.
   if (!device.isEmpty()) {
     return device;
   }
+
   const colony = new Box3();
+
   for (const cell of frame.cells) {
     const center = new Vector3().fromArray(cell.position);
     const half = new Vector3()
@@ -51,6 +57,7 @@ function initialBounds(frame: SceneFrame): Box3 {
         .expandByScalar(cell.radius),
     );
   }
+
   return colony.isEmpty() ? new Box3(new Vector3(), new Vector3()) : colony;
 }
 
@@ -59,6 +66,7 @@ export function initialReferenceGrid(frame: SceneFrame): ReferenceGridLayout {
   const size = bounds.getSize(new Vector3());
   const center = bounds.getCenter(new Vector3());
   const extent = Math.max(size.x, size.y, MINIMUM_REFERENCE_GRID_EXTENT);
+
   return Object.freeze({
     extent,
     spacing: extent / REFERENCE_GRID_DIVISIONS,
@@ -80,6 +88,7 @@ export class DatasetReferenceGrid {
 
   public forFrame(frame: SceneFrame): ReferenceGridLayout {
     this.layout ??= initialReferenceGrid(frame);
+
     return this.layout;
   }
 }

@@ -12,9 +12,10 @@ The examples use `uv`, the `microsimulator` command, data-only checkpoints, and 
 
 ## Devices, flow, and transport
 
-1. [Microfluidic devices: walls, flow, and washout](microfluidics.md) connects geometry, nutrient delivery, cell growth, and outlet removal, with trap, clock, and biopixel examples.
-2. [Solved flow in a pillar channel](flow-solvers.md) introduces attached founders, released daughters, stationary resistance, solver selection, and analytic benchmarks.
-3. [Nutrient penetration and attached-population growth](nutrient-validation.md) measures spatial growth, conservation, and sensitivity to spatial and temporal resolution.
+1. [Mother-machine growth and washout](mother-machine.md) starts with single-file growth channels, retention by confinement, old-pole lineage tracking, and a live viewer example.
+2. [Microfluidic devices: walls, flow, and washout](microfluidics.md) connects geometry, nutrient delivery, cell growth, and outlet removal, with trap, clock, and biopixel examples.
+3. [Solved flow in a pillar channel](flow-solvers.md) introduces attached founders, released daughters, stationary resistance, solver selection, and analytic benchmarks.
+4. [Nutrient penetration and attached-population growth](nutrient-validation.md) measures spatial growth, conservation, and sensitivity to spatial and temporal resolution.
 
 ## Cell biology and circuits
 

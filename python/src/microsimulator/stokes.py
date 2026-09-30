@@ -38,9 +38,14 @@ a one-voxel gap does not resolve a parabolic velocity profile.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from collections.abc import Mapping as _Mapping
+from dataclasses import dataclass as _dataclass
+from dataclasses import field as _field
+from types import MappingProxyType as _MappingProxyType
 
 import numpy as np
 
+from . import _core as _native
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendKind,
     FlowAxis,
@@ -52,11 +57,16 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
 )
 from .flow import (
     FlowError,
+    FluidDomain,
+    FluidProperties,
+    Pressure,
+    VolumeFlow,
     _flow_axis_index,
     _kozeny_carman_drag,
     _RodLike,
     colony_volume_fraction,
 )
+from .schedules import PiecewiseConstant, at
 
 _NATIVE_AXES = {"x": FlowAxis.X, "y": FlowAxis.Y, "z": FlowAxis.Z}
 
@@ -81,15 +91,18 @@ def colony_drag(
 
     if not 0 < max_volume_fraction < 1:
         raise FlowError("maximum volume fraction must lie strictly between zero and one")
+
     fraction = np.minimum(
         colony_volume_fraction(spec, cells, averaging_radius=averaging_radius), max_volume_fraction
     )
     drag = _kozeny_carman_drag(fraction, drag_coefficient)
     obstacles = spec.obstacles
+
     if obstacles:
         dims = (spec.shape.x, spec.shape.y, spec.shape.z)
         solid = np.asarray(obstacles, dtype=np.uint8).reshape(dims) != 0
         drag[solid] = 0.0
+
     return [float(value) for value in drag.ravel()]
 
 
@@ -128,6 +141,7 @@ def solve_stokes_field(
     selected = (
         simulation if simulation is not None else Simulation(backend, device_index=device_index)
     )
+
     try:
         result = selected.solve_resolved_flow(
             spec,
@@ -136,4 +150,58 @@ def solve_stokes_field(
         )
     except (OverflowError, RuntimeError, ValueError) as error:
         raise FlowError(str(error)) from error
+
     return result.field, result.report
+
+
+@_dataclass(frozen=True, slots=True)
+class StokesFlow:
+    """Constant-property incompressible Stokes flow with physical port values."""
+
+    domain: FluidDomain
+    properties: FluidProperties
+    boundaries: _Mapping[str, Pressure | VolumeFlow | PiecewiseConstant[Pressure | VolumeFlow]]
+    solver: _native.LinearSolveParameters = _field(default_factory=_native.LinearSolveParameters)
+    geometry: _native.FluidGeometryParameters = _field(
+        default_factory=_native.FluidGeometryParameters
+    )
+    stepping: _native.FluidBodyStepParameters = _field(
+        default_factory=_native.FluidBodyStepParameters
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "boundaries", _MappingProxyType(dict(self.boundaries)))
+
+        if set(self.boundaries) != set(self.domain.ports):
+            raise ValueError("each hydraulic port needs exactly one boundary condition")
+
+    def native_ports(self, seconds: float = 0.0) -> list[_native.FlowPort]:
+        result: list[_native.FlowPort] = []
+
+        for name, patch in self.domain.ports.items():
+            port = _native.FlowPort()
+            port.name, port.axis, port.upper = name, _NATIVE_AXES[patch.axis], patch.upper
+            port.sites = list(patch.sites)
+            drive = at(self.boundaries[name], seconds)
+
+            if isinstance(drive, Pressure):
+                port.kind, port.value = _native.FlowPortKind.PRESSURE, drive.pa
+            elif isinstance(drive, VolumeFlow):  # pyright: ignore[reportUnnecessaryIsInstance]
+                port.kind = _native.FlowPortKind.FLOW_RATE
+                port.value = drive.ul_per_min * 1e-9 / 60 * (-1 if drive.direction == "in" else 1)
+            else:
+                raise TypeError("hydraulic boundary must specify pressure or volume flow")
+
+            result.append(port)
+
+        return result
+
+    def solve(
+        self, *, backend: BackendKind = BackendKind.CPU, device_index: int = 0
+    ) -> _native.FluidFlowResult:
+        return _native.StokesFlowSolver(backend, device_index).solve(
+            self.domain.native_grid(),
+            self.properties.native(),
+            self.native_ports(),
+            self.solver,
+        )

@@ -59,39 +59,49 @@ static_assert(sizeof(MetalFlowGridParameters) == 96);
 
 id<MTLDevice> select_device(std::uint32_t device_index) {
   NSArray<id<MTLDevice>>* devices = MTLCopyAllDevices();
+
   if (devices.count == 0) {
     id<MTLDevice> default_device = MTLCreateSystemDefaultDevice();
+
     if (device_index == 0 && default_device != nil) {
       return default_device;
     }
+
     if (default_device == nil) {
       throw std::runtime_error("Metal is unavailable on this system");
     }
   }
+
   if (static_cast<NSUInteger>(device_index) >= devices.count) {
     throw std::out_of_range("Metal device index is unavailable");
   }
+
   return devices[device_index];
 }
 
 id<MTLComputePipelineState> make_pipeline(id<MTLDevice> device, id<MTLLibrary> library,
                                           NSString* name) {
   id<MTLFunction> function = [library newFunctionWithName:name];
+
   if (function == nil) {
     throw std::runtime_error(std::string("Metal flow function is missing: ") + name.UTF8String);
   }
+
   NSError* error = nil;
   id<MTLComputePipelineState> pipeline = [device newComputePipelineStateWithFunction:function
                                                                                error:&error];
+
   if (pipeline == nil) {
     throw_metal_error("failed to create a Metal flow pipeline", error);
   }
+
   return pipeline;
 }
 
 void wait_for_command(id<MTLCommandBuffer> command, const char* operation) {
   [command commit];
   [command waitUntilCompleted];
+
   if (command.status == MTLCommandBufferStatusError) {
     throw_metal_error(operation, command.error);
   }
@@ -102,6 +112,7 @@ std::uint32_t checked_count(std::size_t count, const char* description) {
     throw std::overflow_error(std::string("Metal flow ") + description +
                               " must fit the nonzero uint32 index space");
   }
+
   return static_cast<std::uint32_t>(count);
 }
 
@@ -110,13 +121,17 @@ MetalFlowGridParameters make_grid_parameters(const detail::FlowGridLayout& layou
   const auto face_count = checked_count(layout.total_face_count(), "face count");
   const auto offsets = layout.face_offsets();
   const auto counts = layout.face_counts();
+
   for (const auto value : offsets) {
     static_cast<void>(checked_count(value == 0 ? 1 : value, "face offset"));
   }
+
   for (const auto value : counts) {
     static_cast<void>(checked_count(value, "component face count"));
   }
+
   const auto spacing = layout.spacing();
+
   return {
       .dimensions = {layout.dimensions()[0], layout.dimensions()[1], layout.dimensions()[2], 0},
       .spacing = {spacing[0], spacing[1], spacing[2], 0.0F},
@@ -151,18 +166,24 @@ struct FlowSolver::Impl {
     @autoreleasepool {
       device = select_device(device_index);
       queue = [device newCommandQueue];
+
       if (queue == nil) {
         throw std::runtime_error("failed to create a Metal flow command queue");
       }
+
       NSString* source = [NSString stringWithUTF8String:flow_source];
+
       if (source == nil) {
         throw std::runtime_error("Metal flow source is not valid UTF-8");
       }
+
       NSError* error = nil;
       id<MTLLibrary> library = [device newLibraryWithSource:source options:nil error:&error];
+
       if (library == nil) {
         throw_metal_error("failed to compile Metal flow", error);
       }
+
       depth_operator = make_pipeline(device, library, @"depth_flow_operator");
       depth_velocity = make_pipeline(device, library, @"depth_flow_velocity");
       momentum = make_pipeline(device, library, @"resolved_flow_momentum");
@@ -176,6 +197,7 @@ struct FlowSolver::Impl {
       vector_combine = make_pipeline(device, library, @"flow_vector_combine");
       vector_subtract = make_pipeline(device, library, @"flow_vector_subtract");
       dot_partial = make_pipeline(device, library, @"flow_dot_partial");
+
       if (dot_partial.maxTotalThreadsPerThreadgroup < reduction_width) {
         throw std::runtime_error("Metal flow reduction requires 64 threads per threadgroup");
       }
@@ -185,9 +207,11 @@ struct FlowSolver::Impl {
   id<MTLBuffer> allocate(std::size_t byte_count, const char* description) const {
     id<MTLBuffer> buffer = [device newBufferWithLength:byte_count
                                                options:MTLResourceStorageModeShared];
+
     if (buffer == nil) {
       throw std::runtime_error(std::string("failed to allocate Metal flow ") + description);
     }
+
     return buffer;
   }
 
@@ -196,8 +220,10 @@ struct FlowSolver::Impl {
     if (values.empty()) {
       throw std::logic_error(std::string("cannot upload an empty Metal flow ") + description);
     }
+
     auto buffer = allocate(values.size_bytes(), description);
     std::memcpy(buffer.contents, values.data(), values.size_bytes());
+
     return buffer;
   }
 
@@ -234,6 +260,7 @@ struct FlowSolver::Impl {
 
   PcgWorkspace make_workspace(std::uint32_t count, const char* description) const {
     const auto partial_count = (count + reduction_width - 1) / reduction_width;
+
     return {
         .residual = float_buffer(count, (std::string(description) + " residual").c_str()),
         .preconditioned =
@@ -287,26 +314,33 @@ struct FlowSolver::Impl {
                [encoder setBytes:&count length:sizeof(count) atIndex:6];
              });
     const auto rhs_norm_squared = dot(right_hand_side, right_hand_side, count, workspace.partials);
+
     if (rhs_norm_squared == 0.0) {
       return {};
     }
+
     const auto rhs_norm = std::sqrt(rhs_norm_squared);
     auto rho = dot(workspace.residual, workspace.preconditioned, count, workspace.partials);
     auto relative = 1.0;
+
     for (std::uint32_t iteration = 1; iteration <= max_iterations; ++iteration) {
       apply(workspace.direction, workspace.transformed);
       const auto curvature =
           dot(workspace.direction, workspace.transformed, count, workspace.partials);
+
       if (!std::isfinite(curvature) || curvature <= 0.0) {
         throw std::runtime_error(std::string(label) +
                                  " conjugate gradient encountered non-positive curvature");
       }
+
       const auto alpha_double = rho / curvature;
+
       if (!std::isfinite(alpha_double) ||
           std::abs(alpha_double) > std::numeric_limits<float>::max()) {
         throw std::runtime_error(std::string(label) +
                                  " conjugate gradient produced a non-finite step");
       }
+
       const auto alpha = static_cast<float>(alpha_double);
       dispatch(pcg_update, count, "Metal flow PCG update failed",
                [&](id<MTLComputeCommandEncoder> encoder) {
@@ -320,13 +354,16 @@ struct FlowSolver::Impl {
       const auto residual_squared =
           dot(workspace.residual, workspace.residual, count, workspace.partials);
       relative = std::sqrt(std::max(0.0, residual_squared)) / rhs_norm;
+
       if (!std::isfinite(relative)) {
         throw std::runtime_error(std::string(label) +
                                  " conjugate gradient produced a non-finite residual");
       }
+
       if (relative <= tolerance) {
         return {.iterations = iteration, .relative_residual = static_cast<float>(relative)};
       }
+
       dispatch(pcg_precondition, count, "Metal flow PCG preconditioner failed",
                [&](id<MTLComputeCommandEncoder> encoder) {
                  [encoder setBuffer:workspace.residual offset:0 atIndex:0];
@@ -336,16 +373,20 @@ struct FlowSolver::Impl {
                });
       const auto next_rho =
           dot(workspace.residual, workspace.preconditioned, count, workspace.partials);
+
       if (!std::isfinite(next_rho) || rho == 0.0) {
         throw std::runtime_error(std::string(label) +
                                  " conjugate gradient encountered a preconditioner breakdown");
       }
+
       const auto beta_double = next_rho / rho;
+
       if (!std::isfinite(beta_double) ||
           std::abs(beta_double) > std::numeric_limits<float>::max()) {
         throw std::runtime_error(std::string(label) +
                                  " conjugate gradient produced a non-finite direction");
       }
+
       const auto beta = static_cast<float>(beta_double);
       dispatch(pcg_direction, count, "Metal flow PCG direction update failed",
                [&](id<MTLComputeCommandEncoder> encoder) {
@@ -356,6 +397,7 @@ struct FlowSolver::Impl {
                });
       rho = next_rho;
     }
+
     throw std::runtime_error(std::string(label) +
                              " conjugate gradient did not converge: relative " +
                              std::to_string(relative));
@@ -434,7 +476,10 @@ struct FlowSolver::Impl {
 
   void combine(id<MTLBuffer> source, id<MTLBuffer> target, float alpha, float beta,
                std::uint32_t count) const {
-    if (!std::isfinite(alpha)) throw std::runtime_error("non-finite Metal Krylov coefficient");
+    if (!std::isfinite(alpha)) {
+      throw std::runtime_error("non-finite Metal Krylov coefficient");
+    }
+
     dispatch(vector_combine, count, "Metal Krylov vector update",
              [&](id<MTLComputeCommandEncoder> encoder) {
                [encoder setBuffer:source offset:0 atIndex:0];
@@ -500,6 +545,7 @@ DepthAveragedFlowResult FlowSolver::solve_depth_averaged(
   const auto scaled =
       detail::scale_velocity(spec, reduction.original_layout(), reduction.lift(velocity),
                              reduction.open_inlet_faces(), parameters.mean_inlet_speed);
+
   return {
       .field = scaled.field,
       .report = {.iterations = report.iterations,
@@ -508,6 +554,25 @@ DepthAveragedFlowResult FlowSolver::solve_depth_averaged(
                  .max_speed = scaled.max_speed},
   };
 }
+
+namespace {
+struct ResolvedKrylovVector {
+  id<MTLBuffer> u;
+  id<MTLBuffer> p;
+};
+
+double resolved_divergence_rms(std::span<const std::uint8_t> fluid, double divergence_square,
+                               double continuity_scale) {
+  const auto fluid_count = std::count(fluid.begin(), fluid.end(), std::uint8_t{1});
+  const double divergence_rms =
+      fluid_count == 0
+          ? 0.0
+          : std::sqrt(divergence_square / static_cast<double>(fluid_count)) / continuity_scale;
+
+  return divergence_rms;
+}
+
+}  // namespace
 
 ResolvedFlowResult FlowSolver::solve_resolved(const SignalGridSpec& spec,
                                               std::span<const float> drag,
@@ -528,10 +593,9 @@ ResolvedFlowResult FlowSolver::solve_resolved(const SignalGridSpec& spec,
   const auto gradient = impl_->float_buffer(grid.total_face_count, "block gradient");
   auto inner_workspace = impl_->make_workspace(grid.total_face_count, "momentum");
   auto outer_workspace = impl_->make_workspace(grid.site_count, "pressure");
-  struct Vector {
-    id<MTLBuffer> u;
-    id<MTLBuffer> p;
-  };
+
+  using Vector = ResolvedKrylovVector;
+
   const double continuity_scale =
       1.0 / *std::min_element(system.layout().spacing().begin(), system.layout().spacing().end());
   detail::FlexibleKrylovOperations<Vector> ops;
@@ -540,6 +604,7 @@ ResolvedFlowResult FlowSolver::solve_resolved(const SignalGridSpec& spec,
              impl_->float_buffer(grid.site_count, "Krylov pressure")};
     std::memset(v.u.contents, 0, grid.total_face_count * sizeof(float));
     std::memset(v.p.contents, 0, grid.site_count * sizeof(float));
+
     return v;
   };
   ops.copy = [&](const Vector& source, Vector& target) {
@@ -593,16 +658,13 @@ ResolvedFlowResult FlowSolver::solve_resolved(const SignalGridSpec& spec,
       impl_->dot(rhs.u, rhs.u, grid.total_face_count, inner_workspace.partials);
   const auto divergence_square =
       impl_->dot(residual.p, residual.p, grid.site_count, outer_workspace.partials);
-  const auto fluid_count =
-      std::count(system.fluid().begin(), system.fluid().end(), std::uint8_t{1});
   const double divergence_rms =
-      fluid_count == 0
-          ? 0.0
-          : std::sqrt(divergence_square / static_cast<double>(fluid_count)) / continuity_scale;
+      resolved_divergence_rms(system.fluid(), divergence_square, continuity_scale);
   const auto* values = static_cast<const float*>(solution.solution.u.contents);
   const auto scaled = detail::scale_velocity(
       spec, system.layout(), std::span<const float>(values, grid.total_face_count),
       system.open_inlet_faces(), parameters.mean_inlet_speed);
+
   return {
       .field = scaled.field,
       .report = {.outer_iterations = solution.iterations,
