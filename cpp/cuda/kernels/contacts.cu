@@ -68,7 +68,9 @@ __device__ float3 cross_product(float3 left, float3 right) {
                      left.x * right.y - left.y * right.x);
 }
 
-__device__ float magnitude(float3 value) { return sqrtf(dot_product(value, value)); }
+__device__ float magnitude(float3 value) {
+  return sqrtf(dot_product(value, value));
+}
 
 __device__ float3 normalized_vector(float3 value) {
   return multiply(value, 1.0F / magnitude(value));
@@ -82,6 +84,7 @@ __device__ Capsule load_capsule(const std::uint64_t* ids, const float4* centers,
                                 const float4* geometry, std::uint32_t slot) {
   const auto center = centers[slot];
   const auto axis = axes[slot];
+
   return {
       ids[slot],
       slot,
@@ -117,13 +120,16 @@ __device__ PointPair closest_points(const Capsule& first, const Capsule& second,
 
   float first_parameter = 0.0F;
   float second_parameter = 0.0F;
+
   if (first_length_squared <= epsilon_squared && second_length_squared <= epsilon_squared) {
     return {first_start, second_start};
   }
+
   if (first_length_squared <= epsilon_squared) {
     second_parameter = clamp_value(second_projection / second_length_squared, 0.0F, 1.0F);
   } else {
     const auto first_projection = dot_product(first_delta, between_starts);
+
     if (second_length_squared <= epsilon_squared) {
       first_parameter = clamp_value(-first_projection / first_length_squared, 0.0F, 1.0F);
     } else {
@@ -131,14 +137,17 @@ __device__ PointPair closest_points(const Capsule& first, const Capsule& second,
       const auto denominator =
           first_length_squared * second_length_squared - cross_projection * cross_projection;
       const auto parallel_tolerance = float_epsilon * first_length_squared * second_length_squared;
+
       if (denominator > parallel_tolerance) {
         first_parameter = clamp_value(
             (cross_projection * second_projection - first_projection * second_length_squared) /
                 denominator,
             0.0F, 1.0F);
       }
+
       second_parameter =
           (cross_projection * first_parameter + second_projection) / second_length_squared;
+
       if (second_parameter < 0.0F) {
         second_parameter = 0.0F;
         first_parameter = clamp_value(-first_projection / first_length_squared, 0.0F, 1.0F);
@@ -161,10 +170,12 @@ __device__ PairPoints contact_points(const Capsule& first, const Capsule& second
   const auto axis_dot = clamp_value(dot_product(first.axis, second.axis), -1.0F, 1.0F);
   const auto sine = sqrtf(fmaxf(0.0F, 1.0F - axis_dot * axis_dot));
   PairPoints result{};
+
   if (sine > parameters.parallel_sine_threshold || first.length <= parameters.degeneracy_epsilon ||
       second.length <= parameters.degeneracy_epsilon) {
     result.values[0] = closest_points(first, second, parameters.degeneracy_epsilon);
     result.count = 1;
+
     return result;
   }
 
@@ -174,13 +185,16 @@ __device__ PairPoints contact_points(const Capsule& first, const Capsule& second
   const auto projected_second_half = second_half * fabsf(axis_dot);
   const auto overlap_begin = fmaxf(-first_half, center_coordinate - projected_second_half);
   const auto overlap_end = fminf(first_half, center_coordinate + projected_second_half);
+
   if (overlap_end - overlap_begin <= parameters.degeneracy_epsilon) {
     result.values[0] = closest_points(first, second, parameters.degeneracy_epsilon);
     result.count = 1;
+
     return result;
   }
 
   const float first_parameters[2] = {overlap_begin, overlap_end};
+
   for (std::uint32_t index = 0; index < 2; ++index) {
     const auto point_on_first = add(first.center, multiply(first.axis, first_parameters[index]));
     const auto second_parameter =
@@ -191,18 +205,22 @@ __device__ PairPoints contact_points(const Capsule& first, const Capsule& second
         add(second.center, multiply(second.axis, second_parameter)),
     };
   }
+
   result.count = 2;
+
   return result;
 }
 
 __device__ float3 deterministic_normal(const Capsule& first, const Capsule& second,
                                        const PointPair& points, float epsilon) {
   const auto point_delta = subtract(points.second, points.first);
+
   if (magnitude(point_delta) > epsilon) {
     return normalized_vector(point_delta);
   }
 
   const auto axes_cross = cross_product(first.axis, second.axis);
+
   if (magnitude(axes_cross) > epsilon) {
     return normalized_vector(axes_cross);
   }
@@ -210,6 +228,7 @@ __device__ float3 deterministic_normal(const Capsule& first, const Capsule& seco
   const auto center_delta = subtract(second.center, first.center);
   const auto transverse_center_delta =
       subtract(center_delta, multiply(first.axis, dot_product(center_delta, first.axis)));
+
   if (magnitude(transverse_center_delta) > epsilon) {
     return normalized_vector(transverse_center_delta);
   }
@@ -217,6 +236,7 @@ __device__ float3 deterministic_normal(const Capsule& first, const Capsule& seco
   const auto absolute_axis =
       make_float3(fabsf(first.axis.x), fabsf(first.axis.y), fabsf(first.axis.z));
   float3 basis{};
+
   if (absolute_axis.x <= absolute_axis.y && absolute_axis.x <= absolute_axis.z) {
     basis = make_float3(1.0F, 0.0F, 0.0F);
   } else if (absolute_axis.y <= absolute_axis.z) {
@@ -224,7 +244,46 @@ __device__ float3 deterministic_normal(const Capsule& first, const Capsule& seco
   } else {
     basis = make_float3(0.0F, 0.0F, 1.0F);
   }
+
   return normalized_vector(cross_product(first.axis, basis));
+}
+
+__device__ SurfacePoint box_surface(float3 point, const ExternalConstraintGpu& constraint,
+                                    float degeneracy_epsilon) {
+  const auto center =
+      make_float3(constraint.geometry.x, constraint.geometry.y, constraint.geometry.z);
+  const auto half_extents =
+      make_float3(constraint.parameters.x, constraint.parameters.y, constraint.parameters.z);
+  const auto delta = subtract(point, center);
+  const auto outside_vector =
+      make_float3(delta.x - clamp_value(delta.x, -half_extents.x, half_extents.x),
+                  delta.y - clamp_value(delta.y, -half_extents.y, half_extents.y),
+                  delta.z - clamp_value(delta.z, -half_extents.z, half_extents.z));
+  const auto outside_distance = magnitude(outside_vector);
+
+  if (outside_distance > degeneracy_epsilon) {
+    return {outside_distance, multiply(outside_vector, 1.0F / outside_distance)};
+  }
+
+  const auto clearances =
+      make_float3(half_extents.x - fabsf(delta.x), half_extents.y - fabsf(delta.y),
+                  half_extents.z - fabsf(delta.z));
+
+  if (clearances.x <= clearances.y && clearances.x <= clearances.z) {
+    const auto sign = fabsf(delta.x) <= degeneracy_epsilon || delta.x >= 0.0F ? 1.0F : -1.0F;
+
+    return {-clearances.x, make_float3(sign, 0.0F, 0.0F)};
+  }
+
+  if (clearances.y <= clearances.z) {
+    const auto sign = fabsf(delta.y) <= degeneracy_epsilon || delta.y >= 0.0F ? 1.0F : -1.0F;
+
+    return {-clearances.y, make_float3(0.0F, sign, 0.0F)};
+  }
+
+  const auto sign = fabsf(delta.z) <= degeneracy_epsilon || delta.z >= 0.0F ? 1.0F : -1.0F;
+
+  return {-clearances.z, make_float3(0.0F, 0.0F, sign)};
 }
 
 __device__ SurfacePoint external_surface(float3 point, const ExternalConstraintGpu& constraint,
@@ -234,8 +293,10 @@ __device__ SurfacePoint external_surface(float3 point, const ExternalConstraintG
         make_float3(constraint.parameters.x, constraint.parameters.y, constraint.parameters.z);
     const auto plane_point =
         make_float3(constraint.geometry.x, constraint.geometry.y, constraint.geometry.z);
+
     return {dot_product(subtract(point, plane_point), inward_normal), inward_normal};
   }
+
   if (constraint.kind == 1) {
     const auto center =
         make_float3(constraint.geometry.x, constraint.geometry.y, constraint.geometry.z);
@@ -243,35 +304,12 @@ __device__ SurfacePoint external_surface(float3 point, const ExternalConstraintG
     const auto distance = magnitude(delta);
     const auto outward = distance > degeneracy_epsilon ? multiply(delta, 1.0F / distance)
                                                        : make_float3(1.0F, 0.0F, 0.0F);
+
     return {distance - constraint.geometry.w, outward};
   }
+
   if (constraint.kind == 2) {
-    const auto center =
-        make_float3(constraint.geometry.x, constraint.geometry.y, constraint.geometry.z);
-    const auto half_extents =
-        make_float3(constraint.parameters.x, constraint.parameters.y, constraint.parameters.z);
-    const auto delta = subtract(point, center);
-    const auto outside_vector =
-        make_float3(delta.x - clamp_value(delta.x, -half_extents.x, half_extents.x),
-                    delta.y - clamp_value(delta.y, -half_extents.y, half_extents.y),
-                    delta.z - clamp_value(delta.z, -half_extents.z, half_extents.z));
-    const auto outside_distance = magnitude(outside_vector);
-    if (outside_distance > degeneracy_epsilon) {
-      return {outside_distance, multiply(outside_vector, 1.0F / outside_distance)};
-    }
-    const auto clearances =
-        make_float3(half_extents.x - fabsf(delta.x), half_extents.y - fabsf(delta.y),
-                    half_extents.z - fabsf(delta.z));
-    if (clearances.x <= clearances.y && clearances.x <= clearances.z) {
-      const auto sign = fabsf(delta.x) <= degeneracy_epsilon || delta.x >= 0.0F ? 1.0F : -1.0F;
-      return {-clearances.x, make_float3(sign, 0.0F, 0.0F)};
-    }
-    if (clearances.y <= clearances.z) {
-      const auto sign = fabsf(delta.y) <= degeneracy_epsilon || delta.y >= 0.0F ? 1.0F : -1.0F;
-      return {-clearances.y, make_float3(0.0F, sign, 0.0F)};
-    }
-    const auto sign = fabsf(delta.z) <= degeneracy_epsilon || delta.z >= 0.0F ? 1.0F : -1.0F;
-    return {-clearances.z, make_float3(0.0F, 0.0F, sign)};
+    return box_surface(point, constraint, degeneracy_epsilon);
   }
 
   const auto delta =
@@ -283,17 +321,22 @@ __device__ SurfacePoint external_surface(float3 point, const ExternalConstraintG
   const auto axial = make_float3(0.0F, 0.0F, z_offset >= 0.0F ? 1.0F : -1.0F);
   const auto radial_excess = radial_distance - constraint.geometry.w;
   const auto axial_excess = fabsf(z_offset) - constraint.parameters.x;
+
   if (radial_excess > 0.0F && axial_excess > 0.0F) {
     const auto distance = sqrtf(radial_excess * radial_excess + axial_excess * axial_excess);
+
     return {distance, multiply(add(multiply(radial, radial_excess), multiply(axial, axial_excess)),
                                1.0F / distance)};
   }
+
   if (radial_excess > 0.0F) {
     return {radial_excess, radial};
   }
+
   if (axial_excess > 0.0F) {
     return {axial_excess, axial};
   }
+
   return -radial_excess <= -axial_excess ? SurfacePoint{radial_excess, radial}
                                          : SurfacePoint{axial_excess, axial};
 }
@@ -306,26 +349,33 @@ __device__ bool segment_intersects_bounds(float3 start, float3 end, float3 lower
   const float uppers[3] = {upper.x, upper.y, upper.z};
   auto entry = 0.0F;
   auto exit = 1.0F;
+
   for (std::uint32_t axis = 0; axis < 3; ++axis) {
     if (deltas[axis] == 0.0F) {
       if (starts[axis] < lowers[axis] || starts[axis] > uppers[axis]) {
         return false;
       }
+
       continue;
     }
+
     auto first = (lowers[axis] - starts[axis]) / deltas[axis];
     auto second = (uppers[axis] - starts[axis]) / deltas[axis];
+
     if (first > second) {
       const auto temporary = first;
       first = second;
       second = temporary;
     }
+
     entry = fmaxf(entry, first);
     exit = fminf(exit, second);
+
     if (entry > exit) {
       return false;
     }
   }
+
   return true;
 }
 
@@ -335,6 +385,7 @@ __device__ CenterlineMinimum minimize_surface_on_segment(float3 start, float3 en
   const auto delta = subtract(end, start);
   auto lower = 0.0F;
   auto upper = 1.0F;
+
   for (std::uint32_t iteration = 0; iteration < segment_minimization_iterations; ++iteration) {
     const auto first_parameter = lower + (upper - lower) / 3.0F;
     const auto second_parameter = upper - (upper - lower) / 3.0F;
@@ -342,6 +393,7 @@ __device__ CenterlineMinimum minimize_surface_on_segment(float3 start, float3 en
         external_surface(add(start, multiply(delta, first_parameter)), constraint, epsilon);
     const auto second =
         external_surface(add(start, multiply(delta, second_parameter)), constraint, epsilon);
+
     if (first.signed_distance < second.signed_distance) {
       upper = second_parameter;
     } else if (second.signed_distance < first.signed_distance) {
@@ -354,23 +406,29 @@ __device__ CenterlineMinimum minimize_surface_on_segment(float3 start, float3 en
 
   CenterlineMinimum result{start, external_surface(start, constraint, epsilon)};
   const float candidates[5] = {1.0F, 0.5F, lower, (lower + upper) * 0.5F, upper};
+
   for (std::uint32_t index = 0; index < 5; ++index) {
     const auto point = add(start, multiply(delta, candidates[index]));
     const auto surface = external_surface(point, constraint, epsilon);
+
     if (surface.signed_distance < result.surface.signed_distance) {
       result = {point, surface};
     }
   }
+
   if (constraint.kind == 3) {
     if (fabsf(delta.z) > epsilon) {
       const auto parameter = clamp_value((constraint.geometry.z - start.z) / delta.z, 0.0F, 1.0F);
       const auto point = add(start, multiply(delta, parameter));
       const auto surface = external_surface(point, constraint, epsilon);
+
       if (surface.signed_distance <= result.surface.signed_distance) {
         result = {point, surface};
       }
     }
+
     const auto radial_length_squared = delta.x * delta.x + delta.y * delta.y;
+
     if (radial_length_squared > epsilon * epsilon) {
       const auto parameter = clamp_value(-((start.x - constraint.geometry.x) * delta.x +
                                            (start.y - constraint.geometry.y) * delta.y) /
@@ -378,11 +436,13 @@ __device__ CenterlineMinimum minimize_surface_on_segment(float3 start, float3 en
                                          0.0F, 1.0F);
       const auto point = add(start, multiply(delta, parameter));
       const auto surface = external_surface(point, constraint, epsilon);
+
       if (surface.signed_distance <= result.surface.signed_distance) {
         result = {point, surface};
       }
     }
   }
+
   return result;
 }
 
@@ -398,6 +458,7 @@ __device__ CenterlineMinimum sphere_minimum(float3 start, float3 end,
           ? clamp_value(-dot_product(subtract(start, center), delta) / length_squared, 0.0F, 1.0F)
           : 0.0F;
   const auto point = add(start, multiply(delta, parameter));
+
   return {point, external_surface(point, constraint, epsilon)};
 }
 
@@ -427,11 +488,13 @@ evaluate_external_constraint(const Capsule& cell, const ExternalConstraintGpu& c
   };
 
   const auto finite_outside = constraint.kind != 0 && constraint.allowed_region == 0;
+
   if (finite_outside) {
     if (constraint.kind >= 2) {
       const auto reach = cell.radius + contact_parameters.activation_margin;
       float3 lower{};
       float3 upper{};
+
       if (constraint.kind == 2) {
         lower = make_float3(constraint.geometry.x - constraint.parameters.x - reach,
                             constraint.geometry.y - constraint.parameters.y - reach,
@@ -447,6 +510,7 @@ evaluate_external_constraint(const Capsule& cell, const ExternalConstraintGpu& c
                             constraint.geometry.y + constraint.geometry.w + reach,
                             constraint.geometry.z + constraint.parameters.x + reach);
       }
+
       if (!segment_intersects_bounds(endpoints[0], endpoints[1], lower, upper)) {
         return result;
       }
@@ -457,11 +521,14 @@ evaluate_external_constraint(const Capsule& cell, const ExternalConstraintGpu& c
                                               contact_parameters.degeneracy_epsilon)
                              : minimize_surface_on_segment(endpoints[0], endpoints[1], constraint,
                                                            contact_parameters.degeneracy_epsilon);
+
     if (minimum.surface.signed_distance - cell.radius >= contact_parameters.activation_margin) {
       return result;
     }
+
     for (std::uint32_t endpoint = 0; endpoint < 2; ++endpoint) {
       const auto separation = endpoint_surfaces[endpoint].signed_distance - cell.radius;
+
       if (separation < contact_parameters.activation_margin &&
           fabsf(endpoint_surfaces[endpoint].signed_distance - minimum.surface.signed_distance) <=
               contact_parameters.degeneracy_epsilon) {
@@ -469,23 +536,28 @@ evaluate_external_constraint(const Capsule& cell, const ExternalConstraintGpu& c
                              cell.radius, true);
       }
     }
+
     if (result.active_count == 0) {
       add_external_contact(result, interior_location, minimum.point, minimum.surface, cell.radius,
                            true);
     }
+
     return result;
   }
 
   const auto outside = constraint.allowed_region == 0;
+
   for (std::uint32_t endpoint = 0; endpoint < 2; ++endpoint) {
     const auto separation = (outside ? endpoint_surfaces[endpoint].signed_distance
                                      : -endpoint_surfaces[endpoint].signed_distance) -
                             cell.radius;
+
     if (separation < contact_parameters.activation_margin) {
       add_external_contact(result, endpoint, endpoints[endpoint], endpoint_surfaces[endpoint],
                            cell.radius, outside);
     }
   }
+
   return result;
 }
 
@@ -495,9 +567,11 @@ __global__ void count_cell_contacts(const std::uint64_t* ids, const float4* cent
                                     ContactParametersGpu parameters,
                                     std::uint32_t candidate_count) {
   const auto pair_index = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (pair_index >= candidate_count) {
     return;
   }
+
   const auto first_slot = candidates[pair_index].x;
   const auto second_slot = candidates[pair_index].y;
 
@@ -506,25 +580,31 @@ __global__ void count_cell_contacts(const std::uint64_t* ids, const float4* cent
   canonicalize(first, second);
   const auto points = contact_points(first, second, parameters);
   std::uint32_t active_count = 0;
+
   for (std::uint32_t ordinal = 0; ordinal < points.count; ++ordinal) {
     const auto separation =
         magnitude(subtract(points.values[ordinal].second, points.values[ordinal].first)) -
         (first.radius + second.radius);
     active_count += separation < parameters.activation_margin ? 1U : 0U;
   }
+
   counts[pair_index] = active_count;
 }
 
 __global__ void inclusive_scan_step(const std::uint32_t* input, std::uint32_t* output,
                                     std::uint32_t offset, std::uint32_t element_count) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (index >= element_count) {
     return;
   }
+
   auto value = input[index];
+
   if (index >= offset) {
     value += input[index - offset];
   }
+
   output[index] = value;
 }
 
@@ -538,12 +618,15 @@ __global__ void fill_cell_contacts(const std::uint64_t* ids, const float4* cente
                                    float* weights, ContactParametersGpu parameters,
                                    std::uint32_t candidate_count) {
   const auto pair_index = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (pair_index >= candidate_count) {
     return;
   }
+
   const auto first_slot = candidates[pair_index].x;
   const auto second_slot = candidates[pair_index].y;
   const auto pair_contact_count = counts[pair_index];
+
   if (pair_contact_count == 0) {
     return;
   }
@@ -554,12 +637,15 @@ __global__ void fill_cell_contacts(const std::uint64_t* ids, const float4* cente
   const auto points = contact_points(first, second, parameters);
   const auto weight = points.count == 2 ? inverse_sqrt_two : 1.0F;
   auto output_index = inclusive_counts[pair_index] - pair_contact_count;
+
   for (std::uint32_t ordinal = 0; ordinal < points.count; ++ordinal) {
     const auto point_delta = subtract(points.values[ordinal].second, points.values[ordinal].first);
     const auto separation = magnitude(point_delta) - (first.radius + second.radius);
+
     if (separation >= parameters.activation_margin) {
       continue;
     }
+
     const auto normal =
         deterministic_normal(first, second, points.values[ordinal], parameters.degeneracy_epsilon);
     const auto surface_point = add(points.values[ordinal].first, multiply(normal, first.radius));
@@ -585,9 +671,11 @@ __global__ void count_external_contacts(const std::uint64_t* ids, const float4* 
                                         std::uint32_t cell_count, std::uint32_t constraint_count) {
   const auto constraint_index = blockIdx.x * blockDim.x + threadIdx.x;
   const auto cell_slot = blockIdx.y * blockDim.y + threadIdx.y;
+
   if (cell_slot >= cell_count || constraint_index >= constraint_count) {
     return;
   }
+
   const auto pair_index = cell_slot * constraint_count + constraint_index;
   const auto cell = load_capsule(ids, centers, axes, geometry, cell_slot);
   counts[pair_index] =
@@ -604,11 +692,14 @@ __global__ void fill_external_contacts(
     std::uint32_t constraint_count) {
   const auto constraint_index = blockIdx.x * blockDim.x + threadIdx.x;
   const auto cell_slot = blockIdx.y * blockDim.y + threadIdx.y;
+
   if (cell_slot >= cell_count || constraint_index >= constraint_count) {
     return;
   }
+
   const auto pair_index = cell_slot * constraint_count + constraint_index;
   const auto pair_contact_count = counts[pair_index];
+
   if (pair_contact_count == 0) {
     return;
   }
@@ -619,6 +710,7 @@ __global__ void fill_external_contacts(
   const auto weight =
       constraint.parameters.w * (evaluation.active_count == 2 ? inverse_sqrt_two : 1.0F);
   auto output_index = inclusive_counts[pair_index] - pair_contact_count;
+
   for (std::uint32_t contact = 0; contact < evaluation.active_count; ++contact) {
     const auto point = add(evaluation.centerline_points[contact],
                            multiply(evaluation.normals[contact], cell.radius));

@@ -43,11 +43,13 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     _SphereConstraint,
     _WorldStateCheckpoint,
 )
+from ._culture_checkpoint import decode_culture_checkpoint, encode_culture_checkpoint
+from .channels import UNNAMED_CHANNELS, ChannelMetadata, ChannelMetadataError
 
 CHECKPOINT_FORMAT = "microsimulator-checkpoint"
-CHECKPOINT_VERSION = 8
+CHECKPOINT_VERSION = 11
 MAX_CHECKPOINT_BYTES = 1 << 30
-_NATIVE_CHECKPOINT_VERSION = 4
+_NATIVE_CHECKPOINT_VERSION = 5
 
 _UINT32_MAX = (1 << 32) - 1
 _UINT64_MAX = (1 << 64) - 1
@@ -83,6 +85,7 @@ class CheckpointBundle:
     provenance: dict[str, JSONValue]
     schema_version: int
     source_backend: CheckpointSourceBackend
+    channel_metadata: ChannelMetadata = UNNAMED_CHANNELS
 
 
 _RATE_OP_NAMES = {
@@ -162,7 +165,9 @@ def _boundary_to_json(boundary: GridBoundary) -> dict[str, JSONValue]:
 def _signal_grid_to_json(checkpoint: _SignalGridCheckpoint | None) -> JSONValue:
     if checkpoint is None:
         return None
+
     spec = checkpoint.spec
+
     return {
         "spec": {
             "signal_count": spec.signal_count,
@@ -224,6 +229,7 @@ def _instructions_to_json(instructions: list[RateInstruction]) -> list[JSONValue
 def _coupled_rate_plan_to_json(plan: CoupledRatePlan | None) -> JSONValue:
     if plan is None:
         return None
+
     return {
         "species_count": plan.species_count,
         "signal_count": plan.signal_count,
@@ -235,6 +241,7 @@ def _coupled_rate_plan_to_json(plan: CoupledRatePlan | None) -> JSONValue:
 
 def _simulation_to_json(checkpoint: _SimulationCheckpoint) -> dict[str, JSONValue]:
     cells: list[JSONValue] = []
+
     for cell in checkpoint.world.cells:
         cells.append(
             {
@@ -295,6 +302,7 @@ def _simulation_to_json(checkpoint: _SimulationCheckpoint) -> dict[str, JSONValu
         for cylinder in checkpoint.constraints.cylinders
     ]
     instructions = _instructions_to_json(checkpoint.species_rate_plan.instructions)
+
     return {
         "time": checkpoint.time,
         "world": {
@@ -317,6 +325,7 @@ def _simulation_to_json(checkpoint: _SimulationCheckpoint) -> dict[str, JSONValu
         },
         "signal_grid": _signal_grid_to_json(checkpoint.signal_grid),
         "coupled_rate_plan": _coupled_rate_plan_to_json(checkpoint.coupled_rate_plan),
+        "culture": encode_culture_checkpoint(checkpoint.culture),
     }
 
 
@@ -336,12 +345,19 @@ def save_checkpoint(
     *,
     provenance: Mapping[str, JSONValue] | None = None,
     controller: JSONValue = None,
+    channel_metadata: ChannelMetadata = UNNAMED_CHANNELS,
 ) -> None:
     """Atomically save a complete simulation checkpoint as validated JSON."""
 
     checkpoint = simulation._checkpoint()
     checkpoint.validate()
     state = _simulation_to_json(checkpoint)
+
+    try:
+        labels = channel_metadata.to_json(simulation.species_count, simulation.signal_count)
+    except ChannelMetadataError as error:
+        raise CheckpointError(str(error)) from error
+
     digest = hashlib.sha256(_canonical_json(state)).hexdigest()
     controller_digest = hashlib.sha256(_canonical_json(controller)).hexdigest()
     backend = simulation.backend_info
@@ -361,10 +377,13 @@ def save_checkpoint(
             "algorithm": "sha256",
             "simulation": digest,
             "controller": controller_digest,
+            "channel_metadata": hashlib.sha256(_canonical_json(labels)).hexdigest(),
         },
         "simulation": state,
         "controller": controller,
+        "channel_metadata": labels,
     }
+
     try:
         encoded = (
             json.dumps(
@@ -381,6 +400,7 @@ def save_checkpoint(
 
     destination = Path(path)
     temporary: Path | None = None
+
     try:
         with tempfile.NamedTemporaryFile(
             mode="wb",
@@ -393,6 +413,7 @@ def save_checkpoint(
             stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
+
         os.replace(temporary, destination)
         temporary = None
     except OSError as error:
@@ -412,25 +433,32 @@ def _reject_constant(value: str) -> NoReturn:
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
+
     for key, value in pairs:
         if key in result:
             raise CheckpointError(f"checkpoint contains duplicate key {key!r}")
+
         result[key] = value
+
     return result
 
 
 def _object(value: object, path: str) -> dict[str, object]:
     if not isinstance(value, dict):
         _fail(path, "expected an object")
+
     mapping = cast(dict[object, object], value)
+
     if not all(isinstance(key, str) for key in mapping):
         _fail(path, "expected string object keys")
+
     return cast(dict[str, object], mapping)
 
 
 def _array(value: object, path: str) -> list[object]:
     if not isinstance(value, list):
         _fail(path, "expected an array")
+
     return cast(list[object], value)
 
 
@@ -440,8 +468,10 @@ def _keys(
     allowed = required | (optional or set())
     missing = required - value.keys()
     unknown = value.keys() - allowed
+
     if missing:
         _fail(path, f"missing keys {sorted(missing)}")
+
     if unknown:
         _fail(path, f"unknown keys {sorted(unknown)}")
 
@@ -449,41 +479,51 @@ def _keys(
 def _string(value: object, path: str) -> str:
     if not isinstance(value, str):
         _fail(path, "expected a string")
+
     return value
 
 
 def _integer(value: object, path: str, minimum: int, maximum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         _fail(path, "expected an integer")
+
     if value < minimum or value > maximum:
         _fail(path, f"integer is outside [{minimum}, {maximum}]")
+
     return value
 
 
 def _boolean(value: object, path: str) -> bool:
     if not isinstance(value, bool):
         _fail(path, "expected a boolean")
+
     return value
 
 
 def _number(value: object, path: str, *, float32: bool = False) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         _fail(path, "expected a number")
+
     try:
         result = float(value)
     except (OverflowError, ValueError):
         _fail(path, "number is outside the finite float64 range")
+
     if not math.isfinite(result):
         _fail(path, "number must be finite")
+
     if float32 and abs(result) > _FLOAT32_MAX:
         _fail(path, "number is outside the finite float32 range")
+
     return result
 
 
 def _vec3(value: object, path: str) -> Vec3:
     values = _array(value, path)
+
     if len(values) != 3:
         _fail(path, "expected exactly three coordinates")
+
     return Vec3(
         _number(values[0], f"{path}[0]", float32=True),
         _number(values[1], f"{path}[1]", float32=True),
@@ -504,8 +544,10 @@ def _cell(value: object, path: str, schema_version: int) -> CellSnapshot:
         "cell_type",
         "species",
     }
+
     if schema_version >= 6:
         required.add("fixed")
+
     _keys(
         data,
         path,
@@ -525,6 +567,7 @@ def _cell(value: object, path: str, schema_version: int) -> CellSnapshot:
         _number(item, f"{path}.species[{index}]", float32=True)
         for index, item in enumerate(_array(data["species"], f"{path}.species"))
     ]
+
     return cell
 
 
@@ -534,6 +577,7 @@ def _lineage_entry(value: object, path: str) -> _LineageEntry:
     entry = _LineageEntry()
     entry.child = _integer(data["child"], f"{path}.child", 1, _UINT64_MAX)
     entry.parent = _integer(data["parent"], f"{path}.parent", 1, _UINT64_MAX)
+
     return entry
 
 
@@ -545,6 +589,7 @@ def _plane(value: object, path: str) -> _PlaneConstraint:
     plane.point = _vec3(data["point"], f"{path}.point")
     plane.inward_normal = _vec3(data["inward_normal"], f"{path}.inward_normal")
     plane.coefficient = _number(data["coefficient"], f"{path}.coefficient", float32=True)
+
     return plane
 
 
@@ -557,10 +602,12 @@ def _sphere(value: object, path: str) -> _SphereConstraint:
     sphere.radius = _number(data["radius"], f"{path}.radius", float32=True)
     sphere.coefficient = _number(data["coefficient"], f"{path}.coefficient", float32=True)
     region_name = _string(data["allowed_region"], f"{path}.allowed_region")
+
     try:
         sphere.allowed_region = _CONSTRAINT_REGIONS[region_name]
     except KeyError:
         _fail(f"{path}.allowed_region", f"unknown sphere region {region_name!r}")
+
     return sphere
 
 
@@ -573,10 +620,12 @@ def _box(value: object, path: str) -> _BoxConstraint:
     box.half_extents = _vec3(data["half_extents"], f"{path}.half_extents")
     box.coefficient = _number(data["coefficient"], f"{path}.coefficient", float32=True)
     region_name = _string(data["allowed_region"], f"{path}.allowed_region")
+
     try:
         box.allowed_region = _CONSTRAINT_REGIONS[region_name]
     except KeyError:
         _fail(f"{path}.allowed_region", f"unknown box region {region_name!r}")
+
     return box
 
 
@@ -590,10 +639,12 @@ def _cylinder(value: object, path: str) -> _CylinderConstraint:
     cylinder.half_height = _number(data["half_height"], f"{path}.half_height", float32=True)
     cylinder.coefficient = _number(data["coefficient"], f"{path}.coefficient", float32=True)
     region_name = _string(data["allowed_region"], f"{path}.allowed_region")
+
     try:
         cylinder.allowed_region = _CONSTRAINT_REGIONS[region_name]
     except KeyError:
         _fail(f"{path}.allowed_region", f"unknown cylinder region {region_name!r}")
+
     return cylinder
 
 
@@ -602,14 +653,17 @@ def _instruction(value: object, path: str) -> RateInstruction:
     _keys(data, path, {"operation", "first", "second", "third", "value"})
     operation_name = _string(data["operation"], f"{path}.operation")
     instruction = RateInstruction()
+
     try:
         instruction.operation = _RATE_OPS[operation_name]
     except KeyError:
         _fail(f"{path}.operation", f"unknown rate operation {operation_name!r}")
+
     instruction.first = _integer(data["first"], f"{path}.first", 0, _UINT32_MAX)
     instruction.second = _integer(data["second"], f"{path}.second", 0, _UINT32_MAX)
     instruction.third = _integer(data["third"], f"{path}.third", 0, _UINT32_MAX)
     instruction.value = _number(data["value"], f"{path}.value", float32=True)
+
     return instruction
 
 
@@ -618,20 +672,24 @@ def _boundary(value: object, path: str) -> GridBoundary:
     _keys(data, path, {"kind", "values"})
     kind_name = _string(data["kind"], f"{path}.kind")
     boundary = GridBoundary()
+
     try:
         boundary.kind = _GRID_BOUNDARIES[kind_name]
     except KeyError:
         _fail(f"{path}.kind", f"unknown grid boundary kind {kind_name!r}")
+
     boundary.values = [
         _number(item, f"{path}.values[{index}]", float32=True)
         for index, item in enumerate(_array(data["values"], f"{path}.values"))
     ]
+
     return boundary
 
 
 def _affine_reaction(value: object, path: str) -> SignalGridAffineReaction | None:
     if value is None:
         return None
+
     data = _object(value, path)
     _keys(data, path, {"source_rates", "loss_rates"})
     reaction = SignalGridAffineReaction()
@@ -643,12 +701,310 @@ def _affine_reaction(value: object, path: str) -> SignalGridAffineReaction | Non
         _number(item, f"{path}.loss_rates[{index}]", float32=True)
         for index, item in enumerate(_array(data["loss_rates"], f"{path}.loss_rates"))
     ]
+
     return reaction
+
+
+def _checkpoint_velocity_field(
+    spec_data: dict[str, object], path: str
+) -> SignalGridVelocityField | None:
+    field_value = spec_data["velocity_field"]
+
+    if field_value is not None:
+        field_data = _object(field_value, f"{path}.spec.velocity_field")
+        _keys(field_data, f"{path}.spec.velocity_field", {"x_faces", "y_faces", "z_faces"})
+        field = SignalGridVelocityField()
+        field.x_faces = [
+            _number(item, f"{path}.spec.velocity_field.x_faces[{index}]", float32=True)
+            for index, item in enumerate(
+                _array(field_data["x_faces"], f"{path}.spec.velocity_field.x_faces")
+            )
+        ]
+        field.y_faces = [
+            _number(item, f"{path}.spec.velocity_field.y_faces[{index}]", float32=True)
+            for index, item in enumerate(
+                _array(field_data["y_faces"], f"{path}.spec.velocity_field.y_faces")
+            )
+        ]
+        field.z_faces = [
+            _number(item, f"{path}.spec.velocity_field.z_faces[{index}]", float32=True)
+            for index, item in enumerate(
+                _array(field_data["z_faces"], f"{path}.spec.velocity_field.z_faces")
+            )
+        ]
+
+        return field
+
+    return None
+
+
+def _checkpoint_signal_solver(
+    spec: SignalGridSpec, spec_data: dict[str, object], path: str
+) -> None:
+    integration_name = _string(spec_data["integration"], f"{path}.spec.integration")
+
+    if integration_name not in _SIGNAL_INTEGRATIONS:
+        _fail(f"{path}.spec.integration", f"unknown integration {integration_name!r}")
+
+    spec.integration = _SIGNAL_INTEGRATIONS[integration_name]
+    solver_data = _object(spec_data["solver"], f"{path}.spec.solver")
+    _keys(
+        solver_data,
+        f"{path}.spec.solver",
+        {"max_iterations", "absolute_tolerance", "relative_tolerance"},
+    )
+    spec.solver.max_iterations = _integer(
+        solver_data["max_iterations"],
+        f"{path}.spec.solver.max_iterations",
+        1,
+        _UINT32_MAX,
+    )
+    spec.solver.absolute_tolerance = _number(
+        solver_data["absolute_tolerance"],
+        f"{path}.spec.solver.absolute_tolerance",
+        float32=True,
+    )
+    spec.solver.relative_tolerance = _number(
+        solver_data["relative_tolerance"],
+        f"{path}.spec.solver.relative_tolerance",
+        float32=True,
+    )
+
+
+def _checkpoint_world(data: dict[str, object], schema_version: int) -> _WorldStateCheckpoint:
+    world_data = _object(data["world"], "$.simulation.world")
+    _keys(world_data, "$.simulation.world", {"species_count", "next_id", "cells", "lineage"})
+    world = _WorldStateCheckpoint()
+    world.species_count = _integer(
+        world_data["species_count"], "$.simulation.world.species_count", 0, _UINT64_MAX
+    )
+    world.next_id = _integer(world_data["next_id"], "$.simulation.world.next_id", 1, _UINT64_MAX)
+    world.cells = [
+        _cell(item, f"$.simulation.world.cells[{index}]", schema_version)
+        for index, item in enumerate(_array(world_data["cells"], "$.simulation.world.cells"))
+    ]
+    world.lineage = [
+        _lineage_entry(item, f"$.simulation.world.lineage[{index}]")
+        for index, item in enumerate(_array(world_data["lineage"], "$.simulation.world.lineage"))
+    ]
+
+    return world
+
+
+def _checkpoint_constraints(
+    data: dict[str, object], schema_version: int
+) -> _ConstraintSetCheckpoint:
+    constraint_data = _object(data["constraints"], "$.simulation.constraints")
+    constraint_keys = {"next_id", "planes", "spheres"}
+
+    if schema_version >= 8:
+        constraint_keys.update({"boxes", "cylinders"})
+
+    _keys(constraint_data, "$.simulation.constraints", constraint_keys)
+    constraints = _ConstraintSetCheckpoint()
+    constraints.next_id = _integer(
+        constraint_data["next_id"], "$.simulation.constraints.next_id", 1, _UINT64_MAX
+    )
+    constraints.planes = [
+        _plane(item, f"$.simulation.constraints.planes[{index}]")
+        for index, item in enumerate(
+            _array(constraint_data["planes"], "$.simulation.constraints.planes")
+        )
+    ]
+    constraints.spheres = [
+        _sphere(item, f"$.simulation.constraints.spheres[{index}]")
+        for index, item in enumerate(
+            _array(constraint_data["spheres"], "$.simulation.constraints.spheres")
+        )
+    ]
+
+    if schema_version >= 8:
+        constraints.boxes = [
+            _box(item, f"$.simulation.constraints.boxes[{index}]")
+            for index, item in enumerate(
+                _array(constraint_data["boxes"], "$.simulation.constraints.boxes")
+            )
+        ]
+        constraints.cylinders = [
+            _cylinder(item, f"$.simulation.constraints.cylinders[{index}]")
+            for index, item in enumerate(
+                _array(constraint_data["cylinders"], "$.simulation.constraints.cylinders")
+            )
+        ]
+
+    return constraints
+
+
+def _checkpoint_species_plan(data: dict[str, object]) -> SpeciesRatePlan:
+    plan_data = _object(data["species_rate_plan"], "$.simulation.species_rate_plan")
+    _keys(
+        plan_data,
+        "$.simulation.species_rate_plan",
+        {"species_count", "instructions", "outputs"},
+    )
+    plan_species_count = _integer(
+        plan_data["species_count"],
+        "$.simulation.species_rate_plan.species_count",
+        0,
+        _UINT64_MAX,
+    )
+    instructions = [
+        _instruction(item, f"$.simulation.species_rate_plan.instructions[{index}]")
+        for index, item in enumerate(
+            _array(plan_data["instructions"], "$.simulation.species_rate_plan.instructions")
+        )
+    ]
+    outputs = [
+        _integer(item, f"$.simulation.species_rate_plan.outputs[{index}]", 0, _UINT32_MAX)
+        for index, item in enumerate(
+            _array(plan_data["outputs"], "$.simulation.species_rate_plan.outputs")
+        )
+    ]
+
+    return SpeciesRatePlan(plan_species_count, instructions, outputs)
+
+
+def _read_checkpoint(source: Path) -> dict[str, object]:
+    try:
+        with source.open("rb") as stream:
+            encoded = stream.read(MAX_CHECKPOINT_BYTES + 1)
+
+        if not encoded:
+            raise CheckpointError("checkpoint is empty")
+
+        if len(encoded) > MAX_CHECKPOINT_BYTES:
+            raise CheckpointError(f"checkpoint exceeds the {MAX_CHECKPOINT_BYTES}-byte limit")
+    except OSError as error:
+        raise CheckpointError(f"could not read checkpoint {source}") from error
+
+    try:
+        decoded = json.loads(
+            encoded,
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_constant,
+        )
+    except CheckpointError:
+        raise
+    except (ValueError, UnicodeDecodeError, RecursionError) as error:
+        raise CheckpointError(f"checkpoint is not valid UTF-8 JSON: {error}") from error
+
+    root = _object(cast(object, decoded), "$")
+
+    return root
+
+
+def _checkpoint_version(root: dict[str, object]) -> int:
+    if "version" not in root:
+        _fail("$", "missing keys ['version']")
+
+    schema_version = _integer(root["version"], "$.version", 0, _UINT32_MAX)
+    supported_versions = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, CHECKPOINT_VERSION}
+
+    if schema_version not in supported_versions:
+        _fail("$.version", f"unsupported checkpoint version {schema_version}")
+
+    required = {
+        "format",
+        "version",
+        "producer",
+        "source_backend",
+        "provenance",
+        "integrity",
+        "simulation",
+    }
+
+    if schema_version >= 4:
+        required.add("controller")
+
+    if schema_version >= 9:
+        required.add("channel_metadata")
+
+    _keys(
+        root,
+        "$",
+        required,
+    )
+
+    if _string(root["format"], "$.format") not in (CHECKPOINT_FORMAT, "cellmodeller2-checkpoint"):
+        _fail("$.format", "not a MicroSimulator checkpoint")
+
+    return schema_version
+
+
+def _checkpoint_source_backend(root: dict[str, object]) -> CheckpointSourceBackend:
+    source_backend_data = _object(root["source_backend"], "$.source_backend")
+    _keys(
+        source_backend_data,
+        "$.source_backend",
+        {"kind", "name", "device", "device_index", "native"},
+    )
+    source_backend_kind = _string(source_backend_data["kind"], "$.source_backend.kind")
+
+    if source_backend_kind not in _BACKEND_NAMES.values():
+        _fail("$.source_backend.kind", f"unknown backend kind {source_backend_kind!r}")
+
+    source_backend = CheckpointSourceBackend(
+        kind=source_backend_kind,
+        name=_string(source_backend_data["name"], "$.source_backend.name"),
+        device=_string(source_backend_data["device"], "$.source_backend.device"),
+        device_index=_integer(
+            source_backend_data["device_index"],
+            "$.source_backend.device_index",
+            0,
+            _UINT32_MAX,
+        ),
+        native=_boolean(source_backend_data["native"], "$.source_backend.native"),
+    )
+
+    return source_backend
+
+
+def _validate_checkpoint_integrity(root: dict[str, object], schema_version: int) -> JSONValue:
+    integrity = _object(root["integrity"], "$.integrity")
+    integrity_keys = {"algorithm", "simulation"}
+
+    if schema_version >= 4:
+        integrity_keys.add("controller")
+
+    if schema_version >= 9:
+        integrity_keys.add("channel_metadata")
+
+    _keys(integrity, "$.integrity", integrity_keys)
+
+    if _string(integrity["algorithm"], "$.integrity.algorithm") != "sha256":
+        _fail("$.integrity.algorithm", "unsupported integrity algorithm")
+
+    expected_digest = _string(integrity["simulation"], "$.integrity.simulation")
+    actual_digest = hashlib.sha256(_canonical_json(root["simulation"])).hexdigest()
+
+    if not hmac.compare_digest(actual_digest, expected_digest):
+        _fail("$.integrity.simulation", "state digest does not match")
+
+    controller = cast(JSONValue, root["controller"]) if schema_version >= 4 else None
+
+    if schema_version >= 4:
+        expected_controller_digest = _string(integrity["controller"], "$.integrity.controller")
+        actual_controller_digest = hashlib.sha256(_canonical_json(controller)).hexdigest()
+
+        if not hmac.compare_digest(actual_controller_digest, expected_controller_digest):
+            _fail("$.integrity.controller", "controller digest does not match")
+
+    if schema_version >= 9:
+        expected_labels_digest = _string(
+            integrity["channel_metadata"], "$.integrity.channel_metadata"
+        )
+        actual_labels_digest = hashlib.sha256(_canonical_json(root["channel_metadata"])).hexdigest()
+
+        if not hmac.compare_digest(actual_labels_digest, expected_labels_digest):
+            _fail("$.integrity.channel_metadata", "channel metadata digest does not match")
+
+    return controller
 
 
 def _signal_grid(value: object, path: str, schema_version: int) -> _SignalGridCheckpoint | None:
     if value is None:
         return None
+
     data = _object(value, path)
     _keys(data, path, {"spec", "levels"})
     spec_data = _object(data["spec"], f"{path}.spec")
@@ -661,20 +1017,26 @@ def _signal_grid(value: object, path: str, schema_version: int) -> _SignalGridCh
         "advection",
         "boundaries",
     }
+
     if schema_version >= 5:
         spec_keys.update({"integration", "solver"})
+
     if schema_version >= 7:
         spec_keys.add("reaction")
+
     if schema_version >= 8:
         spec_keys.update({"obstacles", "velocity_field"})
+
     _keys(
         spec_data,
         f"{path}.spec",
         spec_keys,
     )
     shape_values = _array(spec_data["shape"], f"{path}.spec.shape")
+
     if len(shape_values) != 3:
         _fail(f"{path}.spec.shape", "expected exactly three dimensions")
+
     shape = GridShape()
     shape.x = _integer(shape_values[0], f"{path}.spec.shape[0]", 1, _UINT32_MAX)
     shape.y = _integer(shape_values[1], f"{path}.spec.shape[1]", 1, _UINT32_MAX)
@@ -699,66 +1061,20 @@ def _signal_grid(value: object, path: str, schema_version: int) -> _SignalGridCh
         _vec3(item, f"{path}.spec.advection[{index}]")
         for index, item in enumerate(_array(spec_data["advection"], f"{path}.spec.advection"))
     ]
+
     if schema_version >= 7:
         spec.reaction = _affine_reaction(spec_data["reaction"], f"{path}.spec.reaction")
+
     if schema_version >= 8:
         spec.obstacles = [
             _integer(item, f"{path}.spec.obstacles[{index}]", 0, 1)
-            for index, item in enumerate(
-                _array(spec_data["obstacles"], f"{path}.spec.obstacles")
-            )
+            for index, item in enumerate(_array(spec_data["obstacles"], f"{path}.spec.obstacles"))
         ]
-        field_value = spec_data["velocity_field"]
-        if field_value is not None:
-            field_data = _object(field_value, f"{path}.spec.velocity_field")
-            _keys(field_data, f"{path}.spec.velocity_field", {"x_faces", "y_faces", "z_faces"})
-            field = SignalGridVelocityField()
-            field.x_faces = [
-                _number(item, f"{path}.spec.velocity_field.x_faces[{index}]", float32=True)
-                for index, item in enumerate(
-                    _array(field_data["x_faces"], f"{path}.spec.velocity_field.x_faces")
-                )
-            ]
-            field.y_faces = [
-                _number(item, f"{path}.spec.velocity_field.y_faces[{index}]", float32=True)
-                for index, item in enumerate(
-                    _array(field_data["y_faces"], f"{path}.spec.velocity_field.y_faces")
-                )
-            ]
-            field.z_faces = [
-                _number(item, f"{path}.spec.velocity_field.z_faces[{index}]", float32=True)
-                for index, item in enumerate(
-                    _array(field_data["z_faces"], f"{path}.spec.velocity_field.z_faces")
-                )
-            ]
-            spec.velocity_field = field
+        spec.velocity_field = _checkpoint_velocity_field(spec_data, path)
+
     if schema_version >= 5:
-        integration_name = _string(spec_data["integration"], f"{path}.spec.integration")
-        if integration_name not in _SIGNAL_INTEGRATIONS:
-            _fail(f"{path}.spec.integration", f"unknown integration {integration_name!r}")
-        spec.integration = _SIGNAL_INTEGRATIONS[integration_name]
-        solver_data = _object(spec_data["solver"], f"{path}.spec.solver")
-        _keys(
-            solver_data,
-            f"{path}.spec.solver",
-            {"max_iterations", "absolute_tolerance", "relative_tolerance"},
-        )
-        spec.solver.max_iterations = _integer(
-            solver_data["max_iterations"],
-            f"{path}.spec.solver.max_iterations",
-            1,
-            _UINT32_MAX,
-        )
-        spec.solver.absolute_tolerance = _number(
-            solver_data["absolute_tolerance"],
-            f"{path}.spec.solver.absolute_tolerance",
-            float32=True,
-        )
-        spec.solver.relative_tolerance = _number(
-            solver_data["relative_tolerance"],
-            f"{path}.spec.solver.relative_tolerance",
-            float32=True,
-        )
+        _checkpoint_signal_solver(spec, spec_data, path)
+
     spec.x_lower = _boundary(boundaries["x_lower"], f"{path}.spec.boundaries.x_lower")
     spec.x_upper = _boundary(boundaries["x_upper"], f"{path}.spec.boundaries.x_upper")
     spec.y_lower = _boundary(boundaries["y_lower"], f"{path}.spec.boundaries.y_lower")
@@ -772,12 +1088,14 @@ def _signal_grid(value: object, path: str, schema_version: int) -> _SignalGridCh
         _number(item, f"{path}.levels[{index}]", float32=True)
         for index, item in enumerate(_array(data["levels"], f"{path}.levels"))
     ]
+
     return checkpoint
 
 
 def _coupled_rate_plan(value: object, path: str) -> CoupledRatePlan | None:
     if value is None:
         return None
+
     data = _object(value, path)
     _keys(
         data,
@@ -804,6 +1122,7 @@ def _coupled_rate_plan(value: object, path: str) -> CoupledRatePlan | None:
         _integer(item, f"{path}.signal_outputs[{index}]", 0, _UINT32_MAX)
         for index, item in enumerate(_array(data["signal_outputs"], f"{path}.signal_outputs"))
     ]
+
     try:
         return CoupledRatePlan(
             species_count,
@@ -819,94 +1138,30 @@ def _coupled_rate_plan(value: object, path: str) -> CoupledRatePlan | None:
 def _native_checkpoint(value: object, schema_version: int) -> _SimulationCheckpoint:
     data = _object(value, "$.simulation")
     required = {"time", "world", "constraints", "species_rate_plan"}
+
     if schema_version >= 2:
         required.add("signal_grid")
+
     if schema_version >= 3:
         required.add("coupled_rate_plan")
+
+    if schema_version >= 10:
+        required.add("media_flow" if schema_version == 10 else "culture")
+
     _keys(data, "$.simulation", required)
 
-    world_data = _object(data["world"], "$.simulation.world")
-    _keys(world_data, "$.simulation.world", {"species_count", "next_id", "cells", "lineage"})
-    world = _WorldStateCheckpoint()
-    world.species_count = _integer(
-        world_data["species_count"], "$.simulation.world.species_count", 0, _UINT64_MAX
-    )
-    world.next_id = _integer(world_data["next_id"], "$.simulation.world.next_id", 1, _UINT64_MAX)
-    world.cells = [
-        _cell(item, f"$.simulation.world.cells[{index}]", schema_version)
-        for index, item in enumerate(_array(world_data["cells"], "$.simulation.world.cells"))
-    ]
-    world.lineage = [
-        _lineage_entry(item, f"$.simulation.world.lineage[{index}]")
-        for index, item in enumerate(_array(world_data["lineage"], "$.simulation.world.lineage"))
-    ]
+    world = _checkpoint_world(data, schema_version)
 
-    constraint_data = _object(data["constraints"], "$.simulation.constraints")
-    constraint_keys = {"next_id", "planes", "spheres"}
-    if schema_version >= 8:
-        constraint_keys.update({"boxes", "cylinders"})
-    _keys(constraint_data, "$.simulation.constraints", constraint_keys)
-    constraints = _ConstraintSetCheckpoint()
-    constraints.next_id = _integer(
-        constraint_data["next_id"], "$.simulation.constraints.next_id", 1, _UINT64_MAX
-    )
-    constraints.planes = [
-        _plane(item, f"$.simulation.constraints.planes[{index}]")
-        for index, item in enumerate(
-            _array(constraint_data["planes"], "$.simulation.constraints.planes")
-        )
-    ]
-    constraints.spheres = [
-        _sphere(item, f"$.simulation.constraints.spheres[{index}]")
-        for index, item in enumerate(
-            _array(constraint_data["spheres"], "$.simulation.constraints.spheres")
-        )
-    ]
-    if schema_version >= 8:
-        constraints.boxes = [
-            _box(item, f"$.simulation.constraints.boxes[{index}]")
-            for index, item in enumerate(
-                _array(constraint_data["boxes"], "$.simulation.constraints.boxes")
-            )
-        ]
-        constraints.cylinders = [
-            _cylinder(item, f"$.simulation.constraints.cylinders[{index}]")
-            for index, item in enumerate(
-                _array(constraint_data["cylinders"], "$.simulation.constraints.cylinders")
-            )
-        ]
+    constraints = _checkpoint_constraints(data, schema_version)
 
-    plan_data = _object(data["species_rate_plan"], "$.simulation.species_rate_plan")
-    _keys(
-        plan_data,
-        "$.simulation.species_rate_plan",
-        {"species_count", "instructions", "outputs"},
-    )
-    plan_species_count = _integer(
-        plan_data["species_count"],
-        "$.simulation.species_rate_plan.species_count",
-        0,
-        _UINT64_MAX,
-    )
-    instructions = [
-        _instruction(item, f"$.simulation.species_rate_plan.instructions[{index}]")
-        for index, item in enumerate(
-            _array(plan_data["instructions"], "$.simulation.species_rate_plan.instructions")
-        )
-    ]
-    outputs = [
-        _integer(item, f"$.simulation.species_rate_plan.outputs[{index}]", 0, _UINT32_MAX)
-        for index, item in enumerate(
-            _array(plan_data["outputs"], "$.simulation.species_rate_plan.outputs")
-        )
-    ]
+    species_plan = _checkpoint_species_plan(data)
 
     checkpoint = _SimulationCheckpoint()
     checkpoint.schema_version = _NATIVE_CHECKPOINT_VERSION
     checkpoint.time = _number(data["time"], "$.simulation.time")
     checkpoint.world = world
     checkpoint.constraints = constraints
-    checkpoint.species_rate_plan = SpeciesRatePlan(plan_species_count, instructions, outputs)
+    checkpoint.species_rate_plan = species_plan
     checkpoint.signal_grid = (
         _signal_grid(data["signal_grid"], "$.simulation.signal_grid", schema_version)
         if schema_version >= 2
@@ -917,10 +1172,21 @@ def _native_checkpoint(value: object, schema_version: int) -> _SimulationCheckpo
         if schema_version >= 3
         else None
     )
+
     try:
+        checkpoint.culture = (
+            decode_culture_checkpoint(
+                data["media_flow" if schema_version == 10 else "culture"],
+                schema_version,
+                checkpoint.time,
+            )
+            if schema_version >= 10
+            else None
+        )
         checkpoint.validate()
-    except (ValueError, OverflowError) as error:
+    except (ValueError, OverflowError, TypeError) as error:
         raise CheckpointError(f"checkpoint state is invalid: {error}") from error
+
     return checkpoint
 
 
@@ -933,104 +1199,42 @@ def load_checkpoint_bundle(
     """Load native and optional controller state without evaluating executable content."""
 
     source = Path(path)
-    try:
-        with source.open("rb") as stream:
-            encoded = stream.read(MAX_CHECKPOINT_BYTES + 1)
-        if not encoded:
-            raise CheckpointError("checkpoint is empty")
-        if len(encoded) > MAX_CHECKPOINT_BYTES:
-            raise CheckpointError(f"checkpoint exceeds the {MAX_CHECKPOINT_BYTES}-byte limit")
-    except OSError as error:
-        raise CheckpointError(f"could not read checkpoint {source}") from error
 
-    try:
-        decoded = json.loads(
-            encoded,
-            object_pairs_hook=_reject_duplicate_keys,
-            parse_constant=_reject_constant,
-        )
-    except CheckpointError:
-        raise
-    except (ValueError, UnicodeDecodeError, RecursionError) as error:
-        raise CheckpointError(f"checkpoint is not valid UTF-8 JSON: {error}") from error
+    root = _read_checkpoint(source)
 
-    root = _object(cast(object, decoded), "$")
-    if "version" not in root:
-        _fail("$", "missing keys ['version']")
-    schema_version = _integer(root["version"], "$.version", 0, _UINT32_MAX)
-    supported_versions = {1, 2, 3, 4, 5, 6, 7, CHECKPOINT_VERSION}
-    if schema_version not in supported_versions:
-        _fail("$.version", f"unsupported checkpoint version {schema_version}")
-    required = {
-        "format",
-        "version",
-        "producer",
-        "source_backend",
-        "provenance",
-        "integrity",
-        "simulation",
-    }
-    if schema_version >= 4:
-        required.add("controller")
-    _keys(
-        root,
-        "$",
-        required,
-    )
-    if _string(root["format"], "$.format") not in (CHECKPOINT_FORMAT, "cellmodeller2-checkpoint"):
-        _fail("$.format", "not a MicroSimulator checkpoint")
+    schema_version = _checkpoint_version(root)
+
     _object(root["producer"], "$.producer")
-    source_backend_data = _object(root["source_backend"], "$.source_backend")
-    _keys(
-        source_backend_data,
-        "$.source_backend",
-        {"kind", "name", "device", "device_index", "native"},
-    )
-    source_backend_kind = _string(source_backend_data["kind"], "$.source_backend.kind")
-    if source_backend_kind not in _BACKEND_NAMES.values():
-        _fail("$.source_backend.kind", f"unknown backend kind {source_backend_kind!r}")
-    source_backend = CheckpointSourceBackend(
-        kind=source_backend_kind,
-        name=_string(source_backend_data["name"], "$.source_backend.name"),
-        device=_string(source_backend_data["device"], "$.source_backend.device"),
-        device_index=_integer(
-            source_backend_data["device_index"],
-            "$.source_backend.device_index",
-            0,
-            _UINT32_MAX,
-        ),
-        native=_boolean(source_backend_data["native"], "$.source_backend.native"),
-    )
+    source_backend = _checkpoint_source_backend(root)
     provenance = cast(dict[str, JSONValue], _object(root["provenance"], "$.provenance"))
 
-    integrity = _object(root["integrity"], "$.integrity")
-    integrity_keys = {"algorithm", "simulation"}
-    if schema_version >= 4:
-        integrity_keys.add("controller")
-    _keys(integrity, "$.integrity", integrity_keys)
-    if _string(integrity["algorithm"], "$.integrity.algorithm") != "sha256":
-        _fail("$.integrity.algorithm", "unsupported integrity algorithm")
-    expected_digest = _string(integrity["simulation"], "$.integrity.simulation")
-    actual_digest = hashlib.sha256(_canonical_json(root["simulation"])).hexdigest()
-    if not hmac.compare_digest(actual_digest, expected_digest):
-        _fail("$.integrity.simulation", "state digest does not match")
-
-    controller = cast(JSONValue, root["controller"]) if schema_version >= 4 else None
-    if schema_version >= 4:
-        expected_controller_digest = _string(
-            integrity["controller"], "$.integrity.controller"
-        )
-        actual_controller_digest = hashlib.sha256(_canonical_json(controller)).hexdigest()
-        if not hmac.compare_digest(actual_controller_digest, expected_controller_digest):
-            _fail("$.integrity.controller", "controller digest does not match")
+    controller = _validate_checkpoint_integrity(root, schema_version)
 
     checkpoint = _native_checkpoint(root["simulation"], schema_version)
+    species_count = checkpoint.world.species_count
+    signal_count = checkpoint.signal_grid.spec.signal_count if checkpoint.signal_grid else 0
+
+    if checkpoint.culture is not None:
+        signal_count = len(checkpoint.culture.configuration.solutes)
+
+    try:
+        labels = (
+            ChannelMetadata.from_json(root["channel_metadata"], species_count, signal_count)
+            if schema_version >= 9
+            # Legacy files contain no labels. Preserve that omission compactly:
+            # claimed native counts must not allocate new presentation arrays.
+            else UNNAMED_CHANNELS
+        )
+    except ChannelMetadataError as error:
+        raise CheckpointError(str(error)) from error
+
     return CheckpointBundle(
         simulation=Simulation(backend, checkpoint, device_index),
         controller=controller,
         provenance=provenance,
         schema_version=schema_version,
         source_backend=source_backend,
+        channel_metadata=labels,
     )
 
 
@@ -1043,8 +1247,19 @@ def load_checkpoint(
     """Load a native checkpoint, rejecting controller state that would be discarded."""
 
     bundle = load_checkpoint_bundle(path, backend=backend, device_index=device_index)
+
     if bundle.controller is not None:
         raise CheckpointError(
             "checkpoint contains controller state; load it with load_checkpoint_bundle"
         )
+
+    if any(
+        label is not None
+        for group in (bundle.channel_metadata.species, bundle.channel_metadata.signals)
+        for label in (group or ())
+    ):
+        raise CheckpointError(
+            "checkpoint contains channel metadata; load it with load_checkpoint_bundle"
+        )
+
     return bundle.simulation

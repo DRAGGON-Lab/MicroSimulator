@@ -9,6 +9,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -18,13 +19,19 @@ namespace cm::detail {
 
 class FlowGridLayout {
  public:
-  FlowGridLayout(const SignalGridSpec& spec, FlowAxis flow_axis)
+  template <class Grid>
+  FlowGridLayout(const Grid& spec, FlowAxis flow_axis)
       : dimensions_{spec.shape.x, spec.shape.y, spec.shape.z},
-        spacing_{spec.spacing.x, spec.spacing.y, spec.spacing.z},
         flow_axis_(static_cast<std::size_t>(flow_axis)) {
-    face_counts_[0] = spec.x_face_count();
-    face_counts_[1] = spec.y_face_count();
-    face_counts_[2] = spec.z_face_count();
+    if constexpr (std::is_arithmetic_v<decltype(spec.spacing)>) {
+      spacing_ = {spec.spacing, spec.spacing, spec.spacing};
+    } else {
+      spacing_ = {spec.spacing.x, spec.spacing.y, spec.spacing.z};
+    }
+
+    face_counts_[0] = (std::size_t(spec.shape.x) + 1) * spec.shape.y * spec.shape.z;
+    face_counts_[1] = std::size_t(spec.shape.x) * (std::size_t(spec.shape.y) + 1) * spec.shape.z;
+    face_counts_[2] = std::size_t(spec.shape.x) * spec.shape.y * (std::size_t(spec.shape.z) + 1);
     face_offsets_[1] = face_counts_[0];
     face_offsets_[2] = face_counts_[0] + face_counts_[1];
     total_face_count_ = face_offsets_[2] + face_counts_[2];
@@ -34,9 +41,13 @@ class FlowGridLayout {
     return dimensions_;
   }
 
-  [[nodiscard]] const std::array<float, 3>& spacing() const noexcept { return spacing_; }
+  [[nodiscard]] const std::array<float, 3>& spacing() const noexcept {
+    return spacing_;
+  }
 
-  [[nodiscard]] std::size_t flow_axis() const noexcept { return flow_axis_; }
+  [[nodiscard]] std::size_t flow_axis() const noexcept {
+    return flow_axis_;
+  }
 
   [[nodiscard]] std::size_t site_count() const noexcept {
     return static_cast<std::size_t>(dimensions_[0]) * dimensions_[1] * dimensions_[2];
@@ -54,7 +65,9 @@ class FlowGridLayout {
     return face_offsets_;
   }
 
-  [[nodiscard]] std::size_t total_face_count() const noexcept { return total_face_count_; }
+  [[nodiscard]] std::size_t total_face_count() const noexcept {
+    return total_face_count_;
+  }
 
   [[nodiscard]] std::size_t site_index(std::uint32_t x, std::uint32_t y,
                                        std::uint32_t z) const noexcept {
@@ -65,12 +78,14 @@ class FlowGridLayout {
     const auto z = static_cast<std::uint32_t>(index % dimensions_[2]);
     index /= dimensions_[2];
     const auto y = static_cast<std::uint32_t>(index % dimensions_[1]);
+
     return {static_cast<std::uint32_t>(index / dimensions_[1]), y, z};
   }
 
   [[nodiscard]] std::array<std::uint32_t, 3> face_dimensions(std::size_t component) const noexcept {
     auto result = dimensions_;
     ++result[component];
+
     return result;
   }
 
@@ -79,9 +94,11 @@ class FlowGridLayout {
     if (component == 0) {
       return (static_cast<std::size_t>(x) * dimensions_[1] + y) * dimensions_[2] + z;
     }
+
     if (component == 1) {
       return (static_cast<std::size_t>(x) * (dimensions_[1] + 1) + y) * dimensions_[2] + z;
     }
+
     return (static_cast<std::size_t>(x) * dimensions_[1] + y) * (dimensions_[2] + 1) + z;
   }
 
@@ -93,14 +110,17 @@ class FlowGridLayout {
   [[nodiscard]] std::pair<std::size_t, std::array<std::uint32_t, 3>> face_coordinates(
       std::size_t index) const noexcept {
     std::size_t component = 0;
+
     while (component < 2 && index >= face_offsets_[component] + face_counts_[component]) {
       ++component;
     }
+
     auto local = index - face_offsets_[component];
     const auto face_dims = face_dimensions(component);
     const auto z = static_cast<std::uint32_t>(local % face_dims[2]);
     local /= face_dims[2];
     const auto y = static_cast<std::uint32_t>(local % face_dims[1]);
+
     return {component, {static_cast<std::uint32_t>(local / face_dims[1]), y, z}};
   }
 
@@ -108,31 +128,38 @@ class FlowGridLayout {
                                                          const std::array<std::uint32_t, 3>& face,
                                                          int side) const noexcept {
     auto site = face;
+
     if (side < 0) {
       if (face[component] == 0) {
         return std::nullopt;
       }
+
       --site[component];
     } else if (face[component] >= dimensions_[component]) {
       return std::nullopt;
     }
+
     return site_index(site[0], site[1], site[2]);
   }
 
   [[nodiscard]] std::optional<std::size_t> neighbor_site(std::size_t index, std::size_t axis,
                                                          int offset) const noexcept {
     auto site = site_coordinates(index);
+
     if (offset < 0) {
       if (site[axis] == 0) {
         return std::nullopt;
       }
+
       --site[axis];
     } else {
       if (site[axis] + 1 >= dimensions_[axis]) {
         return std::nullopt;
       }
+
       ++site[axis];
     }
+
     return site_index(site[0], site[1], site[2]);
   }
 
@@ -141,17 +168,21 @@ class FlowGridLayout {
     const auto [component, original] = face_coordinates(index);
     auto face = original;
     const auto face_dims = face_dimensions(component);
+
     if (offset < 0) {
       if (face[axis] == 0) {
         return std::nullopt;
       }
+
       --face[axis];
     } else {
       if (face[axis] + 1 >= face_dims[axis]) {
         return std::nullopt;
       }
+
       ++face[axis];
     }
+
     return face_index(component, face[0], face[1], face[2]);
   }
 
@@ -166,6 +197,7 @@ class FlowGridLayout {
 
 [[nodiscard]] inline float harmonic_mean(float first, float second) noexcept {
   const auto sum = first + second;
+
   return sum > 0.0F ? 2.0F * first * second / sum : 0.0F;
 }
 
@@ -176,13 +208,16 @@ class ShallowFlowReduction {
   ShallowFlowReduction(const SignalGridSpec& spec, std::span<const float> mobility, FlowAxis axis)
       : original_(spec), original_layout_(spec, axis), grid_(spec) {
     validate_flow_grid(spec, axis);
+
     if (axis == FlowAxis::z) {
       throw std::invalid_argument(
           "shallow flow is depth-integrated along z; flow axis must be x or y");
     }
+
     if (!mobility.empty() && mobility.size() != spec.site_count()) {
       throw std::invalid_argument("flow mobility must hold one value per grid site");
     }
+
     grid_.shape.z = 1;
     grid_.velocity_field.reset();
     grid_.reaction.reset();
@@ -194,88 +229,175 @@ class ShallowFlowReduction {
     conductance_.assign(columns, 0.0F);
     std::uint32_t common_bottom = spec.shape.z;
     float max_height = 0.0F;
+
     for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
       for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
-        const auto column = static_cast<std::size_t>(x) * spec.shape.y + y;
-        bool started = false, ended = false;
-        float value = 1.0F;
-        for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
-          const auto site = original_layout_.site_index(x, y, z);
-          if (!mobility.empty() && (!std::isfinite(mobility[site]) || mobility[site] < 0.0F)) {
-            throw std::invalid_argument("flow mobility must be finite and non-negative");
-          }
-          if (spec.solid_site(site)) {
-            if (started) ended = true;
-            continue;
-          }
-          if (ended)
-            throw std::invalid_argument(
-                "shallow flow needs contiguous fluid columns; use resolved flow");
-          const float next = mobility.empty() ? 1.0F : mobility[site];
-          if (!started) {
-            if (common_bottom == spec.shape.z) common_bottom = z;
-            if (z != common_bottom)
-              throw std::invalid_argument(
-                  "shallow flow needs a common planar floor; use resolved flow");
-            value = next;
-          } else if (std::abs(next - value) > 2.0e-6F * std::max(std::abs(value), std::abs(next))) {
-            throw std::invalid_argument(
-                "shallow-flow mobility must be constant through each depth column");
-          }
-          started = true;
-          heights_[column] += spec.spacing.z;
-        }
-        if (started) {
-          grid_.obstacles[column] = 0;
-          conductance_[column] = heights_[column] * value;
-          max_height = std::max(max_height, heights_[column]);
-        }
+        initialize_column(x, y, mobility, common_bottom, max_height);
       }
     }
+
     bottom_ = common_bottom;
+
     if (mobility.empty() && max_height > 0.0F) {
       for (std::size_t i = 0; i < columns; ++i) {
         const auto relative_height = heights_[i] / max_height;
         conductance_[i] *= relative_height * relative_height;
       }
     }
-    for (std::size_t i = 0; i < columns; ++i)
-      if (conductance_[i] == 0.0F) grid_.obstacles[i] = 1;
+
+    for (std::size_t i = 0; i < columns; ++i) {
+      if (conductance_[i] == 0.0F) {
+        grid_.obstacles[i] = 1;
+      }
+    }
+
     validate_flow_grid(grid_, axis);
   }
 
-  const SignalGridSpec& grid() const { return grid_; }
-  const FlowGridLayout& original_layout() const { return original_layout_; }
-  const std::vector<float>& conductance() const { return conductance_; }
+  const SignalGridSpec& grid() const {
+    return grid_;
+  }
+
+  const FlowGridLayout& original_layout() const {
+    return original_layout_;
+  }
+
+  const std::vector<float>& conductance() const {
+    return conductance_;
+  }
 
   std::vector<float> lift(std::span<const float> flux) const {
     const auto axis = static_cast<FlowAxis>(original_layout_.flow_axis());
     const FlowGridLayout reduced(grid_, axis);
-    if (flux.size() != reduced.total_face_count())
+
+    if (flux.size() != reduced.total_face_count()) {
       throw std::logic_error("shallow flux size mismatch");
+    }
+
     std::vector<float> velocity(original_layout_.total_face_count(), 0.0F);
+
     for (std::size_t index = 0; index < velocity.size(); ++index) {
       const auto [component, face] = original_layout_.face_coordinates(index);
-      if (component == 2) continue;
+
+      if (component == 2) {
+        continue;
+      }
+
       const auto lower = original_layout_.adjacent_site(component, face, -1);
       const auto upper = original_layout_.adjacent_site(component, face, 1);
-      if ((lower && original_.solid_site(*lower)) || (upper && original_.solid_site(*upper)))
+
+      if ((lower && original_.solid_site(*lower)) || (upper && original_.solid_site(*upper))) {
         continue;
-      if ((!lower || !upper) && component != original_layout_.flow_axis()) continue;
+      }
+
+      if ((!lower || !upper) && component != original_layout_.flow_axis()) {
+        continue;
+      }
+
       const auto low_column = lower ? *lower / original_.shape.z : *upper / original_.shape.z;
       const auto high_column = upper ? *upper / original_.shape.z : low_column;
       const auto height = std::min(heights_[low_column], heights_[high_column]);
-      if (height > 0.0F)
+
+      if (height > 0.0F) {
         velocity[index] = flux[reduced.face_index(component, face[0], face[1], 0)] / height;
+      }
     }
+
+    lift_vertical_velocity(velocity);
+
+    return velocity;
+  }
+
+  std::vector<std::uint8_t> open_inlet_faces() const {
+    std::vector<std::uint8_t> result(original_layout_.total_face_count(), 0);
+
+    for (std::size_t index = 0; index < result.size(); ++index) {
+      const auto [component, face] = original_layout_.face_coordinates(index);
+
+      if (component != original_layout_.flow_axis() || face[component] != 0) {
+        continue;
+      }
+
+      const auto site = original_layout_.adjacent_site(component, face, 1);
+
+      if (site && !original_.solid_site(*site) && conductance_[*site / original_.shape.z] > 0.0F) {
+        result[index] = 1;
+      }
+    }
+
+    return result;
+  }
+
+ private:
+  void initialize_column(std::uint32_t x, std::uint32_t y, std::span<const float> mobility,
+                         std::uint32_t& common_bottom, float& max_height) {
+    const auto& spec = original_;
+    const auto column = static_cast<std::size_t>(x) * spec.shape.y + y;
+    bool started = false, ended = false;
+    float value = 1.0F;
+
+    for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
+      const auto site = original_layout_.site_index(x, y, z);
+
+      if (!mobility.empty() && (!std::isfinite(mobility[site]) || mobility[site] < 0.0F)) {
+        throw std::invalid_argument("flow mobility must be finite and non-negative");
+      }
+
+      if (spec.solid_site(site)) {
+        if (started) {
+          ended = true;
+        }
+
+        continue;
+      }
+
+      if (ended) {
+        throw std::invalid_argument(
+            "shallow flow needs contiguous fluid columns; use resolved flow");
+      }
+
+      const float next = mobility.empty() ? 1.0F : mobility[site];
+
+      if (!started) {
+        if (common_bottom == spec.shape.z) {
+          common_bottom = z;
+        }
+
+        if (z != common_bottom) {
+          throw std::invalid_argument(
+              "shallow flow needs a common planar floor; use resolved flow");
+        }
+
+        value = next;
+      } else if (std::abs(next - value) > 2.0e-6F * std::max(std::abs(value), std::abs(next))) {
+        throw std::invalid_argument(
+            "shallow-flow mobility must be constant through each depth column");
+      }
+
+      started = true;
+      heights_[column] += spec.spacing.z;
+    }
+
+    if (started) {
+      grid_.obstacles[column] = 0;
+      conductance_[column] = heights_[column] * value;
+      max_height = std::max(max_height, heights_[column]);
+    }
+  }
+
+  void lift_vertical_velocity(std::vector<float>& velocity) const {
     // Integrate horizontal divergence upward, spreading the small column
     // pressure residual uniformly over depth so both floor and roof stay closed.
     for (std::uint32_t x = 0; x < original_.shape.x; ++x) {
       for (std::uint32_t y = 0; y < original_.shape.y; ++y) {
         std::vector<double> horizontal;
         double sum = 0.0;
+
         for (std::uint32_t z = bottom_; z < original_.shape.z; ++z) {
-          if (original_.solid_site(original_layout_.site_index(x, y, z))) break;
+          if (original_.solid_site(original_layout_.site_index(x, y, z))) {
+            break;
+          }
+
           const double dx = (velocity[original_layout_.face_index(0, x + 1, y, z)] -
                              velocity[original_layout_.face_index(0, x, y, z)]) /
                             original_.spacing.x;
@@ -285,9 +407,14 @@ class ShallowFlowReduction {
           horizontal.push_back(dx + dy);
           sum += dx + dy;
         }
-        if (horizontal.empty()) continue;
+
+        if (horizontal.empty()) {
+          continue;
+        }
+
         const double mean = sum / static_cast<double>(horizontal.size());
         double vertical = 0.0;
+
         for (std::size_t k = 0; k + 1 < horizontal.size(); ++k) {
           vertical -= original_.spacing.z * (horizontal[k] - mean);
           velocity[original_layout_.face_index(
@@ -295,22 +422,8 @@ class ShallowFlowReduction {
         }
       }
     }
-    return velocity;
   }
 
-  std::vector<std::uint8_t> open_inlet_faces() const {
-    std::vector<std::uint8_t> result(original_layout_.total_face_count(), 0);
-    for (std::size_t index = 0; index < result.size(); ++index) {
-      const auto [component, face] = original_layout_.face_coordinates(index);
-      if (component != original_layout_.flow_axis() || face[component] != 0) continue;
-      const auto site = original_layout_.adjacent_site(component, face, 1);
-      if (site && !original_.solid_site(*site) && conductance_[*site / original_.shape.z] > 0.0F)
-        result[index] = 1;
-    }
-    return result;
-  }
-
- private:
   const SignalGridSpec& original_;
   FlowGridLayout original_layout_;
   SignalGridSpec grid_;
@@ -328,38 +441,49 @@ class DepthAveragedFlowSystem {
         diagonal_(layout_.site_count()),
         right_hand_side_(layout_.site_count()) {
     validate_flow_grid(spec_, axis);
+
     if (!mobility.empty()) {
       if (mobility.size() != layout_.site_count()) {
         throw std::invalid_argument("flow mobility must hold one value per grid site");
       }
+
       std::copy(mobility.begin(), mobility.end(), mobility_.begin());
     }
+
     for (std::size_t site = 0; site < mobility_.size(); ++site) {
       if (!std::isfinite(mobility_[site]) || mobility_[site] < 0.0F) {
         throw std::invalid_argument("flow mobility values must be finite and non-negative");
       }
+
       if (spec_.solid_site(site)) {
         mobility_[site] = 0.0F;
       }
     }
 
     bool open_inlet = false;
+
     for (std::size_t site = 0; site < layout_.site_count(); ++site) {
       const auto value = mobility_[site];
+
       if (value == 0.0F) {
         continue;
       }
+
       const auto coordinates = layout_.site_coordinates(site);
+
       for (std::size_t component = 0; component < 3; ++component) {
         const auto inverse_square =
             1.0F / (layout_.spacing()[component] * layout_.spacing()[component]);
+
         for (const auto offset : {-1, 1}) {
           const auto neighbor = layout_.neighbor_site(site, component, offset);
+
           if (neighbor.has_value()) {
             diagonal_[site] += harmonic_mean(value, mobility_[*neighbor]) * inverse_square;
           }
         }
       }
+
       if (coordinates[layout_.flow_axis()] == 0) {
         const auto boundary =
             2.0F * value /
@@ -368,20 +492,31 @@ class DepthAveragedFlowSystem {
         right_hand_side_[site] = boundary;
         open_inlet = true;
       }
+
       if (coordinates[layout_.flow_axis()] + 1 == layout_.dimensions()[layout_.flow_axis()]) {
         diagonal_[site] +=
             2.0F * value /
             (layout_.spacing()[layout_.flow_axis()] * layout_.spacing()[layout_.flow_axis()]);
       }
     }
+
     if (!open_inlet) {
       throw std::invalid_argument("the flow inlet boundary is entirely blocked");
     }
   }
 
-  [[nodiscard]] const FlowGridLayout& layout() const noexcept { return layout_; }
-  [[nodiscard]] const std::vector<float>& mobility() const noexcept { return mobility_; }
-  [[nodiscard]] const std::vector<float>& diagonal() const noexcept { return diagonal_; }
+  [[nodiscard]] const FlowGridLayout& layout() const noexcept {
+    return layout_;
+  }
+
+  [[nodiscard]] const std::vector<float>& mobility() const noexcept {
+    return mobility_;
+  }
+
+  [[nodiscard]] const std::vector<float>& diagonal() const noexcept {
+    return diagonal_;
+  }
+
   [[nodiscard]] const std::vector<float>& right_hand_side() const noexcept {
     return right_hand_side_;
   }
@@ -390,24 +525,36 @@ class DepthAveragedFlowSystem {
     if (input.size() != layout_.site_count()) {
       throw std::invalid_argument("depth-averaged flow vector has the wrong size");
     }
+
     output.assign(input.size(), 0.0);
+
     for (std::size_t site = 0; site < input.size(); ++site) {
       if (diagonal_[site] == 0.0F) {
         continue;
       }
+
       double result = 0.0;
       const auto coordinates = layout_.site_coordinates(site);
       const auto axis = layout_.flow_axis();
       const double boundary =
           2.0 * mobility_[site] /
           (static_cast<double>(layout_.spacing()[axis]) * layout_.spacing()[axis]);
-      if (coordinates[axis] == 0) result += boundary * input[site];
-      if (coordinates[axis] + 1 == layout_.dimensions()[axis]) result += boundary * input[site];
+
+      if (coordinates[axis] == 0) {
+        result += boundary * input[site];
+      }
+
+      if (coordinates[axis] + 1 == layout_.dimensions()[axis]) {
+        result += boundary * input[site];
+      }
+
       for (std::size_t component = 0; component < 3; ++component) {
         const auto inverse_square = 1.0 / (static_cast<double>(layout_.spacing()[component]) *
                                            layout_.spacing()[component]);
+
         for (const auto offset : {-1, 1}) {
           const auto neighbor = layout_.neighbor_site(site, component, offset);
+
           if (neighbor.has_value()) {
             const auto conductance =
                 static_cast<double>(harmonic_mean(mobility_[site], mobility_[*neighbor])) *
@@ -416,6 +563,7 @@ class DepthAveragedFlowSystem {
           }
         }
       }
+
       output[site] = result;
     }
   }
@@ -424,13 +572,16 @@ class DepthAveragedFlowSystem {
     if (pressure.size() != layout_.site_count()) {
       throw std::invalid_argument("depth-averaged pressure vector has the wrong size");
     }
+
     std::vector<float> result(layout_.total_face_count(), 0.0F);
+
     for (std::size_t face_index = 0; face_index < result.size(); ++face_index) {
       const auto [component, face] = layout_.face_coordinates(face_index);
       const auto lower = layout_.adjacent_site(component, face, -1);
       const auto upper = layout_.adjacent_site(component, face, 1);
       const auto spacing = static_cast<double>(layout_.spacing()[component]);
       double value = 0.0;
+
       if (lower.has_value() && upper.has_value()) {
         const auto face_mobility = harmonic_mean(mobility_[*lower], mobility_[*upper]);
         value =
@@ -440,8 +591,10 @@ class DepthAveragedFlowSystem {
       } else if (component == layout_.flow_axis() && lower.has_value()) {
         value = 2.0 * static_cast<double>(mobility_[*lower]) * pressure[*lower] / spacing;
       }
+
       result[face_index] = static_cast<float>(value);
     }
+
     return result;
   }
 
@@ -449,20 +602,25 @@ class DepthAveragedFlowSystem {
     std::vector<std::uint8_t> result(layout_.total_face_count(), 0);
     const auto component = layout_.flow_axis();
     const auto face_dims = layout_.face_dimensions(component);
+
     for (std::uint32_t x = 0; x < face_dims[0]; ++x) {
       for (std::uint32_t y = 0; y < face_dims[1]; ++y) {
         for (std::uint32_t z = 0; z < face_dims[2]; ++z) {
           std::array<std::uint32_t, 3> face{x, y, z};
+
           if (face[component] != 0) {
             continue;
           }
+
           const auto upper = layout_.adjacent_site(component, face, 1);
+
           if (upper.has_value() && mobility_[*upper] > 0.0F) {
             result[layout_.face_index(component, x, y, z)] = 1;
           }
         }
       }
     }
+
     return result;
   }
 
@@ -487,23 +645,11 @@ class ResolvedFlowSystem {
         diagonal_(layout_.total_face_count()),
         force_(layout_.total_face_count()) {
     validate_flow_grid(spec_, axis);
-    if (!drag.empty()) {
-      if (drag.size() != layout_.site_count()) {
-        throw std::invalid_argument("resolved-flow drag must hold one value per grid site");
-      }
-      std::copy(drag.begin(), drag.end(), drag_.begin());
-    }
-    for (std::size_t site = 0; site < layout_.site_count(); ++site) {
-      fluid_[site] = spec_.solid_site(site) ? 0 : 1;
-      if (!std::isfinite(drag_[site]) || drag_[site] < 0.0F) {
-        throw std::invalid_argument("resolved-flow drag values must be finite and non-negative");
-      }
-      if (fluid_[site] == 0) {
-        drag_[site] = 0.0F;
-      }
-    }
+
+    initialize_drag(drag);
 
     bool open_inlet = false;
+
     for (std::size_t index = 0; index < layout_.total_face_count(); ++index) {
       const auto [component, face] = layout_.face_coordinates(index);
       const auto lower = layout_.adjacent_site(component, face, -1);
@@ -512,74 +658,83 @@ class ResolvedFlowSystem {
       const auto upper_fluid = upper.has_value() && fluid_[*upper] != 0;
       exists_[index] = lower_fluid || upper_fluid ? 1 : 0;
       auto active = lower_fluid && upper_fluid;
+
       if (component == layout_.flow_axis() &&
           (face[component] == 0 || face[component] == layout_.dimensions()[component])) {
         active = lower_fluid || upper_fluid;
       }
+
       active_[index] = active ? 1 : 0;
+
       if (!active) {
         continue;
       }
-      float sum = 0.0F;
-      float count = 0.0F;
-      if (lower_fluid) {
-        sum += drag_[*lower];
-        count += 1.0F;
-      }
-      if (upper_fluid) {
-        sum += drag_[*upper];
-        count += 1.0F;
-      }
-      face_drag_[index] = sum / count;
-      diagonal_[index] = face_drag_[index];
-      for (std::size_t axis_index = 0; axis_index < 3; ++axis_index) {
-        if (layout_.dimensions()[axis_index] > 1) {
-          diagonal_[index] +=
-              2.0F / (layout_.spacing()[axis_index] * layout_.spacing()[axis_index]);
-        }
-      }
-      if (component == layout_.flow_axis()) {
-        // Solve for the pressure correction about the known linear inlet-to-
-        // outlet profile. This algebraic shift avoids subtracting nearly equal
-        // O(1) pressures to recover a small viscous forcing in binary32.
-        force_[index] = 1.0F / ((static_cast<float>(layout_.dimensions()[component]) + 1.0F) *
-                                layout_.spacing()[component]);
-        if (face[component] == 0) open_inlet = true;
-      }
+
+      open_inlet =
+          initialize_active_face(index, component, face, lower, upper, lower_fluid, upper_fluid) ||
+          open_inlet;
     }
+
     if (!open_inlet) {
       throw std::invalid_argument("the resolved-flow inlet boundary is entirely blocked");
     }
   }
 
-  [[nodiscard]] const FlowGridLayout& layout() const noexcept { return layout_; }
-  [[nodiscard]] const std::vector<std::uint8_t>& fluid() const noexcept { return fluid_; }
-  [[nodiscard]] const std::vector<std::uint8_t>& active() const noexcept { return active_; }
-  [[nodiscard]] const std::vector<std::uint8_t>& exists() const noexcept { return exists_; }
-  [[nodiscard]] const std::vector<float>& face_drag() const noexcept { return face_drag_; }
-  [[nodiscard]] const std::vector<float>& diagonal() const noexcept { return diagonal_; }
-  [[nodiscard]] const std::vector<float>& force() const noexcept { return force_; }
+  [[nodiscard]] const FlowGridLayout& layout() const noexcept {
+    return layout_;
+  }
+
+  [[nodiscard]] const std::vector<std::uint8_t>& fluid() const noexcept {
+    return fluid_;
+  }
+
+  [[nodiscard]] const std::vector<std::uint8_t>& active() const noexcept {
+    return active_;
+  }
+
+  [[nodiscard]] const std::vector<std::uint8_t>& exists() const noexcept {
+    return exists_;
+  }
+
+  [[nodiscard]] const std::vector<float>& face_drag() const noexcept {
+    return face_drag_;
+  }
+
+  [[nodiscard]] const std::vector<float>& diagonal() const noexcept {
+    return diagonal_;
+  }
+
+  [[nodiscard]] const std::vector<float>& force() const noexcept {
+    return force_;
+  }
 
   void apply_momentum(std::span<const double> input, std::vector<double>& output) const {
     if (input.size() != layout_.total_face_count()) {
       throw std::invalid_argument("resolved-flow face vector has the wrong size");
     }
+
     output.assign(input.size(), 0.0);
+
     for (std::size_t index = 0; index < input.size(); ++index) {
       if (active_[index] == 0) {
         continue;
       }
+
       const auto component = layout_.face_coordinates(index).first;
       auto result = static_cast<double>(face_drag_[index]) * input[index];
+
       for (std::size_t axis = 0; axis < 3; ++axis) {
         if (layout_.dimensions()[axis] == 1) {
           continue;
         }
+
         const auto inverse_square =
             1.0 / (static_cast<double>(layout_.spacing()[axis]) * layout_.spacing()[axis]);
+
         for (const auto offset : {-1, 1}) {
           const auto neighbor_index = layout_.neighbor_face(index, axis, offset);
           auto neighbor = 0.0;
+
           if (axis == component) {
             neighbor = neighbor_index.has_value() ? input[*neighbor_index] : input[index];
           } else if (neighbor_index.has_value() && exists_[*neighbor_index] != 0) {
@@ -587,9 +742,11 @@ class ResolvedFlowSystem {
           } else {
             neighbor = -input[index];
           }
+
           result -= (neighbor - input[index]) * inverse_square;
         }
       }
+
       output[index] = result;
     }
   }
@@ -598,11 +755,14 @@ class ResolvedFlowSystem {
     if (pressure.size() != layout_.site_count()) {
       throw std::invalid_argument("resolved-flow pressure vector has the wrong size");
     }
+
     std::vector<double> result(layout_.total_face_count(), 0.0);
+
     for (std::size_t index = 0; index < result.size(); ++index) {
       if (active_[index] == 0) {
         continue;
       }
+
       const auto [component, face] = layout_.face_coordinates(index);
       const auto lower = layout_.adjacent_site(component, face, -1);
       const auto upper = layout_.adjacent_site(component, face, 1);
@@ -610,6 +770,7 @@ class ResolvedFlowSystem {
       const auto upper_value = upper.has_value() && fluid_[*upper] != 0 ? pressure[*upper] : 0.0;
       result[index] = (upper_value - lower_value) / layout_.spacing()[component];
     }
+
     return result;
   }
 
@@ -617,12 +778,16 @@ class ResolvedFlowSystem {
     if (velocity.size() != layout_.total_face_count()) {
       throw std::invalid_argument("resolved-flow velocity vector has the wrong size");
     }
+
     std::vector<double> result(layout_.site_count(), 0.0);
+
     for (std::size_t site = 0; site < result.size(); ++site) {
       if (fluid_[site] == 0) {
         continue;
       }
+
       const auto coordinates = layout_.site_coordinates(site);
+
       for (std::size_t component = 0; component < 3; ++component) {
         auto upper = coordinates;
         ++upper[component];
@@ -633,17 +798,21 @@ class ResolvedFlowSystem {
             (velocity[upper_face] - velocity[lower_face]) / layout_.spacing()[component];
       }
     }
+
     return result;
   }
 
   [[nodiscard]] std::vector<float> pressure_diagonal() const {
     std::vector<float> result(layout_.site_count(), 0.0F);
+
     for (std::size_t site = 0; site < result.size(); ++site) {
       if (fluid_[site] != 0) {
         const auto coordinates = layout_.site_coordinates(site);
+
         for (std::size_t axis = 0; axis < 3; ++axis) {
           auto upper = coordinates;
           ++upper[axis];
+
           for (const auto face :
                {layout_.face_index(axis, coordinates[0], coordinates[1], coordinates[2]),
                 layout_.face_index(axis, upper[0], upper[1], upper[2])}) {
@@ -655,38 +824,47 @@ class ResolvedFlowSystem {
         }
       }
     }
+
     return result;
   }
 
   [[nodiscard]] std::vector<std::uint8_t> open_inlet_faces() const {
     std::vector<std::uint8_t> result(layout_.total_face_count(), 0);
     const auto component = layout_.flow_axis();
+
     for (std::size_t index = layout_.face_offsets()[component];
          index < layout_.face_offsets()[component] + layout_.face_counts()[component]; ++index) {
       const auto [face_component, face] = layout_.face_coordinates(index);
+
       if (face_component == component && face[component] == 0 && active_[index] != 0) {
         result[index] = 1;
       }
     }
+
     return result;
   }
 
   [[nodiscard]] std::uint32_t minimum_gap_voxels() const {
     std::uint32_t shortest = 0;
+
     for (std::size_t axis = 0; axis < 3; ++axis) {
       if (axis == layout_.flow_axis() || layout_.dimensions()[axis] <= 1) {
         continue;
       }
+
       const auto first_axis = (axis + 1) % 3;
       const auto second_axis = (axis + 2) % 3;
+
       for (std::uint32_t first = 0; first < layout_.dimensions()[first_axis]; ++first) {
         for (std::uint32_t second = 0; second < layout_.dimensions()[second_axis]; ++second) {
           std::uint32_t run = 0;
+
           for (std::uint32_t along = 0; along < layout_.dimensions()[axis]; ++along) {
             std::array<std::uint32_t, 3> coordinates{};
             coordinates[axis] = along;
             coordinates[first_axis] = first;
             coordinates[second_axis] = second;
+
             if (fluid_[layout_.site_index(coordinates[0], coordinates[1], coordinates[2])] != 0) {
               ++run;
             } else if (run != 0) {
@@ -694,16 +872,81 @@ class ResolvedFlowSystem {
               run = 0;
             }
           }
+
           if (run != 0) {
             shortest = shortest == 0 ? run : std::min(shortest, run);
           }
         }
       }
     }
+
     return shortest;
   }
 
  private:
+  bool initialize_active_face(std::size_t index, std::size_t component,
+                              const std::array<std::uint32_t, 3>& face,
+                              std::optional<std::size_t> lower, std::optional<std::size_t> upper,
+                              bool lower_fluid, bool upper_fluid) {
+    float sum = 0.0F;
+    float count = 0.0F;
+
+    if (lower_fluid) {
+      sum += drag_[*lower];
+      count += 1.0F;
+    }
+
+    if (upper_fluid) {
+      sum += drag_[*upper];
+      count += 1.0F;
+    }
+
+    face_drag_[index] = sum / count;
+    diagonal_[index] = face_drag_[index];
+
+    for (std::size_t axis_index = 0; axis_index < 3; ++axis_index) {
+      if (layout_.dimensions()[axis_index] > 1) {
+        diagonal_[index] += 2.0F / (layout_.spacing()[axis_index] * layout_.spacing()[axis_index]);
+      }
+    }
+
+    if (component == layout_.flow_axis()) {
+      // Solve for the pressure correction about the known linear inlet-to-
+      // outlet profile. This algebraic shift avoids subtracting nearly equal
+      // O(1) pressures to recover a small viscous forcing in binary32.
+      force_[index] = 1.0F / ((static_cast<float>(layout_.dimensions()[component]) + 1.0F) *
+                              layout_.spacing()[component]);
+
+      if (face[component] == 0) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  void initialize_drag(std::span<const float> drag) {
+    if (!drag.empty()) {
+      if (drag.size() != layout_.site_count()) {
+        throw std::invalid_argument("resolved-flow drag must hold one value per grid site");
+      }
+
+      std::copy(drag.begin(), drag.end(), drag_.begin());
+    }
+
+    for (std::size_t site = 0; site < layout_.site_count(); ++site) {
+      fluid_[site] = spec_.solid_site(site) ? 0 : 1;
+
+      if (!std::isfinite(drag_[site]) || drag_[site] < 0.0F) {
+        throw std::invalid_argument("resolved-flow drag values must be finite and non-negative");
+      }
+
+      if (fluid_[site] == 0) {
+        drag_[site] = 0.0F;
+      }
+    }
+  }
+
   const SignalGridSpec& spec_;
   FlowGridLayout layout_;
   std::vector<std::uint8_t> fluid_;
@@ -730,29 +973,38 @@ struct ScaledVelocity {
   if (values.size() != layout.total_face_count() || open_inlet.size() != values.size()) {
     throw std::invalid_argument("flow velocity scaling arrays have inconsistent sizes");
   }
+
   double inlet_sum = 0.0;
   std::size_t inlet_count = 0;
   float peak = 0.0F;
+
   for (std::size_t index = 0; index < values.size(); ++index) {
     if (!std::isfinite(values[index])) {
       throw std::runtime_error("flow solve produced a non-finite velocity");
     }
+
     peak = std::max(peak, std::abs(values[index]));
+
     if (open_inlet[index] != 0) {
       inlet_sum += values[index];
       ++inlet_count;
     }
   }
+
   if (inlet_count == 0) {
     throw std::logic_error("flow solve has no open inlet faces");
   }
+
   const auto solved_mean = static_cast<float>(inlet_sum / static_cast<double>(inlet_count));
+
   if (peak == 0.0F || solved_mean <= 1.0e-9F * peak) {
     throw std::runtime_error("the device carries no through-flow: the outlet is unreachable");
   }
+
   const auto factor = requested_mean / solved_mean;
   std::vector<float> scaled(values.size());
   float scaled_peak = 0.0F;
+
   for (std::size_t index = 0; index < values.size(); ++index) {
     scaled[index] = values[index] * factor;
     scaled_peak = std::max(scaled_peak, std::abs(scaled[index]));
@@ -767,10 +1019,13 @@ struct ScaledVelocity {
   field.z_faces.assign(scaled.begin() + static_cast<std::ptrdiff_t>(offsets[2]), scaled.end());
   auto candidate = spec;
   candidate.velocity_field = field;
+
   for (auto& advection : candidate.advection) {
     advection = {};
   }
+
   candidate.validate();
+
   return {.field = std::move(field),
           .solved_mean = solved_mean,
           .max_speed = scaled_peak,

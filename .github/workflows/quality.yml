@@ -1,0 +1,53 @@
+name: Code quality
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@10.12.1
+      - run: pnpm --dir viewer install --frozen-lockfile
+      - name: Check all maintained files
+        run: uv run --isolated --locked --only-group quality python scripts/quality.py check
+      - name: Test quality tooling
+        run: uv run --isolated --locked --only-group quality python -m unittest discover -s tests/quality
+      - name: Type-check viewer
+        run: pnpm --dir viewer check
+
+  python-types:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CMAKE_ARGS: -DCM_ENABLE_METAL=OFF -DCM_ENABLE_CUDA=OFF -DCM_BUILD_TESTS=OFF
+      CMAKE_BUILD_PARALLEL_LEVEL: "2"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked --group dev
+      - run: uv run --locked --no-sync pyright

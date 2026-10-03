@@ -2,6 +2,8 @@
 
 Start with a cell trap supplied by a flowing nutrient channel. This model combines device walls, a steady flow solve, solute transport, nutrient-dependent growth, and cell motion. The [microfluidics tutorial](microfluidics.md) explains the model, and the [modeling guide](../microfluidics.md) introduces the broader workflow.
 
+For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
+
 ## Prepare the workspace
 
 MicroSimulator requires Python 3.12, CMake, Ninja, a C++23 compiler, and `uv`. From the repository root:
@@ -66,20 +68,19 @@ uv run microsimulator view \
   --open
 ```
 
-The viewer can play, pause, step, reset, and request a checkpoint. For the trap, enable a nutrient signal slice and choose `Growth rate` coloring to inspect the population alongside its environment. Other models can use `Species` coloring for intracellular channels or `Cell type` for strain or discrete-state categories. Selecting a cell shows its stable ID, lineage parent, geometry, type, growth rate, and ordered species values.
+The viewer can play, pause, step, reset, request a checkpoint, and stop the session. Pause retains the current process/state; Reset rebuilds this session's starting model; closing the browser pauses for reconnection. Stop session or terminal Ctrl+C releases the server after current work completes, without automatically saving. See [Stop and restart](commands.md#live-view-stop-and-restart) before launching another model. For the trap, enable a nutrient signal slice and choose `Growth rate` coloring to inspect the population alongside its environment. Other models can use `Species` coloring for intracellular channels or `Cell type` for strain or discrete-state categories. Selecting a cell shows its stable ID, lineage parent, geometry, type, growth rate, and ordered species values.
 
 The browser owns only presentation state. Python owns the clock, model, backend, checkpoint path, and random state.
 
 ## Resume exactly
 
-Controller-backed checkpoints must be resumed with the same model source, seed, and parameters. MicroSimulator verifies the source digest before running the file:
+Controller-backed checkpoints require the same model source bytes. The CLI restores the saved seed and parameters automatically and verifies the source digest before running the file. Do not pass new `--parameter` values; they are rejected. Omit `--seed` because it does not override the saved seed during resume. The step count below is additional, and the timestep is retained explicitly:
 
 ```console
 uv run microsimulator run \
   --model examples/microfluidic_trap.py \
   --resume results/tutorial-trap.json \
   --backend cpu \
-  --seed 42 \
   --steps 100 \
   --dt 0.02 \
   --output results/trap-resumed.json

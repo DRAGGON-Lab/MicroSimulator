@@ -19,11 +19,16 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Sequence
+from collections.abc import Mapping as _Mapping
+from dataclasses import dataclass as _dataclass
+from types import MappingProxyType as _MappingProxyType
+from typing import Literal as _Literal
 from typing import Protocol
 
 import numpy as np
 from numpy.typing import NDArray
 
+from . import _core as _native  # pyright: ignore[reportPrivateUsage, reportMissingModuleSource]
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendKind,
     DepthAveragedFlowParameters,
@@ -65,18 +70,22 @@ def _flow_axis_index(spec: SignalGridSpec, axis: str) -> int:
 
     if axis not in _AXES:
         raise FlowError("flow axis must be one of x, y, z")
+
     flow_axis = _AXES[axis]
     boundaries = (
         (spec.x_lower, spec.x_upper),
         (spec.y_lower, spec.y_upper),
         (spec.z_lower, spec.z_upper),
     )
+
     for lower, upper in boundaries:
         if lower.kind == GridBoundaryKind.PERIODIC or upper.kind == GridBoundaryKind.PERIODIC:
             raise FlowError("the flow solver does not support periodic boundaries")
+
     for boundary in boundaries[flow_axis]:
         if boundary.kind != GridBoundaryKind.FIXED:
             raise FlowError("the flow axis boundaries must be FIXED to act as inlet and outlet")
+
     return flow_axis
 
 
@@ -85,6 +94,7 @@ def _kozeny_carman_drag(fraction: _FloatGrid, drag_coefficient: float) -> _Float
 
     if not math.isfinite(drag_coefficient) or drag_coefficient < 0.0:
         raise FlowError("drag coefficient must be finite and non-negative")
+
     return drag_coefficient * fraction * fraction / (1.0 - fraction) ** 3
 
 
@@ -119,6 +129,7 @@ def solve_flow_field(
     selected = (
         simulation if simulation is not None else Simulation(backend, device_index=device_index)
     )
+
     try:
         result = selected.solve_depth_averaged_flow(
             spec,
@@ -127,6 +138,7 @@ def solve_flow_field(
         )
     except (OverflowError, RuntimeError, ValueError) as error:
         raise FlowError(str(error)) from error
+
     return result.field, result.report
 
 
@@ -142,18 +154,49 @@ def gap_mobility(spec: SignalGridSpec) -> list[float]:
 
     dims = (spec.shape.x, spec.shape.y, spec.shape.z)
     obstacles = spec.obstacles
+
     if obstacles:
         if len(obstacles) != dims[0] * dims[1] * dims[2]:
             raise FlowError("obstacles must hold one flag per grid site")
+
         fluid = (np.asarray(obstacles, dtype=np.uint8).reshape(dims) == 0).astype(np.float64)
     else:
         fluid = np.ones(dims, dtype=np.float64)
+
     gaps = fluid.sum(axis=2, keepdims=True)
     max_gap = float(np.max(gaps))
+
     if max_gap == 0.0:
         raise FlowError("the grid contains no fluid sites")
+
     mobility = fluid * (gaps / max_gap) ** 2
+
     return [float(value) for value in mobility.ravel()]
+
+
+def _restrict_connected_support(kernel: _FloatGrid) -> None:
+    # Restrict to one face-connected fluid component of the kernel support.
+    connected = np.zeros(kernel.shape, dtype=bool)
+    seed = tuple(int(i) for i in np.unravel_index(int(np.argmax(kernel)), kernel.shape))
+    pending = [seed]
+
+    while pending:
+        index = pending.pop()
+
+        if connected[index] or kernel[index] <= 0:
+            continue
+
+        connected[index] = True
+
+        for axis in range(3):
+            for offset in (-1, 1):
+                adjacent = list(index)
+                adjacent[axis] += offset
+
+                if 0 <= adjacent[axis] < kernel.shape[axis]:
+                    pending.append(tuple(adjacent))
+
+    kernel[~connected] = 0
 
 
 def _deposit_amount(
@@ -168,15 +211,19 @@ def _deposit_amount(
     origin = (spec.origin.x, spec.origin.y, spec.origin.z)
     spacing = (spec.spacing.x, spec.spacing.y, spec.spacing.z)
     centers = (position.x, position.y, position.z)
+
     if any(not math.isfinite(v) for v in centers) or not math.isfinite(amount) or amount < 0:
         raise FlowError("deposited positions and nonnegative amounts must be finite")
+
     if any(
         p < o - h / 2 or p >= o + (n - 0.5) * h
         for p, o, h, n in zip(centers, origin, spacing, dims, strict=True)
     ):
         return  # Outside the modeled volume: removal/washout is the caller's responsibility.
+
     slices: list[slice] = []
     weights: list[_FloatGrid] = []
+
     for p, o, h, n in zip(centers, origin, spacing, dims, strict=True):
         lo = max(0, math.floor((p - averaging_radius - o) / h + 0.5))
         hi = min(n, math.ceil((p + averaging_radius - o) / h + 0.5))
@@ -192,30 +239,20 @@ def _deposit_amount(
         )
         slices.append(slice(lo, hi))
         weights.append(np.diff(cdf))
+
     kernel = weights[0][:, None, None] * weights[1][None, :, None] * weights[2][None, None, :]
     region = tuple(slices)
+
     if spec.obstacles:
         solid = np.asarray(spec.obstacles, dtype=np.uint8).reshape(dims)[region] != 0
         kernel[solid] = 0
-        # Restrict to one face-connected fluid component of the kernel support.
-        connected = np.zeros(kernel.shape, dtype=bool)
-        seed = tuple(int(i) for i in np.unravel_index(int(np.argmax(kernel)), kernel.shape))
-        pending = [seed]
-        while pending:
-            index = pending.pop()
-            if connected[index] or kernel[index] <= 0:
-                continue
-            connected[index] = True
-            for axis in range(3):
-                for offset in (-1, 1):
-                    adjacent = list(index)
-                    adjacent[axis] += offset
-                    if 0 <= adjacent[axis] < kernel.shape[axis]:
-                        pending.append(tuple(adjacent))
-        kernel[~connected] = 0
+        _restrict_connected_support(kernel)
+
     total = float(kernel.sum())
+
     if total <= 0:
         raise FlowError("biomass deposition has no connected fluid support")
+
     target[region] += (amount / total) * kernel
 
 
@@ -232,14 +269,18 @@ def colony_volume_fraction(
     mesh refinement. Boundary-truncated kernels are renormalized within one
     connected fluid region. Cells outside the grid's physical extent are omitted.
     """
+
     if not math.isfinite(averaging_radius) or averaging_radius <= 0:
         raise FlowError("averaging radius must be finite and positive")
+
     dims = (spec.shape.x, spec.shape.y, spec.shape.z)
     volume = np.zeros(dims, dtype=np.float64)
+
     for cell in cells:
         _deposit_amount(
             spec, cell.position, biomass_volume(cell.length, cell.radius), averaging_radius, volume
         )
+
     return volume / spec.voxel_volume
 
 
@@ -258,16 +299,22 @@ def colony_species_density(
     averaging_radius: float = 4.0,
 ) -> list[float]:
     """Conservatively deposit intracellular amount concentration * biomass volume."""
+
     if species < 0:
         raise FlowError("species index must be non-negative")
+
     if not math.isfinite(averaging_radius) or averaging_radius <= 0:
         raise FlowError("averaging radius must be finite and positive")
+
     totals = np.zeros((spec.shape.x, spec.shape.y, spec.shape.z), dtype=np.float64)
+
     for cell in cells:
         if species >= len(cell.species):
             raise FlowError("species index is outside the cell's species")
+
         amount = cell.species[species] * biomass_volume(cell.length, cell.radius)
         _deposit_amount(spec, cell.position, amount, averaging_radius, totals)
+
     return [float(value) for value in (totals / spec.voxel_volume).ravel()]
 
 
@@ -285,19 +332,26 @@ def colony_mobility(
     The density cap regularizes only the resistance law; deposited biomass is
     never discarded. Both base mobility and returned mobility are gap means.
     """
+
     if not 0 < max_volume_fraction < 1:
         raise FlowError("maximum volume fraction must lie strictly between zero and one")
+
     dims = (spec.shape.x, spec.shape.y, spec.shape.z)
+
     if isinstance(base, (int, float)):
         if not math.isfinite(base) or base <= 0.0:
             raise FlowError("base mobility must be finite and positive")
+
         base_grid = np.full(dims, float(base), dtype=np.float64)
     else:
         if len(base) != dims[0] * dims[1] * dims[2]:
             raise FlowError("base mobility must hold one value per grid site")
+
         base_grid = np.asarray(base, dtype=np.float64).reshape(dims)
+
         if not bool(np.all(np.isfinite(base_grid))) or bool(np.any(base_grid < 0.0)):
             raise FlowError("base mobility values must be finite and non-negative")
+
     fraction = colony_volume_fraction(spec, cells, averaging_radius=averaging_radius)
     fluid = (
         np.ones(dims, dtype=np.float64)
@@ -311,7 +365,118 @@ def colony_mobility(
     # m = b / (1 + b * drag) is 1 / (1/b + drag) extended continuously to b = 0.
     mobility = base_grid / (1.0 + base_grid * drag)
     obstacles = spec.obstacles
+
     if obstacles:
         solid = np.asarray(obstacles, dtype=np.uint8).reshape(dims) != 0
         mobility[solid] = 0.0
+
     return [float(value) for value in mobility.ravel()]
+
+
+# Physical pressure/rate flow is distinct from the normalized shallow solver.
+
+
+@_dataclass(frozen=True, slots=True)
+class FluidProperties:
+    viscosity_pa_s: float = 1e-3
+    density_kg_m3: float = 1000.0
+
+    def native(self) -> _native.FluidProperties:
+        value = _native.FluidProperties()
+        value.viscosity_pa_s, value.density_kg_m3 = self.viscosity_pa_s, self.density_kg_m3
+        value.validate()
+
+        return value
+
+
+@_dataclass(frozen=True, slots=True)
+class Pressure:
+    pa: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.pa):
+            raise ValueError("pressure must be finite")
+
+
+@_dataclass(frozen=True, slots=True)
+class VolumeFlow:
+    ul_per_min: float
+    direction: _Literal["in", "out"] = "in"
+
+    def __post_init__(self) -> None:
+        if (
+            not math.isfinite(self.ul_per_min)
+            or self.ul_per_min < 0
+            or self.direction not in ("in", "out")
+        ):
+            raise ValueError("invalid volume flow")
+
+
+@_dataclass(frozen=True, slots=True)
+class BoundaryPatch:
+    axis: _Literal["x", "y", "z"]
+    upper: bool
+    sites: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.axis not in ("x", "y", "z"):
+            raise ValueError("invalid port axis")
+
+        object.__setattr__(self, "sites", tuple(self.sites))
+
+
+@_dataclass(frozen=True, slots=True)
+class FluidDomain:
+    size_um: tuple[float, float, float]
+    spacing_um: float
+    ports: _Mapping[str, BoundaryPatch]
+    origin_um: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    obstacles: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "ports", _MappingProxyType(dict(self.ports)))
+        object.__setattr__(self, "obstacles", tuple(self.obstacles))
+        self.native_grid().validate()
+
+    @classmethod
+    def rectangular_channel(
+        cls,
+        *,
+        size_um: tuple[float, float, float],
+        spacing_um: float,
+        flow_axis: _Literal["x", "y", "z"] = "y",
+    ) -> FluidDomain:
+        return cls(
+            size_um,
+            spacing_um,
+            {
+                "inlet": BoundaryPatch(flow_axis, False),
+                "outlet": BoundaryPatch(flow_axis, True),
+            },
+        )
+
+    def native_grid(self) -> _native.FluidGridSpec:
+        if not math.isfinite(self.spacing_um) or self.spacing_um <= 0:
+            raise ValueError("grid spacing must be positive")
+
+        dimensions: list[int] = []
+
+        for size in self.size_um:
+            if not math.isfinite(size) or size <= 0:
+                raise ValueError("grid size must be positive")
+
+            n = round(size / self.spacing_um)
+
+            if n < 1 or not math.isclose(n * self.spacing_um, size, rel_tol=1e-6):
+                raise ValueError("device sizes must be integer multiples of grid spacing")
+
+            dimensions.append(n)
+
+        grid = _native.FluidGridSpec()
+        grid.shape.x, grid.shape.y, grid.shape.z = dimensions
+        grid.origin = Vec3(*(x + self.spacing_um / 2 for x in self.origin_um))
+        grid.spacing = self.spacing_um
+        grid.length_unit_m, grid.time_unit_s = 1e-6, 1.0
+        grid.obstacles = list(self.obstacles)
+
+        return grid

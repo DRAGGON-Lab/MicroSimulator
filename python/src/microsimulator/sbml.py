@@ -15,6 +15,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     RateOp,
     SpeciesRatePlan,
 )
+from .channels import ChannelMetadata
 
 _FLOAT32_MAX = 3.4028234663852886e38
 _UINT32_MAX = (1 << 32) - 1
@@ -35,6 +36,17 @@ class SBMLRateModel:
     initial_levels: tuple[float, ...]
     rate_plan: SpeciesRatePlan
     warnings: tuple[str, ...]
+
+    @property
+    def channel_metadata(self) -> ChannelMetadata:
+        """Use nonempty SBML names, falling back to stable SBML identifiers."""
+
+        return ChannelMetadata(
+            species=tuple(
+                name if name.strip() else identifier
+                for name, identifier in zip(self.species_names, self.species_ids, strict=True)
+            )
+        )
 
     @property
     def species_count(self) -> int:
@@ -173,18 +185,24 @@ def _libsbml() -> _LibSBML:
 
 def _finite_float32(value: float, path: str) -> float:
     result = float(value)
+
     if not math.isfinite(result) or abs(result) > _FLOAT32_MAX:
         raise SBMLImportError(f"{path}: expected a finite float32 value")
+
     return result
 
 
 def _diagnostic(error: _SBMLError) -> str:
     location = ""
+
     if error.getLine() > 0:
         location = f"line {error.getLine()}"
+
         if error.getColumn() > 0:
             location += f", column {error.getColumn()}"
+
         location += ": "
+
     return f"{location}{error.getMessage().strip()}"
 
 
@@ -192,18 +210,24 @@ def _validate_document(document: _Document, libsbml: _LibSBML) -> tuple[str, ...
     document.checkConsistency()
     failures: list[str] = []
     warnings: list[str] = []
+
     for index in range(document.getNumErrors()):
         error = document.getError(index)
         message = _diagnostic(error)
+
         if error.getSeverity() >= libsbml.LIBSBML_SEV_ERROR:
             failures.append(message)
         else:
             warnings.append(message)
+
     if failures:
         detail = "; ".join(failures[:8])
+
         if len(failures) > 8:
             detail += f"; and {len(failures) - 8} more errors"
+
         raise SBMLImportError(f"SBML document is invalid: {detail}")
+
     return tuple(warnings)
 
 
@@ -216,8 +240,10 @@ def _reject_unsupported_model_features(model: _Model) -> None:
         "function definitions": model.getNumFunctionDefinitions(),
     }
     present = [name for name, count in unsupported.items() if count != 0]
+
     if present:
         raise SBMLImportError(f"unsupported SBML constructs: {', '.join(present)}")
+
     if model.isSetConversionFactor():
         raise SBMLImportError("model conversion factors are not supported")
 
@@ -225,34 +251,47 @@ def _reject_unsupported_model_features(model: _Model) -> None:
 def _unit_compartment(model: _Model) -> tuple[str, float]:
     if model.getNumCompartments() != 1:
         raise SBMLImportError("SBML import requires exactly one compartment")
+
     compartment = model.getCompartment(0)
     identifier = compartment.getId()
+
     if not identifier:
         raise SBMLImportError("compartment must have an identifier")
+
     if not compartment.getConstant():
         raise SBMLImportError(f"compartment {identifier!r} must be constant")
+
     if not compartment.isSetSize():
         raise SBMLImportError(f"compartment {identifier!r} must declare size 1")
+
     size = _finite_float32(compartment.getSize(), f"compartment {identifier!r} size")
+
     if size != 1.0:
         raise SBMLImportError(f"compartment {identifier!r} must have size 1")
+
     return identifier, size
 
 
 def _parameters(model: _Model) -> dict[str, float]:
     values: dict[str, float] = {}
+
     for index in range(model.getNumParameters()):
         parameter = model.getParameter(index)
         identifier = parameter.getId()
+
         if not identifier:
             raise SBMLImportError(f"global parameter {index} must have an identifier")
+
         if not parameter.getConstant():
             raise SBMLImportError(f"global parameter {identifier!r} must be constant")
+
         if not parameter.isSetValue():
             raise SBMLImportError(f"global parameter {identifier!r} must declare a value")
+
         values[identifier] = _finite_float32(
             parameter.getValue(), f"global parameter {identifier!r}"
         )
+
     return values
 
 
@@ -263,26 +302,32 @@ def _local_parameters(kinetic_law: _KineticLaw, reaction_id: str) -> dict[str, f
         for index in range(kinetic_law.getNumLocalParameters())
     ]
     parameters.extend(
-        (kinetic_law.getParameter(index), True)
-        for index in range(kinetic_law.getNumParameters())
+        (kinetic_law.getParameter(index), True) for index in range(kinetic_law.getNumParameters())
     )
+
     for parameter, check_constant in parameters:
         identifier = parameter.getId()
+
         if not identifier or identifier in values:
             if identifier in values:
                 continue
+
             raise SBMLImportError(f"reaction {reaction_id!r} has an unnamed local parameter")
+
         if check_constant and not parameter.getConstant():
             raise SBMLImportError(
                 f"reaction {reaction_id!r} parameter {identifier!r} must be constant"
             )
+
         if not parameter.isSetValue():
             raise SBMLImportError(
                 f"reaction {reaction_id!r} parameter {identifier!r} must declare a value"
             )
+
         values[identifier] = _finite_float32(
             parameter.getValue(), f"reaction {reaction_id!r} parameter {identifier!r}"
         )
+
     return values
 
 
@@ -310,12 +355,14 @@ class _PlanBuilder:
     ) -> int:
         if len(self.instructions) >= _UINT32_MAX:
             raise SBMLImportError("SBML rate plan exceeds the uint32 instruction space")
+
         instruction = RateInstruction()
         instruction.operation = operation
         instruction.first = first
         instruction.second = second
         instruction.value = value
         self.instructions.append(instruction)
+
         return len(self.instructions) - 1
 
     def constant(self, value: float, path: str) -> int:
@@ -324,10 +371,29 @@ class _PlanBuilder:
     def fold(self, operation: RateOp, operands: list[int], path: str) -> int:
         if not operands:
             raise SBMLImportError(f"{path}: expression has no operands")
+
         result = operands[0]
+
         for operand in operands[1:]:
             result = self.emit(operation, first=result, second=operand)
+
         return result
+
+    def identifier(self, name: str, local_parameters: dict[str, float], path: str) -> int:
+
+        if name in local_parameters:
+            return self.constant(local_parameters[name], path)
+
+        if name in self.global_parameters:
+            return self.constant(self.global_parameters[name], path)
+
+        if name in self.species:
+            return self.emit(RateOp.SPECIES, first=self.species[name])
+
+        if name == self.compartment[0]:
+            return self.constant(self.compartment[1], path)
+
+        raise SBMLImportError(f"{path}: unresolved identifier {name!r}")
 
     def expression(
         self,
@@ -338,63 +404,80 @@ class _PlanBuilder:
         node_type = node.getType()
         child_count = node.getNumChildren()
         children = [node.getChild(index) for index in range(child_count)]
+
         if node.isRational():
             denominator = node.getDenominator()
+
             if denominator == 0:
                 raise SBMLImportError(f"{path}: rational literal has zero denominator")
+
             return self.constant(node.getNumerator() / denominator, path)
+
         if node.isInteger():
             return self.constant(node.getInteger(), path)
+
         if node.isReal():
             return self.constant(node.getReal(), path)
+
         if node_type == self.libsbml.AST_CONSTANT_E:
             return self.constant(math.e, path)
+
         if node_type == self.libsbml.AST_CONSTANT_PI:
             return self.constant(math.pi, path)
+
         if node_type == self.libsbml.AST_NAME_TIME:
             raise SBMLImportError(f"{path}: time-dependent kinetic laws are not supported")
+
         if node.isName():
-            name = node.getName()
-            if name in local_parameters:
-                return self.constant(local_parameters[name], path)
-            if name in self.global_parameters:
-                return self.constant(self.global_parameters[name], path)
-            if name in self.species:
-                return self.emit(RateOp.SPECIES, first=self.species[name])
-            if name == self.compartment[0]:
-                return self.constant(self.compartment[1], path)
-            raise SBMLImportError(f"{path}: unresolved identifier {name!r}")
+            return self.identifier(node.getName(), local_parameters, path)
 
         compiled = [
             self.expression(child, local_parameters, f"{path}.child[{index}]")
             for index, child in enumerate(children)
         ]
+
+        return self.operator(node_type, child_count, compiled, path)
+
+    def operator(self, node_type: int, child_count: int, compiled: list[int], path: str) -> int:
         if node_type == self.libsbml.AST_PLUS:
             return self.fold(RateOp.ADD, compiled, path)
+
         if node_type == self.libsbml.AST_TIMES:
             return self.fold(RateOp.MULTIPLY, compiled, path)
+
         if node_type == self.libsbml.AST_MINUS:
             if child_count == 1:
                 return self.emit(RateOp.NEGATE, first=compiled[0])
+
             if child_count == 2:
                 return self.emit(RateOp.SUBTRACT, first=compiled[0], second=compiled[1])
+
             raise SBMLImportError(f"{path}: subtraction requires one or two operands")
+
         if node_type == self.libsbml.AST_DIVIDE:
             if child_count != 2:
                 raise SBMLImportError(f"{path}: division requires two operands")
+
             return self.emit(RateOp.DIVIDE, first=compiled[0], second=compiled[1])
+
         if node_type in {self.libsbml.AST_POWER, self.libsbml.AST_FUNCTION_POWER}:
             if child_count != 2:
                 raise SBMLImportError(f"{path}: power requires two operands")
+
             return self.emit(RateOp.POWER, first=compiled[0], second=compiled[1])
+
         if node_type == self.libsbml.AST_FUNCTION_EXP:
             if child_count != 1:
                 raise SBMLImportError(f"{path}: exponential requires one operand")
+
             return self.emit(RateOp.EXPONENTIAL, first=compiled[0])
+
         if node_type == self.libsbml.AST_FUNCTION_LN:
             if child_count != 1:
                 raise SBMLImportError(f"{path}: natural logarithm requires one operand")
+
             return self.emit(RateOp.LOGARITHM, first=compiled[0])
+
         raise SBMLImportError(f"{path}: unsupported MathML node type {node_type}")
 
 
@@ -405,51 +488,95 @@ def _species_metadata(
     identifiers: list[str] = []
     names: list[str] = []
     levels: list[float] = []
+
     for index in range(model.getNumSpecies()):
         species = model.getSpecies(index)
         identifier = species.getId()
+
         if not identifier:
             raise SBMLImportError(f"species {index} must have an identifier")
+
         if identifier in identifiers:
             raise SBMLImportError(f"duplicate species identifier {identifier!r}")
+
         if species.getCompartment() != compartment_id:
             raise SBMLImportError(
                 f"species {identifier!r} is not in compartment {compartment_id!r}"
             )
+
         if species.getHasOnlySubstanceUnits():
             raise SBMLImportError(f"species {identifier!r} must be concentration-valued")
+
         if species.isSetConversionFactor():
             raise SBMLImportError(f"species {identifier!r} conversion factors are not supported")
+
         has_concentration = species.isSetInitialConcentration()
         has_amount = species.isSetInitialAmount()
+
         if has_concentration == has_amount:
             raise SBMLImportError(
                 f"species {identifier!r} must declare exactly one initial concentration or amount"
             )
+
         initial = (
-            species.getInitialConcentration()
-            if has_concentration
-            else species.getInitialAmount()
+            species.getInitialConcentration() if has_concentration else species.getInitialAmount()
         )
         initial = _finite_float32(initial, f"species {identifier!r} initial level")
+
         if initial < 0.0:
             raise SBMLImportError(f"species {identifier!r} initial level must be non-negative")
+
         species_values.append(species)
         identifiers.append(identifier)
         names.append(species.getName() or identifier)
         levels.append(initial)
+
     return species_values, tuple(identifiers), tuple(names), tuple(levels)
 
 
 def _stoichiometry(reference: _SpeciesReference, reaction_id: str) -> float:
     if reference.isSetStoichiometryMath() or not reference.getConstant():
         raise SBMLImportError(f"reaction {reaction_id!r} uses dynamic stoichiometry")
-    value = _finite_float32(
-        reference.getStoichiometry(), f"reaction {reaction_id!r} stoichiometry"
-    )
+
+    value = _finite_float32(reference.getStoichiometry(), f"reaction {reaction_id!r} stoichiometry")
+
     if value < 0.0:
         raise SBMLImportError(f"reaction {reaction_id!r} stoichiometry must be non-negative")
+
     return value
+
+
+def _compile_species_outputs(
+    builder: _PlanBuilder,
+    species_values: list[_Species],
+    species_ids: tuple[str, ...],
+    contributions: list[list[tuple[float, int]]],
+    zero: int,
+) -> list[int]:
+    outputs: list[int] = []
+
+    for index, species in enumerate(species_values):
+        if species.getBoundaryCondition() or species.getConstant():
+            outputs.append(zero)
+            continue
+
+        output = zero
+
+        for coefficient, rate in contributions[index]:
+            if coefficient == 1.0:
+                output = builder.emit(RateOp.ADD, first=output, second=rate)
+            elif coefficient == -1.0:
+                output = builder.emit(RateOp.SUBTRACT, first=output, second=rate)
+            else:
+                factor = builder.constant(
+                    coefficient, f"species {species_ids[index]!r} coefficient"
+                )
+                term = builder.emit(RateOp.MULTIPLY, first=factor, second=rate)
+                output = builder.emit(RateOp.ADD, first=output, second=term)
+
+        outputs.append(output)
+
+    return outputs
 
 
 def _compile_model(model: _Model, libsbml: _LibSBML, warnings: tuple[str, ...]) -> SBMLRateModel:
@@ -466,16 +593,21 @@ def _compile_model(model: _Model, libsbml: _LibSBML, warnings: tuple[str, ...]) 
     for reaction_index in range(model.getNumReactions()):
         reaction = model.getReaction(reaction_index)
         reaction_id = reaction.getId() or f"reaction[{reaction_index}]"
+
         if not reaction.isSetKineticLaw():
             raise SBMLImportError(f"reaction {reaction_id!r} must declare a kinetic law")
+
         kinetic_law = reaction.getKineticLaw()
+
         if not kinetic_law.isSetMath():
             raise SBMLImportError(f"reaction {reaction_id!r} kinetic law must contain MathML")
+
         rate = builder.expression(
             kinetic_law.getMath(),
             _local_parameters(kinetic_law, reaction_id),
             f"reaction {reaction_id!r} kinetic law",
         )
+
         for sign, count, getter in (
             (-1.0, reaction.getNumReactants(), reaction.getReactant),
             (1.0, reaction.getNumProducts(), reaction.getProduct),
@@ -483,36 +615,22 @@ def _compile_model(model: _Model, libsbml: _LibSBML, warnings: tuple[str, ...]) 
             for reference_index in range(count):
                 reference = getter(reference_index)
                 identifier = reference.getSpecies()
+
                 if identifier not in species_indices:
                     raise SBMLImportError(
                         f"reaction {reaction_id!r} references unknown species {identifier!r}"
                     )
+
                 coefficient = sign * _stoichiometry(reference, reaction_id)
                 contributions[species_indices[identifier]].append((coefficient, rate))
 
-    outputs: list[int] = []
-    for index, species in enumerate(species_values):
-        if species.getBoundaryCondition() or species.getConstant():
-            outputs.append(zero)
-            continue
-        output = zero
-        for coefficient, rate in contributions[index]:
-            if coefficient == 1.0:
-                output = builder.emit(RateOp.ADD, first=output, second=rate)
-            elif coefficient == -1.0:
-                output = builder.emit(RateOp.SUBTRACT, first=output, second=rate)
-            else:
-                factor = builder.constant(
-                    coefficient, f"species {species_ids[index]!r} coefficient"
-                )
-                term = builder.emit(RateOp.MULTIPLY, first=factor, second=rate)
-                output = builder.emit(RateOp.ADD, first=output, second=term)
-        outputs.append(output)
+    outputs = _compile_species_outputs(builder, species_values, species_ids, contributions, zero)
 
     try:
         rate_plan = SpeciesRatePlan(len(species_values), builder.instructions, outputs)
     except (ValueError, OverflowError) as error:
         raise SBMLImportError(f"compiled SBML rate plan is invalid: {error}") from error
+
     return SBMLRateModel(
         model_id=model.getId(),
         model_name=model.getName(),
@@ -529,16 +647,19 @@ def parse_sbml(source: str) -> SBMLRateModel:
 
     if not source.strip():
         raise SBMLImportError("SBML source must be a nonempty string")
+
     libsbml = _libsbml()
     document = libsbml.readSBMLFromString(source)
-    if document.getLevel() > 0 and (
-        document.getLevel() != 3 or document.getVersion() != 2
-    ):
+
+    if document.getLevel() > 0 and (document.getLevel() != 3 or document.getVersion() != 2):
         raise SBMLImportError("SBML import currently requires Level 3 Version 2 Core")
+
     warnings = _validate_document(document, libsbml)
     model = document.getModel()
+
     if model is None:
         raise SBMLImportError("SBML document does not contain a model")
+
     return _compile_model(model, libsbml, warnings)
 
 
@@ -546,8 +667,10 @@ def load_sbml(path: str | Path) -> SBMLRateModel:
     """Read an SBML file as UTF-8 and compile the supported subset."""
 
     source_path = Path(path)
+
     try:
         source = source_path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         raise SBMLImportError(f"could not read SBML file {source_path}") from error
+
     return parse_sbml(source)

@@ -25,6 +25,7 @@ std::array<EndpointGeometry, 2> endpoints(const CellGeometryView& geometry, std:
   const Vec3 axis{geometry.direction_x[slot], geometry.direction_y[slot],
                   geometry.direction_z[slot]};
   const auto half_length = geometry.lengths[slot] * 0.5F;
+
   return {
       EndpointGeometry{RodContactLocation::negative, center - axis * half_length},
       EndpointGeometry{RodContactLocation::positive, center + axis * half_length},
@@ -49,24 +50,31 @@ bool segment_intersects_bounds(Vec3 start, Vec3 end, Vec3 lower, Vec3 upper) {
   const std::array<float, 3> uppers{upper.x, upper.y, upper.z};
   auto entry = 0.0F;
   auto exit = 1.0F;
+
   for (std::size_t axis = 0; axis < starts.size(); ++axis) {
     if (deltas[axis] == 0.0F) {
       if (starts[axis] < lowers[axis] || starts[axis] > uppers[axis]) {
         return false;
       }
+
       continue;
     }
+
     auto first = (lowers[axis] - starts[axis]) / deltas[axis];
     auto second = (uppers[axis] - starts[axis]) / deltas[axis];
+
     if (first > second) {
       std::swap(first, second);
     }
+
     entry = std::max(entry, first);
     exit = std::min(exit, second);
+
     if (entry > exit) {
       return false;
     }
   }
+
   return true;
 }
 
@@ -75,11 +83,13 @@ CenterlineMinimum minimize_surface_on_segment(Vec3 start, Vec3 end, const Surfac
   const auto delta = end - start;
   auto lower = 0.0F;
   auto upper = 1.0F;
+
   for (std::size_t iteration = 0; iteration < segment_minimization_iterations; ++iteration) {
     const auto first_parameter = lower + (upper - lower) / 3.0F;
     const auto second_parameter = upper - (upper - lower) / 3.0F;
     const auto first = surface_at(start + delta * first_parameter);
     const auto second = surface_at(start + delta * second_parameter);
+
     if (first.signed_distance < second.signed_distance) {
       upper = second_parameter;
     } else if (second.signed_distance < first.signed_distance) {
@@ -92,13 +102,16 @@ CenterlineMinimum minimize_surface_on_segment(Vec3 start, Vec3 end, const Surfac
 
   CenterlineMinimum result{start, surface_at(start)};
   const std::array<float, 5> candidates{1.0F, 0.5F, lower, (lower + upper) * 0.5F, upper};
+
   for (const auto parameter : candidates) {
     const auto point = start + delta * parameter;
     const auto surface = surface_at(point);
+
     if (surface.signed_distance < result.surface.signed_distance) {
       result = {point, surface};
     }
   }
+
   return result;
 }
 
@@ -112,6 +125,7 @@ void append_outside_minimum_contacts(std::vector<ExternalContact>& contacts,
                                      const ConstraintContactParameters& parameters) {
   const auto radius = geometry.radii[slot];
   const auto minimum_separation = minimum.surface.signed_distance - radius;
+
   if (minimum_separation >= parameters.activation_margin) {
     return;
   }
@@ -121,10 +135,13 @@ void append_outside_minimum_contacts(std::vector<ExternalContact>& contacts,
     Vec3 centerline_point;
     SurfacePoint surface;
   };
+
   std::array<Candidate, 2> candidates{};
   std::size_t count = 0;
+
   for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
     const auto endpoint_separation = endpoint_surfaces[index].signed_distance - radius;
+
     if (endpoint_separation < parameters.activation_margin &&
         std::abs(endpoint_surfaces[index].signed_distance - minimum.surface.signed_distance) <=
             parameters.degeneracy_epsilon) {
@@ -135,11 +152,13 @@ void append_outside_minimum_contacts(std::vector<ExternalContact>& contacts,
       };
     }
   }
+
   if (count == 0) {
     candidates[count++] = {RodContactLocation::interior, minimum.point, minimum.surface};
   }
 
   const auto weight = coefficient * (count == 2 ? inverse_sqrt_two : 1.0F);
+
   for (std::size_t index = 0; index < count; ++index) {
     const auto normal = candidates[index].surface.outward * -1.0F;
     contacts.push_back({
@@ -162,19 +181,23 @@ void append_plane_contacts(std::vector<ExternalContact>& contacts, const CellGeo
   const auto cell_endpoints = endpoints(geometry, slot);
   std::array<float, 2> separations{};
   std::array<bool, 2> active{};
+
   for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
     separations[index] =
         dot(cell_endpoints[index].centerline_point - plane.point, plane.inward_normal) -
         geometry.radii[slot];
     active[index] = separations[index] < parameters.activation_margin;
   }
+
   const auto active_count = static_cast<unsigned>(active[0]) + static_cast<unsigned>(active[1]);
   const auto weight = plane.coefficient * (active_count == 2 ? inverse_sqrt_two : 1.0F);
   const auto normal = plane.inward_normal * -1.0F;
+
   for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
     if (!active[index]) {
       continue;
     }
+
     contacts.push_back({
         .cell_id = geometry.ids[slot],
         .cell_slot = static_cast<Slot>(slot),
@@ -195,6 +218,7 @@ void append_sphere_contacts(std::vector<ExternalContact>& contacts,
                             const ConstraintContactParameters& parameters) {
   const auto cell_endpoints = endpoints(geometry, slot);
   std::array<SurfacePoint, 2> surfaces{};
+
   for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
     const auto center_delta = cell_endpoints[index].centerline_point - sphere.center;
     const auto distance = norm(center_delta);
@@ -202,6 +226,7 @@ void append_sphere_contacts(std::vector<ExternalContact>& contacts,
                                                                  : Vec3{1.0F, 0.0F, 0.0F};
     surfaces[index] = {distance - sphere.radius, radial};
   }
+
   if (sphere.allowed_region == SphereRegion::outside) {
     const auto start = cell_endpoints[0].centerline_point;
     const auto end = cell_endpoints[1].centerline_point;
@@ -219,23 +244,28 @@ void append_sphere_contacts(std::vector<ExternalContact>& contacts,
     append_outside_minimum_contacts(
         contacts, geometry, slot, sphere.id, ExternalConstraintKind::sphere, sphere.coefficient,
         cell_endpoints, surfaces, {point, {distance - sphere.radius, radial}}, parameters);
+
     return;
   }
 
   std::array<float, 2> separations{};
   std::array<Vec3, 2> normals{};
   std::array<bool, 2> active{};
+
   for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
     separations[index] = -surfaces[index].signed_distance - geometry.radii[slot];
     normals[index] = surfaces[index].outward;
     active[index] = separations[index] < parameters.activation_margin;
   }
+
   const auto active_count = static_cast<unsigned>(active[0]) + static_cast<unsigned>(active[1]);
   const auto weight = sphere.coefficient * (active_count == 2 ? inverse_sqrt_two : 1.0F);
+
   for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
     if (!active[index]) {
       continue;
     }
+
     contacts.push_back({
         .cell_id = geometry.ids[slot],
         .cell_slot = static_cast<Slot>(slot),
@@ -260,26 +290,31 @@ SurfacePoint box_surface(const Vec3& point, const BoxConstraint& box, float dege
   };
   const auto outside_vector = delta - clamped;
   const auto outside_distance = norm(outside_vector);
+
   if (outside_distance > degeneracy_epsilon) {
     return {outside_distance, outside_vector * (1.0F / outside_distance)};
   }
+
   const std::array<float, 3> clearances{
       box.half_extents.x - std::abs(delta.x),
       box.half_extents.y - std::abs(delta.y),
       box.half_extents.z - std::abs(delta.z),
   };
   std::size_t nearest_axis = 0;
+
   for (std::size_t axis = 1; axis < clearances.size(); ++axis) {
     if (clearances[axis] < clearances[nearest_axis]) {
       nearest_axis = axis;
     }
   }
+
   const std::array<float, 3> offsets{delta.x, delta.y, delta.z};
   const auto sign =
       std::abs(offsets[nearest_axis]) <= degeneracy_epsilon || offsets[nearest_axis] >= 0.0F
           ? 1.0F
           : -1.0F;
   Vec3 outward{};
+
   if (nearest_axis == 0) {
     outward = {sign, 0.0F, 0.0F};
   } else if (nearest_axis == 1) {
@@ -287,6 +322,7 @@ SurfacePoint box_surface(const Vec3& point, const BoxConstraint& box, float dege
   } else {
     outward = {0.0F, 0.0F, sign};
   }
+
   return {-clearances[nearest_axis], outward};
 }
 
@@ -295,10 +331,12 @@ void append_box_contacts(std::vector<ExternalContact>& contacts, const CellGeome
                          const ConstraintContactParameters& parameters) {
   const auto cell_endpoints = endpoints(geometry, slot);
   std::array<SurfacePoint, 2> surfaces{};
+
   for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
     surfaces[index] =
         box_surface(cell_endpoints[index].centerline_point, box, parameters.degeneracy_epsilon);
   }
+
   if (box.allowed_region == ConstraintRegion::outside) {
     const auto reach = geometry.radii[slot] + parameters.activation_margin;
     const Vec3 lower{
@@ -311,10 +349,12 @@ void append_box_contacts(std::vector<ExternalContact>& contacts, const CellGeome
         box.center.y + box.half_extents.y + reach,
         box.center.z + box.half_extents.z + reach,
     };
+
     if (!segment_intersects_bounds(cell_endpoints[0].centerline_point,
                                    cell_endpoints[1].centerline_point, lower, upper)) {
       return;
     }
+
     const auto minimum = minimize_surface_on_segment(
         cell_endpoints[0].centerline_point, cell_endpoints[1].centerline_point,
         [&box, &parameters](const Vec3& point) {
@@ -322,23 +362,28 @@ void append_box_contacts(std::vector<ExternalContact>& contacts, const CellGeome
         });
     append_outside_minimum_contacts(contacts, geometry, slot, box.id, ExternalConstraintKind::box,
                                     box.coefficient, cell_endpoints, surfaces, minimum, parameters);
+
     return;
   }
 
   std::array<float, 2> separations{};
   std::array<Vec3, 2> normals{};
   std::array<bool, 2> active{};
+
   for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
     separations[index] = -surfaces[index].signed_distance - geometry.radii[slot];
     normals[index] = surfaces[index].outward;
     active[index] = separations[index] < parameters.activation_margin;
   }
+
   const auto active_count = static_cast<unsigned>(active[0]) + static_cast<unsigned>(active[1]);
   const auto weight = box.coefficient * (active_count == 2 ? inverse_sqrt_two : 1.0F);
+
   for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
     if (!active[index]) {
       continue;
     }
+
     contacts.push_back({
         .cell_id = geometry.ids[slot],
         .cell_slot = static_cast<Slot>(slot),
@@ -365,20 +410,26 @@ SurfacePoint cylinder_surface(const Vec3& point, const CylinderConstraint& cylin
   const Vec3 axial{0.0F, 0.0F, z_sign};
   const auto radial_excess = radial_distance - cylinder.radius;
   const auto axial_excess = std::abs(z_offset) - cylinder.half_height;
+
   if (radial_excess > 0.0F && axial_excess > 0.0F) {
     const auto distance =
         std::sqrt((radial_excess * radial_excess) + (axial_excess * axial_excess));
+
     return {distance, (radial * radial_excess + axial * axial_excess) * (1.0F / distance)};
   }
+
   if (radial_excess > 0.0F) {
     return {radial_excess, radial};
   }
+
   if (axial_excess > 0.0F) {
     return {axial_excess, axial};
   }
+
   if (-radial_excess <= -axial_excess) {
     return {radial_excess, radial};
   }
+
   return {axial_excess, axial};
 }
 
@@ -393,6 +444,7 @@ CenterlineMinimum minimize_cylinder_surface_on_segment(
   const auto consider = [&result, &start, &delta, &surface_at](float parameter) {
     const auto point = start + delta * std::clamp(parameter, 0.0F, 1.0F);
     const auto surface = surface_at(point);
+
     if (surface.signed_distance <= result.surface.signed_distance) {
       result = {point, surface};
     }
@@ -401,11 +453,14 @@ CenterlineMinimum minimize_cylinder_surface_on_segment(
   if (std::abs(delta.z) > parameters.degeneracy_epsilon) {
     consider((cylinder.center.z - start.z) / delta.z);
   }
+
   const auto radial_length_squared = delta.x * delta.x + delta.y * delta.y;
+
   if (radial_length_squared > parameters.degeneracy_epsilon * parameters.degeneracy_epsilon) {
     consider(-((start.x - cylinder.center.x) * delta.x + (start.y - cylinder.center.y) * delta.y) /
              radial_length_squared);
   }
+
   return result;
 }
 
@@ -415,10 +470,12 @@ void append_cylinder_contacts(std::vector<ExternalContact>& contacts,
                               const ConstraintContactParameters& parameters) {
   const auto cell_endpoints = endpoints(geometry, slot);
   std::array<SurfacePoint, 2> surfaces{};
+
   for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
     surfaces[index] = cylinder_surface(cell_endpoints[index].centerline_point, cylinder,
                                        parameters.degeneracy_epsilon);
   }
+
   if (cylinder.allowed_region == ConstraintRegion::outside) {
     const auto reach = geometry.radii[slot] + parameters.activation_margin;
     const Vec3 lower{
@@ -431,33 +488,40 @@ void append_cylinder_contacts(std::vector<ExternalContact>& contacts,
         cylinder.center.y + cylinder.radius + reach,
         cylinder.center.z + cylinder.half_height + reach,
     };
+
     if (!segment_intersects_bounds(cell_endpoints[0].centerline_point,
                                    cell_endpoints[1].centerline_point, lower, upper)) {
       return;
     }
+
     const auto minimum = minimize_cylinder_surface_on_segment(cell_endpoints[0].centerline_point,
                                                               cell_endpoints[1].centerline_point,
                                                               cylinder, parameters);
     append_outside_minimum_contacts(contacts, geometry, slot, cylinder.id,
                                     ExternalConstraintKind::cylinder, cylinder.coefficient,
                                     cell_endpoints, surfaces, minimum, parameters);
+
     return;
   }
 
   std::array<float, 2> separations{};
   std::array<Vec3, 2> normals{};
   std::array<bool, 2> active{};
+
   for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
     separations[index] = -surfaces[index].signed_distance - geometry.radii[slot];
     normals[index] = surfaces[index].outward;
     active[index] = separations[index] < parameters.activation_margin;
   }
+
   const auto active_count = static_cast<unsigned>(active[0]) + static_cast<unsigned>(active[1]);
   const auto weight = cylinder.coefficient * (active_count == 2 ? inverse_sqrt_two : 1.0F);
+
   for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
     if (!active[index]) {
       continue;
     }
+
     contacts.push_back({
         .cell_id = geometry.ids[slot],
         .cell_slot = static_cast<Slot>(slot),
@@ -482,23 +546,29 @@ ExternalContactGraph find_external_contacts_cpu(const WorldState& state,
   state.validate();
   const auto geometry = state.geometry_state();
   std::vector<ExternalContact> contacts;
+
   for (std::size_t slot = 0; slot < geometry.size(); ++slot) {
     for (const auto& plane : constraints.planes()) {
       append_plane_contacts(contacts, geometry, slot, plane, parameters);
     }
+
     for (const auto& sphere : constraints.spheres()) {
       append_sphere_contacts(contacts, geometry, slot, sphere, parameters);
     }
+
     for (const auto& box : constraints.boxes()) {
       append_box_contacts(contacts, geometry, slot, box, parameters);
     }
+
     for (const auto& cylinder : constraints.cylinders()) {
       append_cylinder_contacts(contacts, geometry, slot, cylinder, parameters);
     }
   }
+
   std::ranges::sort(contacts, {}, [](const ExternalContact& contact) {
     return std::tuple{contact.cell_id, contact.constraint_id, contact.location};
   });
+
   return ExternalContactGraph(geometry.size(), std::move(contacts));
 }
 

@@ -20,6 +20,7 @@ from microsimulator import (
 def test_symbolic_species_plan_runs_on_every_available_backend(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     builder = RatePlanBuilder()
     x = builder.species(0)
     y = builder.species(1)
@@ -51,6 +52,7 @@ def test_symbolic_species_plan_runs_on_every_available_backend(backend: BackendK
 def test_symbolic_coupled_plan_uses_geometry_and_signal_sources(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     builder = RatePlanBuilder()
     intracellular = builder.species(0)
     extracellular = builder.signal(0)
@@ -82,9 +84,12 @@ def test_symbolic_coupled_plan_uses_geometry_and_signal_sources(backend: Backend
 def test_rate_builder_rejects_nonfinite_constants_and_mixed_graphs() -> None:
     first = RatePlanBuilder()
     second = RatePlanBuilder()
+
     with pytest.raises(RatePlanError, match="finite"):
         first.constant(float("nan"))
+
     with pytest.raises(RatePlanError, match="different builders"):
         _ = first.species(0) + second.species(0)
+
     with pytest.raises(TypeError, match="Booleans"):
         bool(first.species(0))

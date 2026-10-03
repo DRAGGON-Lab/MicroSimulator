@@ -1,6 +1,7 @@
 import { parseScene, type SceneFrame } from "./scene";
 
-export type LiveConnectionState = "connecting" | "connected" | "closed";
+export type LiveConnectionState =
+  "connecting" | "connected" | "stopping" | "stopped" | "closed";
 
 export interface LiveFrameMessage {
   readonly type: "frame";
@@ -21,11 +22,21 @@ export interface LiveErrorMessage {
   readonly message: string;
 }
 
+export interface LiveSessionMessage {
+  readonly type: "session";
+  readonly state: "stopping" | "stopped";
+}
+
 export type LiveMessage =
-  LiveFrameMessage | LiveCheckpointMessage | LiveErrorMessage;
+  | LiveFrameMessage
+  | LiveCheckpointMessage
+  | LiveErrorMessage
+  | LiveSessionMessage;
 
 export type LiveCommand =
-  | Readonly<{ type: "frame" | "play" | "pause" | "reset" | "checkpoint" }>
+  | Readonly<{
+      type: "frame" | "play" | "pause" | "reset" | "checkpoint" | "stop";
+    }>
   | Readonly<{ type: "step"; steps?: number }>;
 
 export interface LiveCallbacks {
@@ -49,6 +60,7 @@ function record(value: unknown, path: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return fail(path, "expected an object");
   }
+
   return value as Record<string, unknown>;
 }
 
@@ -60,9 +72,11 @@ function exactKeys(
   const allowed = new Set(expected);
   const missing = expected.filter((key) => !(key in value));
   const unknown = Object.keys(value).filter((key) => !allowed.has(key));
+
   if (missing.length > 0) {
     fail(path, `missing keys ${JSON.stringify(missing.toSorted())}`);
   }
+
   if (unknown.length > 0) {
     fail(path, `unknown keys ${JSON.stringify(unknown.toSorted())}`);
   }
@@ -72,6 +86,7 @@ function nonnegativeInteger(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     return fail(path, "expected a non-negative safe integer");
   }
+
   return value;
 }
 
@@ -79,6 +94,7 @@ function boolean(value: unknown, path: string): boolean {
   if (typeof value !== "boolean") {
     return fail(path, "expected a Boolean");
   }
+
   return value;
 }
 
@@ -86,18 +102,22 @@ function string(value: unknown, path: string): string {
   if (typeof value !== "string" || value.length === 0) {
     return fail(path, "expected a non-empty string");
   }
+
   return value;
 }
 
 export async function parseLiveMessage(encoded: string): Promise<LiveMessage> {
   let value: unknown;
+
   try {
     value = JSON.parse(encoded) as unknown;
   } catch {
     return fail("$", "message is not valid JSON");
   }
+
   const message = record(value, "$");
   const type = message.type;
+
   if (type === "frame") {
     exactKeys(message, "$", [
       "type",
@@ -107,6 +127,7 @@ export async function parseLiveMessage(encoded: string): Promise<LiveMessage> {
       "checkpoint_enabled",
       "scene",
     ]);
+
     return {
       type,
       revision: nonnegativeInteger(message.revision, "$.revision"),
@@ -122,20 +143,37 @@ export async function parseLiveMessage(encoded: string): Promise<LiveMessage> {
       frame: await parseScene(JSON.stringify(message.scene)),
     };
   }
+
   if (type === "checkpoint") {
     exactKeys(message, "$", ["type", "path"]);
+
     return { type, path: string(message.path, "$.path") };
   }
+
   if (type === "error") {
     exactKeys(message, "$", ["type", "message"]);
+
     return { type, message: string(message.message, "$.message") };
   }
+
+  if (type === "session") {
+    exactKeys(message, "$", ["type", "state"]);
+
+    if (message.state !== "stopping" && message.state !== "stopped") {
+      return fail("$.state", "unknown session state");
+    }
+
+    return { type, state: message.state };
+  }
+
   return fail("$.type", "unknown message type");
 }
 
 export class LiveConnection {
   private socket: WebSocket | null = null;
   private messageQueue = Promise.resolve();
+  private stopping = false;
+  private stopped = false;
 
   public constructor(
     private readonly token: string,
@@ -150,6 +188,7 @@ export class LiveConnection {
     if (this.socket !== null) {
       throw new LiveProtocolError("live connection already started");
     }
+
     const url = new URL("/api/v1/session", window.location.href);
     url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("token", this.token);
@@ -159,31 +198,65 @@ export class LiveConnection {
     socket.addEventListener("open", () => this.callbacks.state("connected"));
     socket.addEventListener("message", (event) => {
       const encoded = event.data;
+
       if (typeof encoded !== "string") {
         this.callbacks.protocolError("live server sent a non-text message");
+
         return;
       }
+
       this.messageQueue = this.messageQueue
-        .then(async () =>
-          this.callbacks.message(await parseLiveMessage(encoded)),
-        )
+        .then(async () => {
+          if (this.stopped) return;
+
+          const message = await parseLiveMessage(encoded);
+
+          if (message.type === "session") {
+            this.stopping = true;
+            this.stopped = message.state === "stopped";
+            this.callbacks.state(message.state);
+          }
+
+          this.callbacks.message(message);
+        })
         .catch((error: unknown) => {
           this.callbacks.protocolError(
             error instanceof Error ? error.message : String(error),
           );
         });
     });
-    socket.addEventListener("error", () =>
-      this.callbacks.protocolError("live connection failed"),
-    );
-    socket.addEventListener("close", () => this.callbacks.state("closed"));
+    socket.addEventListener("error", () => {
+      void this.messageQueue.then(() => {
+        if (!this.stopped)
+          this.callbacks.protocolError("live connection failed");
+      });
+    });
+    socket.addEventListener("close", () => {
+      // Scene digest verification is asynchronous. Drain messages before close,
+      // otherwise a valid stopped notification can race with disconnected UI.
+      void this.messageQueue.then(() => {
+        if (!this.stopped) this.callbacks.state("closed");
+      });
+    });
   }
 
   public send(command: LiveCommand): void {
+    if (this.stopping) {
+      if (command.type === "stop") return;
+
+      throw new LiveProtocolError("live session is stopping or stopped");
+    }
+
     if (this.socket?.readyState !== WebSocket.OPEN) {
       throw new LiveProtocolError("live connection is not ready");
     }
+
     this.socket.send(JSON.stringify(command));
+
+    if (command.type === "stop") {
+      this.stopping = true;
+      this.callbacks.state("stopping");
+    }
   }
 
   public close(): void {

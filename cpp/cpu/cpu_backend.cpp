@@ -24,14 +24,17 @@ class CpuBackend final : public ComputeBackend {
            feature == BackendFeature::external_constraints || feature == BackendFeature::signals ||
            feature == BackendFeature::coupled_rates ||
            feature == BackendFeature::depth_averaged_flow ||
-           feature == BackendFeature::resolved_flow;
+           feature == BackendFeature::resolved_flow || feature == BackendFeature::culture;
   }
 
-  void advance_growth(WorldState& state, float dt) override { state.advance_growth(dt); }
+  void advance_growth(WorldState& state, float dt) override {
+    state.advance_growth(dt);
+  }
 
   void advance_species(WorldState& state, const SpeciesRatePlan& plan,
-                       std::span<const float> previous_lengths, float dt) override {
-    advance_species_cpu(state, plan, previous_lengths, dt);
+                       std::span<const float> previous_lengths, float dt,
+                       BiochemicalVolumeView volumes = {}) override {
+    advance_species_cpu(state, plan, previous_lengths, dt, volumes);
   }
 
   SignalSolveReport advance_signal_grid(SignalGrid& grid, float dt) override {
@@ -81,6 +84,7 @@ std::unique_ptr<ComputeBackend> make_cpu_backend(std::uint32_t device_index) {
   if (device_index != 0) {
     throw std::out_of_range("CPU backend exposes only device index 0");
   }
+
   return std::make_unique<CpuBackend>();
 }
 

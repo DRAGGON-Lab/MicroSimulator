@@ -38,6 +38,7 @@ def _grid() -> SignalGridSpec:
     grid.advection = [Vec3(), Vec3()]
     grid.integration = SignalIntegrationKind.CRANK_NICOLSON
     grid.solver.absolute_tolerance = 1.0e-12
+
     return grid
 
 
@@ -51,6 +52,7 @@ def _rates() -> CoupledRatePlan:
     alpha_exchange = (alpha - alpha_in) * area
     beta_exchange = (beta - beta_in) * area
     type_zero = rates.equal(rates.cell_type(), 0)
+
     return rates.coupled_plan(
         2,
         2,
@@ -68,10 +70,12 @@ def _rates() -> CoupledRatePlan:
 
 def _regulate(step: ControllerStep) -> StepPlan:
     updates: list[CellUpdate] = []
+
     for cell in step.cells:
         partner = cell.species[1] if cell.cell_type == 0 else cell.species[0]
         growth_rate = 0.1 + 0.9 * partner / (0.1 + partner)
         updates.append(CellUpdate(cell.id, growth_rate=growth_rate))
+
     return StepPlan(updates=tuple(updates), divisions=DIVISION.requests(step))
 
 
@@ -80,6 +84,7 @@ def build(context: ModelContext) -> NativeController:
     simulation.configure_signal_grid(_grid())
     simulation.set_coupled_rate_plan(_rates())
     founders: list[int] = []
+
     for cell_type, x in ((0, -3.0), (1, 3.0)):
         founder = CellInit()
         founder.position = Vec3(x, 0.0, 0.0)
@@ -89,8 +94,10 @@ def build(context: ModelContext) -> NativeController:
         founder.cell_type = cell_type
         founder.species = [0.0, 0.0]
         founders.append(simulation.add_cell(founder))
+
     state: dict[str, JSONValue] = {}
     DIVISION.initialize(state, context.rng, tuple(founders))
+
     return NativeController(
         simulation,
         model_id=MODEL_ID,
@@ -105,6 +112,7 @@ def build(context: ModelContext) -> NativeController:
 
 def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeController:
     del context
+
     return NativeController.from_checkpoint(
         checkpoint,
         model_id=MODEL_ID,

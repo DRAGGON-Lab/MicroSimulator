@@ -76,6 +76,7 @@ class RunManifest:
         for job in self.jobs:
             if job.id == job_id:
                 return job
+
         raise RunManifestError(f"run manifest has no job {job_id!r}")
 
 
@@ -89,33 +90,42 @@ def _reject_constant(value: str) -> NoReturn:
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
+
     for key, value in pairs:
         if key in result:
             raise RunManifestError(f"run manifest contains duplicate key {key!r}")
+
         result[key] = value
+
     return result
 
 
 def _object(value: object, path: str) -> dict[str, object]:
     if not isinstance(value, dict):
         _fail(path, "expected an object")
+
     mapping = cast(dict[object, object], value)
+
     if not all(isinstance(key, str) for key in mapping):
         _fail(path, "expected string object keys")
+
     return cast(dict[str, object], mapping)
 
 
 def _array(value: object, path: str) -> list[object]:
     if not isinstance(value, list):
         _fail(path, "expected an array")
+
     return cast(list[object], value)
 
 
 def _keys(value: dict[str, object], path: str, required: set[str]) -> None:
     missing = required - value.keys()
     unknown = value.keys() - required
+
     if missing:
         _fail(path, f"missing keys {sorted(missing)}")
+
     if unknown:
         _fail(path, f"unknown keys {sorted(unknown)}")
 
@@ -123,62 +133,79 @@ def _keys(value: dict[str, object], path: str, required: set[str]) -> None:
 def _string(value: object, path: str) -> str:
     if not isinstance(value, str):
         _fail(path, "expected a string")
+
     return value
 
 
 def _integer(value: object, path: str, minimum: int, maximum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         _fail(path, "expected an integer")
+
     if value < minimum or value > maximum:
         _fail(path, f"integer is outside [{minimum}, {maximum}]")
+
     return value
 
 
 def _number(value: object, path: str) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         _fail(path, "expected a number")
+
     result = float(value)
+
     if not math.isfinite(result):
         _fail(path, "number must be finite")
+
     return result
 
 
 def _digest(value: object, path: str) -> str:
     result = _string(value, path)
+
     if len(result) != 64 or result != result.lower():
         _fail(path, "expected a lowercase SHA-256 digest")
+
     try:
         bytes.fromhex(result)
     except ValueError:
         _fail(path, "expected a lowercase SHA-256 digest")
+
     return result
 
 
 def _path(value: object, path: str, directory: Path) -> Path:
     encoded = _string(value, path)
+
     if not encoded or "\0" in encoded:
         _fail(path, "expected a nonempty filesystem path")
+
     result = Path(encoded)
+
     return (result if result.is_absolute() else directory / result).resolve()
 
 
 def _json_value(value: object, path: str) -> JSONValue:
     if value is None or isinstance(value, str | bool | int):
         return value
+
     if isinstance(value, float):
         if not math.isfinite(value):
             _fail(path, "number must be finite")
+
         return value
+
     if isinstance(value, list):
         return [
             _json_value(item, f"{path}[{index}]")
             for index, item in enumerate(cast(list[object], value))
         ]
+
     if isinstance(value, dict):
         return {
             key: _json_value(item, f"{path}.{key}")
             for key, item in _object(cast(object, value), path).items()
         }
+
     _fail(path, "expected JSON data")
 
 
@@ -206,6 +233,7 @@ def _job(value: object, path: str, directory: Path) -> RunJob:
         },
     )
     job_id = _string(data["id"], f"{path}.id")
+
     if _RUN_ID_PATTERN.fullmatch(job_id) is None:
         _fail(f"{path}.id", "expected 1-128 ASCII letters, digits, '.', '_', or '-'")
 
@@ -213,8 +241,10 @@ def _job(value: object, path: str, directory: Path) -> RunJob:
     _keys(model, f"{path}.model", {"path", "sha256"})
     backend_name = _string(data["backend"], f"{path}.backend")
     backend = _BACKENDS.get(backend_name)
+
     if backend is None:
         _fail(f"{path}.backend", f"unknown backend {backend_name!r}")
+
     stopping = _object(data["stopping"], f"{path}.stopping")
     _keys(stopping, f"{path}.stopping", {"maximum_steps", "dt", "cell_count"})
     stop_value = stopping["cell_count"]
@@ -224,8 +254,10 @@ def _job(value: object, path: str, directory: Path) -> RunJob:
         else _integer(stop_value, f"{path}.stopping.cell_count", 1, _UINT64_MAX)
     )
     dt = _number(stopping["dt"], f"{path}.stopping.dt")
+
     if dt < 0.0:
         _fail(f"{path}.stopping.dt", "number must be non-negative")
+
     return RunJob(
         id=job_id,
         model=_path(model["path"], f"{path}.model.path", directory),
@@ -249,17 +281,25 @@ def _job(value: object, path: str, directory: Path) -> RunJob:
 def _periodic_contains(job: RunJob, candidate: Path) -> bool:
     if job.checkpoint_every == 0 or job.checkpoint_every > job.maximum_steps:
         return False
+
     parent, stem, suffix = periodic_checkpoint_parts(job.output)
+
     if candidate.parent != parent:
         return False
+
     prefix = f"{stem}.step-"
     name = candidate.name
+
     if not name.startswith(prefix) or not name.endswith(suffix):
         return False
+
     encoded_step = name[len(prefix) : -len(suffix)]
+
     if len(encoded_step) < 8 or not encoded_step.isascii() or not encoded_step.isdigit():
         return False
+
     step = int(encoded_step)
+
     return 0 < step <= job.maximum_steps and step % job.checkpoint_every == 0
 
 
@@ -269,12 +309,15 @@ def _validate_output_disjointness(jobs: tuple[RunJob, ...]) -> None:
             raise RunManifestError(
                 f"jobs {first.id!r} and {second.id!r} use the same output {first.output}"
             )
+
         if _periodic_contains(first, second.output) or _periodic_contains(second, first.output):
             raise RunManifestError(
                 f"jobs {first.id!r} and {second.id!r} have colliding final/periodic outputs"
             )
+
         first_parent, first_stem, first_suffix = periodic_checkpoint_parts(first.output)
         second_parent, second_stem, second_suffix = periodic_checkpoint_parts(second.output)
+
         if (
             first.checkpoint_every > 0
             and second.checkpoint_every > 0
@@ -295,16 +338,21 @@ def load_run_manifest(path: str | os.PathLike[str]) -> RunManifest:
     """Parse a strict manifest without importing or executing any model."""
 
     source = Path(path).resolve()
+
     try:
         with source.open("rb") as stream:
             encoded = stream.read(MAX_RUN_MANIFEST_BYTES + 1)
     except OSError as error:
         raise RunManifestError(f"could not read run manifest {source}") from error
+
     if not encoded:
         raise RunManifestError("run manifest is empty")
+
     if len(encoded) > MAX_RUN_MANIFEST_BYTES:
         raise RunManifestError(f"run manifest exceeds the {MAX_RUN_MANIFEST_BYTES}-byte limit")
+
     digest = hashlib.sha256(encoded).hexdigest()
+
     try:
         decoded = json.loads(
             encoded,
@@ -318,23 +366,33 @@ def load_run_manifest(path: str | os.PathLike[str]) -> RunManifest:
 
     root = _object(cast(object, decoded), "$")
     _keys(root, "$", {"format", "version", "jobs"})
+
     if _string(root["format"], "$.format") not in (
-        RUN_MANIFEST_FORMAT, "cellmodeller2-run-manifest"
+        RUN_MANIFEST_FORMAT,
+        "cellmodeller2-run-manifest",
     ):
         _fail("$.format", "not a MicroSimulator run manifest")
+
     version = _integer(root["version"], "$.version", 0, _UINT32_MAX)
+
     if version != RUN_MANIFEST_VERSION:
         _fail("$.version", f"unsupported run manifest version {version}")
+
     values = _array(root["jobs"], "$.jobs")
+
     if not values:
         _fail("$.jobs", "at least one job is required")
+
     jobs = tuple(
         _job(value, f"$.jobs[{index}]", source.parent) for index, value in enumerate(values)
     )
     ids = [job.id for job in jobs]
+
     if len(ids) != len(set(ids)):
         raise RunManifestError("run manifest job IDs must be unique")
+
     _validate_output_disjointness(jobs)
+
     return RunManifest(source=source, sha256=digest, jobs=jobs)
 
 
@@ -367,6 +425,7 @@ def execute_run_job(
         },
         "job_id": job.id,
     }
+
     return run_simulation(
         simulation,
         steps=job.maximum_steps,

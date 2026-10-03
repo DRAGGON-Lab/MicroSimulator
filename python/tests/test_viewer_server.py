@@ -32,6 +32,7 @@ def _factory() -> tuple[Simulation, dict[str, JSONValue]]:
     cell.length = 2.0
     cell.growth_rate = 0.5
     simulation.add_cell(cell)
+
     return simulation, {"model": {"name": "viewer-test"}}
 
 
@@ -54,6 +55,7 @@ class _TestController:
 
 def _controller_factory() -> tuple[_TestController, dict[str, JSONValue]]:
     simulation, provenance = _factory()
+
     return _TestController(simulation), provenance
 
 
@@ -63,6 +65,7 @@ def _dist(path: Path) -> Path:
     assets.mkdir(parents=True)
     (dist / "index.html").write_text("<!doctype html><title>test</title>", encoding="utf-8")
     (assets / "app.js").write_text("", encoding="utf-8")
+
     return dist
 
 
@@ -89,6 +92,7 @@ def test_live_session_steps_resets_and_writes_only_configured_checkpoint(
     assert cast(dict[str, Any], reset["scene"])["frame"]["time"] == 0.0
 
     disabled = LiveSession(_factory, dt=0.25)
+
     with pytest.raises(LiveViewerError, match="not configured"):
         disabled.checkpoint()
 
@@ -134,18 +138,22 @@ def test_live_websocket_requires_same_origin_token_and_controls_session(tmp_path
         client = TestClient(TestServer(application))
         await client.start_server()
         origin = str(client.make_url("/")).rstrip("/")
+
         try:
             with pytest.raises(WSServerHandshakeError) as wrong_token:
                 await client.ws_connect(
                     "/api/v1/session?token=wrong",
                     headers={"Origin": origin},
                 )
+
             assert wrong_token.value.status == 403
+
             with pytest.raises(WSServerHandshakeError) as wrong_origin:
                 await client.ws_connect(
                     f"/api/v1/session?token={token}",
                     headers={"Origin": "https://attacker.invalid"},
                 )
+
             assert wrong_origin.value.status == 403
 
             socket = await client.ws_connect(

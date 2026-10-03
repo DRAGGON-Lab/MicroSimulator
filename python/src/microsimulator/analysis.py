@@ -34,9 +34,9 @@ from .checkpoint import CheckpointBundle, JSONValue, load_checkpoint_bundle
 from .scene import SceneFrame, SceneGridBoundary, SceneSignalGrid, capture_scene
 
 ANALYSIS_FORMAT = "microsimulator-analysis"
-ANALYSIS_VERSION = 3
+ANALYSIS_VERSION = 5
 MAX_ANALYSIS_MANIFEST_BYTES = 1 << 26
-_SUPPORTED_ANALYSIS_VERSIONS = frozenset({1, 2, ANALYSIS_VERSION})
+_SUPPORTED_ANALYSIS_VERSIONS = frozenset({1, 2, 3, 4, ANALYSIS_VERSION})
 
 _TABLE_NAMES = frozenset(
     {
@@ -45,8 +45,20 @@ _TABLE_NAMES = frozenset(
         "species.parquet",
         "contacts.parquet",
         "external_contacts.parquet",
+        "culture_frames.parquet",
+        "culture_cells.parquet",
+        "fluid_fragments.parquet",
+        "chemical_transfers.parquet",
     }
 )
+# Version 4 files keep their original identities and digests. Public readers
+# resolve canonical table names to those legacy paths without rewriting data.
+_LEGACY_TABLE_NAMES = {
+    "culture_frames.parquet": "media_frames.parquet",
+    "culture_cells.parquet": "media_cells.parquet",
+    "fluid_fragments.parquet": "media_fragments.parquet",
+    "chemical_transfers.parquet": "media_reservoirs.parquet",
+}
 _REQUIRED_TABLE_NAMES = frozenset({"frames.parquet", "cells.parquet", "species.parquet"})
 
 _BACKEND_NAMES = {
@@ -98,15 +110,24 @@ class AnalysisDataset:
 
         if name not in _TABLE_NAMES:
             raise AnalysisError(f"unknown analysis table {name!r}")
+
         tables = cast(dict[str, object], self.manifest["tables"])
-        return name in tables
+
+        return self._table_path(name) in tables
+
+    def _table_path(self, name: str) -> str:
+        if self.manifest["version"] == 4:
+            return _LEGACY_TABLE_NAMES.get(name, name)
+
+        return name
 
     def scan_table(self, name: str) -> pl.LazyFrame:
         """Lazily scan a named Parquet table after manifest validation."""
 
         if not self.has_table(name):
             raise AnalysisError(f"analysis dataset does not contain {name}")
-        return pl.scan_parquet(self.root / name)
+
+        return pl.scan_parquet(self.root / self._table_path(name))
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,12 +147,14 @@ class _SignalEpoch:
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
+
     try:
         with path.open("rb") as stream:
             while chunk := stream.read(1 << 20):
                 digest.update(chunk)
     except OSError as error:
         raise AnalysisError(f"could not read {path}") from error
+
     return digest.hexdigest()
 
 
@@ -151,27 +174,35 @@ def _reject_constant(value: str) -> None:
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
+
     for key, value in pairs:
         if key in result:
             raise AnalysisError(f"analysis manifest contains duplicate key {key!r}")
+
         result[key] = value
+
     return result
 
 
 def _manifest_object(value: object, path: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise AnalysisError(f"{path}: expected an object")
+
     result = cast(dict[object, object], value)
+
     if not all(isinstance(key, str) for key in result):
         raise AnalysisError(f"{path}: expected string object keys")
+
     return cast(dict[str, object], result)
 
 
 def _manifest_keys(value: dict[str, object], path: str, required: set[str]) -> None:
     missing = required - value.keys()
     unknown = value.keys() - required
+
     if missing:
         raise AnalysisError(f"{path}: missing keys {sorted(missing)}")
+
     if unknown:
         raise AnalysisError(f"{path}: unknown keys {sorted(unknown)}")
 
@@ -179,12 +210,15 @@ def _manifest_keys(value: dict[str, object], path: str, required: set[str]) -> N
 def _digest_value(value: object, path: str) -> str:
     if not isinstance(value, str) or len(value) != 64:
         raise AnalysisError(f"{path}: expected a SHA-256 digest")
+
     try:
         bytes.fromhex(value)
     except ValueError as error:
         raise AnalysisError(f"{path}: expected a SHA-256 digest") from error
+
     if value != value.lower():
         raise AnalysisError(f"{path}: expected a lowercase SHA-256 digest")
+
     return value
 
 
@@ -238,16 +272,22 @@ def _boundary_record(boundary: SceneGridBoundary) -> dict[str, JSONValue]:
 def _signal_epochs(frames: Sequence[_SourceFrame]) -> list[_SignalEpoch]:
     epochs: list[_SignalEpoch] = []
     previous_had_grid = False
+
     for frame in frames:
         grid = frame.scene.signal_grid
+
         if grid is None:
             previous_had_grid = False
             continue
+
         signature = _grid_signature(grid)
+
         if not previous_had_grid or not epochs or epochs[-1].signature != signature:
             epochs.append(_SignalEpoch(signature, []))
+
         epochs[-1].frames.append(frame)
         previous_had_grid = True
+
     return epochs
 
 
@@ -260,18 +300,24 @@ def _write_signals(path: Path, epochs: Sequence[_SignalEpoch]) -> list[dict[str,
     )
     records: list[dict[str, JSONValue]] = []
     compressor = ZstdCodec(level=7, checksum=True)
+
     for epoch_index, epoch in enumerate(epochs):
         first_grid = epoch.frames[0].scene.signal_grid
+
         if first_grid is None:  # pragma: no cover - guaranteed by _signal_epochs
             raise AssertionError("signal epoch has no grid")
+
         shape = first_grid.shape
         array_shape = (len(epoch.frames), first_grid.signal_count, *shape)
         chunks = (1, 1, min(shape[0], 64), min(shape[1], 64), min(shape[2], 16))
         levels = np.empty(array_shape, dtype=np.float32)
+
         for local_index, frame in enumerate(epoch.frames):
             grid = frame.scene.signal_grid
+
             if grid is None:  # pragma: no cover - guaranteed by _signal_epochs
                 raise AssertionError("signal epoch contains an empty grid")
+
             levels[local_index] = np.asarray(grid.levels, dtype=np.float32).reshape(
                 (grid.signal_count, *grid.shape)
             )
@@ -329,46 +375,46 @@ def _write_signals(path: Path, epochs: Sequence[_SignalEpoch]) -> list[dict[str,
                 "compression": {"codec": "zstd", "level": 7, "checksum": True},
             }
         )
+
     return records
 
 
 def _directory_digest(path: Path) -> str:
     digest = hashlib.sha256()
     children = sorted(path.rglob("*"))
+
     if any(child.is_symlink() for child in children):
         raise AnalysisError(f"analysis data contains a symbolic link under {path}")
+
     for child in (item for item in children if item.is_file()):
         relative = child.relative_to(path).as_posix().encode("utf-8")
         digest.update(len(relative).to_bytes(8, "big"))
         digest.update(relative)
         digest.update(bytes.fromhex(_sha256(child)))
+
     return digest.hexdigest()
 
 
-def open_dataset(
-    path: str | os.PathLike[str],
-    *,
-    verify: bool = True,
-) -> AnalysisDataset:
-    """Open a supported analysis dataset and optionally verify every data digest."""
-
-    root = Path(path)
-    if not root.is_dir() or root.is_symlink():
-        raise AnalysisError(f"analysis dataset is not a directory: {root}")
+def _read_dataset_manifest(root: Path) -> dict[str, object]:
     manifest_path = root / "manifest.json"
+
     if manifest_path.is_symlink():
         raise AnalysisError("analysis manifest must not be a symbolic link")
+
     try:
         with manifest_path.open("rb") as stream:
             encoded = stream.read(MAX_ANALYSIS_MANIFEST_BYTES + 1)
     except OSError as error:
         raise AnalysisError(f"could not read analysis manifest {manifest_path}") from error
+
     if not encoded:
         raise AnalysisError("analysis manifest is empty")
+
     if len(encoded) > MAX_ANALYSIS_MANIFEST_BYTES:
         raise AnalysisError(
             f"analysis manifest exceeds the {MAX_ANALYSIS_MANIFEST_BYTES}-byte limit"
         )
+
     try:
         decoded = json.loads(
             encoded,
@@ -381,22 +427,33 @@ def open_dataset(
         raise AnalysisError(f"analysis manifest is not valid UTF-8 JSON: {error}") from error
 
     manifest = _manifest_object(cast(object, decoded), "$")
+
+    return manifest
+
+
+def _validate_dataset_identity(manifest: dict[str, object]) -> int:
     top_level_keys = {"format", "version", "dataset_id", "sources", "options", "tables", "signals"}
     _manifest_keys(manifest, "$", top_level_keys)
+
     if manifest["format"] not in (ANALYSIS_FORMAT, "cellmodeller2-analysis"):
         raise AnalysisError("$.format: not a MicroSimulator analysis dataset")
+
     schema_version = manifest["version"]
+
     if (
         isinstance(schema_version, bool)
         or not isinstance(schema_version, int)
         or schema_version not in _SUPPORTED_ANALYSIS_VERSIONS
     ):
         raise AnalysisError(f"$.version: unsupported analysis version {manifest['version']!r}")
+
     dataset_id = _digest_value(manifest["dataset_id"], "$.dataset_id")
     sources = manifest["sources"]
     options = manifest["options"]
+
     if not isinstance(sources, list):
         raise AnalysisError("$.sources: expected an array")
+
     _manifest_object(options, "$.options")
     identity: dict[str, object] = {
         "format": manifest["format"],
@@ -404,50 +461,99 @@ def open_dataset(
         "sources": sources,
         "options": options,
     }
+
     if schema_version >= 2:
         identity["tables"] = manifest["tables"]
         identity["signals"] = manifest["signals"]
+
     expected_dataset_id = hashlib.sha256(_canonical_json(identity)).hexdigest()
+
     if not hmac.compare_digest(dataset_id, expected_dataset_id):
         raise AnalysisError("$.dataset_id: dataset identity digest does not match")
 
+    return schema_version
+
+
+def _validate_dataset_tables(
+    root: Path, manifest: dict[str, object], schema_version: int, verify: bool
+) -> None:
     tables = _manifest_object(manifest["tables"], "$.tables")
     table_names = set(tables)
     missing_tables = _REQUIRED_TABLE_NAMES - table_names
-    unknown_tables = table_names - _TABLE_NAMES
+    allowed_tables = (
+        (_TABLE_NAMES - _LEGACY_TABLE_NAMES.keys()) | set(_LEGACY_TABLE_NAMES.values())
+        if schema_version == 4
+        else _TABLE_NAMES
+    )
+    unknown_tables = table_names - allowed_tables
+
     if missing_tables:
         raise AnalysisError(f"$.tables: missing tables {sorted(missing_tables)}")
+
     if unknown_tables:
         raise AnalysisError(f"$.tables: unknown tables {sorted(unknown_tables)}")
+
     for name, value in tables.items():
         record = _manifest_object(value, f"$.tables.{name}")
         _manifest_keys(record, f"$.tables.{name}", {"rows", "schema", "sha256"})
         rows = record["rows"]
+
         if isinstance(rows, bool) or not isinstance(rows, int) or rows < 0:
             raise AnalysisError(f"$.tables.{name}.rows: expected a non-negative integer")
+
         if not isinstance(record["schema"], list):
             raise AnalysisError(f"$.tables.{name}.schema: expected an array")
+
         expected_digest = _digest_value(record["sha256"], f"$.tables.{name}.sha256")
         table_path = root / name
+
         if not table_path.is_file() or table_path.is_symlink():
             raise AnalysisError(f"analysis table is missing or unsafe: {name}")
+
         if verify and not hmac.compare_digest(_sha256(table_path), expected_digest):
             raise AnalysisError(f"analysis table digest does not match: {name}")
 
+
+def _validate_dataset_signals(root: Path, manifest: dict[str, object], verify: bool) -> None:
     signals = manifest["signals"]
+
     if signals is not None:
         signal_record = _manifest_object(signals, "$.signals")
         _manifest_keys(signal_record, "$.signals", {"path", "sha256_tree", "epochs"})
+
         if signal_record["path"] != "signals.zarr":
             raise AnalysisError("$.signals.path: expected 'signals.zarr'")
+
         expected_tree = _digest_value(signal_record["sha256_tree"], "$.signals.sha256_tree")
+
         if not isinstance(signal_record["epochs"], list):
             raise AnalysisError("$.signals.epochs: expected an array")
+
         signals_path = root / "signals.zarr"
+
         if not signals_path.is_dir() or signals_path.is_symlink():
             raise AnalysisError("analysis signal store is missing or unsafe")
+
         if verify and not hmac.compare_digest(_directory_digest(signals_path), expected_tree):
             raise AnalysisError("analysis signal store digest does not match")
+
+
+def open_dataset(
+    path: str | os.PathLike[str],
+    *,
+    verify: bool = True,
+) -> AnalysisDataset:
+    """Open a supported analysis dataset and optionally verify every data digest."""
+
+    root = Path(path)
+
+    if not root.is_dir() or root.is_symlink():
+        raise AnalysisError(f"analysis dataset is not a directory: {root}")
+
+    manifest = _read_dataset_manifest(root)
+    schema_version = _validate_dataset_identity(manifest)
+    _validate_dataset_tables(root, manifest, schema_version, verify)
+    _validate_dataset_signals(root, manifest, verify)
 
     return AnalysisDataset(
         root=root.resolve(),
@@ -464,17 +570,21 @@ def _load_sources(
 ) -> list[_SourceFrame]:
     if not checkpoints:
         raise AnalysisError("at least one checkpoint is required")
+
     frames: list[_SourceFrame] = []
     previous_time: float | None = None
+
     for index, value in enumerate(checkpoints):
         path = Path(value)
         bundle = load_checkpoint_bundle(path, backend=backend, device_index=device_index)
-        scene = capture_scene(bundle.simulation)
+        scene = capture_scene(bundle.simulation, channel_metadata=bundle.channel_metadata)
+
         if previous_time is not None and scene.time < previous_time:
             raise AnalysisError(
                 f"checkpoint {path} has time {scene.time:.9g}, before prior time "
                 f"{previous_time:.9g}"
             )
+
         previous_time = scene.time
         frames.append(
             _SourceFrame(
@@ -485,6 +595,7 @@ def _load_sources(
                 scene=scene,
             )
         )
+
     return frames
 
 
@@ -533,6 +644,69 @@ _CELLS_SCHEMA = pa.schema(
         pa.field("fixed", pa.bool_(), nullable=False),
     ]
 )
+
+_CULTURE_SCHEMAS = {
+    "culture_frames.parquet": pa.schema(
+        [
+            pa.field("frame_index", pa.uint32(), nullable=False),
+            *[
+                pa.field(name, pa.float64(), nullable=False)
+                for name in (
+                    "length_unit_m",
+                    "time_unit_s",
+                    "viscosity_pa_s",
+                    "density_kg_m3",
+                    "spacing",
+                    "max_speed_m_s",
+                    "flow_relative_residual",
+                    "maximum_volume_residual",
+                )
+            ],
+            pa.field("shape", pa.list_(pa.uint32()), nullable=False),
+            pa.field("origin", pa.list_(pa.float64()), nullable=False),
+            pa.field("obstacles", pa.list_(pa.uint8()), nullable=False),
+            pa.field("solute_names", pa.list_(pa.string()), nullable=False),
+            pa.field("solute_amount_units", pa.list_(pa.string()), nullable=False),
+            pa.field("culture_authoring_json", pa.string(), nullable=False),
+        ]
+    ),
+    "culture_cells.parquet": pa.schema(
+        [
+            pa.field("frame_index", pa.uint32(), nullable=False),
+            pa.field("cell_id", pa.uint64(), nullable=False),
+            *[
+                pa.field(name, pa.float64(), nullable=False)
+                for name in ("biochemical_volume", "geometric_volume", "cylinder_length", "radius")
+            ],
+            pa.field("position", pa.list_(pa.float64()), nullable=False),
+            pa.field("orientation", pa.list_(pa.float64()), nullable=False),
+            pa.field("species_amounts", pa.list_(pa.float64()), nullable=False),
+            pa.field("dry_biomass_g", pa.float64()),
+            pa.field("realized_specific_rate_per_hour", pa.float64(), nullable=False),
+            pa.field("biomass_produced_g", pa.float64(), nullable=False),
+            pa.field("uptake_totals", pa.list_(pa.float64()), nullable=False),
+            pa.field("surface_concentrations", pa.list_(pa.float64()), nullable=False),
+        ]
+    ),
+    "fluid_fragments.parquet": pa.schema(
+        [
+            pa.field("frame_index", pa.uint32(), nullable=False),
+            pa.field("fragment_index", pa.uint32(), nullable=False),
+            pa.field("site", pa.uint32(), nullable=False),
+            pa.field("component", pa.uint32(), nullable=False),
+            pa.field("volume", pa.float64(), nullable=False),
+            pa.field("centroid", pa.list_(pa.float64()), nullable=False),
+            pa.field("solute_amounts", pa.list_(pa.float64()), nullable=False),
+        ]
+    ),
+    "chemical_transfers.parquet": pa.schema(
+        [
+            pa.field("frame_index", pa.uint32(), nullable=False),
+            pa.field("port", pa.string(), nullable=False),
+            pa.field("net_amounts_into_fluid", pa.list_(pa.float64()), nullable=False),
+        ]
+    ),
+}
 
 _SPECIES_SCHEMA = pa.schema(
     [
@@ -591,24 +765,403 @@ def _parameter_record(parameters: object, names: Sequence[str]) -> dict[str, JSO
 def _publish(temporary: Path, destination: Path, *, replace: bool) -> None:
     if destination.exists() and not replace:
         raise AnalysisError(f"output already exists: {destination}")
+
     backup: Path | None = None
+
     if destination.exists():
         backup = Path(
             tempfile.mkdtemp(prefix=f".{destination.name}.backup-", dir=destination.parent)
         )
         backup.rmdir()
         destination.rename(backup)
+
     try:
         temporary.rename(destination)
     except OSError:
         if backup is not None:
             backup.rename(destination)
+
         raise
+
     if backup is not None:
         if backup.is_dir():
             shutil.rmtree(backup)
         else:
             backup.unlink()
+
+
+def _append_culture_rows(
+    source: _SourceFrame, culture_rows: dict[str, list[dict[str, object]]]
+) -> None:
+    scene = source.scene
+
+    if scene.culture is not None:
+        culture = scene.culture
+        state = source.bundle.simulation.culture_checkpoint
+
+        if state is None:
+            raise AnalysisError("culture scene and native state disagree")
+
+        culture_rows["culture_frames.parquet"].append(
+            {
+                "frame_index": source.index,
+                "length_unit_m": culture.length_unit_m,
+                "time_unit_s": culture.time_unit_s,
+                "viscosity_pa_s": culture.viscosity_pa_s,
+                "density_kg_m3": culture.density_kg_m3,
+                "spacing": culture.spacing,
+                "max_speed_m_s": culture.max_speed_m_s,
+                "flow_relative_residual": culture.flow_relative_residual,
+                "maximum_volume_residual": culture.maximum_volume_residual,
+                "shape": list(culture.shape),
+                "origin": list(culture.origin),
+                "obstacles": list(culture.obstacles),
+                "solute_names": list(culture.solutes),
+                "solute_amount_units": [s.amount_unit for s in state.configuration.solutes],
+                "culture_authoring_json": state.configuration.authoring_json,
+            }
+        )
+        models = {m.cell_id: m for m in state.configuration.growth}
+
+        for cell in state.cells:
+            concentrations = source.bundle.simulation.cell_surface_concentrations(cell.body.id)
+            culture_rows["culture_cells.parquet"].append(
+                {
+                    "frame_index": source.index,
+                    "cell_id": cell.body.id,
+                    "biochemical_volume": cell.biochemical_volume,
+                    "geometric_volume": cell.body.geometric_volume,
+                    "cylinder_length": cell.body.length,
+                    "radius": cell.body.radius,
+                    "position": list(cell.body.position),
+                    "orientation": list(cell.body.orientation),
+                    "species_amounts": cell.species_amounts,
+                    "dry_biomass_g": cell.biochemical_volume * models[cell.body.id].biomass_density
+                    if cell.body.id in models
+                    else None,
+                    "realized_specific_rate_per_hour": cell.realized_specific_rate
+                    * 3600
+                    / state.configuration.grid.time_unit_s,
+                    "biomass_produced_g": cell.biomass_produced,
+                    "uptake_totals": cell.uptake_totals,
+                    "surface_concentrations": concentrations,
+                }
+            )
+
+        for i, fragment in enumerate(culture.fragments):
+            culture_rows["fluid_fragments.parquet"].append(
+                {
+                    "frame_index": source.index,
+                    "fragment_index": i,
+                    "site": fragment.site,
+                    "component": fragment.component,
+                    "volume": fragment.volume,
+                    "centroid": list(fragment.centroid),
+                    "solute_amounts": list(fragment.amounts),
+                }
+            )
+
+        for reservoir in culture.reservoirs:
+            culture_rows["chemical_transfers.parquet"].append(
+                {
+                    "frame_index": source.index,
+                    "port": reservoir.name,
+                    "net_amounts_into_fluid": list(reservoir.amounts),
+                }
+            )
+
+
+def _append_cell_rows(
+    source: _SourceFrame, cell_rows: list[dict[str, object]], species_rows: list[dict[str, object]]
+) -> None:
+    scene = source.scene
+
+    for cell in scene.cells:
+        cell_rows.append(
+            {
+                "frame_index": source.index,
+                "id": cell.id,
+                "parent_id": cell.parent_id,
+                "slot": cell.slot,
+                "position_x": cell.position[0],
+                "position_y": cell.position[1],
+                "position_z": cell.position[2],
+                "direction_x": cell.direction[0],
+                "direction_y": cell.direction[1],
+                "direction_z": cell.direction[2],
+                "cylinder_length": cell.length,
+                "radius": cell.radius,
+                "capsule_length": cell.length + (2.0 * cell.radius),
+                "growth_rate": cell.growth_rate,
+                "cell_type": cell.cell_type,
+                "fixed": cell.fixed,
+            }
+        )
+
+        for channel, level in enumerate(cell.species):
+            species_rows.append(
+                {
+                    "frame_index": source.index,
+                    "cell_id": cell.id,
+                    "channel": channel,
+                    "level": level,
+                }
+            )
+
+
+def _append_contact_rows(
+    source: _SourceFrame, contact_values: ContactParameters, contact_rows: list[dict[str, object]]
+) -> int:
+    graph = source.bundle.simulation.find_cell_contacts(contact_values)
+
+    for contact in graph.contacts:
+        contact_rows.append(
+            {
+                "frame_index": source.index,
+                "first_id": contact.first_id,
+                "second_id": contact.second_id,
+                "first_slot": contact.first_slot,
+                "second_slot": contact.second_slot,
+                "ordinal": contact.ordinal,
+                "point_x": contact.point_on_first.x,
+                "point_y": contact.point_on_first.y,
+                "point_z": contact.point_on_first.z,
+                "normal_x": contact.normal.x,
+                "normal_y": contact.normal.y,
+                "normal_z": contact.normal.z,
+                "signed_separation": contact.signed_separation,
+                "overlap": max(0.0, -contact.signed_separation),
+                "weight": contact.weight,
+            }
+        )
+
+    frame_contact_count = len(graph)
+
+    return frame_contact_count
+
+
+def _append_external_rows(
+    source: _SourceFrame,
+    constraint_values: ConstraintContactParameters,
+    external_rows: list[dict[str, object]],
+) -> int:
+    external_graph = source.bundle.simulation.find_external_contacts(constraint_values)
+
+    for contact in external_graph.contacts:
+        external_rows.append(
+            {
+                "frame_index": source.index,
+                "cell_id": contact.cell_id,
+                "cell_slot": contact.cell_slot,
+                "constraint_id": contact.constraint_id,
+                "constraint_kind": _CONSTRAINT_NAMES[contact.constraint_kind],
+                "location": _CONTACT_LOCATION_NAMES[contact.location],
+                "point_x": contact.point_on_cell.x,
+                "point_y": contact.point_on_cell.y,
+                "point_z": contact.point_on_cell.z,
+                "normal_x": contact.normal.x,
+                "normal_y": contact.normal.y,
+                "normal_z": contact.normal.z,
+                "signed_separation": contact.signed_separation,
+                "overlap": max(0.0, -contact.signed_separation),
+                "weight": contact.weight,
+            }
+        )
+
+    frame_external_count = len(external_graph)
+
+    return frame_external_count
+
+
+def _append_frame_row(
+    source: _SourceFrame,
+    frame_rows: list[dict[str, object]],
+    frame_contact_count: int,
+    frame_external_count: int,
+) -> None:
+    scene = source.scene
+    source_backend = source.bundle.source_backend
+    reconstructed = scene.backend
+    frame_rows.append(
+        {
+            "frame_index": source.index,
+            "time": scene.time,
+            "source": source.label,
+            "source_sha256": source.digest,
+            "checkpoint_version": source.bundle.schema_version,
+            "source_backend_kind": source_backend.kind,
+            "source_backend_name": source_backend.name,
+            "source_backend_device": source_backend.device,
+            "source_backend_device_index": source_backend.device_index,
+            "source_backend_native": source_backend.native,
+            "reconstruction_backend_kind": reconstructed.kind,
+            "reconstruction_backend_name": reconstructed.name,
+            "reconstruction_backend_device": reconstructed.device,
+            "reconstruction_backend_device_index": reconstructed.device_index,
+            "reconstruction_backend_native": reconstructed.native,
+            "cell_count": len(scene.cells),
+            "species_count": scene.species_count,
+            "signal_count": scene.signal_grid.signal_count if scene.signal_grid else 0,
+            "contact_count": frame_contact_count,
+            "external_contact_count": frame_external_count,
+        }
+    )
+
+
+def _dataset_options(
+    backend: BackendKind,
+    device_index: int,
+    include_contacts: bool,
+    include_external_contacts: bool,
+    path_provenance: bool,
+    contact_values: ContactParameters,
+    constraint_values: ConstraintContactParameters,
+) -> dict[str, JSONValue]:
+    options: dict[str, JSONValue] = {
+        "backend": _BACKEND_NAMES[backend],
+        "device_index": device_index,
+        "include_contacts": include_contacts,
+        "include_external_contacts": include_external_contacts,
+        "path_provenance": path_provenance,
+        "contact_parameters": (
+            _parameter_record(
+                contact_values,
+                ("activation_margin", "parallel_sine_threshold", "degeneracy_epsilon"),
+            )
+            if include_contacts
+            else None
+        ),
+        "constraint_contact_parameters": (
+            _parameter_record(constraint_values, ("activation_margin", "degeneracy_epsilon"))
+            if include_external_contacts
+            else None
+        ),
+        "contact_conformance": (
+            "cpu_reference" if backend == BackendKind.CPU else "hardware_conformant"
+        )
+        if include_contacts or include_external_contacts
+        else None,
+    }
+
+    return options
+
+
+def _write_dataset_manifest(
+    temporary: Path,
+    frames: Sequence[_SourceFrame],
+    options: dict[str, JSONValue],
+    table_manifest: dict[str, JSONValue],
+    signal_manifest: dict[str, JSONValue] | None,
+) -> str:
+    source_manifest: list[JSONValue] = [
+        {
+            "frame_index": source.index,
+            "path": source.label,
+            "sha256": source.digest,
+            "checkpoint_version": source.bundle.schema_version,
+            "provenance": source.bundle.provenance,
+        }
+        for source in frames
+    ]
+    dataset_id = hashlib.sha256(
+        _canonical_json(
+            {
+                "format": ANALYSIS_FORMAT,
+                "version": ANALYSIS_VERSION,
+                "sources": source_manifest,
+                "options": options,
+                "tables": table_manifest,
+                "signals": signal_manifest,
+            }
+        )
+    ).hexdigest()
+    manifest: dict[str, JSONValue] = {
+        "format": ANALYSIS_FORMAT,
+        "version": ANALYSIS_VERSION,
+        "dataset_id": dataset_id,
+        "sources": source_manifest,
+        "options": options,
+        "tables": table_manifest,
+        "signals": signal_manifest,
+    }
+    (temporary / "manifest.json").write_bytes(
+        json.dumps(
+            manifest,
+            allow_nan=False,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ).encode("utf-8")
+        + b"\n"
+    )
+
+    return dataset_id
+
+
+def _write_dataset_data(
+    temporary: Path,
+    tables: list[tuple[str, list[dict[str, object]], Any]],
+    epoch_values: list[_SignalEpoch],
+) -> tuple[dict[str, JSONValue], dict[str, JSONValue] | None]:
+    table_manifest: dict[str, JSONValue] = {}
+
+    for filename, rows, schema in tables:
+        path = temporary / filename
+        _write_table(path, rows, schema)
+        table_manifest[filename] = cast(
+            JSONValue,
+            {
+                "rows": len(rows),
+                "schema": _schema_record(schema),
+                "sha256": _sha256(path),
+            },
+        )
+
+    signal_manifest: dict[str, JSONValue] | None = None
+
+    if epoch_values:
+        signals_path = temporary / "signals.zarr"
+        epoch_records = _write_signals(signals_path, epoch_values)
+        signal_manifest = cast(
+            dict[str, JSONValue],
+            {
+                "path": "signals.zarr",
+                "sha256_tree": _directory_digest(signals_path),
+                "epochs": epoch_records,
+            },
+        )
+
+    return table_manifest, signal_manifest
+
+
+def _analysis_tables(
+    frame_rows: list[dict[str, object]],
+    cell_rows: list[dict[str, object]],
+    species_rows: list[dict[str, object]],
+    contact_rows: list[dict[str, object]],
+    external_rows: list[dict[str, object]],
+    culture_rows: dict[str, list[dict[str, object]]],
+    include_contacts: bool,
+    include_external_contacts: bool,
+) -> list[tuple[str, list[dict[str, object]], Any]]:
+    tables: list[tuple[str, list[dict[str, object]], Any]] = [
+        ("frames.parquet", frame_rows, _FRAMES_SCHEMA),
+        ("cells.parquet", cell_rows, _CELLS_SCHEMA),
+        ("species.parquet", species_rows, _SPECIES_SCHEMA),
+    ]
+
+    if include_contacts:
+        tables.append(("contacts.parquet", contact_rows, _CONTACTS_SCHEMA))
+
+    if include_external_contacts:
+        tables.append(("external_contacts.parquet", external_rows, _EXTERNAL_CONTACTS_SCHEMA))
+
+    if culture_rows["culture_frames.parquet"]:
+        tables.extend(
+            (name, culture_rows[name], schema) for name, schema in _CULTURE_SCHEMAS.items()
+        )
+
+    return tables
 
 
 def export_dataset(
@@ -628,9 +1181,12 @@ def export_dataset(
 
     if device_index < 0:
         raise AnalysisError("device index must be non-negative")
+
     destination = Path(output)
+
     if destination.exists() and not replace:
         raise AnalysisError(f"output already exists: {destination}")
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     frames = _load_sources(checkpoints, backend, device_index, path_provenance)
     contact_values = contact_parameters or ContactParameters()
@@ -641,224 +1197,58 @@ def export_dataset(
     species_rows: list[dict[str, object]] = []
     contact_rows: list[dict[str, object]] = []
     external_rows: list[dict[str, object]] = []
+    culture_rows: dict[str, list[dict[str, object]]] = {name: [] for name in _CULTURE_SCHEMAS}
+
     for source in frames:
-        scene = source.scene
-        for cell in scene.cells:
-            cell_rows.append(
-                {
-                    "frame_index": source.index,
-                    "id": cell.id,
-                    "parent_id": cell.parent_id,
-                    "slot": cell.slot,
-                    "position_x": cell.position[0],
-                    "position_y": cell.position[1],
-                    "position_z": cell.position[2],
-                    "direction_x": cell.direction[0],
-                    "direction_y": cell.direction[1],
-                    "direction_z": cell.direction[2],
-                    "cylinder_length": cell.length,
-                    "radius": cell.radius,
-                    "capsule_length": cell.length + (2.0 * cell.radius),
-                    "growth_rate": cell.growth_rate,
-                    "cell_type": cell.cell_type,
-                    "fixed": cell.fixed,
-                }
-            )
-            for channel, level in enumerate(cell.species):
-                species_rows.append(
-                    {
-                        "frame_index": source.index,
-                        "cell_id": cell.id,
-                        "channel": channel,
-                        "level": level,
-                    }
-                )
+        _append_culture_rows(source, culture_rows)
+
+        _append_cell_rows(source, cell_rows, species_rows)
 
         frame_contact_count = 0
+
         if include_contacts:
-            graph = source.bundle.simulation.find_cell_contacts(contact_values)
-            for contact in graph.contacts:
-                contact_rows.append(
-                    {
-                        "frame_index": source.index,
-                        "first_id": contact.first_id,
-                        "second_id": contact.second_id,
-                        "first_slot": contact.first_slot,
-                        "second_slot": contact.second_slot,
-                        "ordinal": contact.ordinal,
-                        "point_x": contact.point_on_first.x,
-                        "point_y": contact.point_on_first.y,
-                        "point_z": contact.point_on_first.z,
-                        "normal_x": contact.normal.x,
-                        "normal_y": contact.normal.y,
-                        "normal_z": contact.normal.z,
-                        "signed_separation": contact.signed_separation,
-                        "overlap": max(0.0, -contact.signed_separation),
-                        "weight": contact.weight,
-                    }
-                )
-            frame_contact_count = len(graph)
+            frame_contact_count = _append_contact_rows(source, contact_values, contact_rows)
 
         frame_external_count = 0
-        if include_external_contacts:
-            external_graph = source.bundle.simulation.find_external_contacts(constraint_values)
-            for contact in external_graph.contacts:
-                external_rows.append(
-                    {
-                        "frame_index": source.index,
-                        "cell_id": contact.cell_id,
-                        "cell_slot": contact.cell_slot,
-                        "constraint_id": contact.constraint_id,
-                        "constraint_kind": _CONSTRAINT_NAMES[contact.constraint_kind],
-                        "location": _CONTACT_LOCATION_NAMES[contact.location],
-                        "point_x": contact.point_on_cell.x,
-                        "point_y": contact.point_on_cell.y,
-                        "point_z": contact.point_on_cell.z,
-                        "normal_x": contact.normal.x,
-                        "normal_y": contact.normal.y,
-                        "normal_z": contact.normal.z,
-                        "signed_separation": contact.signed_separation,
-                        "overlap": max(0.0, -contact.signed_separation),
-                        "weight": contact.weight,
-                    }
-                )
-            frame_external_count = len(external_graph)
 
-        source_backend = source.bundle.source_backend
-        reconstructed = scene.backend
-        frame_rows.append(
-            {
-                "frame_index": source.index,
-                "time": scene.time,
-                "source": source.label,
-                "source_sha256": source.digest,
-                "checkpoint_version": source.bundle.schema_version,
-                "source_backend_kind": source_backend.kind,
-                "source_backend_name": source_backend.name,
-                "source_backend_device": source_backend.device,
-                "source_backend_device_index": source_backend.device_index,
-                "source_backend_native": source_backend.native,
-                "reconstruction_backend_kind": reconstructed.kind,
-                "reconstruction_backend_name": reconstructed.name,
-                "reconstruction_backend_device": reconstructed.device,
-                "reconstruction_backend_device_index": reconstructed.device_index,
-                "reconstruction_backend_native": reconstructed.native,
-                "cell_count": len(scene.cells),
-                "species_count": scene.species_count,
-                "signal_count": scene.signal_grid.signal_count if scene.signal_grid else 0,
-                "contact_count": frame_contact_count,
-                "external_contact_count": frame_external_count,
-            }
-        )
+        if include_external_contacts:
+            frame_external_count = _append_external_rows(source, constraint_values, external_rows)
+
+        _append_frame_row(source, frame_rows, frame_contact_count, frame_external_count)
 
     epoch_values = _signal_epochs(frames)
     temporary = Path(tempfile.mkdtemp(prefix=f".{destination.name}.tmp-", dir=destination.parent))
+
     try:
-        tables: list[tuple[str, list[dict[str, object]], Any]] = [
-            ("frames.parquet", frame_rows, _FRAMES_SCHEMA),
-            ("cells.parquet", cell_rows, _CELLS_SCHEMA),
-            ("species.parquet", species_rows, _SPECIES_SCHEMA),
-        ]
-        if include_contacts:
-            tables.append(("contacts.parquet", contact_rows, _CONTACTS_SCHEMA))
-        if include_external_contacts:
-            tables.append(("external_contacts.parquet", external_rows, _EXTERNAL_CONTACTS_SCHEMA))
-        table_manifest: dict[str, JSONValue] = {}
-        for filename, rows, schema in tables:
-            path = temporary / filename
-            _write_table(path, rows, schema)
-            table_manifest[filename] = cast(
-                JSONValue,
-                {
-                    "rows": len(rows),
-                    "schema": _schema_record(schema),
-                    "sha256": _sha256(path),
-                },
-            )
+        tables = _analysis_tables(
+            frame_rows,
+            cell_rows,
+            species_rows,
+            contact_rows,
+            external_rows,
+            culture_rows,
+            include_contacts,
+            include_external_contacts,
+        )
 
-        signal_manifest: dict[str, JSONValue] | None = None
-        if epoch_values:
-            signals_path = temporary / "signals.zarr"
-            epoch_records = _write_signals(signals_path, epoch_values)
-            signal_manifest = cast(
-                dict[str, JSONValue],
-                {
-                    "path": "signals.zarr",
-                    "sha256_tree": _directory_digest(signals_path),
-                    "epochs": epoch_records,
-                },
-            )
-
-        options: dict[str, JSONValue] = {
-            "backend": _BACKEND_NAMES[backend],
-            "device_index": device_index,
-            "include_contacts": include_contacts,
-            "include_external_contacts": include_external_contacts,
-            "path_provenance": path_provenance,
-            "contact_parameters": (
-                _parameter_record(
-                    contact_values,
-                    ("activation_margin", "parallel_sine_threshold", "degeneracy_epsilon"),
-                )
-                if include_contacts
-                else None
-            ),
-            "constraint_contact_parameters": (
-                _parameter_record(constraint_values, ("activation_margin", "degeneracy_epsilon"))
-                if include_external_contacts
-                else None
-            ),
-            "contact_conformance": (
-                "cpu_reference" if backend == BackendKind.CPU else "hardware_conformant"
-            )
-            if include_contacts or include_external_contacts
-            else None,
-        }
-        source_manifest: list[JSONValue] = [
-            {
-                "frame_index": source.index,
-                "path": source.label,
-                "sha256": source.digest,
-                "checkpoint_version": source.bundle.schema_version,
-                "provenance": source.bundle.provenance,
-            }
-            for source in frames
-        ]
-        dataset_id = hashlib.sha256(
-            _canonical_json(
-                {
-                    "format": ANALYSIS_FORMAT,
-                    "version": ANALYSIS_VERSION,
-                    "sources": source_manifest,
-                    "options": options,
-                    "tables": table_manifest,
-                    "signals": signal_manifest,
-                }
-            )
-        ).hexdigest()
-        manifest: dict[str, JSONValue] = {
-            "format": ANALYSIS_FORMAT,
-            "version": ANALYSIS_VERSION,
-            "dataset_id": dataset_id,
-            "sources": source_manifest,
-            "options": options,
-            "tables": table_manifest,
-            "signals": signal_manifest,
-        }
-        (temporary / "manifest.json").write_bytes(
-            json.dumps(
-                manifest,
-                allow_nan=False,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            ).encode("utf-8")
-            + b"\n"
+        table_manifest, signal_manifest = _write_dataset_data(temporary, tables, epoch_values)
+        options = _dataset_options(
+            backend,
+            device_index,
+            include_contacts,
+            include_external_contacts,
+            path_provenance,
+            contact_values,
+            constraint_values,
+        )
+        dataset_id = _write_dataset_manifest(
+            temporary, frames, options, table_manifest, signal_manifest
         )
         _publish(temporary, destination, replace=replace)
     except Exception:
         if temporary.exists():
             shutil.rmtree(temporary)
+
         raise
 
     return AnalysisSummary(

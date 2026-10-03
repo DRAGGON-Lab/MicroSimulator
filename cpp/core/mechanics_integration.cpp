@@ -24,13 +24,16 @@ bool finite(const Vec3& value) {
 
 Vec3 rotate_axis_angle(Vec3 direction, Vec3 rotation, float max_rotation) {
   const auto magnitude = norm(rotation);
+
   if (magnitude <= 1.0e-12F || max_rotation == 0.0F) {
     return direction;
   }
+
   const auto angle = std::min(magnitude, max_rotation);
   const auto axis = rotation * (1.0F / magnitude);
   const auto cosine = std::cos(angle);
   const auto sine = std::sin(angle);
+
   return normalized(direction * cosine + cross(axis, direction) * sine +
                     axis * (dot(axis, direction) * (1.0F - cosine)));
 }
@@ -41,17 +44,53 @@ void validate_mechanics_integration_parameters(const MechanicsIntegrationParamet
   }
 }
 
+namespace {
+GeometryUpdate propose_geometry_update(const CellSnapshot& cell, const CellCorrection& correction,
+                                       const MechanicsIntegrationParameters& parameters,
+                                       bool has_desired_increment, float desired_increment_value) {
+  if (!finite(correction.translation) || !finite(correction.rotation) ||
+      !std::isfinite(correction.length)) {
+    throw std::invalid_argument("mechanics correction must be finite");
+  }
+
+  const auto desired_increment = !has_desired_increment ? 0.0F : desired_increment_value;
+
+  if (!std::isfinite(desired_increment) || desired_increment < 0.0F) {
+    throw std::invalid_argument("desired length increments must be finite and non-negative");
+  }
+
+  const auto applied_length_increment =
+      !has_desired_increment ? 0.0F
+                             : (cell.fixed ? desired_increment
+                                           : std::max(0.0F, desired_increment + correction.length));
+  const auto new_position = cell.fixed ? cell.position : cell.position + correction.translation;
+  const auto new_direction = cell.fixed ? cell.direction
+                                        : rotate_axis_angle(cell.direction, correction.rotation,
+                                                            parameters.max_rotation_radians);
+  const auto new_length = cell.length + applied_length_increment;
+
+  if (!finite(new_position) || !finite(new_direction) || !std::isfinite(new_length)) {
+    throw std::overflow_error("mechanics integration produced non-finite geometry");
+  }
+
+  return {cell.slot, new_position, new_direction, new_length};
+}
+}  // namespace
+
 void integrate_mechanics_result(WorldState& state, const MechanicsSolveResult& result,
                                 const MechanicsIntegrationParameters& parameters,
                                 std::span<const float> desired_length_increments) {
   validate_mechanics_integration_parameters(parameters);
   state.validate();
+
   if (result.corrections.size() != state.size()) {
     throw std::invalid_argument("mechanics correction count does not match the world state");
   }
+
   if (!desired_length_increments.empty() && desired_length_increments.size() != state.size()) {
     throw std::invalid_argument("desired length increment count does not match the world state");
   }
+
   if (parameters.require_convergence && result.report.status != SolverStatus::converged) {
     throw std::runtime_error("mechanics corrections require a converged solver result");
   }
@@ -59,32 +98,14 @@ void integrate_mechanics_result(WorldState& state, const MechanicsSolveResult& r
   const auto cells = state.cells();
   std::vector<GeometryUpdate> updates;
   updates.reserve(cells.size());
+
   for (std::size_t index = 0; index < cells.size(); ++index) {
     const auto& cell = cells[index];
     const auto& correction = result.corrections[index];
-    if (!finite(correction.translation) || !finite(correction.rotation) ||
-        !std::isfinite(correction.length)) {
-      throw std::invalid_argument("mechanics correction must be finite");
-    }
-    const auto desired_increment =
-        desired_length_increments.empty() ? 0.0F : desired_length_increments[index];
-    if (!std::isfinite(desired_increment) || desired_increment < 0.0F) {
-      throw std::invalid_argument("desired length increments must be finite and non-negative");
-    }
-    const auto applied_length_increment =
-        desired_length_increments.empty()
-            ? 0.0F
-            : (cell.fixed ? desired_increment
-                          : std::max(0.0F, desired_increment + correction.length));
-    const auto new_position = cell.fixed ? cell.position : cell.position + correction.translation;
-    const auto new_direction = cell.fixed ? cell.direction
-                                          : rotate_axis_angle(cell.direction, correction.rotation,
-                                                              parameters.max_rotation_radians);
-    const auto new_length = cell.length + applied_length_increment;
-    if (!finite(new_position) || !finite(new_direction) || !std::isfinite(new_length)) {
-      throw std::overflow_error("mechanics integration produced non-finite geometry");
-    }
-    updates.push_back({cell.slot, new_position, new_direction, new_length});
+
+    updates.push_back(propose_geometry_update(
+        cell, correction, parameters, !desired_length_increments.empty(),
+        desired_length_increments.empty() ? 0.0F : desired_length_increments[index]));
   }
 
   for (const auto& update : updates) {

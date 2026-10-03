@@ -56,13 +56,16 @@ PointPair closest_points(const Capsule& first, const Capsule& second, float epsi
 
   float first_parameter = 0.0F;
   float second_parameter = 0.0F;
+
   if (first_length_squared <= epsilon * epsilon && second_length_squared <= epsilon * epsilon) {
     return {.first = first_start, .second = second_start};
   }
+
   if (first_length_squared <= epsilon * epsilon) {
     second_parameter = std::clamp(second_projection / second_length_squared, 0.0F, 1.0F);
   } else {
     const auto first_projection = dot(first_delta, between_starts);
+
     if (second_length_squared <= epsilon * epsilon) {
       first_parameter = std::clamp(-first_projection / first_length_squared, 0.0F, 1.0F);
     } else {
@@ -71,14 +74,17 @@ PointPair closest_points(const Capsule& first, const Capsule& second, float epsi
           (first_length_squared * second_length_squared) - (cross_projection * cross_projection);
       const auto parallel_tolerance =
           std::numeric_limits<float>::epsilon() * first_length_squared * second_length_squared;
+
       if (denominator > parallel_tolerance) {
         first_parameter = std::clamp(
             ((cross_projection * second_projection) - (first_projection * second_length_squared)) /
                 denominator,
             0.0F, 1.0F);
       }
+
       second_parameter =
           (cross_projection * first_parameter + second_projection) / second_length_squared;
+
       if (second_parameter < 0.0F) {
         second_parameter = 0.0F;
         first_parameter = std::clamp(-first_projection / first_length_squared, 0.0F, 1.0F);
@@ -100,6 +106,7 @@ std::vector<PointPair> contact_points(const Capsule& first, const Capsule& secon
                                       const ContactParameters& parameters) {
   const auto axis_dot = std::clamp(dot(first.axis, second.axis), -1.0F, 1.0F);
   const auto sine = std::sqrt(std::max(0.0F, 1.0F - (axis_dot * axis_dot)));
+
   if (sine > parameters.parallel_sine_threshold || first.length <= parameters.degeneracy_epsilon ||
       second.length <= parameters.degeneracy_epsilon) {
     return {closest_points(first, second, parameters.degeneracy_epsilon)};
@@ -111,12 +118,14 @@ std::vector<PointPair> contact_points(const Capsule& first, const Capsule& secon
   const auto projected_second_half = second_half * std::abs(axis_dot);
   const auto overlap_begin = std::max(-first_half, center_coordinate - projected_second_half);
   const auto overlap_end = std::min(first_half, center_coordinate + projected_second_half);
+
   if (overlap_end - overlap_begin <= parameters.degeneracy_epsilon) {
     return {closest_points(first, second, parameters.degeneracy_epsilon)};
   }
 
   std::vector<PointPair> result;
   result.reserve(2);
+
   for (const auto first_parameter : {overlap_begin, overlap_end}) {
     const auto point_on_first = first.center + (first.axis * first_parameter);
     const auto second_parameter =
@@ -126,23 +135,27 @@ std::vector<PointPair> contact_points(const Capsule& first, const Capsule& secon
         .second = second.center + (second.axis * second_parameter),
     });
   }
+
   return result;
 }
 
 Vec3 deterministic_normal(const Capsule& first, const Capsule& second, const PointPair& points,
                           float epsilon) {
   const auto point_delta = points.second - points.first;
+
   if (norm(point_delta) > epsilon) {
     return normalized(point_delta);
   }
 
   const auto axes_cross = cross(first.axis, second.axis);
+
   if (norm(axes_cross) > epsilon) {
     return normalized(axes_cross);
   }
 
   const auto center_delta = second.center - first.center;
   const auto transverse_center_delta = center_delta - (first.axis * dot(center_delta, first.axis));
+
   if (norm(transverse_center_delta) > epsilon) {
     return normalized(transverse_center_delta);
   }
@@ -152,6 +165,7 @@ Vec3 deterministic_normal(const Capsule& first, const Capsule& second, const Poi
       std::ranges::min_element(basis, [&first](const Vec3& left, const Vec3& right) {
         return std::abs(dot(first.axis, left)) < std::abs(dot(first.axis, right));
       });
+
   return normalized(cross(first.axis, *least_aligned));
 }
 
@@ -166,12 +180,15 @@ ContactGraph contacts_for_candidates(const WorldState& state, const ContactParam
 
     const auto points = contact_points(first, second, parameters);
     const auto weight = points.size() == 2 ? inverse_sqrt_two : 1.0F;
+
     for (std::size_t ordinal = 0; ordinal < points.size(); ++ordinal) {
       const auto point_delta = points[ordinal].second - points[ordinal].first;
       const auto separation = norm(point_delta) - (first.radius + second.radius);
+
       if (separation >= parameters.activation_margin) {
         continue;
       }
+
       const auto normal =
           deterministic_normal(first, second, points[ordinal], parameters.degeneracy_epsilon);
       contacts.push_back({
@@ -191,6 +208,7 @@ ContactGraph contacts_for_candidates(const WorldState& state, const ContactParam
   std::ranges::sort(contacts, {}, [](const CellContact& contact) {
     return std::tuple{contact.first_id, contact.second_id, contact.ordinal};
   });
+
   return ContactGraph(geometry.size(), std::move(contacts));
 }
 
@@ -198,6 +216,7 @@ ContactGraph contacts_for_candidates(const WorldState& state, const ContactParam
 
 ContactGraph find_cell_contacts_cpu(const WorldState& state, const ContactParameters& parameters) {
   const auto candidates = find_cell_contact_candidates(state, parameters);
+
   return contacts_for_candidates(state, parameters, candidates);
 }
 
@@ -206,13 +225,16 @@ ContactGraph find_cell_contacts_cpu_exhaustive(const WorldState& state,
   validate_contact_parameters(parameters);
   const auto geometry = state.geometry_state();
   std::vector<ContactCandidate> candidates;
+
   if (geometry.size() > 1 &&
       geometry.size() - 1 > std::numeric_limits<std::size_t>::max() / geometry.size()) {
     throw std::overflow_error("exhaustive contact candidate count overflow");
   }
+
   const auto pair_count =
       geometry.size() < 2 ? std::size_t{0} : geometry.size() * (geometry.size() - 1) / 2;
   candidates.reserve(pair_count);
+
   for (std::size_t first = 0; first < geometry.size(); ++first) {
     for (std::size_t second = first + 1; second < geometry.size(); ++second) {
       candidates.push_back(
@@ -221,6 +243,7 @@ ContactGraph find_cell_contacts_cpu_exhaustive(const WorldState& state,
               : ContactCandidate{static_cast<Slot>(second), static_cast<Slot>(first)});
     }
   }
+
   return contacts_for_candidates(state, parameters, candidates);
 }
 

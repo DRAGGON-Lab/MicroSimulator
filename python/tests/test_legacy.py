@@ -32,6 +32,7 @@ class _ArrayView(Protocol):
 def test_legacy_callbacks_drive_native_growth_and_division(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     divided: list[tuple[int, int, int]] = []
 
     def initialize(cell: LegacyCell) -> None:
@@ -42,6 +43,7 @@ def test_legacy_callbacks_drive_native_growth_and_division(backend: BackendKind)
     def update(cells: dict[int, LegacyCell]) -> None:
         for cell in cells.values():
             cell.growthRate = 0.5
+
             if cell.volume >= cell.targetVol:
                 cell.divideFlag = True
 
@@ -99,6 +101,7 @@ def test_legacy_callback_changes_are_validated_before_native_updates() -> None:
 
     with pytest.raises(LegacyCompatibilityError, match="growthRate"):
         adapter.step(0.1)
+
     assert simulation.cell(cell_id).growth_rate == 1.0
 
 
@@ -142,6 +145,7 @@ def test_legacy_adapter_rejects_geometry_mutation() -> None:
         simulation, init=initialize, update=mutate_geometry, mechanics=False
     )
     adapter.add_cell(CellInit())
+
     with pytest.raises(LegacyCompatibilityError, match="may not mutate"):
         adapter.step(0.1)
 
@@ -197,10 +201,12 @@ def test_legacy_alternating_division_rotates_daughter_axes() -> None:
     adapter.step(0.0)
 
     daughters = simulation.cells()
+
     for daughter in daughters:
         assert math.isclose(daughter.direction.x, -0.8, abs_tol=1.0e-7)
         assert math.isclose(daughter.direction.y, 0.6, abs_tol=1.0e-7)
         assert daughter.direction.z == 0.0
+
     assert daughters[0].position.x < 0.0
     assert daughters[0].position.y < 0.0
     assert daughters[1].position.x > 0.0
@@ -294,6 +300,7 @@ def test_legacy_max_substeps_bounds_contact_frontier_relaxation() -> None:
         second.position = Vec3(0.25, 0.0, 0.0)
         second.length = 2.0
         adapter.add_cell(second)
+
         return adapter
 
     disabled = make_adapter(1)
@@ -366,6 +373,7 @@ def test_legacy_controller_state_resumes_attributes_and_random_stream(
 
     adapter.step(0.0)
     restored.step(0.0)
+
     for original_cell, restored_cell in zip(
         adapter.simulation.cells(), restored.simulation.cells(), strict=True
     ):
@@ -424,4 +432,5 @@ def test_legacy_asymm_weights_fail_explicitly() -> None:
 
     with pytest.raises(LegacyCompatibilityError, match="positive weights"):
         adapter.step(0.0)
+
     assert simulation.cell_count == 1

@@ -47,6 +47,7 @@ def rate_instruction(
     instruction.second = second
     instruction.third = third
     instruction.value = value
+
     return instruction
 
 
@@ -130,6 +131,7 @@ def test_asymmetric_division_rejects_invalid_fraction_atomically(fraction: float
 
     with pytest.raises(ValueError, match="fraction"):
         simulation.divide(parent, fraction)
+
     assert simulation.cell_count == 1
     assert simulation.cell(parent).length == 6.0
 
@@ -138,7 +140,9 @@ def test_asymmetric_division_rejects_invalid_fraction_atomically(fraction: float
 def test_unavailable_backend_fails_instead_of_falling_back(backend: BackendKind) -> None:
     if backend_available(backend):
         Simulation(backend)
+
         return
+
     with pytest.raises(RuntimeError, match=r"not implemented|unavailable"):
         Simulation(backend)
 
@@ -148,6 +152,7 @@ def test_backend_device_selection_is_explicit() -> None:
     assert backend_available(BackendKind.CPU, 0)
     assert not backend_available(BackendKind.CPU, 1)
     assert Simulation(device_index=0).backend_info.device_index == 0
+
     with pytest.raises(IndexError, match="device index 0"):
         Simulation(device_index=1)
 
@@ -155,12 +160,14 @@ def test_backend_device_selection_is_explicit() -> None:
         count = backend_device_count(backend)
         assert backend_available(backend) == (count > 0)
         assert not backend_available(backend, count)
+
         if count > 0:
             assert Simulation(backend, device_index=0).backend_info.device_index == 0
 
 
 def test_invalid_time_step_is_rejected() -> None:
     simulation = Simulation()
+
     with pytest.raises(ValueError, match="time step"):
         simulation.step(-0.1)
 
@@ -169,9 +176,12 @@ def test_invalid_time_step_is_rejected() -> None:
 def test_species_step_dilutes_then_evaluates_typed_rates(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     simulation = Simulation(backend, species_count=2)
+
     if not simulation.supports(BackendFeature.SPECIES):
         pytest.skip("backend does not implement species integration")
+
     cell = CellInit()
     cell.length = 2.0
     cell.radius = 0.5
@@ -224,9 +234,12 @@ def test_species_plan_rejects_forward_references() -> None:
 def test_contact_graph_is_available_through_the_public_api(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     simulation = Simulation(backend)
+
     if not simulation.supports(BackendFeature.CELL_CONTACTS):
         pytest.skip("backend does not implement cell contacts")
+
     first = CellInit()
     first.length = 4.0
     first.radius = 0.5
@@ -286,6 +299,7 @@ def test_cell_attributes_can_be_updated_by_stable_id() -> None:
 
     with pytest.raises(ValueError, match="finite"):
         simulation.set_cell_attributes(cell_id, growth_rate=math.nan, cell_type=8)
+
     assert simulation.cell(cell_id).cell_type == 7
 
 
@@ -293,9 +307,12 @@ def test_cell_attributes_can_be_updated_by_stable_id() -> None:
 def test_plane_constraint_graph_is_typed_and_incident(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     simulation = Simulation(backend)
+
     if not simulation.supports(BackendFeature.EXTERNAL_CONSTRAINTS):
         pytest.skip("backend does not implement external constraints")
+
     cell = CellInit()
     cell.position = Vec3(0.0, 0.25, 0.0)
     cell.length = 2.0
@@ -342,9 +359,12 @@ def test_plane_constraint_graph_is_typed_and_incident(backend: BackendKind) -> N
 def test_constraints_participate_in_mechanical_relaxation(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     simulation = Simulation(backend)
+
     if not simulation.supports(BackendFeature.EXTERNAL_CONSTRAINTS):
         pytest.skip("backend does not implement external constraints")
+
     cell = CellInit()
     cell.position = Vec3(0.0, 0.4, 0.0)
     cell.length = 2.0
@@ -366,9 +386,12 @@ def test_constraints_participate_in_mechanical_relaxation(backend: BackendKind) 
 def test_box_constraints_participate_in_mechanical_relaxation(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     simulation = Simulation(backend)
+
     if not simulation.supports(BackendFeature.EXTERNAL_CONSTRAINTS):
         pytest.skip("backend does not implement external constraints")
+
     cell = CellInit()
     cell.position = Vec3(1.4, 0.0, 0.0)
     cell.direction = Vec3(0.0, 1.0, 0.0)
@@ -386,8 +409,7 @@ def test_box_constraints_participate_in_mechanical_relaxation(backend: BackendKi
     assert all(contact.constraint_id == constraint_id for contact in graph.contacts)
     assert all(contact.constraint_kind == ExternalConstraintKind.BOX for contact in graph.contacts)
     assert all(
-        math.isclose(contact.signed_separation, -0.1, abs_tol=1.0e-6)
-        for contact in graph.contacts
+        math.isclose(contact.signed_separation, -0.1, abs_tol=1.0e-6) for contact in graph.contacts
     )
 
     result = simulation.relax_cell_mechanics()
@@ -401,9 +423,12 @@ def test_box_constraints_participate_in_mechanical_relaxation(backend: BackendKi
 def test_finite_wall_detects_midspan_capsule_contact(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     simulation = Simulation(backend)
+
     if not simulation.supports(BackendFeature.EXTERNAL_CONSTRAINTS):
         pytest.skip("backend does not implement external constraints")
+
     cell = CellInit()
     cell.position = Vec3(0.0, 0.75, 0.0)
     cell.direction = Vec3(1.0, 0.0, 0.0)
@@ -458,6 +483,7 @@ def test_native_growth_matches_cpu(backend: BackendKind) -> None:
 
     cpu = Simulation(BackendKind.CPU)
     native = Simulation(backend)
+
     for index in range(33):
         cell = CellInit()
         cell.length = 1.0 + index * 0.1
@@ -472,9 +498,7 @@ def test_native_growth_matches_cpu(backend: BackendKind) -> None:
         assert math.isclose(cpu_cell.length, native_cell.length, abs_tol=1.0e-6)
 
 
-def uniform_flow_grid(
-    *, origin: float, spacing: float, sites: int, speed: float
-) -> SignalGridSpec:
+def uniform_flow_grid(*, origin: float, spacing: float, sites: int, speed: float) -> SignalGridSpec:
     """A collapsed y/z lattice carrying a uniform x flow between fixed ends."""
 
     shape = GridShape()
@@ -495,18 +519,17 @@ def uniform_flow_grid(
     field.y_faces = [0.0] * (2 * sites)
     field.z_faces = [0.0] * (2 * sites)
     grid.velocity_field = field
+
     return grid
 
 
-@pytest.mark.parametrize(
-    ("origin", "spacing"), [(0.0, 1.0), (0.1, 0.3), (-97.5, 1.65), (0.7, 5.0)]
-)
+@pytest.mark.parametrize(("origin", "spacing"), [(0.0, 1.0), (0.1, 0.3), (-97.5, 1.65), (0.7, 5.0)])
 def test_flow_drift_clamps_endpoints_on_any_lattice(origin: float, spacing: float) -> None:
     sites = 33
     simulation = Simulation()
-    simulation.configure_signal_grid(uniform_flow_grid(
-        origin=origin, spacing=spacing, sites=sites, speed=2.0
-    ))
+    simulation.configure_signal_grid(
+        uniform_flow_grid(origin=origin, spacing=spacing, sites=sites, speed=2.0)
+    )
     cell = CellInit()
     cell.position = Vec3(origin + spacing * (sites - 1), 0.0, 0.0)
     cell.direction = Vec3(1.0, 0.0, 0.0)
@@ -596,5 +619,6 @@ def test_a_cell_inside_a_wall_samples_no_flow_and_does_not_drift() -> None:
     simulation.apply_flow_drift(0.5)
 
     assert simulation.cell(buried_id).position.x == 2.0
+
     with pytest.raises(ValueError, match="inside a grid obstacle"):
         simulation.sample_signals(Vec3(2.0, 0.0, 0.0))

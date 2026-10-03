@@ -37,6 +37,15 @@ Rejected commands and model failures return a data-only error:
 { "type": "error", "message": "reason" }
 ```
 
+Intentional shutdown sends lifecycle notifications before closing the WebSocket with code 1000:
+
+```json
+{"type":"session","state":"stopping"}
+{"type":"session","state":"stopped"}
+```
+
+`stopping` means admission of new work has ended. `stopped` means the active operation has finished and the simulation worker has terminated. Clients should process previously received messages (including asynchronous scene verification) before interpreting the subsequent socket close. A close without `stopped` is still an unexpected disconnect. These messages extend the v1 vocabulary; use a viewer built from the same release as the server.
+
 ## Client commands
 
 The vocabulary is closed. Unknown fields are rejected.
@@ -48,8 +57,19 @@ The vocabulary is closed. Unknown fields are rejected.
 {"type":"pause"}
 {"type":"reset"}
 {"type":"checkpoint"}
+{"type":"stop"}
 ```
 
 `steps` defaults to one and is bounded to 1 through 10,000. Playback advances the configured number of steps per published frame. A step or reset first pauses playback. Disconnecting the final client pauses the simulation.
 
 Reset calls the original server-side model factory again with its original backend, device, seed, parameters, and resume source. Checkpoint writes only to the destination configured when the server starts and atomically replaces that file. It preserves controller state for any runnable model implementing the `SimulationController` protocol, including the legacy compatibility adapter.
+
+## Stop and restart
+
+Stop ends this server process and releases its listening port. It is authenticated through the same token and exact-origin WebSocket upgrade as every other command. The reader handles Stop immediately, including while an earlier command on that same socket is executing. Ordinary commands retain per-client ordering in a bounded queue of 32; additional queued commands receive an error rather than blocking Stop.
+
+Shutdown is cooperative: an in-progress individual simulation step finishes, then the rest of its batch is skipped. An already-running reset, scene capture, or atomic checkpoint write also finishes. There is no timeout that kills the worker in the middle of model state mutation or file replacement. A model operation that never returns will therefore keep the session in `stopping`. Queued operations and newly received Frame, Play, Step, Pause, Reset, and Checkpoint commands are rejected once stopping begins; repeated Stop requests are idempotent. Closing the final browser connection still pauses the session and allows reconnection.
+
+Browser Stop and terminal Ctrl+C share the same worker/socket cleanup path. After `stopped`, the server closes client sockets and its application runner, exits, and releases the port. Launch the next `microsimulator view` command from the terminal and open its newly printed URL; each process has a new token. The old browser keeps its last rendered frame and displays Stopped.
+
+Network delivery has separate deadlines from cooperative model work. Initial frame writes, broadcasts, and lifecycle notifications allow one second per receiver; independent lifecycle deliveries run concurrently. The complete WebSocket close operation, including writing and draining its close frame, also has a one-second deadline. An unresponsive connection is then aborted, discarding queued network bytes so neither its initial-send handler nor the application runner waits indefinitely for a reader. Responsive clients still receive `stopping`, `stopped`, and a normal code-1000 close. A stalled client may miss these notifications and observe an unexpected disconnect; this does not cancel an active simulation operation or interrupt an atomic checkpoint write.

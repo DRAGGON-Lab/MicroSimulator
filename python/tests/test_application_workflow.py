@@ -54,16 +54,19 @@ def _build(
         checkpoint=checkpoint,
     )
     assert isinstance(model, NativeController)
+
     if checkpoint is None:
         plane = PlaneConstraintInit()
         plane.point = Vec3(0.0, -0.25, 0.0)
         plane.inward_normal = Vec3(0.0, 1.0, 0.0)
         model.simulation.add_plane_constraint(plane)
+
     return model, provenance
 
 
 def _simulation_state(path: Path) -> object:
     document = cast(dict[str, object], json.loads(path.read_text(encoding="utf-8")))
+
     return document["simulation"]
 
 

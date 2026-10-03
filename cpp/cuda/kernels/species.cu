@@ -14,6 +14,54 @@ __device__ float effective_surface_area(float length, float radius) {
   return 2.0F * pi * radius * (length + 2.0F * radius);
 }
 
+__device__ float evaluate_predicate(const RateInstructionGpu& instruction, const float* workspace) {
+  switch (instruction.operation) {
+    case 21:
+      return workspace[instruction.first] < workspace[instruction.second] ? 1.0F : 0.0F;
+    case 22:
+      return workspace[instruction.first] <= workspace[instruction.second] ? 1.0F : 0.0F;
+    case 23:
+      return workspace[instruction.first] > workspace[instruction.second] ? 1.0F : 0.0F;
+    case 24:
+      return workspace[instruction.first] >= workspace[instruction.second] ? 1.0F : 0.0F;
+    case 25:
+      return workspace[instruction.first] == workspace[instruction.second] ? 1.0F : 0.0F;
+    case 26:
+      return workspace[instruction.first] != 0.0F ? workspace[instruction.second]
+                                                  : workspace[instruction.third];
+    default:
+      return nanf("");
+  }
+}
+
+__device__ float evaluate_arithmetic(const RateInstructionGpu& instruction,
+                                     const float* workspace) {
+  switch (instruction.operation) {
+    case 11:
+      return workspace[instruction.first] + workspace[instruction.second];
+    case 12:
+      return workspace[instruction.first] - workspace[instruction.second];
+    case 13:
+      return workspace[instruction.first] * workspace[instruction.second];
+    case 14:
+      return workspace[instruction.first] / workspace[instruction.second];
+    case 15:
+      return powf(workspace[instruction.first], workspace[instruction.second]);
+    case 16:
+      return fminf(workspace[instruction.first], workspace[instruction.second]);
+    case 17:
+      return fmaxf(workspace[instruction.first], workspace[instruction.second]);
+    case 18:
+      return -workspace[instruction.first];
+    case 19:
+      return expf(workspace[instruction.first]);
+    case 20:
+      return logf(workspace[instruction.first]);
+    default:
+      return evaluate_predicate(instruction, workspace);
+  }
+}
+
 __device__ float evaluate_instruction(const RateInstructionGpu& instruction, const float* workspace,
                                       const float* species, float4 center, float4 geometry,
                                       float growth_rate, std::int32_t cell_type,
@@ -40,44 +88,11 @@ __device__ float evaluate_instruction(const RateInstructionGpu& instruction, con
     case 28:
       return volume_change_rate;
     case 9:
-      return effective_volume(geometry.x, geometry.y);
+      return geometry.z > 0 ? geometry.z : effective_volume(geometry.x, geometry.y);
     case 10:
       return effective_surface_area(geometry.x, geometry.y);
-    case 11:
-      return workspace[instruction.first] + workspace[instruction.second];
-    case 12:
-      return workspace[instruction.first] - workspace[instruction.second];
-    case 13:
-      return workspace[instruction.first] * workspace[instruction.second];
-    case 14:
-      return workspace[instruction.first] / workspace[instruction.second];
-    case 15:
-      return powf(workspace[instruction.first], workspace[instruction.second]);
-    case 16:
-      return fminf(workspace[instruction.first], workspace[instruction.second]);
-    case 17:
-      return fmaxf(workspace[instruction.first], workspace[instruction.second]);
-    case 18:
-      return -workspace[instruction.first];
-    case 19:
-      return expf(workspace[instruction.first]);
-    case 20:
-      return logf(workspace[instruction.first]);
-    case 21:
-      return workspace[instruction.first] < workspace[instruction.second] ? 1.0F : 0.0F;
-    case 22:
-      return workspace[instruction.first] <= workspace[instruction.second] ? 1.0F : 0.0F;
-    case 23:
-      return workspace[instruction.first] > workspace[instruction.second] ? 1.0F : 0.0F;
-    case 24:
-      return workspace[instruction.first] >= workspace[instruction.second] ? 1.0F : 0.0F;
-    case 25:
-      return workspace[instruction.first] == workspace[instruction.second] ? 1.0F : 0.0F;
-    case 26:
-      return workspace[instruction.first] != 0.0F ? workspace[instruction.second]
-                                                  : workspace[instruction.third];
     default:
-      return nanf("");
+      return evaluate_arithmetic(instruction, workspace);
   }
 }
 
@@ -89,14 +104,19 @@ __global__ void advance_species(float* levels, const float* previous_lengths, co
                                 std::uint32_t* error, float dt, std::uint32_t species_count,
                                 std::uint32_t instruction_count, std::uint32_t cell_count) {
   const auto cell = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (cell >= cell_count) {
     return;
   }
 
   const auto species_offset = cell * species_count;
   const auto radius = geometry[cell].y;
-  const auto dilution =
-      effective_volume(previous_lengths[cell], radius) / effective_volume(geometry[cell].x, radius);
+  const auto previous_volume =
+      geometry[cell].z > 0 ? geometry[cell].w : effective_volume(previous_lengths[cell], radius);
+  const auto current_volume =
+      geometry[cell].z > 0 ? geometry[cell].z : effective_volume(geometry[cell].x, radius);
+  const auto dilution = previous_volume / current_volume;
+
   for (std::uint32_t species = 0; species < species_count; ++species) {
     levels[species_offset + species] *= dilution;
   }
@@ -104,15 +124,14 @@ __global__ void advance_species(float* levels, const float* previous_lengths, co
   const auto workspace_offset = cell * instruction_count;
   auto* cell_workspace = workspace + workspace_offset;
   const auto* cell_species = levels + species_offset;
+
   for (std::uint32_t index = 0; index < instruction_count; ++index) {
     const auto value =
         evaluate_instruction(instructions[index], cell_workspace, cell_species, centers[cell],
                              geometry[cell], growth_rates[cell], cell_types[cell],
-                             dt == 0.0f ? 0.0f
-                                        : (effective_volume(geometry[cell].x, radius) -
-                                           effective_volume(previous_lengths[cell], radius)) /
-                                              dt);
+                             dt == 0.0f ? 0.0f : (current_volume - previous_volume) / dt);
     cell_workspace[index] = value;
+
     if (!isfinite(value)) {
       atomicOr(error, 1U);
     }
@@ -121,6 +140,7 @@ __global__ void advance_species(float* levels, const float* previous_lengths, co
   for (std::uint32_t species = 0; species < species_count; ++species) {
     const auto value = levels[species_offset + species] + dt * cell_workspace[outputs[species]];
     levels[species_offset + species] = value;
+
     if (!isfinite(value)) {
       atomicOr(error, 1U);
     }

@@ -44,14 +44,19 @@ def _dataset(source: DatasetSource) -> AnalysisDataset:
 
 def _edges(values: Sequence[float], name: str) -> tuple[float, ...]:
     result = tuple(float(value) for value in values)
+
     if len(result) < 2:
         raise AnalysisError(f"{name} requires at least two edges")
+
     if not all(math.isfinite(value) for value in result):
         raise AnalysisError(f"{name} edges must be finite")
+
     if any(right <= left for left, right in pairwise(result)):
         raise AnalysisError(f"{name} edges must be strictly increasing")
+
     if len(result) - 1 > _UINT32_MAX:
         raise AnalysisError(f"{name} has too many bins")
+
     return result
 
 
@@ -69,6 +74,7 @@ def _bins(values: Sequence[float], prefix: str) -> tuple[pl.LazyFrame, int]:
             ),
         }
     )
+
     return frame.lazy(), count - 1
 
 
@@ -89,6 +95,7 @@ def cells_with_radial_position(source: DatasetSource) -> pl.LazyFrame:
     """Add radial XY position without discarding any typed cell column."""
 
     cells = _dataset(source).scan_table("cells.parquet")
+
     return cells.with_columns(
         (
             pl.col("position_x").cast(pl.Float64).pow(2)
@@ -117,6 +124,7 @@ def radial_counts(source: DatasetSource, edges: Sequence[float]) -> pl.LazyFrame
     counts = assigned.group_by("frame_index", "radial_bin").agg(
         pl.len().cast(pl.UInt64).alias("cell_count")
     )
+
     return (
         _frame_grid(dataset, bins)
         .join(counts, on=["frame_index", "radial_bin"], how="left")
@@ -138,6 +146,7 @@ def radial_species_mean(
 
     if isinstance(channel, bool) or channel < 0 or channel > _UINT32_MAX:
         raise AnalysisError("species channel must be a uint32 value")
+
     dataset = _dataset(source)
     bins, last_bin = _bins(edges, "radial")
     positions = cells_with_radial_position(dataset).select(
@@ -154,6 +163,7 @@ def radial_species_mean(
         pl.len().cast(pl.UInt64).alias("cell_count"),
         pl.col("level").cast(pl.Float64).mean().alias("species_mean"),
     )
+
     return (
         _frame_grid(dataset, bins)
         .join(means, on=["frame_index", "radial_bin"], how="left")
@@ -172,6 +182,7 @@ def length_histogram(
 
     if length not in {"cylinder_length", "capsule_length"}:
         raise AnalysisError(f"unknown length field {length!r}")
+
     dataset = _dataset(source)
     bins, last_bin = _bins(edges, "length")
     assigned = (
@@ -183,6 +194,7 @@ def length_histogram(
     counts = assigned.group_by("frame_index", "length_bin").agg(
         pl.len().cast(pl.UInt64).alias("cell_count")
     )
+
     return (
         _frame_grid(dataset, bins)
         .join(counts, on=["frame_index", "length_bin"], how="left")
@@ -224,6 +236,7 @@ def line_density_xy(
         pl.len().cast(pl.UInt64).alias("cell_count"),
         pl.col("capsule_length").sum().alias("line_density_proxy"),
     )
+
     return (
         _frame_grid(dataset, bin_grid)
         .join(density, on=["frame_index", "x_bin", "y_bin"], how="left")
@@ -248,6 +261,7 @@ def unique_neighbor_edges(source: DatasetSource) -> pl.LazyFrame:
         "overlap",
         "weight",
     )
+
     return (
         normalized.group_by("frame_index", "first_id", "second_id")
         .agg(
@@ -288,6 +302,7 @@ def sister_neighbor_counts(source: DatasetSource) -> pl.LazyFrame:
         pl.len().cast(pl.UInt32).alias("sister_neighbor_count")
     )
     frames = dataset.scan_table("frames.parquet").select("frame_index", "time")
+
     return (
         cells.join(frames, on="frame_index", how="left")
         .join(counts, on=["frame_index", "cell_id"], how="left")
@@ -308,28 +323,39 @@ def _signal_epoch(
 ) -> tuple[AnalysisDataset, dict[str, object], Any]:
     if isinstance(epoch_index, bool) or epoch_index < 0:
         raise AnalysisError("signal epoch index must be non-negative")
+
     dataset = _dataset(source)
     signal_value = dataset.manifest["signals"]
+
     if not isinstance(signal_value, dict):
         raise AnalysisError("analysis dataset does not contain signals")
+
     signal_record = cast(dict[str, object], signal_value)
     epochs = signal_record.get("epochs")
+
     if not isinstance(epochs, list) or epoch_index >= len(epochs):
         raise AnalysisError(f"signal epoch {epoch_index} is unavailable")
+
     epoch_value = epochs[epoch_index]
+
     if not isinstance(epoch_value, dict):
         raise AnalysisError(f"signal epoch {epoch_index} metadata is invalid")
+
     epoch = cast(dict[str, object], epoch_value)
     expected_name = f"epoch-{epoch_index:04d}"
+
     if epoch.get("name") != expected_name:
         raise AnalysisError(f"signal epoch {epoch_index} name is invalid")
+
     root = zarr.open_group(dataset.root / "signals.zarr", mode="r")
+
     return dataset, epoch, root[expected_name]
 
 
 def _signal_shape(epoch: dict[str, object]) -> tuple[int, int, int, int]:
     signal_count = epoch.get("signal_count")
     shape = epoch.get("shape")
+
     if (
         isinstance(signal_count, bool)
         or not isinstance(signal_count, int)
@@ -341,7 +367,9 @@ def _signal_shape(epoch: dict[str, object]) -> tuple[int, int, int, int]:
         )
     ):
         raise AnalysisError("signal epoch shape metadata is invalid")
+
     dimensions = cast(list[int], shape)
+
     return signal_count, dimensions[0], dimensions[1], dimensions[2]
 
 
@@ -362,19 +390,27 @@ def signal_slice(
 
     if axis not in {"x", "y", "z"}:
         raise AnalysisError(f"unknown signal slice axis {axis!r}")
+
     _, metadata, group = _signal_epoch(source, epoch)
     signal_count, x_size, y_size, z_size = _signal_shape(metadata)
     frame_indices = metadata.get("frame_indices")
+
     if not isinstance(frame_indices, list):
         raise AnalysisError("signal epoch frame metadata is invalid")
+
     if isinstance(local_frame, bool) or local_frame < 0 or local_frame >= len(frame_indices):
         raise AnalysisError("signal local frame index is out of range")
+
     if isinstance(channel, bool) or channel < 0 or channel >= signal_count:
         raise AnalysisError("signal channel is out of range")
+
     axis_sizes = {"x": x_size, "y": y_size, "z": z_size}
+
     if isinstance(index, bool) or index < 0 or index >= axis_sizes[axis]:
         raise AnalysisError(f"signal {axis} index is out of range")
+
     levels = group["levels"]
+
     if axis == "x":
         values = levels[local_frame, channel, index, :, :]
         dimensions: tuple[SignalAxis, SignalAxis] = ("y", "z")
@@ -384,6 +420,7 @@ def signal_slice(
     else:
         values = levels[local_frame, channel, :, :, index]
         dimensions = ("x", "y")
+
     return SignalSlice(
         frame_index=cast(int, frame_indices[local_frame]),
         time=float(group["time"][local_frame]),
@@ -410,14 +447,18 @@ def signal_time_course(
     signal_count, x_size, y_size, z_size = _signal_shape(metadata)
     coordinates = {"x": x, "y": y, "z": z}
     limits = {"x": x_size, "y": y_size, "z": z_size}
+
     if isinstance(channel, bool) or channel < 0 or channel >= signal_count:
         raise AnalysisError("signal channel is out of range")
+
     for name, value in coordinates.items():
         if isinstance(value, bool) or value < 0 or value >= limits[name]:
             raise AnalysisError(f"signal {name} index is out of range")
+
     frame_indices = np.asarray(group["frame_index"][:], dtype=np.uint32)
     times = np.asarray(group["time"][:], dtype=np.float64)
     frame_count = frame_indices.shape[0]
+
     return pl.DataFrame(
         {
             "frame_index": pl.Series(frame_indices, dtype=pl.UInt32),

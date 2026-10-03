@@ -6,9 +6,11 @@ namespace {
 __global__ void advance_growth(float* lengths, const float* growth_rates, float dt,
                                std::uint32_t count) {
   const auto index = (blockIdx.x * blockDim.x) + threadIdx.x;
+
   if (index >= count) {
     return;
   }
+
   lengths[index] += growth_rates[index] * lengths[index] * dt;
 }
 

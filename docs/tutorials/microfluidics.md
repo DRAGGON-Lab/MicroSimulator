@@ -2,17 +2,23 @@
 
 This tutorial connects device geometry, flowing media, and cell biology in runnable MicroSimulator models. The [modeling guide](../microfluidics.md) introduces the workflow and the choice of flow solver. Four examples cover the range:
 
-| Model | Device | Demonstrates |
-| --- | --- | --- |
-| [`examples/culture_dish.py`](../../examples/culture_dish.py) | round dish | one inside-cylinder constraint as a dish |
-| [`examples/microfluidic_trap.py`](../../examples/microfluidic_trap.py) | trap + channel | flow, obstacles, drift, washout |
-| [`examples/tutorials/danino_clock.py`](../../examples/tutorials/danino_clock.py) | trap + channel | the full quorum clock in a device |
+These models use XY-only division jitter and finite-height 3D confinement. A thin cavity can encourage a monolayer, but it does not force a common center Z or eliminate tilt; walls are soft constraints whose residual depends on relaxation tolerance and passes. The [dimensionality audit](planarity.md) lists each device and reproduces these distinctions.
+
+For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
+
+The microfluidic-trap, Danino, biopixel, and pillar tutorial founders request centerline length 3.5, capped at their single sampled target in [3.2, 3.8]. Attachment, position, radius, and concentrations are preserved. This affects new construction only; saved geometry is restored unchanged. See [founder initialization and volume conventions](biophysics-and-growth.md#length-and-volume).
+
+| Model                                                                              | Device              | Demonstrates                                 |
+| ---------------------------------------------------------------------------------- | ------------------- | -------------------------------------------- |
+| [`examples/culture_dish.py`](../../examples/culture_dish.py)                       | round dish          | one inside-cylinder constraint as a dish     |
+| [`examples/microfluidic_trap.py`](../../examples/microfluidic_trap.py)             | trap + channel      | flow, obstacles, drift, washout              |
+| [`examples/tutorials/danino_clock.py`](../../examples/tutorials/danino_clock.py)   | trap + channel      | the full quorum clock in a device            |
 | [`examples/tutorials/biopixel_trap.py`](../../examples/tutorials/biopixel_trap.py) | biopixel array trap | reported cavity, CAD layout, monolayer model |
 
 Run any of them live:
 
 ```console
-uv run microsimulator view --model examples/microfluidic_trap.py --seed 42 --dt 0.02 --backend metal --open
+uv run microsimulator view --model examples/microfluidic_trap.py --seed 42 --dt 0.02 --backend cpu --open
 ```
 
 ## Walls that cells and chemistry both respect
@@ -103,11 +109,11 @@ The [`prindle.dwg` and `prindle.dxf` files](devices) supplied with this tutorial
 
 The example deliberately separates three kinds of information:
 
-| Basis | Values used or observed | Role in the example |
-| --- | --- | --- |
-| Published methods | trapping region 100 x 85 x 1.65 micrometers; 25-micrometer trap spacing; nominal arrays of 500 and 12,000 biopixels | source of the modeled cavity dimensions and context for the array scale |
-| Supplied CAD | 496 matching model-space `Layer-2` outlines in a 16 x 31 layout; raw outline size 0.110 x 0.100 drawing units; raw row pitch 0.125 | validates the supplied layout and its source-specific scale, but does not define cavity walls or layer thicknesses |
-| Model choices | one 100 x 85 x 1.65 cavity beside a 100 x 10 x 300 micrometer channel; 10-micrometer numerical walls; mean inlet speed 20 micrometers per model time unit; chosen nutrient, drag, and re-solve parameters | defines a qualitative single-trap simulation, not a calibrated reconstruction of the experimental device |
+| Basis             | Values used or observed                                                                                                                                                                                   | Role in the example                                                                                                |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Published methods | trapping region 100 x 85 x 1.65 micrometers; 25-micrometer trap spacing; nominal arrays of 500 and 12,000 biopixels                                                                                       | source of the modeled cavity dimensions and context for the array scale                                            |
+| Supplied CAD      | 496 matching model-space `Layer-2` outlines in a 16 x 31 layout; raw outline size 0.110 x 0.100 drawing units; raw row pitch 0.125                                                                        | validates the supplied layout and its source-specific scale, but does not define cavity walls or layer thicknesses |
+| Model choices     | one 100 x 85 x 1.65 cavity beside a 100 x 10 x 300 micrometer channel; 10-micrometer numerical walls; mean inlet speed 20 micrometers per model time unit; chosen nutrient, drag, and re-solve parameters | defines a qualitative single-trap simulation, not a calibrated reconstruction of the experimental device           |
 
 The trapping-region dimensions and spacing come from the [published supplementary methods](https://media.springernature.com/original/springer-static/esm/art%3A10.1038%2Fnature10722/MediaObjects/41586_2012_BFnature10722_MOESM313_ESM.pdf), not from subtracting a guessed wall inset from the CAD. `BiopixelTrapDevice` therefore defaults to a 100 x 85 x 1.65 micrometer cavity. Its channel dimensions, wall thickness, and flow speed remain ordinary constructor parameters:
 
@@ -141,7 +147,7 @@ With `include_blocks=True`, the reader also exposes geometry in unplaced block d
 The executable example loads and checks this layout, then simulates one cavity using the independently published dimensions. That single-trap reduction assumes one selected local inlet condition; it does not assert uniform flow across the array, reproduce the array manifold, or include inter-trap coupling. Run it live:
 
 ```console
-uv run microsimulator view --model examples/tutorials/biopixel_trap.py --seed 5 --dt 0.02 --backend metal --open
+uv run microsimulator view --model examples/tutorials/biopixel_trap.py --seed 5 --dt 0.02 --backend cpu --open
 ```
 
 ## Units and timescales

@@ -4,30 +4,32 @@ MicroSimulator models microbial populations in microfluidic environments, connec
 
 ## Start here
 
-| If you want to… | Read… |
-| --- | --- |
-| Understand how devices, flow, and cells fit together | [Microfluidics modeling guide](microfluidics.md) |
-| Run a first simulation | [Getting started](tutorials/getting-started.md) |
-| Build a trap or channel with growth and washout | [Microfluidic devices](tutorials/microfluidics.md) |
-| Choose a flow solver and assess its numerical behavior | [Flow models](microfluidics.md#choosing-a-flow-model) and [flow benchmarks](tutorials/flow-solvers.md#numerical-evidence) |
-| Measure nutrient penetration and growth | [Controlled nutrient study](tutorials/nutrient-validation.md) |
-| Learn the modeling interface | [Tutorials](tutorials/README.md) |
-| Understand numerical conventions | [Numerical contract](architecture/numerical-contract.md) |
-| Analyze simulation output | [Analysis recipes](analysis/recipes.md) |
-| Configure an accelerator | [Execution environments](#execution-environments) |
-| Migrate a CellModeller model or snapshot | [Compatibility and migration](compatibility/README.md) |
-| Test a contribution or backend | [Testing and validation](development/validation.md) |
+| If you want to…                                                 | Read…                                                                                                                     |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Understand how devices, flow, and cells fit together            | [Microfluidics modeling guide](microfluidics.md)                                                                          |
+| Run a first simulation                                          | [Getting started](tutorials/getting-started.md)                                                                           |
+| Select a backend or use PowerShell                              | [Copyable tutorial commands](tutorials/commands.md)                                                                       |
+| Build a trap or channel with growth and washout                 | [Microfluidic devices](tutorials/microfluidics.md)                                                                        |
+| Choose a flow solver and assess its numerical behavior          | [Flow models](microfluidics.md#choosing-a-flow-model) and [flow benchmarks](tutorials/flow-solvers.md#numerical-evidence) |
+| Couple perfusion, solute transport, and nutrient-limited growth | [Fluid, transport, and growth](models/fluid-culture.md)                                                                   |
+| Measure nutrient penetration and growth                         | [Controlled nutrient study](tutorials/nutrient-validation.md)                                                             |
+| Learn the modeling interface                                    | [Tutorials](tutorials/README.md)                                                                                          |
+| Understand numerical conventions                                | [Numerical contract](architecture/numerical-contract.md)                                                                  |
+| Analyze simulation output                                       | [Analysis recipes](analysis/recipes.md)                                                                                   |
+| Configure an accelerator                                        | [Execution environments](#execution-environments)                                                                         |
+| Migrate a CellModeller model or snapshot                        | [Compatibility and migration](compatibility/README.md)                                                                    |
+| Test a contribution or backend                                  | [Testing and validation](development/validation.md)                                                                       |
 
 ## Tutorials
 
 Start with [getting started](tutorials/getting-started.md) to install the tools, run a model, inspect it, and resume a checkpoint. Then follow the [tutorial index](tutorials/README.md) by topic. Each runnable model is self-contained.
 
-| Topic | Guides |
-| --- | --- |
-| Devices, flow, and transport | [Walls, flow, and washout](tutorials/microfluidics.md); [pillar channels and flow solvers](tutorials/flow-solvers.md); [nutrient penetration and growth](tutorials/nutrient-validation.md) |
-| Cell biology | [Growth and mechanics](tutorials/biophysics-and-growth.md); [gene circuits](tutorials/intracellular-dynamics.md); [signaling](tutorials/signaling.md); [plasmids and contacts](tutorials/discrete-state-and-contacts.md) |
-| Circuits in populations | [SimBOL examples](tutorials/simbol.md); [Danino clock in a device](../examples/tutorials/danino_clock.py) |
-| Quantitative output | [Checkpoints, contact graphs, and analysis](tutorials/analysis.md) |
+| Topic                        | Guides                                                                                                                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Devices, flow, and transport | [Walls, flow, and washout](tutorials/microfluidics.md); [pillar channels and flow solvers](tutorials/flow-solvers.md); [nutrient penetration and growth](tutorials/nutrient-validation.md)                               |
+| Cell biology                 | [Growth and mechanics](tutorials/biophysics-and-growth.md); [gene circuits](tutorials/intracellular-dynamics.md); [signaling](tutorials/signaling.md); [plasmids and contacts](tutorials/discrete-state-and-contacts.md) |
+| Circuits in populations      | [SimBOL examples](tutorials/simbol.md); [Danino clock in a device](../examples/tutorials/danino_clock.py)                                                                                                                |
+| Quantitative output          | [Checkpoints, contact graphs, and analysis](tutorials/analysis.md)                                                                                                                                                       |
 
 Executable teaching models are under [`examples/tutorials`](../examples/tutorials). Smaller focused examples are available in [`examples`](../examples).
 
@@ -38,6 +40,7 @@ The [architecture guide](architecture/README.md) introduces the engine design an
 Start with these documents when extending the engine:
 
 - [Shallow device flow](architecture/0022-brinkman-flow.md) and [resolved Stokes-Brinkman flow](architecture/0023-mac-stokes.md)
+- [Resolved fluid flow with growing cells](architecture/0026-resolved-fluid-culture.md)
 - [Flow-driven cell motion](architecture/0021-flow-drift.md)
 - [Biomass, growth, and uptake](architecture/0024-biomass-accounting.md)
 - [Independent native backends](architecture/0001-native-backends.md)
@@ -49,8 +52,9 @@ Start with these documents when extending the engine:
 ## Analysis and visualization
 
 - [Analysis recipes](analysis/recipes.md) covers lazy Polars workflows for colony geometry, species, lineage, contact graphs, and signal fields.
+- [Species and signal labels](models/channel-labels.md) describes native and SBML channel metadata.
 - [Viewer guide](../viewer/README.md) covers static scenes, interactive sessions, controls, development, and tests.
-- [Scene format v2](formats/scene-v2.md) defines the data exchanged with visualization clients.
+- [Scene format v5](formats/scene-v5.md) defines the data exchanged with visualization clients.
 - [Live viewer protocol v1](protocols/live-viewer-v1.md) defines the authenticated loopback protocol for interactive sessions.
 
 ## Execution environments
@@ -66,7 +70,7 @@ The [testing and validation guide](development/validation.md) distinguishes comp
 ## Formats and protocols
 
 - [Run manifest v1](formats/run-manifest-v1.md) defines reproducible batch jobs and parameter sweeps.
-- [Scene format v2](formats/scene-v2.md) defines data-only visualization frames.
+- [Scene format v5](formats/scene-v5.md) defines data-only visualization frames.
 - [Live viewer protocol v1](protocols/live-viewer-v1.md) defines interactive viewer messages and authority boundaries.
 - [Checkpoint design](architecture/0004-checkpoints.md) defines restart state and schema migration.
 - [Analysis dataset design](architecture/0013-analysis-datasets.md) defines Parquet/Zarr schemas and provenance.

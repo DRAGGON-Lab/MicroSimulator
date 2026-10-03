@@ -32,9 +32,7 @@ SQUARE_DUCT_PEAK_TO_MEAN = 2.0962
 """Peak-to-mean axial velocity of fully developed flow in a square duct."""
 
 
-def duct_grid(
-    nx: int, ny: int, nz: int, spacing: tuple[float, float, float]
-) -> SignalGridSpec:
+def duct_grid(nx: int, ny: int, nz: int, spacing: tuple[float, float, float]) -> SignalGridSpec:
     """A duct grid flowing along y between fixed inlet and outlet boundaries."""
 
     shape = GridShape()
@@ -45,11 +43,13 @@ def duct_grid(
     spec.spacing = Vec3(*spacing)
     spec.diffusion = [1.0]
     spec.advection = [Vec3()]
+
     for name in ("y_lower", "y_upper"):
         boundary = getattr(spec, name)
         boundary.kind = GridBoundaryKind.FIXED
         boundary.values = [0.0]
         setattr(spec, name, boundary)
+
     return spec
 
 
@@ -77,6 +77,7 @@ def two_layer_brinkman(drag: float, positions: _Profile) -> _Profile:
 
     if drag <= 0.0:
         raise ValueError("drag must be positive")
+
     root = math.sqrt(drag)
     matrix = np.array(
         [
@@ -92,6 +93,7 @@ def two_layer_brinkman(drag: float, positions: _Profile) -> _Profile:
         -positions * positions / 2.0 + linear * positions,
         1.0 / drag + cosh_c * np.cosh(root * positions) + sinh_c * np.sinh(root * positions),
     )
+
     return profile
 
 
@@ -105,12 +107,16 @@ def centerline_value(profile: _Profile) -> float:
     """
 
     result = profile
+
     for _ in range(profile.ndim):
         count = result.shape[0]
+
         if count < 4 or count % 2 != 0:
             raise ValueError("centerline interpolation needs at least four cells per axis")
+
         middle = count // 2
         inner = 0.5 * (result[middle - 1] + result[middle])
         outer = 0.5 * (result[middle - 2] + result[middle + 1])
         result = (9.0 * inner - outer) / 8.0
+
     return float(result)

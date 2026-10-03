@@ -137,6 +137,7 @@ describe("view orientation transitions", () => {
 
     expect(samples[0]?.angleTo(start)).toBeLessThan(1e-12);
     expect(samples.at(-1)?.angleTo(end)).toBeLessThan(1e-12);
+
     for (let index = 1; index < samples.length; index += 1) {
       expect(samples[index]?.angleTo(start)).toBeGreaterThan(
         samples[index - 1]?.angleTo(start) ?? -1,

@@ -54,6 +54,7 @@ class Result:
         # error measure; the tolerance then bounds it absolutely.
         if self.reference == 0.0:
             return abs(self.computed)
+
         return abs(self.computed - self.reference) / abs(self.reference)
 
     @property
@@ -64,6 +65,7 @@ class Result:
 def bench_plane_poiseuille_order(coarse: int, simulation: Simulation) -> list[Result]:
     results: list[Result] = []
     errors: list[float] = []
+
     for n in (coarse, coarse * 2):
         start = time.perf_counter()
         spec = duct_grid(n, 6, 1, (1.0 / n, 0.25, 1.0))
@@ -86,6 +88,7 @@ def bench_plane_poiseuille_order(coarse: int, simulation: Simulation) -> list[Re
                 time.perf_counter() - start,
             )
         )
+
     order = math.log2(errors[0] / errors[1])
     results.append(
         Result(
@@ -98,6 +101,7 @@ def bench_plane_poiseuille_order(coarse: int, simulation: Simulation) -> list[Re
             0.0,
         )
     )
+
     return results
 
 
@@ -111,6 +115,7 @@ def bench_square_duct(n: int, simulation: Simulation) -> Result:
     # Cell centers straddle the duct axis, so the peak is interpolated rather
     # than taken from the largest sample, which would understate it.
     ratio = centerline_value(cross) / float(cross.mean())
+
     return Result(
         "stokes",
         f"square duct (n={n})",
@@ -126,14 +131,11 @@ def bench_two_layer_brinkman(coarse: int, simulation: Simulation) -> list[Result
     drag_value = 200.0
     results: list[Result] = []
     errors: list[float] = []
+
     for nz in (coarse, coarse * 2):
         start = time.perf_counter()
         spec = duct_grid(1, 6, nz, (1.0, 0.25, 1.0 / nz))
-        drag = [
-            0.0 if (z + 0.5) / nz < 0.5 else drag_value
-            for _ in range(6)
-            for z in range(nz)
-        ]
+        drag = [0.0 if (z + 0.5) / nz < 0.5 else drag_value for _ in range(6) for z in range(nz)]
         field, _ = solve_stokes_field(
             spec,
             mean_inlet_speed=1.0,
@@ -162,6 +164,7 @@ def bench_two_layer_brinkman(coarse: int, simulation: Simulation) -> list[Result
                 time.perf_counter() - start,
             )
         )
+
     results.append(
         Result(
             "stokes",
@@ -173,6 +176,7 @@ def bench_two_layer_brinkman(coarse: int, simulation: Simulation) -> list[Result
             0.0,
         )
     )
+
     return results
 
 
@@ -181,6 +185,7 @@ def bench_hele_shaw_duct(scale: int, simulation: Simulation) -> Result:
     spec = duct_grid(4 * scale, 8 * scale, 3 * scale, (1.0, 1.0, 1.0))
     field, _ = solve_flow_field(spec, mean_inlet_speed=5.0, simulation=simulation)
     error = float(max(abs(v - 5.0) for v in field.y_faces))
+
     return Result(
         "hele-shaw",
         "uniform duct",
@@ -196,15 +201,14 @@ def bench_hele_shaw_mobility_split(scale: int, simulation: Simulation) -> Result
     start = time.perf_counter()
     columns, rows = 2 * scale, 6 * scale
     spec = duct_grid(columns, rows, 1, (1.0, 1.0, 1.0))
-    mobility = [
-        1.0 if x < columns // 2 else 3.0 for x in range(columns) for _ in range(rows)
-    ]
+    mobility = [1.0 if x < columns // 2 else 3.0 for x in range(columns) for _ in range(rows)]
     field, _ = solve_flow_field(
         spec, mean_inlet_speed=4.0, mobility=mobility, simulation=simulation
     )
     middle = rows // 2
     slow = field.y_faces[0 * (rows + 1) + middle]
     fast = field.y_faces[(columns - 1) * (rows + 1) + middle]
+
     return Result(
         "hele-shaw",
         "parallel channels",
@@ -221,10 +225,12 @@ def bench_cross_solver_consistency(scale: int, simulation: Simulation) -> Result
     nx, ny, nz = 6 * scale, 10 * scale, 6 * scale
     spec = duct_grid(nx, ny, nz, (1.0 / scale, 1.0 / scale, 0.05 / scale))
     obstacles = [0] * (nx * ny * nz)
+
     for y in range(4 * scale, 6 * scale):
         for x in range(scale, 3 * scale):
             for z in range(nz):
                 obstacles[site_index(spec, x, y, z)] = 1
+
     spec.obstacles = obstacles
     stokes_field, _ = solve_stokes_field(
         spec, mean_inlet_speed=1.0, tolerance=1.0e-6, simulation=simulation
@@ -238,12 +244,11 @@ def bench_cross_solver_consistency(scale: int, simulation: Simulation) -> Result
 
     mid = ny // 2
     stokes_split = np.array([column_flux(stokes_field.y_faces, x, mid) for x in range(nx)])
-    hele_shaw_split = np.array(
-        [column_flux(hele_shaw_field.y_faces, x, mid) for x in range(nx)]
-    )
+    hele_shaw_split = np.array([column_flux(hele_shaw_field.y_faces, x, mid) for x in range(nx)])
     deviation = float(
         np.max(np.abs(stokes_split / stokes_split.sum() - hele_shaw_split / hele_shaw_split.sum()))
     )
+
     return Result(
         "cross-check",
         "thin-gap pillar",
@@ -257,9 +262,7 @@ def bench_cross_solver_consistency(scale: int, simulation: Simulation) -> Result
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--fine", action="store_true", help="double the benchmark resolutions"
-    )
+    parser.add_argument("--fine", action="store_true", help="double the benchmark resolutions")
     parser.add_argument(
         "--backend",
         choices=("cpu", "metal", "cuda"),
@@ -274,10 +277,12 @@ def main() -> int:
         "cuda": BackendKind.CUDA,
     }
     backend = backends[arguments.backend]
+
     if arguments.device_index < 0 or not backend_available(backend, arguments.device_index):
         parser.error(
             f"backend {arguments.backend!r} has no device at index {arguments.device_index}"
         )
+
     simulation = Simulation(backend, device_index=arguments.device_index)
     scale = 2 if arguments.fine else 1
 
@@ -292,19 +297,26 @@ def main() -> int:
     width = max(len(r.benchmark) for r in results)
     info = simulation.backend_info
     print(f"backend: {info.name} ({info.device}), device index {info.device_index}")
-    print(f"{'solver':<11} {'benchmark':<{width}}  {'computed':>10} {'reference':>10} "
-          f"{'error':>9} {'tol':>7} {'time':>7}  status")
+    print(
+        f"{'solver':<11} {'benchmark':<{width}}  {'computed':>10} {'reference':>10} "
+        f"{'error':>9} {'tol':>7} {'time':>7}  status"
+    )
     failures = 0
+
     for r in results:
         status = "pass" if r.passed else "FAIL"
+
         if not r.passed:
             failures += 1
+
         print(
             f"{r.solver:<11} {r.benchmark:<{width}}  {r.computed:>10.5f} "
             f"{r.reference:>10.5f} {r.error:>9.5f} {r.tolerance:>7.3g} "
             f"{r.seconds:>6.2f}s  {status}   [{r.metric}]"
         )
+
     print(f"\n{len(results) - failures}/{len(results)} benchmarks passed")
+
     return 1 if failures else 0
 
 

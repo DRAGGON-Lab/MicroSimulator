@@ -1,5 +1,89 @@
+from collections.abc import Mapping
 from enum import Enum
 from typing import overload
+
+from .culture import CultureState
+from .growth import CellGrowth
+from .stokes import StokesFlow
+from .transport import SoluteTransport
+
+class OccupancyCapsule:
+    def __init__(
+        self,
+        center: tuple[float, float, float],
+        direction: tuple[float, float, float],
+        length: float,
+        radius: float,
+    ) -> None: ...
+
+class OccupancyFace:
+    first: int
+    second: int
+    conductance: float
+    volume_flux: float
+    def __init__(self, first: int, second: int, conductance: float, volume_flux: float) -> None: ...
+
+class OccupancyReservoir:
+    def __init__(
+        self, site: int, concentration: float, conductance: float, volume_flux: float
+    ) -> None: ...
+
+class OccupancyBalance:
+    before: float
+    after: float
+    source: float
+    reaction: float
+    boundary: float
+
+class OccupancyStep:
+    amount: list[float]
+    balance: OccupancyBalance
+    iterations: int
+    relative_residual: float
+
+class OccupancySolver:
+    def __init__(self, backend: BackendKind, device_index: int, epsilon_cutoff: float) -> None: ...
+    def geometric_porosity(
+        self,
+        centers: list[tuple[float, float, float]],
+        spacing: tuple[float, float, float],
+        cells: list[OccupancyCapsule],
+        subdivisions: int,
+        walls: list[int],
+    ) -> list[float]: ...
+    def accessible_volumes(self, porosity: list[float], voxel_volume: float) -> list[float]: ...
+    def concentration(self, amount: list[float], volume: list[float]) -> list[float]: ...
+    def porosity_face(
+        self,
+        first: int,
+        second: int,
+        epsilon_first: float,
+        epsilon_second: float,
+        diffusion: float,
+        area: float,
+        distance: float,
+        intrinsic_velocity: float,
+    ) -> OccupancyFace: ...
+    def remap_amounts(
+        self,
+        amount: list[float],
+        old_volume: list[float],
+        new_volume: list[float],
+        neighbors: list[tuple[int, int]],
+    ) -> list[float]: ...
+    def exchange_weights(self, kernel: list[float], volume: list[float]) -> list[float]: ...
+    def backward_euler(
+        self,
+        amount: list[float],
+        volume: list[float],
+        faces: list[OccupancyFace],
+        dt: float,
+        source: list[float],
+        loss: list[float],
+        reservoirs: list[OccupancyReservoir],
+        max_iterations: int,
+        relative_tolerance: float,
+    ) -> OccupancyStep: ...
 
 class BackendKind(Enum):
     CPU: BackendKind
@@ -16,6 +100,7 @@ class BackendFeature(Enum):
     COUPLED_RATES: BackendFeature
     DEPTH_AVERAGED_FLOW: BackendFeature
     RESOLVED_FLOW: BackendFeature
+    CULTURE: BackendFeature
 
 class FlowAxis(Enum):
     X: FlowAxis
@@ -468,6 +553,7 @@ class _SimulationCheckpoint:
     species_rate_plan: SpeciesRatePlan
     signal_grid: _SignalGridCheckpoint | None
     coupled_rate_plan: CoupledRatePlan | None
+    culture: CultureCheckpoint | None
 
     def __init__(self) -> None: ...
     def validate(self) -> None: ...
@@ -583,6 +669,35 @@ class Simulation:
     def last_signal_solve_report(self) -> SignalSolveReport | None: ...
     @property
     def has_coupled_rate_plan(self) -> bool: ...
+    @property
+    def has_culture(self) -> bool: ...
+    @property
+    def culture_checkpoint(self) -> CultureCheckpoint | None: ...
+    @property
+    def fluid_fragments(self) -> list[FluidFragment]: ...
+    def configure_culture(
+        self,
+        *,
+        fluid: StokesFlow,
+        transport: SoluteTransport,
+        cell_growth: Mapping[int, CellGrowth] = ...,
+    ) -> None: ...
+    @property
+    def culture_state(self) -> CultureState | None: ...
+    def _configure_culture(
+        self,
+        configuration: CultureConfiguration,
+        concentrations: list[float] = ...,
+        biochemical_volumes: list[float] = ...,
+    ) -> None: ...
+    def set_cell_force(
+        self,
+        id: int,
+        force_n: tuple[float, float, float],
+        torque_nm: tuple[float, float, float] = ...,
+    ) -> None: ...
+    def _restore_checkpoint(self, checkpoint: _SimulationCheckpoint) -> None: ...
+    def cell_surface_concentrations(self, id: int) -> list[float]: ...
     def add_cell(self, cell: CellInit) -> int: ...
     def remove_cell(self, id: int) -> None: ...
     def apply_flow_drift(
@@ -645,3 +760,478 @@ class Simulation:
     def sample_signals(self, position: Vec3) -> list[float]: ...
     def _checkpoint(self) -> _SimulationCheckpoint: ...
     def validate(self) -> None: ...
+
+class CapsuleBody:
+    length_rate: float
+    id: int
+    position: tuple[float, float, float]
+    orientation: tuple[float, float, float, float]
+    length: float
+    radius: float
+    fixed: bool
+    force_n: tuple[float, float, float]
+    torque_nm: tuple[float, float, float]
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+    @property
+    def geometric_volume(self) -> float: ...
+
+class FluidBodyResult:
+    @property
+    def id(self) -> int: ...
+    @property
+    def velocity(self) -> tuple[float, float, float]: ...
+    @property
+    def angular_velocity(self) -> tuple[float, float, float]: ...
+    @property
+    def hydrodynamic_force_n(self) -> tuple[float, float, float]: ...
+    @property
+    def hydrodynamic_torque_nm(self) -> tuple[float, float, float]: ...
+    @property
+    def no_slip_rms_m_s(self) -> float: ...
+    @property
+    def volume_change_rate_m3_s(self) -> float: ...
+    @property
+    def marker_count(self) -> int: ...
+
+class FluidBodyStepParameters:
+    minimum_gap_m: float
+    maximum_displacement_fraction: float
+    max_halvings: int
+    max_contact_iterations: int
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+
+class FluidContactResult:
+    @property
+    def first_id(self) -> int: ...
+    @property
+    def second_id(self) -> int: ...
+    @property
+    def normal(self) -> tuple[float, float, float]: ...
+    @property
+    def point_on_first(self) -> tuple[float, float, float]: ...
+    @property
+    def initial_gap_m(self) -> float: ...
+    @property
+    def normal_force_n(self) -> float: ...
+
+class FluidBodyStep:
+    @property
+    def accepted_dt(self) -> float: ...
+    @property
+    def bodies(self) -> list[CapsuleBody]: ...
+    @property
+    def flow(self) -> FluidFlowResult: ...
+    @property
+    def contacts(self) -> list[FluidContactResult]: ...
+    @property
+    def halvings(self) -> int: ...
+    @property
+    def contact_iterations(self) -> int: ...
+
+class FluidGridSpec:
+    shape: GridShape
+    origin: Vec3
+    spacing: float
+    length_unit_m: float
+    time_unit_s: float
+    obstacles: list[int]
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+    @property
+    def site_count(self) -> int: ...
+
+class FluidProperties:
+    viscosity_pa_s: float
+    density_kg_m3: float
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+
+class FlowPortKind(Enum):
+    PRESSURE: FlowPortKind
+    FLOW_RATE: FlowPortKind
+
+class FlowPort:
+    name: str
+    axis: FlowAxis
+    upper: bool
+    kind: FlowPortKind
+    value: float
+    sites: list[int]
+    def __init__(self) -> None: ...
+
+class LinearSolveParameters:
+    relative_tolerance: float
+    absolute_tolerance: float
+    max_iterations: int
+    memory_limit_bytes: int
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+
+class FlowPortResult:
+    @property
+    def name(self) -> str: ...
+    @property
+    def pressure_pa(self) -> float: ...
+    @property
+    def flow_rate_m3_s(self) -> float: ...
+    @property
+    def area_m2(self) -> float: ...
+
+class FluidSolveReport:
+    def __init__(self) -> None: ...
+    iterations: int
+    relative_residual: float
+    absolute_residual: float
+    divergence_rms_per_s: float
+    continuity_rms_per_s: float
+    source_volume_rate_m3_s: float
+    max_speed_m_s: float
+    reynolds_number: float
+    viscous_relaxation_time_s: float
+    net_flow_rate_m3_s: float
+    estimated_memory_bytes: int
+
+class FluidFlowResult:
+    @property
+    def field(self) -> SignalGridVelocityField: ...
+    @property
+    def pressure_pa(self) -> list[float]: ...
+    @property
+    def ports(self) -> list[FlowPortResult]: ...
+    @property
+    def bodies(self) -> list[FluidBodyResult]: ...
+    @property
+    def report(self) -> FluidSolveReport: ...
+
+class StokesFlowSolver:
+    def __init__(self, backend: BackendKind = ..., device_index: int = 0) -> None: ...
+    def solve(
+        self,
+        grid: FluidGridSpec,
+        fluid: FluidProperties,
+        ports: list[FlowPort],
+        parameters: LinearSolveParameters = ...,
+    ) -> FluidFlowResult: ...
+    def solve_bodies(
+        self,
+        grid: FluidGridSpec,
+        fluid: FluidProperties,
+        ports: list[FlowPort],
+        bodies: list[CapsuleBody],
+        parameters: LinearSolveParameters = ...,
+    ) -> FluidFlowResult: ...
+    def propose_body_step(
+        self,
+        grid: FluidGridSpec,
+        fluid: FluidProperties,
+        ports: list[FlowPort],
+        bodies: list[CapsuleBody],
+        maximum_dt: float,
+        solve_parameters: LinearSolveParameters = ...,
+        step_parameters: FluidBodyStepParameters = ...,
+    ) -> FluidBodyStep: ...
+
+class FluidGeometryParameters:
+    def __init__(self) -> None: ...
+    surface_resolution: int
+    maximum_surface_error_fraction: float
+    memory_limit_bytes: int
+    def validate(self) -> None: ...
+
+class FluidFragment:
+    @property
+    def site(self) -> int: ...
+    @property
+    def component(self) -> int: ...
+    @property
+    def volume(self) -> float: ...
+    @property
+    def centroid(self) -> tuple[float, float, float]: ...
+
+class FluidFace:
+    @property
+    def first(self) -> int: ...
+    @property
+    def second(self) -> int: ...
+    @property
+    def area(self) -> float: ...
+    @property
+    def centroid(self) -> tuple[float, float, float]: ...
+    @property
+    def normal(self) -> tuple[float, float, float]: ...
+    @property
+    def body_id(self) -> int: ...
+    @property
+    def axis(self) -> FlowAxis: ...
+    @property
+    def grid_face(self) -> int: ...
+
+class FluidGeometryReport:
+    @property
+    def fluid_volume(self) -> float: ...
+    @property
+    def expected_fluid_volume(self) -> float: ...
+    @property
+    def volume_error(self) -> float: ...
+    @property
+    def maximum_surface_error(self) -> float: ...
+    @property
+    def component_count(self) -> int: ...
+    @property
+    def estimated_memory_bytes(self) -> int: ...
+
+class FluidOverlap:
+    @property
+    def first(self) -> int: ...
+    @property
+    def second(self) -> int: ...
+    @property
+    def volume(self) -> float: ...
+
+class Solute:
+    amount_unit: str
+
+    def __init__(self) -> None: ...
+    name: str
+    diffusion: float
+
+class ChemicalBoundary:
+    kind: ChemicalBoundaryKind
+    allow_backflow: bool
+
+    def __init__(self) -> None: ...
+    port: str
+    concentrations: list[float]
+
+class SurfaceTransferLaw:
+    def __init__(self) -> None: ...
+    body_id: int
+    solute: int
+    uptake_velocity: float
+    secretion_rate: float
+
+class ChemicalTransfer:
+    def __init__(self) -> None: ...
+    port: str
+    body_id: int
+    amounts: list[float]
+
+class SoluteTransportReport:
+    def __init__(self) -> None: ...
+    projection_iterations: int
+    transport_iterations: int
+    maximum_volume_residual: float
+    mass_balance_error: list[float]
+
+class SoluteTransportResult:
+    @property
+    def surfaces(self) -> list[SurfaceEnvironment]: ...
+    @property
+    def amounts(self) -> list[float]: ...
+    @property
+    def concentrations(self) -> list[float]: ...
+    @property
+    def reservoirs(self) -> list[ChemicalTransfer]: ...
+    @property
+    def cells(self) -> list[ChemicalTransfer]: ...
+    @property
+    def report(self) -> SoluteTransportReport: ...
+
+class CellSurfaceExchange:
+    def __init__(self) -> None: ...
+    body_id: int
+    solute: int
+    species: int
+    uptake_velocity: float
+    secretion_rate: float
+
+class ReserveRequirement:
+    def __init__(self) -> None: ...
+    species: int
+    amount_per_biomass: float
+
+class CultureConfiguration:
+    growth: list[CellGrowthModel]
+    events: list[CultureEvent]
+    authoring_json: str
+    coupling_tolerance: float
+    maximum_coupling_iterations: int
+
+    def __init__(self) -> None: ...
+    grid: FluidGridSpec
+    fluid: FluidProperties
+    ports: list[FlowPort]
+    solutes: list[Solute]
+    reservoirs: list[ChemicalBoundary]
+    exchange: list[CellSurfaceExchange]
+    biomass_requirements: list[ReserveRequirement]
+    biomass_per_geometric_volume: float
+    solver: LinearSolveParameters
+    stepping: FluidBodyStepParameters
+    geometry: FluidGeometryParameters
+    maximum_substeps: int
+    maximum_retries: int
+    def validate(self, species_count: int) -> None: ...
+
+class CultureCellState:
+    uptake_totals: list[float]
+    realized_specific_rate: float
+    biomass_produced: float
+
+    def __init__(self) -> None: ...
+    body: CapsuleBody
+    biochemical_volume: float
+    species_amounts: list[float]
+
+class CultureReport:
+    def __init__(self) -> None: ...
+    substeps: int
+    retries: int
+    flow: FluidSolveReport
+    transport: SoluteTransportReport
+
+class CultureCheckpoint:
+    time: float
+    event_index: int
+
+    def __init__(self) -> None: ...
+    configuration: CultureConfiguration
+    cells: list[CultureCellState]
+    extracellular_amounts: list[float]
+    reservoir_totals: list[ChemicalTransfer]
+    last_report: CultureReport
+    def validate(self, world: _WorldStateCheckpoint) -> None: ...
+
+class FluidGeometry:
+    def __init__(
+        self,
+        grid: FluidGridSpec,
+        bodies: list[CapsuleBody],
+        parameters: FluidGeometryParameters = ...,
+    ) -> None: ...
+    @property
+    def grid(self) -> FluidGridSpec: ...
+    @property
+    def bodies(self) -> list[CapsuleBody]: ...
+    @property
+    def fragments(self) -> list[FluidFragment]: ...
+    @property
+    def faces(self) -> list[FluidFace]: ...
+    @property
+    def report(self) -> FluidGeometryReport: ...
+    def overlaps(self, other: FluidGeometry) -> list[FluidOverlap]: ...
+
+class SoluteTransportSolver:
+    def propose(
+        self,
+        geometry: TransportGeometry,
+        solutes: list[Solute],
+        boundaries: list[ChemicalBoundary],
+        amounts: list[float],
+        exchange: list[SurfaceTransferLaw] = ...,
+        parameters: LinearSolveParameters = ...,
+    ) -> SoluteTransportResult: ...
+    def __init__(self, backend: BackendKind = ..., device_index: int = 0) -> None: ...
+    def step(
+        self,
+        before: FluidGeometry,
+        after: FluidGeometry,
+        velocity: SignalGridVelocityField,
+        ports: list[FlowPort],
+        solutes: list[Solute],
+        reservoirs: list[ChemicalBoundary],
+        amounts: list[float],
+        dt: float,
+        exchange: list[SurfaceTransferLaw] = ...,
+        parameters: LinearSolveParameters = ...,
+    ) -> SoluteTransportResult: ...
+
+class ChemicalBoundaryKind(Enum):
+    RESERVOIR_CONTACT = 0
+    ADVECTIVE = 1
+    OUTFLOW = 2
+
+class GrowthKind(Enum):
+    MONOD = 0
+    ESSENTIAL = 1
+
+class GrowthRequirement:
+    def __init__(self) -> None: ...
+    solute: int
+    half_saturation: float
+    biomass_yield: float
+
+class CellGrowthModel:
+    def __init__(self) -> None: ...
+    cell_id: int
+    kind: GrowthKind
+    mu_max: float
+    biomass_density: float
+    volume_ratio: float
+    requirements: list[GrowthRequirement]
+
+class CultureEvent:
+    def __init__(self) -> None: ...
+    time: float
+    ports: list[FlowPort]
+    reservoirs: list[ChemicalBoundary]
+
+MacVelocityField = SignalGridVelocityField
+
+class GeometricFluxReport:
+    @property
+    def projection_iterations(self) -> int: ...
+    @property
+    def maximum_volume_residual(self) -> float: ...
+
+class TransportGeometry:
+    def __init__(
+        self,
+        before: FluidGeometry,
+        after: FluidGeometry,
+        velocity: MacVelocityField,
+        ports: list[FlowPort],
+        dt: float,
+        backend: BackendKind = ...,
+        device_index: int = 0,
+        parameters: LinearSolveParameters = ...,
+    ) -> None: ...
+    @property
+    def report(self) -> GeometricFluxReport: ...
+
+class SurfaceEnvironment:
+    @property
+    def body_id(self) -> int: ...
+    @property
+    def area(self) -> float: ...
+    @property
+    def concentrations(self) -> list[float]: ...
+
+class GrowthInput:
+    def __init__(self) -> None: ...
+    biochemical_volume: float
+    surface_area: float
+    concentrations: list[float]
+    uptake: list[float]
+
+class GrowthEvaluation:
+    @property
+    def uptake_velocities(self) -> list[float]: ...
+    @property
+    def biomass_gain(self) -> float: ...
+    @property
+    def biochemical_volume_gain(self) -> float: ...
+    @property
+    def geometric_volume_gain(self) -> float: ...
+    @property
+    def specific_rate(self) -> float: ...
+    @property
+    def stoichiometric_residual(self) -> float: ...
+
+class GrowthExecutor:
+    def __init__(self, backend: BackendKind = ..., device_index: int = 0) -> None: ...
+    def evaluate(
+        self, models: list[CellGrowthModel], inputs: list[GrowthInput], dt: float
+    ) -> list[GrowthEvaluation]: ...

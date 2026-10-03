@@ -38,6 +38,7 @@ def _path(relative: str) -> Path:
 
 def _simulation_payload(path: Path) -> object:
     document = cast(dict[str, object], json.loads(path.read_text(encoding="utf-8")))
+
     return document["simulation"]
 
 
@@ -50,6 +51,7 @@ def test_species_migrations_run_typed_equations_and_division(
 ) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     model, _ = build_model(_path(relative), ModelContext(backend, 0, seed=11))
     assert isinstance(model, NativeController)
 
@@ -59,14 +61,17 @@ def test_species_migrations_run_typed_equations_and_division(
     assert len(cells) == 2
     assert len(model.last_mechanics_reports) == 1
     first = cells[0]
+
     if expected_species is not None:
         assert len(first.species) == len(expected_species)
+
         for actual, expected in zip(first.species, expected_species, strict=True):
             assert math.isclose(actual, expected, rel_tol=2.0e-5, abs_tol=1.0e-7)
     else:
         dilution = 2.25 / (first.length + 1.0)
         expected_x0 = 10.0 * dilution
         assert math.isclose(first.species[0], expected_x0, rel_tol=2.0e-5)
+
         if relative == "ex2b_diluteRepression.py":
             expected_x1 = 0.01 * 4.0 / (4.0 + expected_x0 * expected_x0)
             assert math.isclose(first.species[1], expected_x1, rel_tol=2.0e-5)
@@ -129,6 +134,7 @@ def test_signal_migrations_run_typed_coupled_equations(
 ) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     model, _ = build_model(_path(relative), ModelContext(backend, 0, seed=11))
     assert isinstance(model, NativeController)
 
@@ -142,6 +148,7 @@ def test_signal_migrations_run_typed_coupled_equations(
     assert len(signals) == expected_levels
     assert all(math.isfinite(value) and value >= 0.0 for value in signals)
     assert sum(signals) > 0.0
+
     for cell in cells:
         assert len(cell.species) == species_count
         assert all(math.isfinite(value) for value in cell.species)

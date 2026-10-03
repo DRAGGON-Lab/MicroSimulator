@@ -30,6 +30,7 @@ def _plane_poiseuille_error(nx: int) -> float:
     profile = np.asarray(field.y_faces).reshape(nx, 7, 1)[:, 3, 0]
     positions = (np.arange(nx) + 0.5) / nx
     exact = plane_poiseuille(positions)
+
     return float(np.max(np.abs(profile - exact)) / np.max(exact))
 
 
@@ -45,6 +46,7 @@ def test_plane_poiseuille_profile_converges_at_second_order() -> None:
 def test_resolved_flow_uses_the_selected_native_backend(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip(f"{backend.name} backend is unavailable")
+
     spec = duct_grid(6, 5, 1, (1.0 / 6.0, 0.25, 1.0))
     expected, _ = solve_stokes_field(spec, mean_inlet_speed=1.0)
     simulation = Simulation(backend)
@@ -103,9 +105,11 @@ def test_zero_drag_recovers_pure_stokes() -> None:
 def test_stokes_field_is_engine_valid_and_conservative_around_a_pillar() -> None:
     spec = duct_grid(9, 12, 1, (1.0, 1.0, 1.0))
     obstacles = [0] * (9 * 12)
+
     for y in (5, 6):
         for x in (4, 5):
             obstacles[site_index(spec, x, y, 0)] = 1
+
     spec.obstacles = obstacles
     field, report = solve_stokes_field(spec, mean_inlet_speed=6.0, tolerance=1.0e-6)
     spec.velocity_field = field
@@ -116,8 +120,10 @@ def test_stokes_field_is_engine_valid_and_conservative_around_a_pillar() -> None
         return field.y_faces[x * 13 + fy]
 
     fluxes = [sum(y_face(x, fy) for x in range(9)) for fy in range(13)]
+
     for flux in fluxes[1:]:
         assert math.isclose(flux, fluxes[0], rel_tol=1.0e-5)
+
     assert y_face(4, 6) == 0.0
     assert y_face(1, 6) > 6.0
 
@@ -128,16 +134,16 @@ def test_thin_gap_stokes_depth_averages_to_the_hele_shaw_solution() -> None:
     nx, ny, nz = 6, 10, 6
     spec = duct_grid(nx, ny, nz, (1.0, 1.0, 0.05))
     obstacles = [0] * (nx * ny * nz)
+
     for y in (4, 5):
         for x in (1, 2):
             for z in range(nz):
                 obstacles[site_index(spec, x, y, z)] = 1
+
     spec.obstacles = obstacles
 
     stokes_field, _ = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-6)
-    hele_shaw_field, _ = solve_flow_field(
-        spec, mean_inlet_speed=1.0, mobility=gap_mobility(spec)
-    )
+    hele_shaw_field, _ = solve_flow_field(spec, mean_inlet_speed=1.0, mobility=gap_mobility(spec))
 
     def column_flux(field_values: list[float], x: int, fy: int) -> float:
         return sum(field_values[(x * (ny + 1) + fy) * nz + z] for z in range(nz))
@@ -147,6 +153,7 @@ def test_thin_gap_stokes_depth_averages_to_the_hele_shaw_solution() -> None:
     hele_shaw_split = [column_flux(hele_shaw_field.y_faces, x, mid) for x in range(nx)]
     stokes_total = sum(stokes_split)
     hele_shaw_total = sum(hele_shaw_split)
+
     for x in range(nx):
         assert math.isclose(
             stokes_split[x] / stokes_total,
@@ -157,20 +164,27 @@ def test_thin_gap_stokes_depth_averages_to_the_hele_shaw_solution() -> None:
 
 def test_ill_posed_stokes_problems_are_rejected() -> None:
     spec = duct_grid(4, 6, 1, (1.0, 1.0, 1.0))
+
     with pytest.raises(FlowError, match="one of x, y, z"):
         solve_stokes_field(spec, mean_inlet_speed=1.0, axis="w")
+
     with pytest.raises(FlowError, match="finite and nonzero"):
         solve_stokes_field(spec, mean_inlet_speed=0.0)
+
     with pytest.raises(FlowError, match="must be FIXED"):
         solve_stokes_field(spec, mean_inlet_speed=1.0, axis="x")
+
     with pytest.raises(FlowError, match="one value per grid site"):
         solve_stokes_field(spec, mean_inlet_speed=1.0, drag=[1.0])
 
     blocked = duct_grid(3, 4, 1, (1.0, 1.0, 1.0))
     obstacles = [0] * 12
+
     for x in range(3):
         obstacles[site_index(blocked, x, 2, 0)] = 1
+
     blocked.obstacles = obstacles
+
     with pytest.raises(FlowError, match="no through-flow"):
         solve_stokes_field(blocked, mean_inlet_speed=1.0)
 
@@ -196,6 +210,7 @@ def test_colony_drag_rasterizes_the_colony() -> None:
     assert 0.0 < empty < packed
     assert solid == 0.0
     assert math.isclose(packed, 50.0 * 0.9**2 / (1.0 - 0.9) ** 3, rel_tol=1.0e-9)
+
     with pytest.raises(FlowError, match="finite and non-negative"):
         colony_drag(spec, [], drag_coefficient=-1.0)
 
@@ -212,18 +227,22 @@ def test_thin_gaps_over_predict_flux_until_they_are_resolved() -> None:
 
     lubrication = 1.0 / 16.0
     errors: list[float] = []
+
     for thin in (1, 2, 4, 8):
         nz = thin + 1 + 4 * thin
         spec = duct_grid(1, 8, nz, (1.0, 1.0, 1.0))
         obstacles = [0] * (8 * nz)
+
         for y in range(8):
             obstacles[site_index(spec, 0, y, thin)] = 1
+
         spec.obstacles = obstacles
         field, report = solve_stokes_field(spec, mean_inlet_speed=1.0, tolerance=1.0e-6)
         profile = np.asarray(field.y_faces).reshape(1, 9, nz)[0, 4, :]
         ratio = float(profile[:thin].mean() / profile[thin + 1 :].mean())
         errors.append(ratio / lubrication)
         assert report.min_gap_voxels == thin
+
     assert errors[0] > 2.0
     assert errors[1] < errors[0]
     assert errors[2] < 1.2
@@ -245,11 +264,13 @@ def test_reversed_and_transverse_flow_axes_solve() -> None:
     across.y_lower.values = []
     across.y_upper.kind = GridBoundaryKind.NO_FLUX
     across.y_upper.values = []
+
     for name in ("x_lower", "x_upper"):
         boundary = getattr(across, name)
         boundary.kind = GridBoundaryKind.FIXED
         boundary.values = [0.0]
         setattr(across, name, boundary)
+
     sideways, _ = solve_stokes_field(across, mean_inlet_speed=1.0, axis="x")
     across.velocity_field = sideways
     across.validate()
@@ -262,8 +283,10 @@ def test_reversed_and_transverse_flow_axes_solve() -> None:
 def test_partly_blocked_inlets_and_walled_off_pockets_solve() -> None:
     spec = duct_grid(4, 6, 1, (1.0, 1.0, 1.0))
     obstacles = [0] * 24
+
     for y in range(6):
         obstacles[site_index(spec, 0, y, 0)] = 1
+
     spec.obstacles = obstacles
     field, report = solve_stokes_field(spec, mean_inlet_speed=2.0, tolerance=1.0e-6)
     spec.velocity_field = field
@@ -277,11 +300,14 @@ def test_partly_blocked_inlets_and_walled_off_pockets_solve() -> None:
     # A fluid site sealed off from the flow leaves the solve well posed.
     pocket = duct_grid(5, 6, 1, (1.0, 1.0, 1.0))
     sealed = [0] * 30
+
     for y in (2, 4):
         for x in (3, 4):
             sealed[site_index(pocket, x, y, 0)] = 1
+
     for x in (3, 4):
         sealed[site_index(pocket, x, 3, 0)] = 0
+
     sealed[site_index(pocket, 2, 3, 0)] = 1
     pocket.obstacles = sealed
     sealed_field, sealed_report = solve_stokes_field(pocket, mean_inlet_speed=1.0)

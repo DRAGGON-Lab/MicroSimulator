@@ -44,13 +44,17 @@ struct Vec3 {
   };
 }
 
-[[nodiscard]] inline float norm(const Vec3& value) noexcept { return std::sqrt(dot(value, value)); }
+[[nodiscard]] inline float norm(const Vec3& value) noexcept {
+  return std::sqrt(dot(value, value));
+}
 
 [[nodiscard]] inline Vec3 normalized(const Vec3& value) {
   const auto magnitude = norm(value);
+
   if (!std::isfinite(magnitude) || magnitude <= 0.0F) {
     throw std::invalid_argument("cell direction must be finite and non-zero");
   }
+
   return value * (1.0F / magnitude);
 }
 
@@ -70,6 +74,7 @@ enum class BackendFeature : std::uint8_t {
   coupled_rates,
   depth_averaged_flow,
   resolved_flow,
+  culture,
 };
 
 struct BackendInfo {

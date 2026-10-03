@@ -17,6 +17,7 @@ constexpr std::array time_steps{0.01F, 0.025F, 0.1F, 0.04F};
 
 bool close(float actual, float expected) {
   const auto tolerance = absolute_tolerance + (relative_tolerance * std::abs(expected));
+
   return std::abs(actual - expected) <= tolerance;
 }
 
@@ -30,6 +31,7 @@ void run_growth_scenario(cm::BackendKind backend, std::uint32_t device_index) {
   growth_rates.reserve(cell_count);
 
   simulation.step(0.0F);
+
   for (std::size_t index = 0; index < cell_count; ++index) {
     cm::CellInit cell;
     cell.position = {
@@ -50,9 +52,11 @@ void run_growth_scenario(cm::BackendKind backend, std::uint32_t device_index) {
   }
 
   double expected_time = 0.0;
+
   for (const auto dt : time_steps) {
     simulation.step(dt);
     expected_time += static_cast<double>(dt);
+
     for (std::size_t index = 0; index < cell_count; ++index) {
       expected_lengths[index] += growth_rates[index] * expected_lengths[index] * dt;
     }
@@ -60,6 +64,7 @@ void run_growth_scenario(cm::BackendKind backend, std::uint32_t device_index) {
 
   assert(simulation.cell_count() == cell_count);
   assert(std::abs(simulation.time() - expected_time) <= 1.0e-12);
+
   for (std::size_t index = 0; index < cell_count; ++index) {
     const auto cell = simulation.cell(ids[index]);
     assert(cell.id == ids[index]);
@@ -82,5 +87,6 @@ void run_growth_scenario(cm::BackendKind backend, std::uint32_t device_index) {
 
 int main() {
   cm::test::for_each_backend_device(run_growth_scenario);
+
   return 0;
 }

@@ -58,11 +58,13 @@ void test_division_reuses_slot_but_not_identity() {
   assert(simulation.lineage_parent(second) == parent);
 
   bool parent_is_gone = false;
+
   try {
     static_cast<void>(simulation.cell(parent));
   } catch (const std::out_of_range&) {
     parent_is_gone = true;
   }
+
   assert(parent_is_gone);
   simulation.validate();
 }
@@ -89,10 +91,9 @@ void test_asymmetric_division_preserves_capsule_extent() {
   assert(second_cell.species == initial.species);
   assert(close(first_cell.position.x - (first_cell.length * 0.5F), -1.0F));
   assert(close(second_cell.position.x + (second_cell.length * 0.5F), 5.0F));
-  assert(close(
-      (second_cell.position.x - (second_cell.length * 0.5F)) -
-          (first_cell.position.x + (first_cell.length * 0.5F)),
-      1.0F));
+  assert(close((second_cell.position.x - (second_cell.length * 0.5F)) -
+                   (first_cell.position.x + (first_cell.length * 0.5F)),
+               1.0F));
   assert(simulation.lineage_parent(first) == parent);
   assert(simulation.lineage_parent(second) == parent);
   simulation.validate();
@@ -104,19 +105,21 @@ void test_invalid_division_fraction_is_atomic() {
   initial.length = 6.0F;
   const auto parent = simulation.add_cell(initial);
 
-  for (const auto fraction : {0.0F, 1.0F, -0.25F, 1.25F,
-                              std::numeric_limits<float>::quiet_NaN()}) {
+  for (const auto fraction : {0.0F, 1.0F, -0.25F, 1.25F, std::numeric_limits<float>::quiet_NaN()}) {
     bool rejected = false;
+
     try {
       static_cast<void>(simulation.divide(parent, fraction));
     } catch (const std::invalid_argument&) {
       rejected = true;
     }
+
     assert(rejected);
     assert(simulation.cell_count() == 1);
     assert(simulation.cell(parent).slot == 0);
     assert(close(simulation.cell(parent).length, 6.0F));
   }
+
   simulation.validate();
 }
 
@@ -126,19 +129,23 @@ void test_invalid_state_fails_explicitly() {
   invalid.radius = 0.0F;
 
   bool rejected = false;
+
   try {
     static_cast<void>(simulation.add_cell(invalid));
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 
   rejected = false;
+
   try {
     simulation.step(-0.1F);
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 }
 
@@ -153,11 +160,13 @@ void test_mutable_cell_attributes_keep_stable_identity() {
   assert(updated.cell_type == 7);
 
   bool rejected = false;
+
   try {
     simulation.set_cell_attributes(id, std::numeric_limits<float>::quiet_NaN(), 8);
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
   assert(close(simulation.cell(id).growth_rate, 2.5F));
   assert(simulation.cell(id).cell_type == 7);
@@ -237,11 +246,13 @@ void test_removal_backfills_slots_and_keeps_lineage() {
   assert(restored.lineage_parent(daughters.second) == first);
 
   bool rejected = false;
+
   try {
     state.remove_cell(second);
   } catch (const std::exception&) {
     rejected = true;
   }
+
   assert(rejected);
   state.validate();
 }
@@ -251,11 +262,13 @@ void test_unavailable_backends_do_not_fall_back() {
   assert(cm::backend_available(cm::BackendKind::cpu, 0));
   assert(!cm::backend_available(cm::BackendKind::cpu, 1));
   bool invalid_cpu_device_rejected = false;
+
   try {
     cm::Simulation simulation(cm::BackendKind::cpu, 0, 0, 1);
   } catch (const std::out_of_range&) {
     invalid_cpu_device_rejected = true;
   }
+
   assert(invalid_cpu_device_rejected);
 
   for (const auto backend : {cm::BackendKind::metal, cm::BackendKind::cuda}) {
@@ -266,12 +279,15 @@ void test_unavailable_backends_do_not_fall_back() {
       assert(cm::backend_device_count(backend) >= 1);
       continue;
     }
+
     bool rejected = false;
+
     try {
       cm::Simulation simulation(backend);
     } catch (const std::runtime_error&) {
       rejected = true;
     }
+
     assert(rejected);
   }
 }
@@ -289,5 +305,6 @@ int main() {
   test_fixed_state_is_mutable_persistent_and_inherited();
   test_removal_backfills_slots_and_keeps_lineage();
   test_unavailable_backends_do_not_fall_back();
+
   return 0;
 }

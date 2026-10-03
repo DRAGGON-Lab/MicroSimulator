@@ -107,6 +107,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     analysis.add_argument("--overwrite", action="store_true")
 
+    replay = commands.add_parser(
+        "export-replay", help="export explicitly ordered checkpoints for offline replay"
+    )
+    replay.add_argument("checkpoints", nargs="+", type=Path)
+    replay.add_argument("--output", type=Path, required=True, help="new replay bundle directory")
+
     manifest = commands.add_parser(
         "run-manifest", help="execute one named job from a data-only run manifest"
     )
@@ -115,6 +121,7 @@ def _parser() -> argparse.ArgumentParser:
     manifest.add_argument("--progress-every", type=int, default=100)
     manifest.add_argument("--overwrite", action="store_true")
     manifest.add_argument("--quiet", action="store_true")
+
     return parser
 
 
@@ -145,28 +152,39 @@ def _add_source_arguments(parser: argparse.ArgumentParser) -> None:
 def _json_value(value: object, path: str) -> JSONValue:
     if value is None or isinstance(value, str | bool):
         return value
+
     if isinstance(value, int):
         return value
+
     if isinstance(value, float):
         if not math.isfinite(value):
             raise BatchError(f"{path} must be finite JSON")
+
         return value
+
     if isinstance(value, list):
         return [_json_value(item, f"{path}[]") for item in cast(list[object], value)]
+
     if isinstance(value, dict):
         mapping = cast(dict[object, object], value)
+
         if not all(isinstance(key, str) for key in mapping):
             raise BatchError(f"{path} must use string object keys")
+
         return {cast(str, key): _json_value(item, f"{path}.{key}") for key, item in mapping.items()}
+
     raise BatchError(f"{path} is not JSON data")
 
 
 def _parameters(values: Sequence[str]) -> dict[str, JSONValue]:
     result: dict[str, JSONValue] = {}
+
     for value in values:
         name, separator, encoded = value.partition("=")
+
         if not separator or not name:
             raise BatchError(f"invalid parameter {value!r}; expected NAME=JSON")
+
         if name in result:
             raise BatchError(f"duplicate parameter {name!r}")
 
@@ -177,54 +195,71 @@ def _parameters(values: Sequence[str]) -> dict[str, JSONValue]:
             decoded = json.loads(encoded, parse_constant=reject_constant)
         except json.JSONDecodeError as error:
             raise BatchError(f"parameter {name!r} is not valid JSON: {error.msg}") from error
+
         result[name] = _json_value(cast(object, decoded), f"parameter {name!r}")
+
     return result
 
 
 def _device_records() -> list[dict[str, JSONValue]]:
     records: list[dict[str, JSONValue]] = []
+
     for name, backend in _BACKENDS.items():
         count = backend_device_count(backend)
+
         if count == 0:
             records.append({"backend": name, "available": False, "devices": []})
             continue
+
         devices: list[JSONValue] = []
+
         for device_index in range(count):
             info = Simulation(backend, device_index=device_index).backend_info
             devices.append({"index": info.device_index, "name": info.device})
+
         records.append({"backend": name, "available": True, "devices": devices})
+
     return records
 
 
 def _devices(json_output: bool) -> int:
     records = _device_records()
+
     if json_output:
         print(json.dumps(records, indent=2, sort_keys=True))
+
         return 0
+
     for record in records:
         backend = cast(str, record["backend"])
         devices = cast(list[JSONValue], record["devices"])
+
         if not devices:
             print(f"{backend}: unavailable")
             continue
+
         for device in devices:
             device_record = cast(dict[str, JSONValue], device)
             print(f"{backend}:{device_record['index']} {device_record['name']}")
+
     return 0
 
 
 def _resume_provenance(path: Path) -> dict[str, JSONValue]:
     source = path.resolve()
+
     try:
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
     except OSError as error:
         raise BatchError(f"could not read checkpoint {source}") from error
+
     return {"resume": {"path": str(source), "sha256": digest}}
 
 
 def _progress_printer(interval: int, quiet: bool):
     if quiet:
         return None
+
     if interval <= 0:
         raise BatchError("progress interval must be positive unless --quiet is used")
 
@@ -246,25 +281,30 @@ def _model_factory(
 ) -> Callable[[], tuple[RunnableModel, dict[str, JSONValue]]]:
     backend = _BACKENDS[cast(str, arguments.backend)]
     device_index = cast(int, arguments.device_index)
+
     if not backend_available(backend, device_index):
         count = backend_device_count(backend)
         raise BatchError(
             f"backend {arguments.backend} device {device_index} is unavailable "
             f"({count} device(s) found)"
         )
+
     parameters = _parameters(cast(list[str], arguments.parameter))
     model_path = cast(Path | None, arguments.model)
     legacy_model_path = cast(Path | None, arguments.legacy_model)
     resume_path = cast(Path | None, arguments.resume)
+
     if model_path is not None:
         if resume_path is None:
             seed = cast(int, arguments.seed)
 
             def build_native_model() -> tuple[RunnableModel, dict[str, JSONValue]]:
                 context = ModelContext(backend, device_index, seed, parameters)
+
                 return build_model(model_path, context)
 
             return build_native_model
+
         if parameters:
             raise BatchError(
                 "native resume uses the checkpoint parameters; do not pass --parameter"
@@ -277,16 +317,20 @@ def _model_factory(
                 device_index=device_index,
             )
             model_value = bundle.provenance.get("model")
+
             if not isinstance(model_value, dict):
                 raise BatchError("native checkpoint is missing model provenance")
+
             seed_value = model_value.get("seed")
             saved_parameters = model_value.get("parameters")
+
             if (
                 not isinstance(seed_value, int)
                 or isinstance(seed_value, bool)
                 or not isinstance(saved_parameters, dict)
             ):
                 raise BatchError("native checkpoint model provenance is invalid")
+
             context = ModelContext(
                 backend=backend,
                 device_index=device_index,
@@ -300,6 +344,7 @@ def _model_factory(
             )
             provenance = dict(model_provenance)
             provenance.update(_resume_provenance(resume_path))
+
             return model, provenance
 
         return resume_native_model
@@ -309,9 +354,11 @@ def _model_factory(
 
             def build_legacy() -> tuple[RunnableModel, dict[str, JSONValue]]:
                 context = ModelContext(backend, device_index, seed, parameters)
+
                 return build_legacy_model(legacy_model_path, context)
 
             return build_legacy
+
         if parameters:
             raise BatchError(
                 "legacy resume uses the checkpoint parameters; do not pass --parameter"
@@ -324,16 +371,20 @@ def _model_factory(
                 device_index=device_index,
             )
             model_value = bundle.provenance.get("model")
+
             if not isinstance(model_value, dict):
                 raise BatchError("legacy checkpoint is missing model provenance")
+
             seed_value = model_value.get("seed")
             saved_parameters = model_value.get("parameters")
+
             if (
                 not isinstance(seed_value, int)
                 or isinstance(seed_value, bool)
                 or not isinstance(saved_parameters, dict)
             ):
                 raise BatchError("legacy checkpoint model provenance is invalid")
+
             context = ModelContext(
                 backend=backend,
                 device_index=device_index,
@@ -347,12 +398,14 @@ def _model_factory(
             )
             provenance = dict(model_provenance)
             provenance.update(_resume_provenance(resume_path))
+
             return simulation, provenance
 
         return resume_legacy
     else:
         if resume_path is None:
             raise BatchError("a model or checkpoint is required")
+
         if parameters:
             raise BatchError("--parameter is only valid with --model")
 
@@ -362,6 +415,7 @@ def _model_factory(
                 backend=backend,
                 device_index=device_index,
             )
+
             return simulation, _resume_provenance(resume_path)
 
         return resume_native
@@ -387,15 +441,19 @@ def _run(arguments: argparse.Namespace) -> int:
         f"wrote {summary.output} steps={summary.completed_steps} "
         f"time={summary.time:.9g} cells={summary.cell_count} stop={summary.stop_reason}"
     )
+
     return 0
 
 
 def _viewer_distribution(value: Path | None) -> Path:
     if value is not None:
         return value.resolve()
+
     source_distribution = Path(__file__).resolve().parents[3] / "viewer" / "dist"
+
     if source_distribution.is_dir():
         return source_distribution
+
     raise BatchError("viewer build not found; run `pnpm --dir viewer build` or pass --viewer-dist")
 
 
@@ -405,6 +463,7 @@ def _view(arguments: argparse.Namespace) -> int:
     except ModuleNotFoundError as error:
         if error.name == "aiohttp":
             raise BatchError("live viewer requires `microsimulator[viewer]`") from error
+
         raise
 
     viewer_dist = _viewer_distribution(cast(Path | None, arguments.viewer_dist))
@@ -422,13 +481,16 @@ def _view(arguments: argparse.Namespace) -> int:
         fps=cast(float, arguments.fps),
         open_browser=cast(bool, arguments.open),
     )
+
     return 0
 
 
 def _import_legacy_pickle(arguments: argparse.Namespace) -> int:
     output = cast(Path, arguments.output)
+
     if output.exists() and not cast(bool, arguments.overwrite):
         raise BatchError(f"output already exists: {output}")
+
     imported = import_legacy_pickle(
         cast(Path, arguments.input),
         time=cast(float | None, arguments.time),
@@ -442,6 +504,7 @@ def _import_legacy_pickle(arguments: argparse.Namespace) -> int:
         f"wrote {output} cells={imported.simulation.cell_count} "
         f"dropped_fields={len(imported.dropped_cell_fields)}"
     )
+
     return 0
 
 
@@ -451,17 +514,19 @@ def _export_analysis(arguments: argparse.Namespace) -> int:
     except ModuleNotFoundError as error:
         if error.name in {"pyarrow", "zarr"}:
             raise BatchError("analysis export requires `microsimulator[analysis]`") from error
+
         raise
 
     backend_name = cast(str, arguments.backend)
     backend = _BACKENDS[backend_name]
     device_index = cast(int, arguments.device_index)
+
     if not backend_available(backend, device_index):
         count = backend_device_count(backend)
         raise BatchError(
-            f"backend {backend_name} device {device_index} is unavailable "
-            f"({count} device(s) found)"
+            f"backend {backend_name} device {device_index} is unavailable ({count} device(s) found)"
         )
+
     summary = export_dataset(
         cast(list[Path], arguments.checkpoints),
         cast(Path, arguments.output),
@@ -476,6 +541,7 @@ def _export_analysis(arguments: argparse.Namespace) -> int:
         f"wrote {summary.output} frames={summary.frame_count} "
         f"cells={summary.cell_rows} signal_epochs={summary.signal_epochs}"
     )
+
     return 0
 
 
@@ -495,6 +561,7 @@ def _run_manifest(arguments: argparse.Namespace) -> int:
         f"wrote {summary.output} steps={summary.completed_steps} "
         f"time={summary.time:.9g} cells={summary.cell_count} stop={summary.stop_reason}"
     )
+
     return 0
 
 
@@ -502,17 +569,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the ``microsimulator`` command and return its process status."""
 
     arguments = _parser().parse_args(argv)
+
     try:
         if arguments.command == "devices":
             return _devices(cast(bool, arguments.json))
+
         if arguments.command == "import-legacy-pickle":
             return _import_legacy_pickle(arguments)
+
         if arguments.command == "view":
             return _view(arguments)
+
         if arguments.command == "export-analysis":
             return _export_analysis(arguments)
+
+        if arguments.command == "export-replay":
+            from .replay import export_replay
+
+            summary = export_replay(
+                cast(list[Path], arguments.checkpoints), cast(Path, arguments.output)
+            )
+            print(f"wrote {summary.output} frames={summary.frame_count}")
+
+            return 0
+
         if arguments.command == "run-manifest":
             return _run_manifest(arguments)
+
         return _run(arguments)
     except (
         BatchError,
@@ -523,4 +606,5 @@ def main(argv: Sequence[str] | None = None) -> int:
         RuntimeError,
     ) as error:
         print(f"microsimulator: {error}", file=sys.stderr)
+
         return 2

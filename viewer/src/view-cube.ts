@@ -97,9 +97,11 @@ function cornerTarget(x: number, y: number, z: number): ViewCubeTarget {
   const xName = X_NAMES.get(x);
   const yName = Y_NAMES.get(y);
   const zName = Z_NAMES.get(z);
+
   if (xName === undefined || yName === undefined || zName === undefined) {
     throw new Error("corner direction components must be +1 or -1");
   }
+
   return {
     id: `${z > 0 ? "top" : "bottom"}-${y < 0 ? "front" : "back"}-${x > 0 ? "right" : "left"}`,
     kind: "corner",
@@ -122,9 +124,11 @@ export const DEFAULT_VIEW_TARGET: ViewCubeTarget = (() => {
   const target = VIEW_CUBE_TARGETS.find(
     (candidate) => candidate.id === "top-front-right",
   );
+
   if (target === undefined) {
     throw new Error("default view cube target is missing");
   }
+
   return target;
 })();
 
@@ -143,6 +147,7 @@ export function canonicalViewQuaternion(
     .addScaledVector(normal, -preferredUp.dot(normal))
     .normalize();
   const right = new Vector3().crossVectors(up, normal).normalize();
+
   return result.setFromRotationMatrix(
     new Matrix4().makeBasis(right, up, normal),
   );
@@ -158,6 +163,7 @@ export function shortestViewQuaternion(
     startDirection,
     endDirection.clone().normalize(),
   );
+
   return result.copy(turn).multiply(start).normalize();
 }
 
@@ -186,6 +192,7 @@ export function interpolateViewDirection(
     rotation,
     Math.min(Math.max(fraction, 0), 1),
   );
+
   return result.copy(from).applyQuaternion(partial).normalize();
 }
 
@@ -208,6 +215,7 @@ export function dragOrbitOffset(
     Math.max(spherical.phi - deltaY * radiansPerPixel, 1.0e-4),
     Math.PI - 1.0e-4,
   );
+
   return result
     .setFromSpherical(spherical)
     .applyQuaternion(toOrbitSpace.invert());
@@ -218,9 +226,11 @@ function labelTexture(target: ViewCubeTarget): CanvasTexture {
   canvas.width = 256;
   canvas.height = 256;
   const context = canvas.getContext("2d");
+
   if (context === null) {
     throw new Error("2D canvas is unavailable for view cube labels");
   }
+
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.fillStyle = "#f2f5f3";
   context.textAlign = "center";
@@ -233,6 +243,7 @@ function labelTexture(target: ViewCubeTarget): CanvasTexture {
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
   texture.needsUpdate = true;
+
   return texture;
 }
 
@@ -251,10 +262,13 @@ function faceGeometry(): ShapeGeometry {
   const geometry = new ShapeGeometry(shape);
   const positions = geometry.getAttribute("position");
   const uv: number[] = [];
+
   for (let index = 0; index < positions.count; index += 1) {
     uv.push((positions.getX(index) + 1) / 2, (positions.getY(index) + 1) / 2);
   }
+
   geometry.setAttribute("uv", new Float32BufferAttribute(uv, 2));
+
   return geometry;
 }
 
@@ -273,6 +287,7 @@ function cornerGeometry(
   );
   geometry.setIndex([0, 1, 2]);
   geometry.computeVertexNormals();
+
   return geometry;
 }
 
@@ -289,6 +304,7 @@ export function faceLabelBasis(direction: readonly [number, number, number]): {
     .multiplyScalar(-1)
     .cross(up)
     .normalize();
+
   return { right, up, normal };
 }
 
@@ -310,10 +326,12 @@ function disposeObject(group: Group): void {
       const materials = Array.isArray(object.material)
         ? object.material
         : [object.material];
+
       for (const material of materials) {
         if (material instanceof MeshBasicMaterial) {
           material.map?.dispose();
         }
+
         material.dispose();
       }
     }
@@ -369,6 +387,7 @@ export class ViewCube {
       orientFace(mesh, target.direction);
       this.addTarget(mesh, target);
     }
+
     for (const target of CORNER_TARGETS) {
       const mesh = new Mesh(
         cornerGeometry(target.direction),
@@ -380,6 +399,7 @@ export class ViewCube {
       );
       this.addTarget(mesh, target);
     }
+
     this.element.addEventListener("pointermove", this.handlePointerMove);
     this.element.addEventListener("pointerleave", this.handlePointerLeave);
     this.element.addEventListener("pointerdown", this.handlePointerDown);
@@ -389,6 +409,7 @@ export class ViewCube {
 
   public setVisible(visible: boolean): void {
     this.element.hidden = !visible;
+
     if (!visible) {
       this.setHovered(null);
     }
@@ -402,6 +423,7 @@ export class ViewCube {
     if (this.element.hidden) {
       return;
     }
+
     const canvasBounds = renderer.domElement.getBoundingClientRect();
     const bounds = this.element.getBoundingClientRect();
     const left = bounds.left - canvasBounds.left;
@@ -443,9 +465,11 @@ export class ViewCube {
 
   private pick(event: PointerEvent): Mesh | null {
     const bounds = this.element.getBoundingClientRect();
+
     if (bounds.width <= 0 || bounds.height <= 0) {
       return null;
     }
+
     this.pointer.set(
       ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
       -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
@@ -455,6 +479,7 @@ export class ViewCube {
       this.targets,
       false,
     )[0];
+
     return intersection?.object instanceof Mesh ? intersection.object : null;
   }
 
@@ -462,6 +487,7 @@ export class ViewCube {
     if (mesh === this.hovered) {
       return;
     }
+
     if (
       this.hovered !== null &&
       this.hovered.material instanceof MeshBasicMaterial
@@ -471,11 +497,14 @@ export class ViewCube {
         previous?.kind === "corner" ? 0x60736b : 0x35423d,
       );
     }
+
     this.hovered = mesh;
     const target = mesh === null ? undefined : this.targetByMesh.get(mesh);
+
     if (mesh !== null && mesh.material instanceof MeshBasicMaterial) {
       mesh.material.color.setHex(0x5ea98c);
     }
+
     this.element.dataset.hover = target === undefined ? "false" : "true";
     this.element.title =
       target === undefined ? "" : `${target.label} (${target.axisLabel})`;
@@ -484,11 +513,14 @@ export class ViewCube {
   private readonly handlePointerMove = (event: PointerEvent): void => {
     event.preventDefault();
     event.stopPropagation();
+
     if (event.pointerId === this.pointerId) {
       const current = new Vector2(event.clientX, event.clientY);
+
       if (current.distanceTo(this.pointerOrigin) > 4) {
         this.dragged = true;
       }
+
       if (this.dragged) {
         this.cancelPendingClick();
         this.setHovered(null);
@@ -498,9 +530,12 @@ export class ViewCube {
           current.y - this.previousPointer.y,
         );
       }
+
       this.previousPointer.copy(current);
+
       return;
     }
+
     this.setHovered(this.pick(event));
   };
 
@@ -514,6 +549,7 @@ export class ViewCube {
     if (event.button !== 0 || this.pointerId !== null) {
       return;
     }
+
     event.preventDefault();
     event.stopPropagation();
     this.pointerId = event.pointerId;
@@ -527,17 +563,22 @@ export class ViewCube {
     if (event.pointerId !== this.pointerId) {
       return;
     }
+
     event.preventDefault();
     event.stopPropagation();
+
     if (!this.dragged) {
       const target = this.pick(event);
+
       if (target !== null) {
         const definition = this.targetByMesh.get(target);
+
         if (definition !== undefined) {
           this.selectTarget(definition);
         }
       }
     }
+
     this.finishPointer(event);
     this.setHovered(this.pick(event));
   };
@@ -553,6 +594,7 @@ export class ViewCube {
     if (this.element.hasPointerCapture(event.pointerId)) {
       this.element.releasePointerCapture(event.pointerId);
     }
+
     this.pointerId = null;
     this.dragged = false;
     delete this.element.dataset.dragging;
@@ -563,16 +605,20 @@ export class ViewCube {
       window.clearTimeout(this.pendingClick.timer);
       this.pendingClick = null;
       this.onSelect(target, true);
+
       return;
     }
+
     if (this.pendingClick !== null) {
       window.clearTimeout(this.pendingClick.timer);
       this.onSelect(this.pendingClick.target, false);
     }
+
     const timer = window.setTimeout(() => {
       if (this.pendingClick?.timer !== timer) {
         return;
       }
+
       this.pendingClick = null;
       this.onSelect(target, false);
     }, 240);
@@ -583,6 +629,7 @@ export class ViewCube {
     if (this.pendingClick === null) {
       return;
     }
+
     window.clearTimeout(this.pendingClick.timer);
     this.pendingClick = null;
   }

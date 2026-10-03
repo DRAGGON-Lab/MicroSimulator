@@ -20,33 +20,45 @@ _ROOT = Path(__file__).resolve().parents[2]
 _TUTORIALS = _ROOT / "examples" / "tutorials"
 
 _MODELS: tuple[tuple[str, dict[str, JSONValue], float], ...] = (
-    *(("biophysics.py", {"scenario": scenario}, 0.001) for scenario in (
-        "basics",
-        "two_types",
-        "short_cells",
-        "competition",
-        "box",
-    )),
-    *(("gene_expression.py", {"scenario": scenario}, 0.001) for scenario in (
-        "constitutive",
-        "legacy_constitutive",
-        "dilution",
-        "derepression",
-        "oscillator",
-    )),
-    *(("signaling.py", {"scenario": scenario}, 0.001) for scenario in (
-        "single_gene",
-        "communication",
-        "mutualism",
-    )),
-    *(("simbol_circuits.py", {"circuit": circuit}, 0.001) for circuit in (
-        "bba_0001",
-        "bba_0002",
-        "bba_0003",
-        "bba_0004",
-        "bba_0005",
-        "bba_i5200",
-    )),
+    *(
+        ("biophysics.py", {"scenario": scenario}, 0.001)
+        for scenario in (
+            "basics",
+            "two_types",
+            "short_cells",
+            "competition",
+            "box",
+        )
+    ),
+    *(
+        ("gene_expression.py", {"scenario": scenario}, 0.001)
+        for scenario in (
+            "constitutive",
+            "legacy_constitutive",
+            "dilution",
+            "derepression",
+            "oscillator",
+        )
+    ),
+    *(
+        ("signaling.py", {"scenario": scenario}, 0.001)
+        for scenario in (
+            "single_gene",
+            "communication",
+            "mutualism",
+        )
+    ),
+    *(
+        ("simbol_circuits.py", {"circuit": circuit}, 0.001)
+        for circuit in (
+            "bba_0001",
+            "bba_0002",
+            "bba_0003",
+            "bba_0004",
+            "bba_0005",
+            "bba_i5200",
+        )
+    ),
     ("plasmid_segregation.py", {"copies_per_cell": 10}, 0.001),
     ("conjugation.py", {"transfer_probability": 0.1}, 0.001),
     ("danino_clock.py", {}, 0.001),
@@ -90,6 +102,7 @@ def test_plasmid_tutorial_keeps_exact_copy_counts_and_published_fractions() -> N
     state = cast(dict[str, object], model.controller_state())
     model_state = cast(dict[str, object], state["state"])
     plasmids = cast(dict[str, dict[str, int]], model_state["plasmids"])
+
     for cell in model.simulation.cells():
         counts = plasmids[str(cell.id)]
         assert counts["a"] + counts["b"] == 6
@@ -149,6 +162,7 @@ def test_pillar_channel_anchors_sheds_and_washes_out() -> None:
         ModelContext(BackendKind.CPU, 0, seed=7),
     )
     assert isinstance(model, SimulationController)
+
     # 250 steps crosses the Brinkman re-solve cadence at step 100 and sheds
     # daughters from every anchored lineage into the stream.
     for _ in range(250):
@@ -160,13 +174,16 @@ def test_pillar_channel_anchors_sheds_and_washes_out() -> None:
     released = [cell for cell in cells if not cell.fixed]
     assert len(anchored) == 3
     assert len(released) > 3
+
     for cell in anchored:
         nearest = min(
             math.hypot(cell.position.x - x, cell.position.y - y) for x, y in adhesion_sites
         )
         assert nearest < 4.0
+
     # Released cells drift downstream of the anchors; the flow is doing work.
     assert any(cell.position.y > 30.0 for cell in released)
+
     for cell in cells:
         assert cell.position.z == 0.0
         assert abs(cell.position.x) < 40.0
@@ -182,6 +199,7 @@ def test_plasmid_tutorial_resume_is_exact(tmp_path: Path) -> None:
         ModelContext(BackendKind.CPU, 0, seed=37, parameters=parameters),
     )
     assert isinstance(uninterrupted, SimulationController)
+
     for _ in range(6):
         uninterrupted.step(0.1)
 
@@ -204,6 +222,7 @@ def test_plasmid_tutorial_resume_is_exact(tmp_path: Path) -> None:
         checkpoint=load_checkpoint_bundle(midpoint),
     )
     assert isinstance(resumed, SimulationController)
+
     for _ in range(3):
         resumed.step(0.1)
 
@@ -240,3 +259,114 @@ def test_plasmid_tutorial_resume_is_exact(tmp_path: Path) -> None:
         )
         for cell in uninterrupted.simulation.cells()
     ]
+
+
+_FOUNDER_MODELS: tuple[tuple[str, dict[str, JSONValue], float], ...] = (
+    *_MODELS,
+    ("../culture_dish.py", {}, 0.001),
+    ("../microfluidic_trap.py", {}, 0.001),
+)
+
+
+def _founder_targets(model: SimulationController) -> dict[str, float]:
+    controller = cast(dict[str, JSONValue], model.controller_state())
+    state = cast(dict[str, JSONValue], controller["state"])
+
+    if "division_targets" in state:
+        return cast(dict[str, float], state["division_targets"])
+
+    policy = cast(dict[str, JSONValue], state["length_division"])
+
+    return cast(dict[str, float], policy["targets"])
+
+
+@pytest.mark.parametrize("seed", (0, 7, 17, 71))
+@pytest.mark.parametrize(("filename", "parameters", "dt"), _FOUNDER_MODELS)
+def test_tutorial_founders_do_not_divide_without_growth(
+    filename: str,
+    parameters: dict[str, JSONValue],
+    dt: float,
+    seed: int,
+) -> None:
+    model, _ = build_model(
+        _TUTORIALS / filename,
+        ModelContext(BackendKind.CPU, 0, seed=seed, parameters=parameters),
+    )
+    assert isinstance(model, SimulationController)
+    targets = _founder_targets(model)
+    ids = [cell.id for cell in model.simulation.cells()]
+    assert set(targets) == {str(cell_id) for cell_id in ids}
+    assert all(cell.length <= targets[str(cell.id)] for cell in model.simulation.cells())
+    model.step(0.0)
+    assert [cell.id for cell in model.simulation.cells()] == ids
+
+    # Existing strict comparison still divides each founder after its length grows.
+    for cell in model.simulation.cells():
+        model.simulation.set_cell_geometry(
+            cell.id,
+            cell.position,
+            cell.direction,
+            targets[str(cell.id)] + 0.01,
+        )
+
+    model.step(0.0)
+    assert not set(ids) & {cell.id for cell in model.simulation.cells()}
+
+
+@pytest.mark.parametrize(("filename", "parameters", "dt"), _FOUNDER_MODELS)
+def test_tutorial_founder_initialization_is_deterministic_and_resume_does_not_cap(
+    filename: str,
+    parameters: dict[str, JSONValue],
+    dt: float,
+    tmp_path: Path,
+) -> None:
+    context = ModelContext(BackendKind.CPU, 0, seed=71, parameters=parameters)
+    first, provenance = build_model(_TUTORIALS / filename, context)
+    second, _ = build_model(
+        _TUTORIALS / filename,
+        ModelContext(BackendKind.CPU, 0, seed=71, parameters=parameters),
+    )
+    assert isinstance(first, SimulationController)
+    assert isinstance(second, SimulationController)
+    assert first.controller_state() == second.controller_state()
+    assert [cell.length for cell in first.simulation.cells()] == [
+        cell.length for cell in second.simulation.cells()
+    ]
+
+    for cell in first.simulation.cells():
+        first.simulation.set_cell_geometry(cell.id, cell.position, cell.direction, 8.0)
+
+    path = tmp_path / "oversized.cm2.json"
+    run_simulation(first, steps=0, dt=dt, output=path, provenance=provenance)
+    restored, _ = build_model(
+        _TUTORIALS / filename,
+        ModelContext(BackendKind.CPU, 0, seed=71, parameters=parameters),
+        checkpoint=load_checkpoint_bundle(path),
+    )
+    assert isinstance(restored, SimulationController)
+    assert restored.controller_state() == first.controller_state()
+    assert all(cell.length == 8.0 for cell in restored.simulation.cells())
+
+
+def test_conjugation_rare_short_gaussian_target_is_not_resampled() -> None:
+    import random
+
+    model, _ = build_model(
+        _TUTORIALS / "conjugation.py",
+        ModelContext(BackendKind.CPU, 0, seed=3103),
+    )
+    assert isinstance(model, SimulationController)
+    expected = random.Random(3103)
+    targets = _founder_targets(model)
+    cells = model.simulation.cells()
+    # Native CellInit stores the requested 1.9 in single precision.
+    requested = 1.899999976158142
+
+    for cell in cells:
+        assert targets[str(cell.id)] == requested + expected.gauss(1.9, 0.45)
+        assert cell.length <= targets[str(cell.id)]
+
+    assert cells[0].length < requested
+    ids = [cell.id for cell in cells]
+    model.step(0.0)
+    assert [cell.id for cell in model.simulation.cells()] == ids

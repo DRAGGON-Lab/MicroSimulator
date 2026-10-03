@@ -73,20 +73,24 @@ void test_invalid_species_contracts_fail_explicitly() {
   cm::CellInit cell;
   cell.species = {1.0F};
   bool rejected = false;
+
   try {
     static_cast<void>(simulation.add_cell(cell));
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 
   rejected = false;
+
   try {
     const std::vector<cm::RateInstruction> instructions{species(0)};
     static_cast<void>(cm::SpeciesRatePlan(2, instructions, {1, 0}));
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 }
 
@@ -96,5 +100,6 @@ int main() {
   test_dilution_precedes_simultaneous_euler_update();
   test_division_preserves_concentration_and_schema();
   test_invalid_species_contracts_fail_explicitly();
+
   return 0;
 }

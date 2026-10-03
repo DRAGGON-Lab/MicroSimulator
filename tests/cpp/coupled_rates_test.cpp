@@ -12,13 +12,14 @@ bool close(float left, float right, float tolerance = 1.0e-6F) {
 }
 
 cm::SignalGridSpec grid_spec(cm::GridShape shape, cm::Vec3 spacing = {1.0F, 1.0F, 1.0F},
-                              float diffusion = 0.0F) {
+                             float diffusion = 0.0F) {
   cm::SignalGridSpec spec;
   spec.signal_count = 1;
   spec.shape = shape;
   spec.spacing = spacing;
   spec.diffusion = {diffusion};
   spec.advection = {{0.0F, 0.0F, 0.0F}};
+
   return spec;
 }
 
@@ -33,11 +34,13 @@ cm::RateInstruction signal(std::uint32_t index) {
 template <typename Exception, typename Function>
 void assert_throws(Function&& function) {
   bool rejected = false;
+
   try {
     function();
   } catch (const Exception&) {
     rejected = true;
   }
+
   assert(rejected);
 }
 
@@ -57,10 +60,12 @@ void test_sample_and_scatter_share_trilinear_weights() {
 
   assert(close(simulation.cell(id).species[0], 12.0F));
   float grid_amount = 0.0F;
+
   for (const auto level : simulation.signal_levels()) {
     assert(close(level, 3.9375F));
     grid_amount += level * 2.0F;
   }
+
   assert(close(grid_amount, 63.0F));
   assert(simulation.supports(cm::BackendFeature::coupled_rates));
 }
@@ -117,7 +122,9 @@ void test_invalid_position_is_rejected_before_growth() {
   const auto id = simulation.add_cell(cell);
   simulation.set_coupled_rate_plan(cm::CoupledRatePlan(1, 1, {constant(0.0F)}, {0}, {0}));
 
-  assert_throws<std::out_of_range>([&] { simulation.step(0.25F); });
+  assert_throws<std::out_of_range>([&] {
+    simulation.step(0.25F);
+  });
   assert(close(simulation.cell(id).length, 2.0F));
   assert(close(simulation.cell(id).species[0], 3.0F));
   assert(simulation.signal_levels() == std::vector<float>({1.0F, 1.0F}));
@@ -145,10 +152,12 @@ void test_coupled_plan_is_exact_checkpoint_state() {
 }
 
 void test_signal_inputs_are_reserved_for_coupled_plans() {
-  assert_throws<std::invalid_argument>(
-      [&] { static_cast<void>(cm::SpeciesRatePlan(1, {signal(0)}, {0})); });
-  assert_throws<std::invalid_argument>(
-      [&] { static_cast<void>(cm::CoupledRatePlan(1, 1, {signal(1)}, {0}, {0})); });
+  assert_throws<std::invalid_argument>([&] {
+    static_cast<void>(cm::SpeciesRatePlan(1, {signal(0)}, {0}));
+  });
+  assert_throws<std::invalid_argument>([&] {
+    static_cast<void>(cm::CoupledRatePlan(1, 1, {signal(1)}, {0}, {0}));
+  });
 }
 
 }  // namespace
@@ -160,5 +169,6 @@ int main() {
   test_invalid_position_is_rejected_before_growth();
   test_coupled_plan_is_exact_checkpoint_state();
   test_signal_inputs_are_reserved_for_coupled_plans();
+
   return 0;
 }

@@ -15,7 +15,8 @@ features cannot be recovered by renaming or enlarging the fluid region.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, replace
 
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendKind,
@@ -27,7 +28,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     Simulation,
     Vec3,
 )
-from .flow import gap_mobility, solve_flow_field
+from .flow import BoundaryPatch, FluidDomain, gap_mobility, solve_flow_field
 
 # A voxel edge that lands on a wall plane belongs to the wall, so the voxel
 # tests admit a rounding margin: without it a wall drawn exactly on a lattice
@@ -83,6 +84,40 @@ class _ChannelDevice:
             box.allowed_region = region
             simulation.add_box_constraint(box)
 
+    def fluid_domain(
+        self,
+        *,
+        size_um: tuple[float, float, float],
+        spacing_um: float,
+        origin_um: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ) -> FluidDomain:
+        """Materialize walls/ports only; pressure and flow are authored separately."""
+        domain = FluidDomain(
+            size_um,
+            spacing_um,
+            {
+                "inlet": BoundaryPatch("y", False),
+                "outlet": BoundaryPatch("y", True),
+            },
+            origin_um,
+        )
+        grid = domain.native_grid()
+        mask = tuple(
+            int(
+                self._solid(
+                    grid.origin.x + x * spacing_um,
+                    grid.origin.y + y * spacing_um,
+                    grid.origin.z + z * spacing_um,
+                    (0.0, 0.0, 0.0),
+                )
+            )
+            for x in range(grid.shape.x)
+            for y in range(grid.shape.y)
+            for z in range(grid.shape.z)
+        )
+
+        return replace(domain, obstacles=mask)
+
     def apply_to_grid(
         self,
         spec: SignalGridSpec,
@@ -106,14 +141,19 @@ class _ChannelDevice:
         # to make interpolation easier: sampling handles fluid support separately.
         half = (0.0, 0.0, 0.0)
         obstacles = [0] * (shape.x * shape.y * shape.z)
+
         for x in range(shape.x):
             px = origin.x + spacing.x * x
+
             for y in range(shape.y):
                 py = origin.y + spacing.y * y
+
                 for z in range(shape.z):
                     pz = origin.z + spacing.z * z
+
                     if self._solid(px, py, pz, half):
                         obstacles[x * shape.y * shape.z + y * shape.z + z] = 1
+
         spec.obstacles = obstacles
 
         spec.advection = [Vec3() for _ in range(spec.signal_count)]
@@ -216,15 +256,133 @@ class TrapChannelDevice(_ChannelDevice):
 
     def _solid(self, px: float, py: float, pz: float, half: tuple[float, float, float]) -> bool:
         hx, hy, hz = half
+
         if _recedes(px + hx, self.channel_far_x, hx):
             return True
+
         if _reaches(px - hx, self.trap_back_x + self.wall_thickness, hx):
             return True
+
         if _reaches(abs(pz) - hz, self.trap_half_z, hz):
             return True
+
         if _reaches(px - hx, self.trap_open_x, hx) and _reaches(abs(py) - hy, self.trap_half_y, hy):
             return True
+
         return _reaches(px - hx, self.trap_back_x, hx)
+
+
+@dataclass(frozen=True, slots=True)
+class MotherMachineDevice(_ChannelDevice):
+    """Single-file dead-end growth channels beside a perfusion channel along +y.
+
+    Growth channels open at x=0 and end at ``growth_length``. All passages
+    share the floor z=0. The default 25 x 1.5 x 1.4 micrometer growth channels
+    follow Wang et al. (2010), doi:10.1016/j.cub.2010.04.045, supplement.
+    Array size, pitch, perfusion dimensions, and speed are modeling choices.
+    Geometry supplies confinement; this device never fixes a cell in place.
+    """
+
+    growth_length: float = 25.0
+    growth_width: float = 1.5
+    growth_height: float = 1.4
+    channel_count: int = 6
+    channel_pitch: float = 7.5
+    channel_width: float = 12.0
+    channel_height: float = 7.0
+    channel_half_length: float = 22.5
+    wall_thickness: float = 1.0
+    mean_flow_speed: float = 40.0
+
+    def __post_init__(self) -> None:
+        dimensions = (
+            self.growth_length,
+            self.growth_width,
+            self.growth_height,
+            self.channel_pitch,
+            self.channel_width,
+            self.channel_height,
+            self.channel_half_length,
+            self.wall_thickness,
+        )
+
+        if any(not math.isfinite(value) or value <= 0 for value in dimensions):
+            raise ValueError("mother-machine dimensions must be finite and positive")
+
+        if type(self.channel_count) is not int or self.channel_count < 1:
+            raise ValueError("channel_count must be a positive integer")
+
+        if self.growth_width >= self.channel_pitch or self.growth_height > self.channel_height:
+            raise ValueError("growth channels must be separated and fit below the channel ceiling")
+
+        extent = (self.channel_count - 1) * self.channel_pitch + self.growth_width
+
+        if extent >= 2 * self.channel_half_length:
+            raise ValueError("growth channels must fit between the inlet and outlet")
+
+        if not math.isfinite(self.mean_flow_speed) or self.mean_flow_speed < 0:
+            raise ValueError("mean_flow_speed must be finite and nonnegative")
+
+    @property
+    def growth_centers(self) -> tuple[float, ...]:
+        return tuple(
+            (i - (self.channel_count - 1) / 2) * self.channel_pitch
+            for i in range(self.channel_count)
+        )
+
+    def add_constraints(self, simulation: Simulation) -> None:
+        """Use the same walls for mechanical confinement and grid projection."""
+        back = self.growth_length + self.wall_thickness
+        top = self.channel_height + self.wall_thickness
+        blocks = [
+            (
+                (self.growth_length, -self.channel_half_length, -self.wall_thickness),
+                (back, self.channel_half_length, top),
+            ),
+            (
+                (0.0, -self.channel_half_length, self.growth_height),
+                (back, self.channel_half_length, top),
+            ),
+        ]
+        lower = -self.channel_half_length
+
+        for center in self.growth_centers:
+            blocks.append(
+                ((0.0, lower, -self.wall_thickness), (back, center - self.growth_width / 2, top))
+            )
+            lower = center + self.growth_width / 2
+
+        blocks.append(((0.0, lower, -self.wall_thickness), (back, self.channel_half_length, top)))
+        self._wall_boxes(simulation, tuple(blocks), ConstraintRegion.OUTSIDE)
+        self._wall_boxes(
+            simulation,
+            (
+                (
+                    (-self.channel_width, -self.channel_half_length, 0.0),
+                    (back, self.channel_half_length, self.channel_height),
+                ),
+            ),
+            ConstraintRegion.INSIDE,
+        )
+
+    def _solid(self, px: float, py: float, pz: float, half: tuple[float, float, float]) -> bool:
+        hx, hy, hz = half
+
+        if _recedes(px + hx, -self.channel_width, hx) or _reaches(px - hx, self.growth_length, hx):
+            return True
+
+        if _recedes(pz + hz, 0.0, hz) or _reaches(pz - hz, self.channel_height, hz):
+            return True
+
+        if not _reaches(px - hx, 0.0, hx):
+            return False
+
+        in_channel = any(
+            not _reaches(abs(py - center) - hy, self.growth_width / 2, hy)
+            for center in self.growth_centers
+        )
+
+        return not in_channel or _reaches(pz - hz, self.growth_height, hz)
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,14 +481,20 @@ class BiopixelTrapDevice(_ChannelDevice):
 
     def _solid(self, px: float, py: float, pz: float, half: tuple[float, float, float]) -> bool:
         hx, hy, hz = half
+
         if _recedes(px + hx, -self.channel_width, hx):
             return True
+
         if _reaches(px - hx, self.trap_depth + self.wall_thickness, hx):
             return True
+
         if _recedes(pz + hz, 0.0, hz) or _reaches(pz - hz, self.channel_height, hz):
             return True
+
         if _reaches(px - hx, 0.0, hx) and _reaches(abs(py) - hy, self.trap_width * 0.5, hy):
             return True
+
         if _reaches(px - hx, self.trap_depth, hx):
             return True
+
         return _reaches(px - hx, 0.0, hx) and _reaches(pz - hz, self.trap_height, hz)

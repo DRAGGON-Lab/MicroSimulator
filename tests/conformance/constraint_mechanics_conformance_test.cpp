@@ -14,6 +14,7 @@ constexpr float relative_tolerance = 3.0e-4F;
 
 bool close(float actual, float expected) {
   const auto tolerance = absolute_tolerance + relative_tolerance * std::abs(expected);
+
   return std::abs(actual - expected) <= tolerance;
 }
 
@@ -172,6 +173,7 @@ void compare_results(const cm::MechanicsSolveResult& actual,
   assert(actual.report.breakdown == expected.report.breakdown);
   assert(close(actual.report.initial_residual_rms, expected.report.initial_residual_rms));
   assert(actual.corrections.size() == expected.corrections.size());
+
   for (std::size_t index = 0; index < expected.corrections.size(); ++index) {
     const auto& left = actual.corrections[index];
     const auto& right = expected.corrections[index];
@@ -189,6 +191,7 @@ void compare_cells(const cm::Simulation& actual, const cm::Simulation& expected)
   const auto actual_cells = actual.cells();
   const auto expected_cells = expected.cells();
   assert(actual_cells.size() == expected_cells.size());
+
   for (std::size_t index = 0; index < expected_cells.size(); ++index) {
     const auto& left = actual_cells[index];
     const auto& right = expected_cells[index];
@@ -221,11 +224,13 @@ void reject_unsupported_backend(cm::BackendKind backend, std::uint32_t device_in
   cm::Simulation simulation(backend, 0, 0, device_index);
   populate_plane(simulation);
   bool rejected = false;
+
   try {
     static_cast<void>(simulation.solve_cell_mechanics());
   } catch (const std::runtime_error&) {
     rejected = true;
   }
+
   assert(rejected);
 }
 
@@ -234,10 +239,13 @@ void reject_unsupported_backend(cm::BackendKind backend, std::uint32_t device_in
 int main() {
   cm::test::for_each_backend_device([](cm::BackendKind backend, std::uint32_t device_index) {
     cm::Simulation capability_probe(backend, 0, 0, device_index);
+
     if (!capability_probe.supports(cm::BackendFeature::external_constraints)) {
       reject_unsupported_backend(backend, device_index);
+
       return;
     }
+
     run_fixture(backend, device_index, populate_plane);
     run_fixture(backend, device_index, populate_fixed_plane);
     run_fixture(backend, device_index, populate_outside_sphere);
@@ -250,5 +258,6 @@ int main() {
     run_fixture(backend, device_index, populate_midspan_box);
     run_fixture(backend, device_index, populate_midspan_cylinder);
   });
+
   return 0;
 }

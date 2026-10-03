@@ -25,7 +25,8 @@ class ComputeBackend {
   [[nodiscard]] virtual bool supports(BackendFeature feature) const noexcept = 0;
   virtual void advance_growth(WorldState& state, float dt) = 0;
   virtual void advance_species(WorldState& state, const SpeciesRatePlan& plan,
-                               std::span<const float> previous_lengths, float dt) = 0;
+                               std::span<const float> previous_lengths, float dt,
+                               BiochemicalVolumeView volumes = {}) = 0;
   [[nodiscard]] virtual SignalSolveReport advance_signal_grid(SignalGrid& grid, float dt) = 0;
   [[nodiscard]] virtual SignalSolveReport advance_coupled(WorldState& state, SignalGrid& grid,
                                                           const CoupledRatePlan& plan,

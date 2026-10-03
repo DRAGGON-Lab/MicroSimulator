@@ -41,11 +41,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--seed", type=int, default=1729)
     parser.add_argument("--output", type=Path, required=True)
+
     return parser
 
 
 def main() -> int:
     arguments = _parser().parse_args()
+
     try:
         matrix = load_legacy_example_matrix(arguments.matrix)
         targets = enumerate_backend_targets(tuple(_BACKENDS[name] for name in arguments.backend))
@@ -58,11 +60,13 @@ def main() -> int:
         )
     except LegacyExampleMatrixError as error:
         _parser().error(str(error))
+
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = arguments.output.with_name(f".{arguments.output.name}.tmp")
     temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(arguments.output)
     print(f"legacy example matrix {report['result']}: {arguments.output}")
+
     return 0 if report["result"] == "pass" else 1
 
 

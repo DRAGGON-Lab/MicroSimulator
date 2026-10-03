@@ -1,0 +1,85 @@
+{
+  "format": "microsimulator-scene",
+  "frame": {
+    "backend": {
+      "device": "host",
+      "device_index": 0,
+      "kind": "cpu",
+      "name": "cpu-reference",
+      "native": true
+    },
+    "cells": [
+      {
+        "cell_type": 0,
+        "direction": [1.0, 0.0, 0.0],
+        "fixed": false,
+        "growth_rate": 1.0,
+        "id": "1",
+        "length": 2.0,
+        "parent_id": null,
+        "position": [0.0, 0.0, 0.0],
+        "radius": 0.5,
+        "slot": 0,
+        "species": [0.25, 0.75]
+      }
+    ],
+    "channel_metadata": {
+      "signals": [null, " "],
+      "species": ["<b>α 🧪</b>", "<b>α 🧪</b>"]
+    },
+    "constraints": {
+      "boxes": [],
+      "cylinders": [],
+      "planes": [],
+      "spheres": []
+    },
+    "signal_grid": {
+      "boundaries": {
+        "x_lower": {
+          "kind": "no_flux",
+          "values": []
+        },
+        "x_upper": {
+          "kind": "no_flux",
+          "values": []
+        },
+        "y_lower": {
+          "kind": "no_flux",
+          "values": []
+        },
+        "y_upper": {
+          "kind": "no_flux",
+          "values": []
+        },
+        "z_lower": {
+          "kind": "no_flux",
+          "values": []
+        },
+        "z_upper": {
+          "kind": "no_flux",
+          "values": []
+        }
+      },
+      "levels": [
+        0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25,
+        0.25, 0.25, 0.25, 0.25, 0.75, 0.75, 0.75, 0.75, 0.75, 0.75, 0.75, 0.75,
+        0.75, 0.75, 0.75, 0.75, 0.75, 0.75, 0.75, 0.75
+      ],
+      "origin": [0.0, 0.0, 0.0],
+      "shape": [4, 4, 1],
+      "signal_count": 2,
+      "spacing": [1.0, 1.0, 1.0]
+    },
+    "species_count": 2,
+    "time": 0.0
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "frame": "4ed41b5e8443c5da0da1843135647a0ed1d36b1681a2e3fc902199dd75dd3ef7"
+  },
+  "producer": {
+    "name": "microsimulator",
+    "version": "0.1.0"
+  },
+  "version": 3
+}

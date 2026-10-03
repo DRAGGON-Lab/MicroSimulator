@@ -30,28 +30,104 @@ struct FlexibleKrylovResult {
   double relative_residual;
 };
 
+inline void apply_givens_rotations(std::vector<std::vector<double>>& h, std::vector<double>& cosine,
+                                   std::vector<double>& sine, std::vector<double>& g,
+                                   std::uint32_t j) {
+  for (std::uint32_t i = 0; i < j; ++i) {
+    const double upper = cosine[i] * h[i][j] + sine[i] * h[i + 1][j];
+    h[i + 1][j] = -sine[i] * h[i][j] + cosine[i] * h[i + 1][j];
+    h[i][j] = upper;
+  }
+
+  const double diagonal = std::hypot(h[j][j], h[j + 1][j]);
+
+  if (diagonal == 0) {
+    throw std::runtime_error("FGMRES Arnoldi breakdown");
+  }
+
+  cosine[j] = h[j][j] / diagonal;
+  sine[j] = h[j + 1][j] / diagonal;
+  h[j][j] = diagonal;
+  h[j + 1][j] = 0;
+  g[j + 1] = -sine[j] * g[j];
+  g[j] *= cosine[j];
+}
+
+inline std::vector<double> solve_krylov_coefficients(const std::vector<std::vector<double>>& h,
+                                                     const std::vector<double>& g,
+                                                     std::uint32_t used) {
+  std::vector<double> weights(used);
+
+  for (std::uint32_t i = used; i-- > 0;) {
+    double value = g[i];
+
+    for (std::uint32_t j = i + 1; j < used; ++j) {
+      value -= h[i][j] * weights[j];
+    }
+
+    weights[i] = value / h[i][i];
+  }
+
+  return weights;
+}
+
+template <class Vector>
+void orthogonalize_arnoldi(const FlexibleKrylovOperations<Vector>& op,
+                           const std::vector<Vector>& basis, Vector& work,
+                           std::vector<std::vector<double>>& h, std::uint32_t j) {
+  // Twice-modified Gram-Schmidt limits loss of orthogonality in binary32.
+  for (unsigned pass = 0; pass < 2; ++pass) {
+    for (std::uint32_t i = 0; i <= j; ++i) {
+      const double projection = op.dot(basis[i], work);
+      h[i][j] += projection;
+      op.axpy(work, -projection, basis[i]);
+    }
+  }
+}
+
 template <class Vector>
 FlexibleKrylovResult<Vector> flexible_gmres(const FlexibleKrylovOperations<Vector>& op,
                                             const Vector& rhs, double tolerance,
-                                            std::uint32_t max_iterations) {
+                                            std::uint32_t max_iterations,
+                                            std::uint32_t restart = 40) {
+  if (restart == 0) {
+    throw std::invalid_argument("FGMRES restart must be positive");
+  }
+
   auto solution = op.make_zero();
   auto residual = op.make_zero();
   auto work = op.make_zero();
   const double rhs_norm = std::sqrt(op.dot(rhs, rhs));
-  if (!std::isfinite(rhs_norm)) throw std::runtime_error("FGMRES non-finite right-hand side");
-  if (rhs_norm == 0) return {std::move(solution), 0, 0};
+
+  if (!std::isfinite(rhs_norm)) {
+    throw std::runtime_error("FGMRES non-finite right-hand side");
+  }
+
+  if (rhs_norm == 0) {
+    return {std::move(solution), 0, 0};
+  }
+
   std::uint32_t iterations = 0;
-  constexpr std::uint32_t restart = 40;
+
   while (true) {
     op.apply(solution, work);
     op.copy(rhs, residual);
     op.axpy(residual, -1, work);
     const double beta = std::sqrt(op.dot(residual, residual));
-    if (!std::isfinite(beta)) throw std::runtime_error("FGMRES non-finite true residual");
-    if (beta <= tolerance * rhs_norm) return {std::move(solution), iterations, beta / rhs_norm};
-    if (iterations >= max_iterations)
-      throw std::runtime_error("resolved-flow FGMRES did not converge: relative residual " +
+
+    if (!std::isfinite(beta)) {
+      throw std::runtime_error("FGMRES non-finite true residual");
+    }
+
+    if (beta <= tolerance * rhs_norm) {
+      return {std::move(solution), iterations, beta / rhs_norm};
+    }
+
+    if (iterations >= max_iterations) {
+      throw std::runtime_error("FGMRES did not converge: relative residual " +
                                std::to_string(beta / rhs_norm));
+    }
+
     const auto count = std::min(restart, max_iterations - iterations);
     std::vector<Vector> basis, directions;
     auto first = op.make_zero();
@@ -61,49 +137,44 @@ FlexibleKrylovResult<Vector> flexible_gmres(const FlexibleKrylovOperations<Vecto
     std::vector<double> cosine(count), sine(count), g(count + 1);
     g[0] = beta;
     std::uint32_t used = 0;
+
     for (std::uint32_t j = 0; j < count; ++j) {
       auto direction = op.make_zero();
       op.precondition(basis[j], direction);
       op.apply(direction, work);
-      // Twice-modified Gram-Schmidt limits loss of orthogonality in binary32.
-      for (unsigned pass = 0; pass < 2; ++pass) {
-        for (std::uint32_t i = 0; i <= j; ++i) {
-          const double projection = op.dot(basis[i], work);
-          h[i][j] += projection;
-          op.axpy(work, -projection, basis[i]);
-        }
-      }
+
+      orthogonalize_arnoldi(op, basis, work, h, j);
+
       h[j + 1][j] = std::sqrt(op.dot(work, work));
-      if (!std::isfinite(h[j + 1][j])) throw std::runtime_error("FGMRES non-finite Arnoldi vector");
+
+      if (!std::isfinite(h[j + 1][j])) {
+        throw std::runtime_error("FGMRES non-finite Arnoldi vector");
+      }
+
       const bool happy = h[j + 1][j] <= 1e-14;
       auto next = op.make_zero();
-      if (!happy) op.axpy(next, 1 / h[j + 1][j], work);
+
+      if (!happy) {
+        op.axpy(next, 1 / h[j + 1][j], work);
+      }
+
       basis.push_back(std::move(next));
       directions.push_back(std::move(direction));
-      for (std::uint32_t i = 0; i < j; ++i) {
-        const double upper = cosine[i] * h[i][j] + sine[i] * h[i + 1][j];
-        h[i + 1][j] = -sine[i] * h[i][j] + cosine[i] * h[i + 1][j];
-        h[i][j] = upper;
-      }
-      const double diagonal = std::hypot(h[j][j], h[j + 1][j]);
-      if (diagonal == 0) throw std::runtime_error("FGMRES Arnoldi breakdown");
-      cosine[j] = h[j][j] / diagonal;
-      sine[j] = h[j + 1][j] / diagonal;
-      h[j][j] = diagonal;
-      h[j + 1][j] = 0;
-      g[j + 1] = -sine[j] * g[j];
-      g[j] *= cosine[j];
+
+      apply_givens_rotations(h, cosine, sine, g, j);
       ++iterations;
       used = j + 1;
-      if (happy || std::abs(g[j + 1]) <= tolerance * rhs_norm) break;
+
+      if (happy || std::abs(g[j + 1]) <= tolerance * rhs_norm) {
+        break;
+      }
     }
-    std::vector<double> weights(used);
-    for (std::uint32_t i = used; i-- > 0;) {
-      double value = g[i];
-      for (std::uint32_t j = i + 1; j < used; ++j) value -= h[i][j] * weights[j];
-      weights[i] = value / h[i][i];
+
+    const auto weights = solve_krylov_coefficients(h, g, used);
+
+    for (std::uint32_t i = 0; i < used; ++i) {
+      op.axpy(solution, weights[i], directions[i]);
     }
-    for (std::uint32_t i = 0; i < used; ++i) op.axpy(solution, weights[i], directions[i]);
   }
 }
 

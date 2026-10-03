@@ -54,11 +54,13 @@ void test_validation_is_atomic_and_requires_convergence() {
   invalid.corrections = {cm::CellCorrection{}};
   invalid.corrections[0].translation.x = std::numeric_limits<float>::quiet_NaN();
   bool rejected = false;
+
   try {
     cm::integrate_mechanics_result(state, invalid);
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
   assert(close(state.cell(id).position.x, 0.0F));
 
@@ -66,11 +68,13 @@ void test_validation_is_atomic_and_requires_convergence() {
   unconverged.corrections = {cm::CellCorrection{}};
   unconverged.report.status = cm::SolverStatus::iteration_limit;
   rejected = false;
+
   try {
     cm::integrate_mechanics_result(state, unconverged);
   } catch (const std::runtime_error&) {
     rejected = true;
   }
+
   assert(rejected);
   assert(close(state.cell(id).position.x, 0.0F));
 }
@@ -144,5 +148,6 @@ int main() {
   test_validation_is_atomic_and_requires_convergence();
   test_fixed_cell_integration_only_applies_declared_growth();
   test_simulation_relaxation_reduces_penetration();
+
   return 0;
 }

@@ -18,6 +18,7 @@ cm::CellId add_capsule(cm::WorldState& state, cm::Vec3 center, cm::Vec3 axis, fl
   cell.direction = axis;
   cell.length = length;
   cell.radius = radius;
+
   return state.add_cell(cell);
 }
 
@@ -35,21 +36,25 @@ void test_constraint_ids_and_validation() {
 
   plane.coefficient = 0.0F;
   bool rejected = false;
+
   try {
     static_cast<void>(constraints.add_plane(plane));
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 
   plane.coefficient = 1.0F;
   plane.inward_normal = {};
   rejected = false;
+
   try {
     static_cast<void>(constraints.add_plane(plane));
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 }
 
@@ -62,11 +67,13 @@ void test_external_contact_graph_rejects_invalid_location_tag() {
   contact.normal = {1.0F, 0.0F, 0.0F};
 
   bool rejected = false;
+
   try {
     static_cast<void>(cm::ExternalContactGraph(1, {contact}));
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 }
 
@@ -82,6 +89,7 @@ void test_parallel_plane_contact_uses_two_weighted_endpoints() {
   const auto graph = cm::find_external_contacts_cpu(state, constraints);
   assert(graph.size() == 2);
   assert(graph.incident_contact_indices(0).size() == 2);
+
   for (const auto& contact : graph.contacts()) {
     assert(contact.constraint_id == plane_id);
     assert(contact.constraint_kind == cm::ExternalConstraintKind::plane);
@@ -117,6 +125,7 @@ void test_outside_and_inside_spheres_have_typed_orientation() {
   const auto outside_id = outside_constraints.add_sphere(outside);
   const auto outside_graph = cm::find_external_contacts_cpu(outside_state, outside_constraints);
   assert(outside_graph.size() == 2);
+
   for (const auto& contact : outside_graph.contacts()) {
     assert(contact.constraint_id == outside_id);
     assert(contact.constraint_kind == cm::ExternalConstraintKind::sphere);
@@ -135,6 +144,7 @@ void test_outside_and_inside_spheres_have_typed_orientation() {
   inside_constraints.add_sphere(inside);
   const auto inside_graph = cm::find_external_contacts_cpu(inside_state, inside_constraints);
   assert(inside_graph.size() == 2);
+
   for (const auto& contact : inside_graph.contacts()) {
     assert(close(contact.signed_separation, -0.3F));
     assert(close(contact.normal.x, 1.0F));
@@ -151,6 +161,7 @@ void test_degenerate_sphere_normal_is_finite_and_deterministic() {
   constraints.add_sphere(sphere);
   const auto graph = cm::find_external_contacts_cpu(state, constraints);
   assert(graph.size() == 2);
+
   for (const auto& contact : graph.contacts()) {
     assert(close(cm::norm(contact.normal), 1.0F));
     assert(close(contact.normal.x, -1.0F));
@@ -189,21 +200,25 @@ void test_box_ids_validation_and_checkpoint() {
 
   box.half_extents = {1.0F, 0.0F, 1.0F};
   bool rejected = false;
+
   try {
     static_cast<void>(constraints.add_box(box));
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 
   box.half_extents = {1.0F, 1.0F, 1.0F};
   box.coefficient = -1.0F;
   rejected = false;
+
   try {
     static_cast<void>(constraints.add_box(box));
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 
   const auto checkpoint = constraints.checkpoint();
@@ -223,6 +238,7 @@ void test_outside_box_face_contact_uses_two_weighted_endpoints() {
 
   const auto graph = cm::find_external_contacts_cpu(state, constraints);
   assert(graph.size() == 2);
+
   for (const auto& contact : graph.contacts()) {
     assert(contact.constraint_id == box_id);
     assert(contact.constraint_kind == cm::ExternalConstraintKind::box);
@@ -243,6 +259,7 @@ void test_outside_box_corner_contact_has_diagonal_normal() {
   const auto graph = cm::find_external_contacts_cpu(state, constraints);
   assert(graph.size() == 2);
   const auto diagonal = 1.0F / std::sqrt(2.0F);
+
   for (const auto& contact : graph.contacts()) {
     assert(close(contact.signed_separation, 0.3F * std::sqrt(2.0F) - 0.5F));
     assert(close(contact.normal.x, -diagonal));
@@ -261,6 +278,7 @@ void test_box_interior_endpoint_escapes_toward_nearest_face() {
 
   const auto graph = cm::find_external_contacts_cpu(state, constraints);
   assert(graph.size() == 2);
+
   for (const auto& contact : graph.contacts()) {
     assert(close(contact.signed_separation, -0.9F));
     assert(close(contact.normal.y, -1.0F));
@@ -279,6 +297,7 @@ void test_inside_box_confines_like_a_chamber() {
 
   const auto graph = cm::find_external_contacts_cpu(state, constraints);
   assert(graph.size() == 2);
+
   for (const auto& contact : graph.contacts()) {
     assert(close(contact.signed_separation, -0.3F));
     assert(close(contact.normal.x, 1.0F));
@@ -295,6 +314,7 @@ void test_box_center_degeneracy_is_finite_and_deterministic() {
 
   const auto graph = cm::find_external_contacts_cpu(state, constraints);
   assert(graph.size() == 2);
+
   for (const auto& contact : graph.contacts()) {
     assert(close(cm::norm(contact.normal), 1.0F));
     assert(close(contact.normal.x, -1.0F));
@@ -353,21 +373,25 @@ void test_cylinder_ids_validation_and_checkpoint() {
 
   cylinder.radius = 0.0F;
   bool rejected = false;
+
   try {
     static_cast<void>(constraints.add_cylinder(cylinder));
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 
   cylinder.radius = 2.0F;
   cylinder.half_height = -1.0F;
   rejected = false;
+
   try {
     static_cast<void>(constraints.add_cylinder(cylinder));
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 
   const auto checkpoint = constraints.checkpoint();
@@ -387,6 +411,7 @@ void test_outside_cylinder_barrel_contact_uses_two_weighted_endpoints() {
 
   const auto graph = cm::find_external_contacts_cpu(state, constraints);
   assert(graph.size() == 2);
+
   for (const auto& contact : graph.contacts()) {
     assert(contact.constraint_id == cylinder_id);
     assert(contact.constraint_kind == cm::ExternalConstraintKind::cylinder);
@@ -407,6 +432,7 @@ void test_outside_cylinder_rim_contact_has_blended_normal() {
   const auto graph = cm::find_external_contacts_cpu(state, constraints);
   assert(graph.size() == 2);
   const auto diagonal = 1.0F / std::sqrt(2.0F);
+
   for (const auto& contact : graph.contacts()) {
     assert(close(contact.signed_separation, 0.3F * std::sqrt(2.0F) - 0.5F));
     assert(close(contact.normal.x, -diagonal));
@@ -424,6 +450,7 @@ void test_outside_cylinder_cap_contact_points_axially() {
 
   const auto graph = cm::find_external_contacts_cpu(state, constraints);
   assert(graph.size() == 2);
+
   for (const auto& contact : graph.contacts()) {
     assert(close(contact.signed_separation, -0.1F));
     assert(close(contact.normal.z, -1.0F));
@@ -443,6 +470,7 @@ void test_inside_cylinder_confines_like_a_dish() {
 
   const auto graph = cm::find_external_contacts_cpu(state, constraints);
   assert(graph.size() == 2);
+
   for (const auto& contact : graph.contacts()) {
     assert(close(contact.signed_separation, -0.3F));
     assert(close(contact.normal.x, 1.0F));
@@ -459,6 +487,7 @@ void test_cylinder_axis_degeneracy_is_finite_and_radial() {
 
   const auto graph = cm::find_external_contacts_cpu(state, constraints);
   assert(graph.size() == 2);
+
   for (const auto& contact : graph.contacts()) {
     assert(close(cm::norm(contact.normal), 1.0F));
     assert(close(contact.normal.x, -1.0F));
@@ -529,5 +558,6 @@ int main() {
   test_cylinder_axis_degeneracy_is_finite_and_radial();
   test_outside_cylinder_detects_midspan_capsule_contact();
   test_simulation_exposes_cpu_constraint_graph();
+
   return 0;
 }

@@ -16,7 +16,7 @@ constexpr float signal_tolerance = 5.0e-4F;
 constexpr std::array time_steps{0.01F, 0.015F, 0.02F};
 
 cm::RateInstruction operation(cm::RateOp op, std::uint32_t first = 0, std::uint32_t second = 0,
-                               float value = 0.0F) {
+                              float value = 0.0F) {
   return {.operation = op, .first = first, .second = second, .value = value};
 }
 
@@ -31,9 +31,11 @@ cm::Simulation make_simulation(cm::BackendKind backend, std::uint32_t device_ind
   grid.diffusion = {0.02F};
   grid.advection = {{0.01F, -0.005F, 0.0F}};
   std::vector<float> levels(grid.level_count());
+
   for (std::size_t index = 0; index < levels.size(); ++index) {
     levels[index] = 0.5F + 0.001F * static_cast<float>(index % 37);
   }
+
   simulation.configure_signal_grid(grid, std::move(levels));
 
   const std::array positions{
@@ -46,6 +48,7 @@ cm::Simulation make_simulation(cm::BackendKind backend, std::uint32_t device_ind
       cm::Vec3{1.0F, 0.1F, 0.0F},
       cm::Vec3{0.95F, -0.1F, 0.08F},
   };
+
   for (std::size_t index = 0; index < positions.size(); ++index) {
     cm::CellInit cell;
     cell.position = positions[index];
@@ -81,8 +84,8 @@ cm::Simulation make_simulation(cm::BackendKind backend, std::uint32_t device_ind
       operation(constant, 0, 0, 0.02F),
       operation(multiply, 0, 8),
   };
-  simulation.set_coupled_rate_plan(
-      cm::CoupledRatePlan(2, 1, std::move(instructions), {6, 7}, {9}));
+  simulation.set_coupled_rate_plan(cm::CoupledRatePlan(2, 1, std::move(instructions), {6, 7}, {9}));
+
   return simulation;
 }
 
@@ -94,6 +97,7 @@ void compare_cells(const cm::Simulation& actual, const cm::Simulation& expected)
   const auto actual_cells = actual.cells();
   const auto expected_cells = expected.cells();
   assert(actual_cells.size() == expected_cells.size());
+
   for (std::size_t index = 0; index < expected_cells.size(); ++index) {
     const auto& left = actual_cells[index];
     const auto& right = expected_cells[index];
@@ -111,6 +115,7 @@ void compare_cells(const cm::Simulation& actual, const cm::Simulation& expected)
     assert(close(left.length, right.length, geometry_tolerance));
     assert(left.radius == right.radius);
     assert(left.species.size() == right.species.size());
+
     for (std::size_t species = 0; species < right.species.size(); ++species) {
       assert(close(left.species[species], right.species[species], species_tolerance));
     }
@@ -121,6 +126,7 @@ void compare_signals(const cm::Simulation& actual, const cm::Simulation& expecte
   const auto actual_levels = actual.signal_levels();
   const auto expected_levels = expected.signal_levels();
   assert(actual_levels.size() == expected_levels.size());
+
   for (std::size_t index = 0; index < expected_levels.size(); ++index) {
     assert(close(actual_levels[index], expected_levels[index], signal_tolerance));
   }
@@ -174,5 +180,6 @@ void run_trajectory(cm::BackendKind backend, std::uint32_t device_index) {
 
 int main() {
   cm::test::for_each_backend_device(run_trajectory);
+
   return 0;
 }

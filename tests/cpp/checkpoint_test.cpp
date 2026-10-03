@@ -13,15 +13,16 @@ namespace {
 
 cm::SpeciesRatePlan make_rate_plan() {
   using enum cm::RateOp;
+
   return cm::SpeciesRatePlan(2,
-                              {
-                                  {.operation = species, .first = 0},
-                                  {.operation = species, .first = 1},
-                                  {.operation = constant, .value = 0.125F},
-                                  {.operation = add, .first = 0, .second = 2},
-                                  {.operation = negate, .first = 1},
-                              },
-                              {3, 4});
+                             {
+                                 {.operation = species, .first = 0},
+                                 {.operation = species, .first = 1},
+                                 {.operation = constant, .value = 0.125F},
+                                 {.operation = add, .first = 0, .second = 2},
+                                 {.operation = negate, .first = 1},
+                             },
+                             {3, 4});
 }
 
 void assert_cells_equal(const cm::CellSnapshot& actual, const cm::CellSnapshot& expected) {
@@ -44,10 +45,13 @@ void assert_rate_plans_equal(const cm::SpeciesRatePlan& actual,
                              const cm::SpeciesRatePlan& expected) {
   assert(actual.species_count() == expected.species_count());
   assert(actual.outputs().size() == expected.outputs().size());
+
   for (std::size_t index = 0; index < actual.outputs().size(); ++index) {
     assert(actual.outputs()[index] == expected.outputs()[index]);
   }
+
   assert(actual.instructions().size() == expected.instructions().size());
+
   for (std::size_t index = 0; index < actual.instructions().size(); ++index) {
     const auto& left = actual.instructions()[index];
     const auto& right = expected.instructions()[index];
@@ -66,17 +70,22 @@ void assert_checkpoints_equal(const cm::SimulationCheckpoint& actual,
   assert(actual.world.species_count == expected.world.species_count);
   assert(actual.world.next_id == expected.world.next_id);
   assert(actual.world.lineage.size() == expected.world.lineage.size());
+
   for (std::size_t index = 0; index < actual.world.lineage.size(); ++index) {
     assert(actual.world.lineage[index].child == expected.world.lineage[index].child);
     assert(actual.world.lineage[index].parent == expected.world.lineage[index].parent);
   }
+
   assert(actual.world.cells.size() == expected.world.cells.size());
+
   for (std::size_t index = 0; index < actual.world.cells.size(); ++index) {
     assert_cells_equal(actual.world.cells[index], expected.world.cells[index]);
   }
+
   assert(actual.constraints.next_id == expected.constraints.next_id);
   assert(actual.constraints.planes.size() == expected.constraints.planes.size());
   assert(actual.constraints.spheres.size() == expected.constraints.spheres.size());
+
   for (std::size_t index = 0; index < actual.constraints.planes.size(); ++index) {
     const auto& left = actual.constraints.planes[index];
     const auto& right = expected.constraints.planes[index];
@@ -89,6 +98,7 @@ void assert_checkpoints_equal(const cm::SimulationCheckpoint& actual,
     assert(left.inward_normal.z == right.inward_normal.z);
     assert(left.coefficient == right.coefficient);
   }
+
   for (std::size_t index = 0; index < actual.constraints.spheres.size(); ++index) {
     const auto& left = actual.constraints.spheres[index];
     const auto& right = expected.constraints.spheres[index];
@@ -100,6 +110,7 @@ void assert_checkpoints_equal(const cm::SimulationCheckpoint& actual,
     assert(left.coefficient == right.coefficient);
     assert(left.allowed_region == right.allowed_region);
   }
+
   assert_rate_plans_equal(actual.species_rate_plan, expected.species_rate_plan);
 }
 
@@ -108,11 +119,13 @@ void assert_resumed_step_close(const cm::Simulation& actual, const cm::Simulatio
   const auto actual_cells = actual.cells();
   const auto expected_cells = expected.cells();
   assert(actual_cells.size() == expected_cells.size());
+
   for (std::size_t index = 0; index < actual_cells.size(); ++index) {
     assert(actual_cells[index].id == expected_cells[index].id);
     assert(actual_cells[index].slot == expected_cells[index].slot);
     assert(std::abs(actual_cells[index].length - expected_cells[index].length) <= 1.0e-6F);
     assert(actual_cells[index].species.size() == expected_cells[index].species.size());
+
     for (std::size_t species = 0; species < actual_cells[index].species.size(); ++species) {
       assert(std::abs(actual_cells[index].species[species] -
                       expected_cells[index].species[species]) <= 1.0e-5F);
@@ -123,11 +136,13 @@ void assert_resumed_step_close(const cm::Simulation& actual, const cm::Simulatio
 template <typename Function>
 void assert_invalid(Function&& function) {
   bool rejected = false;
+
   try {
     function();
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
+
   assert(rejected);
 }
 
@@ -203,17 +218,25 @@ int main() {
 
   auto invalid_version = saved;
   invalid_version.schema_version += 1;
-  assert_invalid([&] { cm::Simulation rejected(cm::BackendKind::cpu, invalid_version); });
+  assert_invalid([&] {
+    cm::Simulation rejected(cm::BackendKind::cpu, invalid_version);
+  });
 
   auto invalid_slot = saved;
   invalid_slot.world.cells.front().slot = 1;
-  assert_invalid([&] { cm::Simulation rejected(cm::BackendKind::cpu, invalid_slot); });
+  assert_invalid([&] {
+    cm::Simulation rejected(cm::BackendKind::cpu, invalid_slot);
+  });
 
   auto invalid_next_id = saved;
   invalid_next_id.world.next_id = daughter_b;
-  assert_invalid([&] { cm::Simulation rejected(cm::BackendKind::cpu, invalid_next_id); });
+  assert_invalid([&] {
+    cm::Simulation rejected(cm::BackendKind::cpu, invalid_next_id);
+  });
 
   auto invalid_plan = saved;
   invalid_plan.species_rate_plan = cm::SpeciesRatePlan::zero(1);
-  assert_invalid([&] { cm::Simulation rejected(cm::BackendKind::cpu, invalid_plan); });
+  assert_invalid([&] {
+    cm::Simulation rejected(cm::BackendKind::cpu, invalid_plan);
+  });
 }

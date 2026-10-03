@@ -24,14 +24,17 @@ export function flatSignalIndex(
   z: number,
 ): number {
   const [sizeX, sizeY, sizeZ] = grid.shape;
+
   if (channel < 0 || channel >= grid.signalCount) {
     throw new RangeError(`signal channel ${channel} is out of range`);
   }
+
   if (x < 0 || x >= sizeX || y < 0 || y >= sizeY || z < 0 || z >= sizeZ) {
     throw new RangeError(
       `signal coordinate (${x}, ${y}, ${z}) is out of range`,
     );
   }
+
   return channel * sizeX * sizeY * sizeZ + x * sizeY * sizeZ + y * sizeZ + z;
 }
 
@@ -43,24 +46,15 @@ export function sliceDimension(grid: SceneSignalGrid, axis: SliceAxis): number {
   return grid.shape[axis === "x" ? 0 : axis === "y" ? 1 : 2];
 }
 
-export function signalSlice(
+function sliceValues(
   grid: SceneSignalGrid,
   channel: number,
   axis: SliceAxis,
   index: number,
-): SignalSlice {
-  const dimension = sliceDimension(grid, axis);
-  if (!Number.isInteger(index) || index < 0 || index >= dimension) {
-    throw new RangeError(`${axis} slice ${index} is out of range`);
-  }
+): number[] {
   const [sizeX, sizeY, sizeZ] = grid.shape;
-  const [originX, originY, originZ] = grid.origin;
-  const [spacingX, spacingY, spacingZ] = grid.spacing;
-  const centerX = originX + ((sizeX - 1) * spacingX) / 2;
-  const centerY = originY + ((sizeY - 1) * spacingY) / 2;
-  const centerZ = originZ + ((sizeZ - 1) * spacingZ) / 2;
-
   const values: number[] = [];
+
   if (axis === "x") {
     for (let z = 0; z < sizeZ; z += 1) {
       for (let y = 0; y < sizeY; y += 1) {
@@ -69,6 +63,55 @@ export function signalSlice(
         );
       }
     }
+
+    return values;
+  }
+
+  if (axis === "y") {
+    for (let z = 0; z < sizeZ; z += 1) {
+      for (let x = 0; x < sizeX; x += 1) {
+        values.push(
+          grid.levels[flatSignalIndex(grid, channel, x, index, z)] ?? 0,
+        );
+      }
+    }
+
+    return values;
+  }
+
+  for (let y = 0; y < sizeY; y += 1) {
+    for (let x = 0; x < sizeX; x += 1) {
+      values.push(
+        grid.levels[flatSignalIndex(grid, channel, x, y, index)] ?? 0,
+      );
+    }
+  }
+
+  return values;
+}
+
+export function signalSlice(
+  grid: SceneSignalGrid,
+  channel: number,
+  axis: SliceAxis,
+  index: number,
+): SignalSlice {
+  const dimension = sliceDimension(grid, axis);
+
+  if (!Number.isInteger(index) || index < 0 || index >= dimension) {
+    throw new RangeError(`${axis} slice ${index} is out of range`);
+  }
+
+  const [sizeX, sizeY, sizeZ] = grid.shape;
+  const [originX, originY, originZ] = grid.origin;
+  const [spacingX, spacingY, spacingZ] = grid.spacing;
+  const centerX = originX + ((sizeX - 1) * spacingX) / 2;
+  const centerY = originY + ((sizeY - 1) * spacingY) / 2;
+  const centerZ = originZ + ((sizeZ - 1) * spacingZ) / 2;
+
+  const values = sliceValues(grid, channel, axis, index);
+
+  if (axis === "x") {
     return {
       axis,
       index,
@@ -83,14 +126,8 @@ export function signalSlice(
       verticalSpan: span(sizeZ, spacingZ),
     };
   }
+
   if (axis === "y") {
-    for (let z = 0; z < sizeZ; z += 1) {
-      for (let x = 0; x < sizeX; x += 1) {
-        values.push(
-          grid.levels[flatSignalIndex(grid, channel, x, index, z)] ?? 0,
-        );
-      }
-    }
     return {
       axis,
       index,
@@ -105,13 +142,7 @@ export function signalSlice(
       verticalSpan: span(sizeZ, spacingZ),
     };
   }
-  for (let y = 0; y < sizeY; y += 1) {
-    for (let x = 0; x < sizeX; x += 1) {
-      values.push(
-        grid.levels[flatSignalIndex(grid, channel, x, y, index)] ?? 0,
-      );
-    }
-  }
+
   return {
     axis,
     index,

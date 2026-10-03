@@ -7,7 +7,8 @@
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit",
     "dev": "vite",
-    "format:check": "prettier --check .",
+    "format": "uv run --project .. --isolated --locked --only-group quality python ../scripts/quality.py format viewer",
+    "format:check": "uv run --project .. --isolated --locked --only-group quality python ../scripts/quality.py check viewer",
     "test": "vitest run"
   },
   "dependencies": {

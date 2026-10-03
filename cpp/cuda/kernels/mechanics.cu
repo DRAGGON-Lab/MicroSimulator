@@ -64,6 +64,7 @@ __device__ MechanicsDofsGpu added(const MechanicsDofsGpu& left, const MechanicsD
 __device__ MechanicsDofsGpu contact_jacobian(float3 normal, float3 arm, float3 axis,
                                              float total_length, float weight) {
   const auto angular = cross_product(arm, normal);
+
   return {
       make_float4(weight * normal.x, weight * normal.y, weight * normal.z,
                   weight * dot_product(axis, arm) * dot_product(axis, normal) / total_length),
@@ -79,9 +80,11 @@ __global__ void build_mechanics_rows(const float4* centers, const float4* axes,
                                      MechanicsDofsGpu* second_rows, float* right_hand_side,
                                      std::uint32_t contact_count) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (index >= contact_count) {
     return;
   }
+
   const auto first = first_slots[index];
   const auto second = second_slots[index];
   const auto point = make_float3(points[index].x, points[index].y, points[index].z);
@@ -91,6 +94,7 @@ __global__ void build_mechanics_rows(const float4* centers, const float4* axes,
   const auto weight = weights[index];
   first_rows[index] = contact_jacobian(normal, subtract(point, first_center), first_axis,
                                        geometry[first].x + 2.0F * geometry[first].y, weight);
+
   if (second == 0xffffffffU) {
     second_rows[index] = zero_dofs();
   } else {
@@ -99,6 +103,7 @@ __global__ void build_mechanics_rows(const float4* centers, const float4* axes,
     second_rows[index] = contact_jacobian(normal, subtract(point, second_center), second_axis,
                                           geometry[second].x + 2.0F * geometry[second].y, weight);
   }
+
   right_hand_side[index] = weight * separations[index];
 }
 
@@ -109,13 +114,16 @@ __global__ void apply_mechanics_b(const MechanicsDofsGpu* first_rows,
                                   const std::uint8_t* fixed, float* row_values,
                                   std::uint32_t contact_count) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (index >= contact_count) {
     return;
   }
+
   const auto first = first_slots[index];
   const auto second = second_slots[index];
   const auto first_input = fixed[first] == 0 ? input[first] : zero_dofs();
   row_values[index] = dof_dot(first_rows[index], first_input);
+
   if (second != 0xffffffffU) {
     const auto second_input = fixed[second] == 0 ? input[second] : zero_dofs();
     row_values[index] -= dof_dot(second_rows[index], second_input);
@@ -130,16 +138,20 @@ __global__ void apply_mechanics_transpose(const MechanicsDofsGpu* first_rows,
                                           const std::uint32_t* first_slots,
                                           MechanicsDofsGpu* output, std::uint32_t cell_count) {
   const auto cell = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (cell >= cell_count) {
     return;
   }
+
   auto result = zero_dofs();
+
   for (auto offset = incidence_offsets[cell]; offset < incidence_offsets[cell + 1]; ++offset) {
     const auto row = incidence_indices[offset];
     const auto is_first = first_slots[row] == cell;
     const auto jacobian = is_first ? first_rows[row] : second_rows[row];
     result = added(result, scaled(jacobian, (is_first ? 1.0F : -1.0F) * row_values[row]));
   }
+
   output[cell] = result;
 }
 
@@ -148,13 +160,17 @@ __global__ void add_mechanics_regularizer(const float4* axes, const float4* geom
                                           const std::uint8_t* fixed, float mu_a, float gamma,
                                           std::uint32_t cell_count) {
   const auto cell = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (cell >= cell_count) {
     return;
   }
+
   if (fixed[cell] != 0) {
     output[cell] = input[cell];
+
     return;
   }
+
   const auto total_length = geometry[cell].x + 2.0F * geometry[cell].y;
   const auto radius = geometry[cell].y;
   const auto mass = mu_a * total_length;
@@ -183,9 +199,11 @@ __global__ void initialize_mechanics_vectors(MechanicsDofsGpu* right_hand_side,
                                              MechanicsDofsGpu* search_direction,
                                              const std::uint8_t* fixed, std::uint32_t cell_count) {
   const auto cell = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (cell >= cell_count) {
     return;
   }
+
   solution[cell] = zero_dofs();
   const auto projected_rhs = fixed[cell] == 0 ? right_hand_side[cell] : zero_dofs();
   right_hand_side[cell] = projected_rhs;
@@ -199,9 +217,11 @@ __global__ void update_mechanics_solution_residual(MechanicsDofsGpu* solution,
                                                    const MechanicsDofsGpu* applied, float alpha,
                                                    std::uint32_t cell_count) {
   const auto cell = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (cell >= cell_count) {
     return;
   }
+
   solution[cell] = added(solution[cell], scaled(search_direction[cell], alpha));
   residual[cell] = added(residual[cell], scaled(applied[cell], -alpha));
 }
@@ -210,9 +230,11 @@ __global__ void update_mechanics_search_direction(const MechanicsDofsGpu* residu
                                                   MechanicsDofsGpu* search_direction, float beta,
                                                   std::uint32_t cell_count) {
   const auto cell = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (cell >= cell_count) {
     return;
   }
+
   search_direction[cell] = added(residual[cell], scaled(search_direction[cell], beta));
 }
 
@@ -220,35 +242,45 @@ __global__ void subtract_mechanics_vectors(const MechanicsDofsGpu* left,
                                            const MechanicsDofsGpu* right, MechanicsDofsGpu* output,
                                            std::uint32_t cell_count) {
   const auto cell = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (cell >= cell_count) {
     return;
   }
+
   output[cell] = added(left[cell], scaled(right[cell], -1.0F));
 }
 
 __global__ void mechanics_dot_terms(const MechanicsDofsGpu* left, const MechanicsDofsGpu* right,
                                     float* terms, std::uint32_t cell_count) {
   const auto cell = blockIdx.x * blockDim.x + threadIdx.x;
+
   if (cell >= cell_count) {
     return;
   }
+
   terms[cell] = dof_dot(left[cell], right[cell]);
 }
 
 __global__ void reduce_sum_pairs(const float* input, float* output, std::uint32_t element_count) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
   const auto first = index * 2;
+
   if (first >= element_count) {
     return;
   }
+
   auto value = input[first];
+
   if (first + 1 < element_count) {
     value += input[first + 1];
   }
+
   output[index] = value;
 }
 
-std::uint32_t block_count(std::uint32_t count) { return ((count - 1) / threads_per_block) + 1; }
+std::uint32_t block_count(std::uint32_t count) {
+  return ((count - 1) / threads_per_block) + 1;
+}
 
 }  // namespace
 

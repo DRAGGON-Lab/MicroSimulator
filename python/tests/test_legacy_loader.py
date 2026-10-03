@@ -25,6 +25,7 @@ _FIXTURES = Path(__file__).parent / "fixtures"
 def test_unchanged_growth_model_loads_through_setup_facade(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     context = ModelContext(backend, 0, seed=42)
     model, provenance = build_legacy_model(_FIXTURES / "legacy_growth.py", context)
 
@@ -46,6 +47,7 @@ def test_unchanged_growth_model_loads_through_setup_facade(backend: BackendKind)
 
 def test_legacy_loader_rejects_opencl_integrators_explicitly() -> None:
     context = ModelContext(BackendKind.CPU, 0, seed=0)
+
     with pytest.raises(LegacyCompatibilityError, match="OpenCL integrators"):
         build_legacy_model(_FIXTURES / "legacy_opencl_integrator.py", context)
 
@@ -108,9 +110,8 @@ def test_legacy_batch_checkpoint_resumes_exactly_and_checks_source(tmp_path: Pat
     actual = load_checkpoint_bundle(resumed_path)
     assert actual.controller == expected.controller
     assert cast(dict[str, JSONValue], actual.controller)["version"] == 4
-    for left, right in zip(
-        actual.simulation.cells(), expected.simulation.cells(), strict=True
-    ):
+
+    for left, right in zip(actual.simulation.cells(), expected.simulation.cells(), strict=True):
         assert left.id == right.id
         assert left.slot == right.slot
         assert left.position.x == right.position.x
@@ -128,6 +129,7 @@ def test_legacy_batch_checkpoint_resumes_exactly_and_checks_source(tmp_path: Pat
         encoding="utf-8",
     )
     first_bundle = load_checkpoint_bundle(first_path)
+
     with pytest.raises(LegacyCompatibilityError, match="digest"):
         resume_legacy_model(changed_model, context, first_bundle)
 

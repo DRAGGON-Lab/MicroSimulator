@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 import random
 import re
@@ -18,6 +19,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     MechanicsSolveResult,
     Simulation,
 )
+from .channels import UNNAMED_CHANNELS, ChannelMetadata
 from .checkpoint import CheckpointBundle, JSONValue
 
 _RANDOM_STATE_KIND = "python-random-mt19937"
@@ -127,12 +129,14 @@ def _finite_number(value: object, path: str) -> float:
         or abs(value) > _FLOAT32_MAX
     ):
         raise ControllerStateError(f"{path} must be a finite float32 value")
+
     return float(value)
 
 
 def _integer(value: object, path: str, lower: int, upper: int) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < lower or value > upper:
         raise ControllerStateError(f"{path} must be an integer in [{lower}, {upper}]")
+
     return value
 
 
@@ -164,8 +168,10 @@ def _json_object(value: Mapping[str, JSONValue], path: str) -> dict[str, JSONVal
         decoded = cast(object, json.loads(encoded))
     except (TypeError, ValueError, RecursionError) as error:
         raise ControllerStateError(f"{path} must be finite JSON data") from error
+
     if not isinstance(decoded, dict):
         raise ControllerStateError(f"{path} must be a JSON object")
+
     return cast(dict[str, JSONValue], decoded)
 
 
@@ -212,16 +218,22 @@ class MechanicsConfig:
             self.constraint_degeneracy_epsilon,
             "mechanics.constraint_degeneracy_epsilon",
         )
+
         if mu_a <= 0.0 or gamma <= 0.0:
             raise ControllerStateError("mechanics mu_a and gamma must be positive")
+
         if tolerance < 0.0 or contact_margin < 0.0 or rotation < 0.0:
             raise ControllerStateError("mechanics tolerances, margins, and limits are invalid")
+
         if parallel_threshold < 0.0 or parallel_threshold > 1.0:
             raise ControllerStateError("mechanics contact parallel threshold is invalid")
+
         if contact_epsilon <= 0.0 or constraint_epsilon <= 0.0 or constraint_margin < 0.0:
             raise ControllerStateError("mechanics constraint/contact parameters are invalid")
+
         if not isinstance(cast(object, self.require_convergence), bool):
             raise ControllerStateError("mechanics.require_convergence must be Boolean")
+
         if not isinstance(cast(object, self.flow_drift), bool):
             raise ControllerStateError("mechanics.flow_drift must be Boolean")
 
@@ -248,6 +260,7 @@ class MechanicsConfig:
         constraints = ConstraintContactParameters()
         constraints.activation_margin = self.constraint_activation_margin
         constraints.degeneracy_epsilon = self.constraint_degeneracy_epsilon
+
         return mechanics, contacts, integration, constraints
 
     def to_json(self) -> dict[str, JSONValue]:
@@ -262,12 +275,17 @@ class MechanicsConfig:
             field.name for field in fields(MechanicsConfig)
         }:
             raise ControllerStateError("controller mechanics configuration is invalid")
+
         require_convergence = value["require_convergence"]
+
         if not isinstance(require_convergence, bool):
             raise ControllerStateError("mechanics.require_convergence must be Boolean")
+
         flow_drift = value["flow_drift"]
+
         if not isinstance(flow_drift, bool):
             raise ControllerStateError("mechanics.flow_drift must be Boolean")
+
         return cls(
             passes=_integer(value["passes"], "mechanics.passes", 1, _UINT32_MAX),
             mu_a=_finite_number(value["mu_a"], "mechanics.mu_a"),
@@ -309,7 +327,91 @@ class MechanicsConfig:
 def _model_identity(model_id: object, model_version: object) -> tuple[str, int]:
     if not isinstance(model_id, str) or _MODEL_ID.fullmatch(model_id) is None:
         raise ControllerStateError("native controller model ID is invalid")
+
     return model_id, _integer(model_version, "native controller model version", 1, _UINT32_MAX)
+
+
+def _validate_update_payload(update: CellUpdate, species_count: int) -> None:
+    if update.growth_rate is not None:
+        _plan_number(update.growth_rate, "cell update growth rate")
+
+    if update.cell_type is not None:
+        _plan_integer(update.cell_type, "cell update cell type", _INT32_MIN, _INT32_MAX)
+
+    if update.fixed is not None and not isinstance(cast(object, update.fixed), bool):
+        raise ControllerPlanError("cell update fixed value must be Boolean")
+
+    if update.species is not None:
+        species_value = cast(object, update.species)
+
+        if not isinstance(species_value, tuple):
+            raise ControllerPlanError("cell update species shape is invalid")
+
+        species = cast(tuple[object, ...], species_value)
+
+        if len(species) != species_count:
+            raise ControllerPlanError("cell update species shape is invalid")
+
+        for value in species:
+            _plan_number(value, "cell update species value")
+
+
+def _validate_updates(
+    plan: StepPlan, snapshots: Mapping[int, CellSnapshot], species_count: int
+) -> None:
+    updated: set[int] = set()
+    updates_value = cast(object, plan.updates)
+
+    if not isinstance(updates_value, tuple):
+        raise ControllerPlanError("step plan updates must be a tuple")
+
+    updates = cast(tuple[object, ...], updates_value)
+
+    for update_value in updates:
+        if not isinstance(update_value, CellUpdate):
+            raise ControllerPlanError("step plan contains an invalid cell update")
+
+        update = update_value
+        cell_id = _plan_integer(update.cell_id, "cell update ID", 1, _UINT64_MAX)
+
+        if cell_id not in snapshots or cell_id in updated:
+            raise ControllerPlanError("step plan updates an unknown or duplicate cell")
+
+        updated.add(cell_id)
+
+        _validate_update_payload(update, species_count)
+
+
+def _validate_divisions(plan: StepPlan, snapshots: Mapping[int, CellSnapshot]) -> set[int]:
+    dividing: set[int] = set()
+    divisions_value = cast(object, plan.divisions)
+
+    if not isinstance(divisions_value, tuple):
+        raise ControllerPlanError("step plan divisions must be a tuple")
+
+    divisions = cast(tuple[object, ...], divisions_value)
+
+    for request_value in divisions:
+        if not isinstance(request_value, DivisionRequest):
+            raise ControllerPlanError("step plan contains an invalid division request")
+
+        request = request_value
+        parent_id = _plan_integer(request.parent_id, "division parent ID", 1, _UINT64_MAX)
+        parent = snapshots.get(parent_id)
+
+        if parent is None or parent_id in dividing:
+            raise ControllerPlanError("step plan divides an unknown or duplicate parent")
+
+        dividing.add(parent_id)
+        fraction = _plan_number(request.first_fraction, "division fraction")
+
+        if fraction <= 0.0 or fraction >= 1.0:
+            raise ControllerPlanError("division fraction must be strictly between zero and one")
+
+        if parent.length < 2.0 * parent.radius:
+            raise ControllerPlanError("division parent is shorter than its cap diameter")
+
+    return dividing
 
 
 class NativeController:
@@ -327,13 +429,20 @@ class NativeController:
         mechanics: MechanicsConfig | None = None,
         state: Mapping[str, JSONValue] | None = None,
         completed_steps: int = 0,
+        channel_metadata: ChannelMetadata = UNNAMED_CHANNELS,
     ) -> None:
         self._model_id, self._model_version = _model_identity(model_id, model_version)
+
         if not isinstance(cast(object, simulation), Simulation):
             raise TypeError("native controller simulation must be a Simulation")
+
         if not isinstance(cast(object, rng), random.Random):
             raise TypeError("native controller requires an explicit random.Random stream")
+
         self.simulation = simulation
+        self.channel_metadata = channel_metadata.resolved(
+            simulation.species_count, simulation.signal_count
+        )
         self._rng = rng
         self._regulate = regulate
         self._on_division = on_division
@@ -369,65 +478,30 @@ class NativeController:
     def _validate_plan(self, plan: object) -> StepPlan:
         if not isinstance(plan, StepPlan):
             raise ControllerPlanError("regulation callback must return a StepPlan")
+
         snapshots = {cell.id: cell for cell in self.simulation.cells()}
-        updated: set[int] = set()
-        updates_value = cast(object, plan.updates)
-        if not isinstance(updates_value, tuple):
-            raise ControllerPlanError("step plan updates must be a tuple")
-        updates = cast(tuple[object, ...], updates_value)
-        for update_value in updates:
-            if not isinstance(update_value, CellUpdate):
-                raise ControllerPlanError("step plan contains an invalid cell update")
-            update = update_value
-            cell_id = _plan_integer(update.cell_id, "cell update ID", 1, _UINT64_MAX)
-            if cell_id not in snapshots or cell_id in updated:
-                raise ControllerPlanError("step plan updates an unknown or duplicate cell")
-            updated.add(cell_id)
-            if update.growth_rate is not None:
-                _plan_number(update.growth_rate, "cell update growth rate")
-            if update.cell_type is not None:
-                _plan_integer(update.cell_type, "cell update cell type", _INT32_MIN, _INT32_MAX)
-            if update.fixed is not None and not isinstance(cast(object, update.fixed), bool):
-                raise ControllerPlanError("cell update fixed value must be Boolean")
-            if update.species is not None:
-                species_value = cast(object, update.species)
-                if not isinstance(species_value, tuple):
-                    raise ControllerPlanError("cell update species shape is invalid")
-                species = cast(tuple[object, ...], species_value)
-                if len(species) != self.simulation.species_count:
-                    raise ControllerPlanError("cell update species shape is invalid")
-                for value in species:
-                    _plan_number(value, "cell update species value")
-        dividing: set[int] = set()
-        divisions_value = cast(object, plan.divisions)
-        if not isinstance(divisions_value, tuple):
-            raise ControllerPlanError("step plan divisions must be a tuple")
-        divisions = cast(tuple[object, ...], divisions_value)
-        for request_value in divisions:
-            if not isinstance(request_value, DivisionRequest):
-                raise ControllerPlanError("step plan contains an invalid division request")
-            request = request_value
-            parent_id = _plan_integer(request.parent_id, "division parent ID", 1, _UINT64_MAX)
-            parent = snapshots.get(parent_id)
-            if parent is None or parent_id in dividing:
-                raise ControllerPlanError("step plan divides an unknown or duplicate parent")
-            dividing.add(parent_id)
-            fraction = _plan_number(request.first_fraction, "division fraction")
-            if fraction <= 0.0 or fraction >= 1.0:
-                raise ControllerPlanError("division fraction must be strictly between zero and one")
-            if parent.length < 2.0 * parent.radius:
-                raise ControllerPlanError("division parent is shorter than its cap diameter")
+        _validate_updates(plan, snapshots, self.simulation.species_count)
+
+        dividing = _validate_divisions(plan, snapshots)
+
         removals_value = cast(object, plan.removals)
+
         if not isinstance(removals_value, tuple):
             raise ControllerPlanError("step plan removals must be a tuple")
+
         removing: set[int] = set()
+
         for removal_value in cast(tuple[object, ...], removals_value):
             removal = _plan_integer(removal_value, "removal cell ID", 1, _UINT64_MAX)
+
             if removal not in snapshots or removal in removing:
                 raise ControllerPlanError("step plan removes an unknown or duplicate cell")
+
             if removal in dividing:
                 raise ControllerPlanError("step plan removes a dividing cell")
+
             removing.add(removal)
+
         return plan
 
     def _apply_update(self, update: CellUpdate) -> None:
@@ -437,25 +511,61 @@ class NativeController:
             current.growth_rate if update.growth_rate is None else update.growth_rate,
             current.cell_type if update.cell_type is None else update.cell_type,
         )
+
         if update.fixed is not None:
             self.simulation.set_cell_fixed(update.cell_id, update.fixed)
+
         if update.species is not None:
             self.simulation.set_species(update.cell_id, list(update.species))
 
     def step(self, dt: float) -> None:
         """Apply regulation, division, integration, and configured mechanics."""
 
+        if not self.simulation.has_culture:
+            self._step_unchecked(dt)
+
+            return
+
+        if self._mechanics is not None:
+            raise ControllerPlanError(
+                "culture simulation already includes body motion and contact mechanics"
+            )
+
+        checkpoint = self.simulation._checkpoint()  # pyright: ignore[reportPrivateUsage]
+        state = copy.deepcopy(self._state)
+        random_state = self._rng.getstate()
+        completed_steps = self._completed_steps
+        reports = self._last_mechanics_reports
+
+        try:
+            self._step_unchecked(dt)
+        except BaseException:
+            self.simulation._restore_checkpoint(checkpoint)  # pyright: ignore[reportPrivateUsage]
+            self._state.clear()
+            self._state.update(state)
+            self._rng.setstate(random_state)
+            self._completed_steps = completed_steps
+            self._last_mechanics_reports = reports
+            raise
+
+    def _step_unchecked(self, dt: float) -> None:
+
         if not math.isfinite(dt) or dt < 0.0:
             raise ValueError("time step must be finite and non-negative")
+
         if self._completed_steps == _UINT64_MAX:
             raise ControllerPlanError("native controller completed-step counter is exhausted")
+
         plan = StepPlan() if self._regulate is None else self._regulate(self._context())
         plan = self._validate_plan(plan)
+
         for update in plan.updates:
             self._apply_update(update)
+
         for request in plan.divisions:
             parent = self.simulation.cell(request.parent_id)
             first_id, second_id = self.simulation.divide(request.parent_id, request.first_fraction)
+
             if self._on_division is not None:
                 event = DivisionEvent(
                     parent=parent,
@@ -463,11 +573,13 @@ class NativeController:
                     second=self.simulation.cell(second_id),
                 )
                 self._on_division(self._context(), event)
+
         for removal in plan.removals:
             self.simulation.remove_cell(removal)
 
         self.simulation.step(dt)
         reports: list[MechanicsSolveResult] = []
+
         if (
             self._mechanics is not None
             and self._mechanics.flow_drift
@@ -475,10 +587,13 @@ class NativeController:
         ):
             _, _, integration, _ = self._mechanics.native_parameters()
             self.simulation.apply_flow_drift(dt, integration)
+
         if self._mechanics is not None and self.simulation.cell_count != 0:
             parameters = self._mechanics.native_parameters()
+
             for _ in range(self._mechanics.passes):
                 reports.append(self.simulation.relax_cell_mechanics(*parameters))
+
         self._last_mechanics_reports = tuple(reports)
         self._completed_steps += 1
 
@@ -509,6 +624,7 @@ class NativeController:
 
         expected_identity = _model_identity(model_id, model_version)
         value = checkpoint.controller
+
         if not isinstance(value, dict) or set(value) != {
             "kind",
             "version",
@@ -519,24 +635,34 @@ class NativeController:
             "mechanics",
         }:
             raise ControllerStateError("native controller state is invalid")
+
         if (
             value["kind"] not in (_NATIVE_CONTROLLER_KIND, "cellmodeller2-native-controller")
             or value["version"] != _NATIVE_CONTROLLER_VERSION
         ):
             raise ControllerStateError("native controller kind or version is unsupported")
+
         identity = value["model"]
+
         if not isinstance(identity, dict) or set(identity) != {"id", "version"}:
             raise ControllerStateError("native controller model identity is invalid")
+
         actual_identity = _model_identity(identity["id"], identity["version"])
+
         if actual_identity != expected_identity:
             raise ControllerStateError("native controller model identity does not match")
+
         state = value["state"]
+
         if not isinstance(state, dict):
             raise ControllerStateError("native controller model state must be an object")
+
         mechanics_value = value["mechanics"]
         mechanics = None if mechanics_value is None else MechanicsConfig.from_json(mechanics_value)
+
         return cls(
             checkpoint.simulation,
+            channel_metadata=checkpoint.channel_metadata,
             model_id=model_id,
             model_version=model_version,
             rng=restore_random_state(value["random"]),
@@ -557,10 +683,13 @@ def capture_random_state(stream: random.Random) -> dict[str, JSONValue]:
     """Encode a dedicated Python random stream as closed-schema JSON data."""
 
     state_version, internal_state, gaussian = stream.getstate()
+
     if state_version != 3 or len(internal_state) != _MT_STATE_WORDS + 1:
         raise ControllerStateError("Python random stream uses an unsupported state format")
+
     if gaussian is not None and not math.isfinite(gaussian):
         raise ControllerStateError("Python random stream has a non-finite Gaussian cache")
+
     return {
         "kind": _RANDOM_STATE_KIND,
         "version": _RANDOM_STATE_VERSION,
@@ -570,25 +699,40 @@ def capture_random_state(stream: random.Random) -> dict[str, JSONValue]:
     }
 
 
+def _restore_random_words(value: JSONValue) -> list[int]:
+    words = value
+
+    if not isinstance(words, list) or len(words) != _MT_STATE_WORDS + 1:
+        raise ControllerStateError("random state vector is invalid")
+
+    for index, word in enumerate(words):
+        upper = _MT_STATE_WORDS if index == _MT_STATE_WORDS else _UINT32_MAX
+
+        if not isinstance(word, int) or isinstance(word, bool) or word < 0 or word > upper:
+            raise ControllerStateError("random state vector is invalid")
+
+    return cast(list[int], words)
+
+
 def restore_random_state(value: JSONValue) -> random.Random:
     """Restore a random stream produced by :func:`capture_random_state`."""
 
     if not isinstance(value, dict):
         raise ControllerStateError("random state must be an object")
+
     if set(value) != {"kind", "version", "state_version", "state", "gauss_next"}:
         raise ControllerStateError("random state has unexpected fields")
+
     if value["kind"] != _RANDOM_STATE_KIND or value["version"] != _RANDOM_STATE_VERSION:
         raise ControllerStateError("random state kind or version is unsupported")
+
     if value["state_version"] != 3:
         raise ControllerStateError("Python random state version is unsupported")
-    words = value["state"]
-    if not isinstance(words, list) or len(words) != _MT_STATE_WORDS + 1:
-        raise ControllerStateError("random state vector is invalid")
-    for index, word in enumerate(words):
-        upper = _MT_STATE_WORDS if index == _MT_STATE_WORDS else _UINT32_MAX
-        if not isinstance(word, int) or isinstance(word, bool) or word < 0 or word > upper:
-            raise ControllerStateError("random state vector is invalid")
+
+    words = _restore_random_words(value["state"])
+
     gaussian = value["gauss_next"]
+
     if gaussian is not None and (
         not isinstance(gaussian, int | float)
         or isinstance(gaussian, bool)
@@ -597,14 +741,16 @@ def restore_random_state(value: JSONValue) -> random.Random:
         raise ControllerStateError("random state Gaussian cache is invalid")
 
     stream = random.Random()
+
     try:
         stream.setstate(
             (
                 3,
-                tuple(cast(list[int], words)),
+                tuple(words),
                 float(gaussian) if gaussian is not None else None,
             )
         )
     except (TypeError, ValueError) as error:
         raise ControllerStateError("random state is invalid") from error
+
     return stream

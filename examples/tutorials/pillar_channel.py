@@ -89,10 +89,13 @@ def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
     grid.advection = [Vec3()]
     grid.integration = SignalIntegrationKind.BACKWARD_EULER
     obstacles = [0] * grid.site_count
+
     for x in range(shape.x):
         px = grid.origin.x + grid.spacing.x * x
+
         for y in range(shape.y):
             py = grid.origin.y + grid.spacing.y * y
+
             for z in range(shape.z):
                 pz = grid.origin.z + grid.spacing.z * z
                 solid = (
@@ -100,14 +103,18 @@ def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
                     or abs(pz) >= CHANNEL_HALF_HEIGHT
                     or _in_pillar_core(px, py)
                 )
+
                 if solid:
                     obstacles[(x * shape.y + y) * shape.z + z] = 1
+
     grid.obstacles = obstacles
+
     for name in ("y_lower", "y_upper"):
         boundary = getattr(grid, name)
         boundary.kind = GridBoundaryKind.FIXED
         boundary.values = [NUTRIENT_INLET if name == "y_lower" else 0.0]
         setattr(grid, name, boundary)
+
     if simulation is not None:
         field, _ = solve_flow_field(
             grid,
@@ -116,6 +123,7 @@ def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
             simulation=simulation,
         )
         grid.velocity_field = field
+
     return grid
 
 
@@ -126,12 +134,11 @@ GAP_MOBILITY = gap_mobility(GRID)
 def _add_walls(simulation: Simulation) -> None:
     chamber = BoxConstraintInit()
     chamber.center = Vec3(0.0, 0.0, 0.0)
-    chamber.half_extents = Vec3(
-        CHANNEL_HALF_WIDTH, CHANNEL_HALF_LENGTH, CHANNEL_HALF_HEIGHT
-    )
+    chamber.half_extents = Vec3(CHANNEL_HALF_WIDTH, CHANNEL_HALF_LENGTH, CHANNEL_HALF_HEIGHT)
     chamber.coefficient = 1.0
     chamber.allowed_region = ConstraintRegion.INSIDE
     simulation.add_box_constraint(chamber)
+
     for x, y in PILLARS:
         pillar = CylinderConstraintInit()
         pillar.center = Vec3(x, y, 0.0)
@@ -145,6 +152,7 @@ def _add_walls(simulation: Simulation) -> None:
 def _rate_plan() -> CoupledRatePlan:
     rates = RatePlanBuilder()
     uptake = -rates.cell_volume_change_rate() / NUTRIENT_YIELD
+
     return rates.coupled_plan(0, 1, (), (uptake,))
 
 
@@ -155,14 +163,17 @@ def _primed_levels(grid: SignalGridSpec) -> list[float]:
 
 def _nutrient_growth(simulation: Simulation, position: Vec3) -> float:
     nutrient = max(0.0, simulation.sample_signals(position)[0])
+
     return BASE_GROWTH_RATE * nutrient / (NUTRIENT_K + nutrient)
 
 
 def _regulate(step: ControllerStep) -> StepPlan:
     if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
         mobility = colony_mobility(
-            GRID, (cell for cell in step.cells if cell.fixed),
-            base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT
+            GRID,
+            (cell for cell in step.cells if cell.fixed),
+            base=GAP_MOBILITY,
+            drag_coefficient=DRAG_COEFFICIENT,
         )
         field, _ = solve_flow_field(
             GRID,
@@ -171,11 +182,14 @@ def _regulate(step: ControllerStep) -> StepPlan:
             simulation=step.simulation,
         )
         step.simulation.set_velocity_field(field)
+
     divisions = DIVISION.requests(step)
     washed = tuple(cell.id for cell in step.cells if abs(cell.position.y) > WASHOUT_Y)
+
     if washed:
         DIVISION.forget(step, washed)
         divisions = tuple(request for request in divisions if request.parent_id not in washed)
+
     return StepPlan(
         updates=tuple(
             CellUpdate(cell.id, growth_rate=_nutrient_growth(step.simulation, cell.position))
@@ -193,6 +207,7 @@ def _site_distance(position: Vec3) -> float:
 
 def _divided(step: ControllerStep, event: DivisionEvent) -> None:
     DIVISION.on_division(step, event)
+
     # Daughters inherit adhesion. The daughter nearer the adhesion site stays
     # attached and the other is released into the stream; anchoring by site,
     # not by daughter order, keeps the attached lineage at its wake instead of
@@ -214,7 +229,8 @@ def build(context: ModelContext) -> NativeController:
     simulation.set_coupled_rate_plan(_rate_plan())
     _add_walls(simulation)
 
-    founder_ids: list[int] = []
+    founder_ids: list[CellInit] = []
+
     for x, y in FOUNDER_SITES:
         founder = CellInit()
         founder.position = Vec3(x, y, 0.0)
@@ -223,9 +239,11 @@ def build(context: ModelContext) -> NativeController:
         founder.radius = CELL_RADIUS
         founder.growth_rate = 1.0
         founder.fixed = True
-        founder_ids.append(simulation.add_cell(founder))
+        founder_ids.append(founder)
+
     state: dict[str, JSONValue] = {"scope": "pillar-channel"}
-    DIVISION.initialize(state, context.rng, tuple(founder_ids))
+    DIVISION.initialize_founders(simulation, state, context.rng, tuple(founder_ids))
+
     return NativeController(
         simulation,
         model_id=MODEL_ID,
@@ -240,6 +258,7 @@ def build(context: ModelContext) -> NativeController:
 
 def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeController:
     del context
+
     return NativeController.from_checkpoint(
         checkpoint,
         model_id=MODEL_ID,

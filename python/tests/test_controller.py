@@ -47,11 +47,13 @@ def _one_cell(backend: BackendKind = BackendKind.CPU) -> Simulation:
     cell.radius = 0.5
     cell.species = [2.0]
     simulation.add_cell(cell)
+
     return simulation
 
 
 def _simulation_payload(path: Path) -> object:
     document = cast(dict[str, object], json.loads(path.read_text(encoding="utf-8")))
+
     return document["simulation"]
 
 
@@ -83,6 +85,7 @@ def _one_cell_in_uniform_flow() -> Simulation:
     cell.length = 1.0
     cell.radius = 0.25
     simulation.add_cell(cell)
+
     return simulation
 
 
@@ -122,9 +125,11 @@ def test_random_stream_rejects_malformed_state() -> None:
         invalidate_word,
         invalidate_gaussian,
     ]
+
     for mutation in mutations:
         value = cast(dict[str, Any], copy.deepcopy(capture_random_state(random.Random(1))))
         mutation(value)
+
         with pytest.raises(ControllerStateError, match="random state"):
             restore_random_state(value)
 
@@ -136,6 +141,7 @@ def test_mechanics_config_round_trip_preserves_flow_drift() -> None:
 
     invalid = configuration.to_json()
     invalid["flow_drift"] = 1
+
     with pytest.raises(
         ControllerStateError,
         match=r"mechanics\.flow_drift must be Boolean",
@@ -154,12 +160,15 @@ def test_native_controller_resume_preserves_flow_drift_trajectory(tmp_path: Path
         )
 
     uninterrupted = build()
+
     for _ in range(4):
         uninterrupted.step(0.25)
 
     split = build()
+
     for _ in range(2):
         split.step(0.25)
+
     midpoint = tmp_path / "flow-midpoint.cm2.json"
     save_checkpoint(split.simulation, midpoint, controller=split.controller_state())
     resumed = NativeController.from_checkpoint(
@@ -167,6 +176,7 @@ def test_native_controller_resume_preserves_flow_drift_trajectory(tmp_path: Path
         model_id="flow-drift-resume-test",
         model_version=1,
     )
+
     for _ in range(2):
         resumed.step(0.25)
 
@@ -190,11 +200,13 @@ def test_native_controller_composes_regulation_division_and_mechanics(
 ) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
+
     simulation = _one_cell(backend)
 
     def regulate(step: ControllerStep) -> StepPlan:
         parent = step.cells[0]
         step.state["regulated"] = True
+
         return StepPlan(
             updates=(
                 CellUpdate(
@@ -230,6 +242,7 @@ def test_native_controller_composes_regulation_division_and_mechanics(
     daughter_ids = cast(list[JSONValue], controller.state["daughter_ids"])
     assert len(daughter_ids) == 2
     assert len(controller.last_mechanics_reports) == 2
+
     for daughter_id in daughter_ids:
         assert isinstance(daughter_id, int)
         daughter = simulation.cell(daughter_id)
@@ -246,8 +259,10 @@ def test_native_controller_resumes_model_state_rng_and_mechanics(
 ) -> None:
     def regulate(step: ControllerStep) -> StepPlan:
         draws = step.state.get("draws", 0)
+
         if not isinstance(draws, int):
             raise AssertionError("invalid test state")
+
         step.state["draws"] = draws + 1
         updates = tuple(
             CellUpdate(cell.id, growth_rate=0.05 + 0.1 * step.rng.random()) for cell in step.cells
@@ -257,6 +272,7 @@ def test_native_controller_resumes_model_state_rng_and_mechanics(
             if step.completed_steps == 1 and len(step.cells) == 1
             else ()
         )
+
         return StepPlan(updates=updates, divisions=divisions)
 
     def build() -> NativeController:
@@ -271,12 +287,15 @@ def test_native_controller_resumes_model_state_rng_and_mechanics(
         )
 
     uninterrupted = build()
+
     for _ in range(5):
         uninterrupted.step(0.125)
 
     split = build()
+
     for _ in range(2):
         split.step(0.125)
+
     midpoint = tmp_path / "midpoint.cm2.json"
     controller_state = split.controller_state()
     controller_state["kind"] = controller_kind
@@ -291,6 +310,7 @@ def test_native_controller_resumes_model_state_rng_and_mechanics(
         model_version=3,
         regulate=regulate,
     )
+
     for _ in range(3):
         resumed.step(0.125)
 
@@ -317,6 +337,7 @@ def test_native_controller_validates_complete_plan_before_mutation() -> None:
 
     def invalid(step: ControllerStep) -> StepPlan:
         cell_id = step.cells[0].id
+
         return StepPlan(
             updates=(
                 CellUpdate(cell_id, growth_rate=0.1),
@@ -332,8 +353,10 @@ def test_native_controller_validates_complete_plan_before_mutation() -> None:
         regulate=invalid,
     )
     before = simulation.cell(1)
+
     with pytest.raises(ControllerPlanError, match="duplicate"):
         controller.step(0.1)
+
     after = simulation.cell(1)
     assert after.growth_rate == before.growth_rate
     assert simulation.time == 0.0
@@ -354,6 +377,7 @@ def test_native_controller_rejects_wrong_model_identity(tmp_path: Path) -> None:
         controller=controller.controller_state(),
     )
     bundle = load_checkpoint_bundle(path)
+
     with pytest.raises(ControllerStateError, match="identity does not match"):
         NativeController.from_checkpoint(
             bundle,
@@ -399,6 +423,7 @@ def test_native_controller_example_builds_and_resumes(tmp_path: Path) -> None:
     assert load_checkpoint_bundle(output).controller is not None
     assert resumed.completed_steps == 5
 
+
 def test_step_plan_removals_delete_cells_after_divisions() -> None:
     simulation = Simulation(BackendKind.CPU, species_count=0)
     first = CellInit()
@@ -409,6 +434,7 @@ def test_step_plan_removals_delete_cells_after_divisions() -> None:
 
     def regulate(step: ControllerStep) -> StepPlan:
         del step
+
         return StepPlan(removals=(second_id,))
 
     controller = NativeController(
@@ -425,6 +451,7 @@ def test_step_plan_removals_delete_cells_after_divisions() -> None:
 
     def bad_regulate(step: ControllerStep) -> StepPlan:
         del step
+
         return StepPlan(removals=(second_id,))
 
     bad_controller = NativeController(
@@ -434,11 +461,13 @@ def test_step_plan_removals_delete_cells_after_divisions() -> None:
         rng=random.Random(3),
         regulate=bad_regulate,
     )
+
     with pytest.raises(ControllerPlanError, match="unknown or duplicate"):
         bad_controller.step(0.05)
 
     def conflicted(step: ControllerStep) -> StepPlan:
         del step
+
         return StepPlan(
             divisions=(DivisionRequest(first_id),),
             removals=(first_id,),
@@ -451,5 +480,6 @@ def test_step_plan_removals_delete_cells_after_divisions() -> None:
         rng=random.Random(3),
         regulate=conflicted,
     )
+
     with pytest.raises(ControllerPlanError, match="removes a dividing cell"):
         conflict_controller.step(0.05)

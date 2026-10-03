@@ -2,6 +2,8 @@
 
 These tutorials explore cells in microfluidic devices through runnable models: geometry and flow supply the environment, while growth, mechanics, and circuits determine how populations respond. The [modeling guide](../microfluidics.md) introduces the full workflow and its assumptions. Each example can also be used independently.
 
+For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
+
 ## Start here
 
 Follow [getting started](getting-started.md) to run a nutrient-fed trap, configure the viewer, and resume a checkpoint. Then choose a path below.
@@ -10,9 +12,10 @@ The examples use `uv`, the `microsimulator` command, data-only checkpoints, and 
 
 ## Devices, flow, and transport
 
-1. [Microfluidic devices: walls, flow, and washout](microfluidics.md) connects geometry, nutrient delivery, cell growth, and outlet removal, with trap, clock, and biopixel examples.
-2. [Solved flow in a pillar channel](flow-solvers.md) introduces attached founders, released daughters, stationary resistance, solver selection, and analytic benchmarks.
-3. [Nutrient penetration and attached-population growth](nutrient-validation.md) measures spatial growth, conservation, and sensitivity to spatial and temporal resolution.
+1. [Mother-machine growth and washout](mother-machine.md) starts with single-file growth channels, retention by confinement, old-pole lineage tracking, and a live viewer example.
+2. [Microfluidic devices: walls, flow, and washout](microfluidics.md) connects geometry, nutrient delivery, cell growth, and outlet removal, with trap, clock, and biopixel examples.
+3. [Solved flow in a pillar channel](flow-solvers.md) introduces attached founders, released daughters, stationary resistance, solver selection, and analytic benchmarks.
+4. [Nutrient penetration and attached-population growth](nutrient-validation.md) measures spatial growth, conservation, and sensitivity to spatial and temporal resolution.
 
 ## Cell biology and circuits
 
@@ -27,6 +30,8 @@ These lessons develop the biological rules used within devices and in standalone
 ## Analyze an experiment
 
 The [analysis tutorial](analysis.md) covers checkpoints, contact graphs, and quantitative output. Continue with [analysis recipes](../analysis/recipes.md) for reproducible Parquet/Zarr datasets and Polars queries.
+
+The [dimensionality audit and planarity diagnostic](planarity.md) explain XY-only division jitter, finite-height confinement, and reproducible causes of out-of-plane cell motion.
 
 ## Working with the examples
 

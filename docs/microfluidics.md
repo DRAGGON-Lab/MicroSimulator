@@ -2,6 +2,8 @@
 
 MicroSimulator connects the physical environment of a microfluidic device to the behavior of individual cells. A model can follow nutrient delivery into a trap, growth and division within its walls, signaling between cells, and the removal of cells carried into an outlet. Python defines the device and biological rules; the engine advances cell mechanics and chemistry using a shared transport grid and velocity field.
 
+The device tutorials use stationary flow fields and kinematic cell motion. The opt-in [physical-media mode](models/fluid-culture.md) couples pressure/rate-driven flow to hydrodynamic body motion, cell growth, extracellular fragment amounts, and surface exchange. It has separate configuration and accuracy requirements, and currently requires cells to remain inside the device.
+
 ## From device to experiment
 
 1. **Describe the device.** Define the channels, cavities, and obstacles that shape the experiment. Device helpers produce mechanical constraints, solid transport masks, and inlet and outlet boundaries from one description. The [device tutorial](tutorials/microfluidics.md) covers traps and channels; the [pillar example](tutorials/flow-solvers.md) shows curved obstacles.
@@ -10,16 +12,17 @@ MicroSimulator connects the physical environment of a microfluidic device to the
 4. **Define attachment and exit rules.** Fixed cells represent an attached population. Free cells drift and rotate in the velocity field before contact relaxation. Model rules determine attachment, daughter release, and washout, while stable identifiers retain lineage history.
 5. **Run and measure.** Use the [live viewer](../viewer/README.md) to inspect the model, [batch runs](formats/run-manifest-v1.md) to compare parameters and seeds, and [analysis datasets](analysis/recipes.md) to measure the resulting populations and fields. Checkpoints preserve the state needed to resume an experiment.
 
-The [microfluidic trap](../examples/microfluidic_trap.py) is a compact starting model. The [Danino clock](../examples/tutorials/danino_clock.py) adds a quorum-sensing circuit; the [biopixel tutorial](tutorials/microfluidics.md#a-source-backed-prindle-biopixel-example) combines a single-trap model with published cavity dimensions and a supplied CAD layout whose provenance is documented.
+Start with the [mother machine](tutorials/mother-machine.md) for single-file growth, retention by closed-ended channel geometry, and descendant washout. The [microfluidic trap](../examples/microfluidic_trap.py) models a wider growth cavity. The [Danino clock](../examples/tutorials/danino_clock.py) adds a quorum-sensing circuit; the [biopixel tutorial](tutorials/microfluidics.md#a-source-backed-prindle-biopixel-example) combines a single-trap model with published cavity dimensions and a supplied CAD layout whose provenance is documented.
 
 ## Choosing a flow model
 
-Both solvers calculate steady, inertia-free device flow and normalize the result to a prescribed mean inlet speed. They expose the same velocity-field interface for transport, with native implementations on CPU, Metal, and CUDA. See [backend status](../README.md#backend-status) for current support.
+The shallow and Stokes-Brinkman solvers calculate steady, inertia-free device flow and normalize the result to a prescribed mean inlet speed. Physical-media flow imposes pressure or total-rate patches directly in its coupled Stokes system. All expose staggered face velocities and have native CPU, Metal, and CUDA implementations. See [backend status](../README.md#backend-status) for current support.
 
-| Model | Appropriate geometry and question | Numerical scope |
-| --- | --- | --- |
-| [Depth-averaged Hele-Shaw/Darcy flow](architecture/0022-brinkman-flow.md) | Shallow channels and traps; nutrient delivery and flux routing around obstacles | One pressure per contiguous depth column above a common floor. Gap height sets conductance, and an empirical mobility can represent stationary biomass. The model averages across the gap and omits in-plane viscous stresses. |
-| [Resolved Stokes-Brinkman flow](architecture/0023-mac-stokes.md) | Velocity profiles and three-dimensional obstructions on meshes that resolve the passages | Face velocities and voxel pressures solve the coupled momentum and continuity equations with no-slip voxel walls and optional stationary porous drag. Accuracy depends on gap resolution and geometry refinement. |
+| Model                                                                     | Appropriate geometry and question                                                           | Numerical scope                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Depth-averaged Hele-Shaw/Darcy flow](architecture/0022-brinkman-flow.md) | Shallow channels and traps; nutrient delivery and flux routing around obstacles             | One pressure per contiguous depth column above a common floor. Gap height sets conductance, and an empirical mobility can represent stationary biomass. The model averages across the gap and omits in-plane viscous stresses. |
+| [Resolved Stokes-Brinkman flow](architecture/0023-mac-stokes.md)          | Velocity profiles and three-dimensional obstructions on meshes that resolve the passages    | Face velocities and voxel pressures solve the coupled momentum and continuity equations with no-slip voxel walls and optional stationary porous drag. Accuracy depends on gap resolution and geometry refinement.              |
+| [Physical media flow](architecture/0026-resolved-fluid-culture.md)        | General pressure/rate ports, force-balanced growing cells, and moving extracellular storage | Constrained Stokes flow, rigid capsule motion, bounded contacts, geometric fluid fragments, conservative amount transport, and surface exchange. Requires independent fluid-grid, surface, gap, and time refinement.           |
 
 The shallow model lifts integrated fluxes conservatively onto the transport grid. Its reconstructed field does not resolve wall shear. The resolved solver reports momentum and block residuals, divergence, and minimum gap resolution; quantitative use also requires mesh convergence. The [flow tutorial](tutorials/flow-solvers.md) links these choices to analytic benchmarks.
 
@@ -30,6 +33,12 @@ Solutes move through the device by conservative advection and diffusion with rea
 Attached biomass can change flow resistance through a conservatively smoothed density field. This provides an empirical feedback between a stationary population and its nutrient supply. The resistance coefficient, smoothing radius, and flow-refresh interval are explicit model choices. Freely moving cells are excluded from the stationary resistance used by the tutorials.
 
 Free-cell motion uses the local velocity and a finite-aspect Jeffery orientation approximation, followed by contact relaxation. This kinematic coupling approximates rods as equivalent spheroids for rotation. Cell-scale hydrodynamic forces, lubrication, and predictive adhesion or detachment are outside its scope. The [flow-drift design](architecture/0021-flow-drift.md) specifies the approximation and integration limits.
+
+## Cell-occupied extracellular volume
+
+The legacy signal-grid mode stores concentration per full non-wall voxel. The smoothed biochemical biomass density used for stationary resistance is neither bounded geometric occupancy nor a resolved fluid fraction. [ADR 0025](architecture/0025-cell-occupied-volume.md) describes separate coarse geometric-porosity primitives through `microsimulator.occupancy.OccupancySolver`; these remain standalone operations.
+
+Physical-media simulation excludes cell volume using geometric clipping and retains separate connected fluid fragments within a voxel. Stored solute amounts move through actual open areas; a volume-flux projection enforces geometric conservation as cells move and grow. Surface exchange uses membrane area and paired intracellular/extracellular ledgers. Division preserves geometric and biochemical amounts through an explicit remap without a septation-flow transient. See the [modeling guide](models/fluid-culture.md) for units, checkpoints, analysis, and unsupported lifecycle operations.
 
 ## Interpreting results
 

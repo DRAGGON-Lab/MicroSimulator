@@ -22,6 +22,14 @@ The backend contract scenario constructs every enumerated device and requires it
 
 The flow scenario exercises two native domain operations. The depth-averaged case uses a 5-by-8-by-2 anisotropic grid with an internal obstacle and spatially varying mobility. The resolved case uses a 6-by-7-by-2 anisotropic grid with a two-layer Brinkman drag field. Every backend solves through its own matrix-free operator and Krylov kernels, reports convergence, and returns all face components. Velocity fields are compared with the CPU reference using absolute and relative tolerances of `8e-4`; the resolved divergence RMS must remain below `5e-5`, and the minimum transverse gap is exact. CPU-only execution validates the reference fixture, Metal conformance requires execution on an Apple GPU, and CUDA conformance requires execution on an NVIDIA GPU.
 
+## Physical media flow
+
+The five `culture_*` targets cover multiport hydraulics, constrained capsule motion, geometric extracellular fragments, amount transport, and integrated simulation. Hydraulic tests check pressure/rate signs and budgets, disconnected-component gauges, pressure offsets, and CPU/GPU field agreement. Body tests check the six-point kernel identities, force balance, no-slip residuals, growth displacement, wall reactions, and equal/opposite pair-contact reactions. Geometry checks analytic capsule volume, face-area closure, refined surface overlaps, disconnected fluid regions, and daughter geometry.
+
+Transport checks a discrete diffusion eigenmode, first-order timestep convergence against its exact semidiscrete decay, signed reservoir exchange, moving-volume uniform concentration, and paired membrane uptake. Integrated tests check independent biochemical volume in native reaction plans, nutrient/biomass budgets, exact same-device restart, and failed-step rollback. Python tests additionally cover division, controller/RNG rollback, checkpoints, scenes, and analysis. Assertions use explicit runtime checks in the media fixtures, including optimized builds.
+
+Each numerical scenario executes every enumerated backend without a CPU fallback. Include `metal_runtime_gate` or `cuda_runtime_gate` with a GPU conformance run; compiling the CUDA sources does not establish NVIDIA runtime conformance. See [ADR 0026](../../docs/architecture/0026-resolved-fluid-culture.md) for precision, residual gates, host/device execution boundaries, and remaining physical-accuracy and scaling studies.
+
 ## Species
 
 The species scenario uses 513 cells, three concentrations, heterogeneous geometry and cell types, and a typed plan that reads concentrations and cell attributes. It checks growth dilution, post-dilution rate evaluation, simultaneous explicit Euler updates, every declared instruction operation, zero-length time steps, stable identity, and cell-major schema preservation. Levels and lengths use absolute and relative tolerances of `2e-5`; identities and shapes are exact.
@@ -37,6 +45,10 @@ The trajectory scenario composes coupled intracellular/extracellular rates, grow
 ## Signal grid
 
 The signal-grid scenario uses two fields on a 9-by-7-by-5 anisotropic lattice, mixed diffusion and vector advection, periodic x boundaries, no-flux y boundaries, and distinct fixed reservoirs on the z faces. One native transport step and an interior trilinear sample are compared with the CPU reference using absolute and relative tolerances of `5e-6`. An available backend is skipped until it advertises native signal-grid support; after that advertisement this executable is its hardware conformance gate.
+
+## Standalone cell occupancy
+
+The `occupancy_conformance` scenario explicitly selects every enumerated Metal/CUDA device. It checks capsule-union quadrature, binary walls, closing-component rejection, deterministic redistribution, accessible exchange weights, harmonic aperture, signed boundary/reaction/source ledgers, and 1000-step closed transport drift. Checks remain active in optimized builds. With no GPU the scenario is marked skipped, not passed; the existing platform runtime gates still require the selected platform. `python/tests/test_occupancy_native.py` compares against the independent float64 reference and adds rotated/translated geometry, division/removal, periodic edges, cutoff variation, invalid-input rejection, quadrature refinement, and separate spatial/timestep convergence. Concentrations use rtol `2e-4`/atol `2e-6`; normalized ledger residuals must stay below `5e-6`, and 1000-step relative drift below `5e-5`. These are standalone primitives, with no controller/checkpoint or displacement-flow integration claim.
 
 ## Coupled rates
 

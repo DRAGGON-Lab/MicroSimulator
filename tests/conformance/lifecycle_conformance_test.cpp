@@ -13,16 +13,19 @@ constexpr float relative_tolerance = 1.0e-6F;
 
 bool close(float actual, float expected) {
   const auto tolerance = absolute_tolerance + (relative_tolerance * std::abs(expected));
+
   return std::abs(actual - expected) <= tolerance;
 }
 
 void assert_missing(const cm::Simulation& simulation, cm::CellId id) {
   bool rejected = false;
+
   try {
     static_cast<void>(simulation.cell(id));
   } catch (const std::out_of_range&) {
     rejected = true;
   }
+
   assert(rejected);
 }
 
@@ -78,6 +81,7 @@ void run_lifecycle_scenario(cm::BackendKind backend, std::uint32_t device_index)
   assert(close(cells[2].length, 0.42921875F));
   assert(close(cells[1].position.x, 2.665625F));
   assert(close(cells[2].position.x, 4.084375F));
+
   for (const auto& cell : cells) {
     assert(cell.cell_type == 7);
     assert(cell.growth_rate == 0.25F);
@@ -110,5 +114,6 @@ void run_lifecycle_scenario(cm::BackendKind backend, std::uint32_t device_index)
 
 int main() {
   cm::test::for_each_backend_device(run_lifecycle_scenario);
+
   return 0;
 }

@@ -21,6 +21,10 @@ run.dataset/
   species.parquet
   contacts.parquet
   external_contacts.parquet
+  culture_frames.parquet
+  culture_cells.parquet
+  fluid_fragments.parquet
+  chemical_transfers.parquet
   signals.zarr/
 ```
 
@@ -37,11 +41,13 @@ Parquet tables use an explicit Arrow schema and deterministic row ordering:
 
 External constraint contacts use a separate typed table because their centerline-location and constraint-kind semantics differ from cell pairs. The location is encoded as `negative`, `positive`, or `interior`, so a finite-obstacle contact at the rod mid-span is not mislabeled as an endpoint.
 
-Analysis format v3 renames the external-contact `endpoint` column to `location`. The reader continues to authenticate v1 and v2 datasets; the versioned schema makes the incompatible column rename explicit rather than silently changing an existing field's meaning.
+Analysis format v5 includes optional culture tables. `culture_frames` records units, fluid properties, grid geometry, solute names, and diagnostics. `culture_cells` records binary64 biochemical volume, capsule volume, full pose, and intracellular amounts. `fluid_fragments` records fragment identity, voxel, fluid component, volume, centroid, and solute amounts. `chemical_transfers` records cumulative signed transfers into the fluid. Older v1–v4 datasets remain readable under their original schemas, including the historical external-contact `endpoint` column in v1 and v2.
 
-Stable cell and constraint IDs are Arrow `uint64`; slots and channel indices are `uint32`; cell types are `int32`; engine state values are `float32`; and physical time is `float64`. Nullable parent IDs stay typed `uint64` rather than sentinel values. Derived quantities are named as derivations and never replace their source columns.
+Stable cell and constraint IDs are Arrow `uint64`; slots and channel indices are `uint32`; cell types are `int32`; legacy engine state values are `float32`; and physical time and culture state are `float64`. Nullable parent IDs stay typed `uint64` rather than sentinel values. Derived quantities are named as derivations and never replace their source columns.
 
 Signal grids use Zarr arrays with logical dimension order `(frame, channel, x, y, z)`. Coordinates, origin, spacing, boundary conditions, frame indices, and physical times are explicit metadata or coordinate arrays. A change in grid shape or geometry starts a new signal epoch rather than padding or silently resampling values. Chunking favors one frame and one channel per access unit; compression and physical chunk sizes are recorded in the manifest.
+
+For culture frames, Zarr signals are fluid-volume-weighted voxel concentration means. Use `fluid_fragments` for amount budgets and disconnected extracellular compartments; averaging is only a presentation projection.
 
 Parquet and Zarr are optional Python analysis dependencies. The native engine, batch runner, checkpoint reader, scene writer, and live viewer do not import them. Dataframe recipes use Polars lazy scans; Arrow remains the schema and Parquet interchange boundary. Zarr is used directly for multidimensional signals rather than storing opaque arrays inside table cells.
 

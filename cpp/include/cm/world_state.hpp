@@ -66,7 +66,9 @@ struct CellGeometryView {
   std::span<const float> lengths;
   std::span<const float> radii;
 
-  [[nodiscard]] std::size_t size() const noexcept { return ids.size(); }
+  [[nodiscard]] std::size_t size() const noexcept {
+    return ids.size();
+  }
 };
 
 struct CellAttributeView {
@@ -121,6 +123,8 @@ class WorldState {
   void validate() const;
 
  private:
+  void validate_lineage() const;
+
   [[nodiscard]] CellId allocate_id();
   [[nodiscard]] Slot slot_for(CellId id) const;
   void append(CellId id, const CellInit& cell);

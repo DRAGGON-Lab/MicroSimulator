@@ -7,6 +7,7 @@
 #include <span>
 #include <vector>
 
+#include "cm/grid.hpp"
 #include "cm/types.hpp"
 
 namespace cm {
@@ -49,12 +50,6 @@ struct GridBoundary {
   void validate(std::size_t signal_count) const;
 };
 
-struct GridShape {
-  std::uint32_t x{1};
-  std::uint32_t y{1};
-  std::uint32_t z{1};
-};
-
 struct SignalGridAffineReaction {
   std::vector<float> source_rates;
   std::vector<float> loss_rates;
@@ -62,11 +57,7 @@ struct SignalGridAffineReaction {
   void validate(std::size_t level_count) const;
 };
 
-struct SignalGridVelocityField {
-  std::vector<float> x_faces;
-  std::vector<float> y_faces;
-  std::vector<float> z_faces;
-};
+using SignalGridVelocityField = MacVelocityField;
 
 struct SignalGridSpec {
   std::uint32_t signal_count{0};

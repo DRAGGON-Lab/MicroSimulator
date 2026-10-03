@@ -85,6 +85,7 @@ class RatePlanBuilder:
     ) -> RateExpression:
         if len(self._instructions) >= _UINT32_MAX:
             raise RatePlanError("rate plan exceeds the uint32 instruction space")
+
         instruction = RateInstruction()
         instruction.operation = operation
         instruction.first = first
@@ -92,17 +93,21 @@ class RatePlanBuilder:
         instruction.third = third
         instruction.value = value
         self._instructions.append(instruction)
+
         return RateExpression(self, len(self._instructions) - 1)
 
     def _coerce(self, value: float | int | RateExpression) -> RateExpression:
         if isinstance(value, RateExpression):
             if value._builder is not self:
                 raise RatePlanError("rate expressions from different builders cannot be mixed")
+
             return value
+
         return self.constant(value)
 
     def _unary(self, operation: RateOp, value: RateExpression) -> RateExpression:
         operand = self._coerce(value)
+
         return self._emit(operation, first=operand.index)
 
     def _binary(
@@ -113,10 +118,12 @@ class RatePlanBuilder:
     ) -> RateExpression:
         left = self._coerce(first)
         right = self._coerce(second)
+
         return self._emit(operation, first=left.index, second=right.index)
 
     def constant(self, value: float | int) -> RateExpression:
         candidate = cast(object, value)
+
         if (
             not isinstance(candidate, int | float)
             or isinstance(candidate, bool)
@@ -124,10 +131,12 @@ class RatePlanBuilder:
             or abs(candidate) > _FLOAT32_MAX
         ):
             raise RatePlanError("rate constant must be a finite float32 value")
+
         return self._emit(RateOp.CONSTANT, value=float(candidate))
 
     def _source(self, operation: RateOp, index: int = 0) -> RateExpression:
         candidate = cast(object, index)
+
         if (
             not isinstance(candidate, int)
             or isinstance(candidate, bool)
@@ -135,6 +144,7 @@ class RatePlanBuilder:
             or candidate > _UINT32_MAX
         ):
             raise RatePlanError("rate source index must be an unsigned 32-bit integer")
+
         return self._emit(operation, first=candidate)
 
     def species(self, index: int) -> RateExpression:
@@ -166,6 +176,7 @@ class RatePlanBuilder:
 
     def cell_volume(self) -> RateExpression:
         """Effective biomass volume pi*r**2*(length + 2*r)."""
+
         return self._source(RateOp.CELL_VOLUME)
 
     def cell_volume_change_rate(self) -> RateExpression:
@@ -175,6 +186,7 @@ class RatePlanBuilder:
         This includes the discrete growth increment instead of approximating
         it with the elongation rate times the post-growth cell volume.
         """
+
         return self._source(RateOp.CELL_VOLUME_CHANGE_RATE)
 
     def cell_surface_area(self) -> RateExpression:
@@ -244,6 +256,7 @@ class RatePlanBuilder:
         predicate = self._coerce(condition)
         selected = self._coerce(when_true)
         fallback = self._coerce(when_false)
+
         return self._emit(
             RateOp.SELECT,
             first=predicate.index,

@@ -2,6 +2,8 @@
 
 Run the controlled numerical study with:
 
+For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
+
 ```console
 uv run python scripts/run_nutrient_benchmarks.py --backend cpu --output build/nutrient-cpu.json
 uv run python scripts/run_nutrient_benchmarks.py --backend metal --output build/nutrient-metal.json

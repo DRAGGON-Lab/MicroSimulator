@@ -33,20 +33,21 @@ from microsimulator.checkpoint import CheckpointBundle, JSONValue
 MODEL_ID = "tutorials.simbol-circuits"
 MODEL_VERSION = 1
 DIVISION = UniformLengthDivision(3.5, 3.505, jitter_z=False)
-_CIRCUITS = frozenset(
-    {"bba_0001", "bba_0002", "bba_0003", "bba_0004", "bba_0005", "bba_i5200"}
-)
+_CIRCUITS = frozenset({"bba_0001", "bba_0002", "bba_0003", "bba_0004", "bba_0005", "bba_i5200"})
 
 
 def _circuit(parameters: Mapping[str, JSONValue]) -> str:
     value = parameters.get("circuit", "bba_0001")
+
     if not isinstance(value, str) or value not in _CIRCUITS:
         raise ValueError(f"circuit must be one of {sorted(_CIRCUITS)}")
+
     return value
 
 
 def _number(parameters: Mapping[str, JSONValue], name: str, default: float) -> float:
     value = parameters.get(name, default)
+
     if (
         not isinstance(value, int | float)
         or isinstance(value, bool)
@@ -54,6 +55,7 @@ def _number(parameters: Mapping[str, JSONValue], name: str, default: float) -> f
         or value < 0.0
     ):
         raise ValueError(f"{name} must be a finite non-negative number")
+
     return float(value)
 
 
@@ -73,8 +75,10 @@ def _species_model(
     parameters: Mapping[str, JSONValue],
 ) -> tuple[list[float], SpeciesRatePlan]:
     rates = RatePlanBuilder()
+
     if circuit == "bba_0001":
         gfp = rates.species(0)
+
         return [1.0], rates.species_plan(1, (1.0 - 0.05 * gfp,))
 
     if circuit == "bba_0002":
@@ -84,6 +88,7 @@ def _species_model(
             rates,
             _number(parameters, "inducer_concentration", 0.0),
         )
+
         return [2.0, 1.0], rates.species_plan(
             2,
             (_repression(rates, active_tetr) - 0.05 * rfp, 1.0 - 0.05 * tetr),
@@ -96,6 +101,7 @@ def _species_model(
             rates,
             _number(parameters, "inducer_concentration", 1.0),
         )
+
         return [0.0, 0.0], rates.species_plan(
             2,
             (2.0 - 0.1 * laci, 2.0 * _repression(rates, active_laci) - 0.1 * gfp),
@@ -111,6 +117,7 @@ def _species_model(
             _number(parameters, "inducer_concentration", 1.0),
         )
         k909012 = _repression(rates, ci) * _repression(rates, laci)
+
         return [1.0, 0.0, 0.0, 0.0], rates.species_plan(
             4,
             (
@@ -126,6 +133,7 @@ def _species_model(
         gfp = rates.species(1)
         laci = rates.species(2)
         tetr = rates.species(3)
+
         return [1.0, 0.0, 0.0, 0.0], rates.species_plan(
             4,
             (
@@ -135,6 +143,7 @@ def _species_model(
                 2.0 * _repression(rates, laci) - 0.1 * tetr,
             ),
         )
+
     raise AssertionError("signaling circuit must use the coupled model")
 
 
@@ -150,6 +159,7 @@ def _signal_grid() -> SignalGridSpec:
     grid.advection = [Vec3()]
     grid.integration = SignalIntegrationKind.CRANK_NICOLSON
     grid.solver.absolute_tolerance = 1.0e-12
+
     return grid
 
 
@@ -178,6 +188,7 @@ def _signaling_model(
         ),
         (exchange_amount,),
     )
+
     return [0.0, 0.0, 0.0, 0.0], plan
 
 
@@ -190,6 +201,7 @@ def _regulate(step: ControllerStep) -> StepPlan:
 
 def build(context: ModelContext) -> NativeController:
     circuit = _circuit(context.parameters)
+
     if circuit == "bba_0003":
         initial_species, coupled_plan = _signaling_model(context.parameters)
         simulation = context.simulation(reserved_capacity=10_000, species_count=4)
@@ -208,9 +220,9 @@ def build(context: ModelContext) -> NativeController:
     founder.radius = 0.5
     founder.growth_rate = 1.0
     founder.species = initial_species
-    founder_id = simulation.add_cell(founder)
     state: dict[str, JSONValue] = {"circuit": circuit}
-    DIVISION.initialize(state, context.rng, (founder_id,))
+    DIVISION.initialize_founders(simulation, state, context.rng, (founder,))
+
     return NativeController(
         simulation,
         model_id=MODEL_ID,
@@ -232,6 +244,8 @@ def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeControl
         regulate=_regulate,
         on_division=DIVISION.on_division,
     )
+
     if controller.state.get("circuit") != circuit:
         raise ValueError("checkpoint circuit does not match model parameters")
+
     return controller
