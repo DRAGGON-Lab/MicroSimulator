@@ -77,7 +77,7 @@ MicroSimulator originated as a CellModeller rewrite and now has an independent d
 
 ## Development and validation
 
-The [testing and validation guide](development/validation.md) describes the test layers, backend requirements, hardware runners, and release checks. The [backend conformance reference](../tests/conformance/README.md) lists the shared numerical scenarios and tolerances.
+The [testing and validation guide](development/validation.md) describes the test layers, backend requirements, hardware runners, and release checks. The [biophysics audit](development/biophysics-validation.md) traces governing equations, units, assumptions, and executable evidence. The [backend conformance reference](../tests/conformance/README.md) lists the shared numerical scenarios and tolerances.
 
 For a standard CPU development build:
 

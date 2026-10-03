@@ -27,6 +27,11 @@ The microfluidics validation combines analytic flow checks with coupled device e
 
 These checks address numerical behavior under explicit model assumptions. The controlled nutrient study excludes division, mechanics, and detachment; the interactive examples exercise the broader workflow. Experimental calibration requires additional evidence for the chosen geometry, boundary conditions, biological rates, and empirical resistance parameters.
 
+The [biophysics audit](biophysics-validation.md) traces every major biological quantity from its
+equation and units to implementation and executable evidence. Its quick CPU suite runs in normal CI;
+the extended suite is an explicit research/release gate and writes machine-readable evidence under
+`build/`.
+
 ## Backend contract
 
 Every test-enabled build runs the shared scenarios against every enumerated device compiled into that build. `backend_contract_conformance` requires each constructed device to advertise growth, species, contacts, mechanics, constraints, signals, coupled rates, depth-averaged flow, and resolved flow. Capability guards in individual tests may help diagnose partial development builds, but they cannot turn a missing capability into a green complete-backend result.
