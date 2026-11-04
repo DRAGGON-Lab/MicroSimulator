@@ -81,6 +81,9 @@ void run_depth_case(cm::BackendKind backend, std::uint32_t device_index) {
   const auto expected = reference.solve_depth_averaged_flow(spec, mobility, parameters);
   const auto actual = candidate.solve_depth_averaged_flow(spec, mobility, parameters);
   assert(actual.report.relative_residual <= 1.1e-6F);
+  assert(expected.report.relative_residual <= 1.1e-6F);
+  assert(std::abs(actual.report.relative_residual - expected.report.relative_residual) <=
+         1.0e-6F);
   compare_fields(actual.field, expected.field, "depth-averaged flow");
 }
 
@@ -111,12 +114,13 @@ void run_resolved_case(cm::BackendKind backend, std::uint32_t device_index) {
 
 }  // namespace
 
-int main() {
-  cm::test::for_each_backend_device([](cm::BackendKind backend, std::uint32_t device_index) {
+int main(int argc, char** argv) {
+  const bool resolved_only = argc == 2 && std::string_view(argv[1]) == "resolved";
+  cm::test::for_each_backend_device([&](cm::BackendKind backend, std::uint32_t device_index) {
     cm::Simulation probe(backend, 0, 0, device_index);
     assert(probe.supports(cm::BackendFeature::depth_averaged_flow));
     assert(probe.supports(cm::BackendFeature::resolved_flow));
-    run_depth_case(backend, device_index);
-    run_resolved_case(backend, device_index);
+    if (!resolved_only) run_depth_case(backend, device_index);
+    if (resolved_only) run_resolved_case(backend, device_index);
   });
 }

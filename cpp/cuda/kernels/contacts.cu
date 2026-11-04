@@ -678,7 +678,7 @@ void launch_external_contact_count(const std::uint64_t* ids, const float4* cente
                                    ConstraintContactParametersGpu parameters,
                                    std::uint32_t cell_count, std::uint32_t constraint_count,
                                    cudaStream_t stream) {
-  constexpr dim3 threads(16, 16);
+  const dim3 threads(16, 16);
   const dim3 blocks((constraint_count + threads.x - 1) / threads.x,
                     (cell_count + threads.y - 1) / threads.y);
   count_external_contacts<<<blocks, threads, 0, stream>>>(
@@ -693,7 +693,7 @@ void launch_external_contact_fill(
     float4* points_on_cell, float4* normals, float* separations, float* weights,
     ConstraintContactParametersGpu parameters, std::uint32_t cell_count,
     std::uint32_t constraint_count, cudaStream_t stream) {
-  constexpr dim3 threads(16, 16);
+  const dim3 threads(16, 16);
   const dim3 blocks((constraint_count + threads.x - 1) / threads.x,
                     (cell_count + threads.y - 1) / threads.y);
   fill_external_contacts<<<blocks, threads, 0, stream>>>(

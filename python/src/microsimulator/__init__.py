@@ -1,5 +1,14 @@
 """MicroSimulator public Python API."""
 
+import os
+from pathlib import Path
+
+if os.name == "nt" and (cuda_path := os.environ.get("CUDA_PATH")):
+    # Python does not search PATH for extension-module dependencies on Windows.
+    _cuda_dll_directory = Path(cuda_path) / "bin"
+    if _cuda_dll_directory.is_dir():
+        _cuda_dll_handle = os.add_dll_directory(str(_cuda_dll_directory))
+
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendFeature,
     BackendInfo,

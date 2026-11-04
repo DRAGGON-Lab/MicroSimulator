@@ -910,18 +910,19 @@ class CudaBackend final : public ComputeBackend {
       shapes[index] = make_float4(geometry.lengths[index], geometry.radii[index], 0.0F, 0.0F);
     }
 
-    check_cuda(cudaMemcpy(contact_ids_.data(), geometry.ids.data(), geometry.ids.size_bytes(),
-                          cudaMemcpyHostToDevice),
+    check_cuda(cudaMemcpyAsync(contact_ids_.data(), geometry.ids.data(), geometry.ids.size_bytes(),
+                               cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact cell IDs");
-    check_cuda(cudaMemcpy(contact_centers_.data(), centers.data(), centers.size() * sizeof(float4),
-                          cudaMemcpyHostToDevice),
+    check_cuda(cudaMemcpyAsync(contact_centers_.data(), centers.data(), centers.size() * sizeof(float4),
+                               cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact cell centers");
-    check_cuda(cudaMemcpy(contact_axes_.data(), axes.data(), axes.size() * sizeof(float4),
-                          cudaMemcpyHostToDevice),
+    check_cuda(cudaMemcpyAsync(contact_axes_.data(), axes.data(), axes.size() * sizeof(float4),
+                               cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact cell axes");
-    check_cuda(cudaMemcpy(contact_geometry_.data(), shapes.data(), shapes.size() * sizeof(float4),
-                          cudaMemcpyHostToDevice),
+    check_cuda(cudaMemcpyAsync(contact_geometry_.data(), shapes.data(), shapes.size() * sizeof(float4),
+                               cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact cell geometry");
+    check_cuda(cudaStreamSynchronize(stream_), "CUDA contact cell upload failed");
   }
 
   void upload_contact_candidates(std::span<const ContactCandidate> candidates) {
@@ -930,9 +931,10 @@ class CudaBackend final : public ComputeBackend {
     for (const auto& candidate : candidates) {
       values.push_back(make_uint2(candidate.first_slot, candidate.second_slot));
     }
-    check_cuda(cudaMemcpy(contact_candidates_.data(), values.data(), values.size() * sizeof(uint2),
-                          cudaMemcpyHostToDevice),
+    check_cuda(cudaMemcpyAsync(contact_candidates_.data(), values.data(), values.size() * sizeof(uint2),
+                               cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact candidates");
+    check_cuda(cudaStreamSynchronize(stream_), "CUDA contact candidate upload failed");
   }
 
   void upload_external_constraints(const ConstraintSet& constraints) {
@@ -979,6 +981,7 @@ class CudaBackend final : public ComputeBackend {
     }
     std::ranges::sort(values, {}, &cuda::ExternalConstraintGpu::id);
     copy_to_device(external_constraints_, values, "failed to upload CUDA external constraints");
+    check_cuda(cudaStreamSynchronize(stream_), "CUDA external constraint upload failed");
   }
 
   void scan_contact_counts(std::uint32_t element_count) {
@@ -1224,8 +1227,8 @@ class CudaBackend final : public ComputeBackend {
   }
 
   void upload_mechanics_fixed(std::span<const std::uint8_t> fixed) {
-    check_cuda(cudaMemcpy(mechanics_fixed_.data(), fixed.data(), fixed.size_bytes(),
-                          cudaMemcpyHostToDevice),
+    check_cuda(cudaMemcpyAsync(mechanics_fixed_.data(), fixed.data(), fixed.size_bytes(),
+                               cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA mechanics fixed flags");
   }
 
@@ -1269,6 +1272,7 @@ class CudaBackend final : public ComputeBackend {
     copy_to_device(contact_separations_, separations,
                    "failed to upload CUDA mechanics contact separations");
     copy_to_device(contact_weights_, weights, "failed to upload CUDA mechanics contact weights");
+    check_cuda(cudaStreamSynchronize(stream_), "CUDA mechanics contact upload failed");
   }
 
   void upload_mechanics_incidence(const ContactGraph& contacts,
@@ -1294,6 +1298,7 @@ class CudaBackend final : public ComputeBackend {
                    "failed to upload CUDA mechanics incidence offsets");
     copy_to_device(mechanics_incidence_indices_, indices,
                    "failed to upload CUDA mechanics incidence indices");
+    check_cuda(cudaStreamSynchronize(stream_), "CUDA mechanics incidence upload failed");
   }
 
   void apply_mechanics_operator(const cuda::MechanicsDofsGpu* input, cuda::MechanicsDofsGpu* output,
@@ -1534,8 +1539,9 @@ class CudaBackend final : public ComputeBackend {
   template <typename T>
   void copy_to_device(CudaBuffer<T>& destination, const std::vector<T>& source,
                       const char* operation) {
-    check_cuda(cudaMemcpy(destination.data(), source.data(), source.size() * sizeof(T),
-                          cudaMemcpyHostToDevice),
+    // The backend stream is nonblocking; a default-stream cudaMemcpy can race its kernels.
+    check_cuda(cudaMemcpyAsync(destination.data(), source.data(), source.size() * sizeof(T),
+                               cudaMemcpyHostToDevice, stream_),
                operation);
   }
 

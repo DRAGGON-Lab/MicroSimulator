@@ -88,7 +88,7 @@ The native conformance runner requires an NVIDIA GPU. `cuda_runtime_gate` preven
 
 The application runner builds the Python extension with CUDA enabled, requires a runtime device, runs the Python and recorded-trajectory suites, and executes the legacy-example matrix on CPU and every enumerated CUDA device. It also covers exact controller resume, live scene semantics, and analysis export with native cell and constraint contact derivation.
 
-The hosted `CUDA compile check` workflow runs for pull requests and `main`. Hardware and application checks are manually dispatched to a self-hosted Linux x64 runner carrying the `gpu` label so untrusted pull-request code is not executed automatically on a persistent GPU host. CUDA support across an NVIDIA architecture requires all three checks on the release commit.
+The hosted `CUDA compile check` workflow runs for pull requests and `master`. Hardware and application checks are manually dispatched to a self-hosted Linux x64 runner carrying the `gpu` label so untrusted pull-request code is not executed automatically on a persistent GPU host. CUDA support across an NVIDIA architecture requires all three checks on the release commit.
 
 ## What the tests cover
 

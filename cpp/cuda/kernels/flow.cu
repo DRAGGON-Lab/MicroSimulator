@@ -85,15 +85,15 @@ __global__ void depth_flow_operator(const float* input, const float* mobility,
       auto neighbor = coordinate;
       --neighbor.values[axis];
       const auto neighbor_index = site_index(neighbor, grid);
-      result += harmonic_mean(mobility[index], mobility[neighbor_index]) *
-                grid.inverse_spacing_squared[axis] * (input[index] - input[neighbor_index]);
+      result -= harmonic_mean(mobility[index], mobility[neighbor_index]) *
+                grid.inverse_spacing_squared[axis] * input[neighbor_index];
     }
     if (coordinate.values[axis] + 1 < grid.dimensions[axis]) {
       auto neighbor = coordinate;
       ++neighbor.values[axis];
       const auto neighbor_index = site_index(neighbor, grid);
-      result += harmonic_mean(mobility[index], mobility[neighbor_index]) *
-                grid.inverse_spacing_squared[axis] * (input[index] - input[neighbor_index]);
+      result -= harmonic_mean(mobility[index], mobility[neighbor_index]) *
+                grid.inverse_spacing_squared[axis] * input[neighbor_index];
     }
   }
   output[index] = result;

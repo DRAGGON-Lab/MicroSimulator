@@ -6,6 +6,19 @@ For application commands, use the [shared CPU, Metal, and CUDA tutorial examples
 
 `CM_ENABLE_CUDA` is off by default so ordinary CPU builds do not acquire a CUDA toolchain dependency.
 
+## Windows development build
+
+Install Visual Studio 2022 C++ Build Tools and the CUDA Toolkit, then open a fresh PowerShell session so `CUDA_PATH` is available. Set `CMAKE_CUDA_ARCHITECTURES` to the GPU's compute capability without the decimal point (for example, `120` for a compute capability 12.0 device):
+
+```powershell
+cmake -S . -B build/cuda-windows -G "Visual Studio 17 2022" -A x64 -DCMAKE_CUDA_ARCHITECTURES=120 -DCM_ENABLE_CUDA=ON -DCM_ENABLE_METAL=OFF -DCM_BUILD_TESTS=ON -DCM_BUILD_PYTHON=OFF
+cmake --build build/cuda-windows --config Release --parallel 2
+$env:Path = "$env:CUDA_PATH\bin;$env:Path"
+ctest --test-dir build/cuda-windows -C Release --output-on-failure
+```
+
+For the Python CLI, rebuild the package with `CMAKE_ARGS` containing `-DCM_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=120`, then run `microsimulator devices`. Python loads the CUDA runtime from `CUDA_PATH\bin` when importing the extension. The Linux hardware and application gates below remain the release acceptance checks.
+
 ## Compile check
 
 Run the driverless source and link gate in NVIDIA's CUDA 12.8.1 development container:
@@ -16,7 +29,7 @@ scripts/run_cuda_compile_check.sh
 
 The script mounts the source read-only, builds all CUDA-enabled native targets, lists the registered tests without executing them, and writes checksummed compiler, image, configure, and build evidence. Override `CM_CUDA_ARCHITECTURES` or `CM_CUDA_CONTAINER_IMAGE` to test another target or toolkit image.
 
-The `CUDA compile check` workflow runs this gate for pull requests, pushes to `main`, and manual dispatches on GitHub's hosted Ubuntu runner. Compilation establishes toolchain compatibility, not numerical or application behavior.
+The `CUDA compile check` workflow runs this gate for pull requests, pushes to `master`, and manual dispatches on GitHub's hosted Ubuntu runner. Compilation establishes toolchain compatibility, not numerical or application behavior.
 
 ## Native hardware conformance
 
