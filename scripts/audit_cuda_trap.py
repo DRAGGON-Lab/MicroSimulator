@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import time
 from pathlib import Path
-
-from microsimulator import BackendKind, ModelContext
-from microsimulator.flow import gap_mobility, solve_flow_field
-from microsimulator.runner import build_model
 
 MARKS = {0, 1, 50, 100, 500, 1000}
 
@@ -49,6 +46,10 @@ def snapshot(model: object, step: int) -> dict:
 
 
 def run(backend: str, output: Path, steps: int) -> None:
+    from microsimulator import BackendKind, ModelContext
+    from microsimulator.flow import gap_mobility, solve_flow_field
+    from microsimulator.runner import build_model
+
     kind = BackendKind.CPU if backend == "cpu" else BackendKind.CUDA
     start = time.perf_counter()
     model, provenance = build_model(
@@ -140,12 +141,49 @@ def compare(cpu_path: Path, cuda_path: Path, output: Path) -> None:
         total_error_percent = 100 * abs(total_cuda - total_cpu) / total_cpu
         max_nutrient = max(actual["nutrient"])
         flow_errors = {}
+        flow_pass = True
+        first_flow_face_failure = None
         for component in ("x", "y", "z"):
             left = expected["flow"][component]
             right = actual["flow"][component]
-            flow_errors[component] = max(
-                (abs(a - b) for a, b in zip(left, right, strict=True)), default=0.0
-            )
+            if len(left) != len(right):
+                flow_pass = False
+                if first_flow_face_failure is None:
+                    first_flow_face_failure = {
+                        "component": component,
+                        "index": min(len(left), len(right)),
+                        "reason": "length_mismatch",
+                        "cpu_faces": len(left),
+                        "cuda_faces": len(right),
+                    }
+            max_error = 0.0
+            for index, (cpu_face, cuda_face) in enumerate(zip(left, right, strict=False)):
+                if not math.isfinite(cpu_face) or not math.isfinite(cuda_face):
+                    flow_pass = False
+                    max_error = None
+                    if first_flow_face_failure is None:
+                        first_flow_face_failure = {
+                            "component": component,
+                            "index": index,
+                            "reason": "nonfinite",
+                        }
+                    continue
+                error = abs(cuda_face - cpu_face)
+                if max_error is not None:
+                    max_error = max(max_error, error)
+                tolerance = 8.0e-4 + 8.0e-4 * abs(cpu_face)
+                if error > tolerance:
+                    flow_pass = False
+                    if first_flow_face_failure is None:
+                        first_flow_face_failure = {
+                            "component": component,
+                            "index": index,
+                            "reason": "over_tolerance",
+                            "cpu_face": cpu_face,
+                            "cuda_face": cuda_face,
+                            "tolerance": tolerance,
+                        }
+            flow_errors[component] = max_error
         ok = (
             ids_match
             and length_error <= 0.001
@@ -153,6 +191,7 @@ def compare(cpu_path: Path, cuda_path: Path, output: Path) -> None:
             and nutrient_error <= 0.01
             and total_error_percent <= 0.1
             and max_nutrient <= 10.001
+            and flow_pass
         )
         passed &= ok
         comparisons.append(
@@ -169,6 +208,8 @@ def compare(cpu_path: Path, cuda_path: Path, output: Path) -> None:
                 "total_nutrient_error_percent": total_error_percent,
                 "max_cuda_nutrient": max_nutrient,
                 "max_flow_face_errors": flow_errors,
+                "flow_pass": flow_pass,
+                "first_flow_face_failure": first_flow_face_failure,
                 "cpu_signal_report": expected["signal_report"],
                 "cuda_signal_report": actual["signal_report"],
             }
