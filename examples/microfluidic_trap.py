@@ -66,9 +66,8 @@ def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
     grid.shape = shape
     # Two z layers span the trap's six-micrometer depth exactly, so its fluid
     # volume is the device's rather than the half voxel of slack a coarser
-    # lattice would leave on each side, and the lattice still reaches a voxel
-    # past the walls: contact relaxation can press a crowded cell into a wall
-    # and briefly out through it, and sampling outside the lattice is an error.
+    # lattice would leave on each side. The lattice extends beyond the walls
+    # so signal interpolation remains defined for capsules touching them.
     grid.origin = Vec3(-140.0, -144.0, -7.5)
     grid.spacing = Vec3(4.0, 4.0, 3.0)
     grid.diffusion = [40.0]
@@ -96,10 +95,7 @@ def _rate_plan() -> CoupledRatePlan:
 
 def _primed_levels(grid: SignalGridSpec) -> list[float]:
     # The device is loaded flooded with fresh media before flow starts.
-    return [
-        NUTRIENT_INLET if solid == 0 else 0.0
-        for solid in grid.obstacles
-    ]
+    return [NUTRIENT_INLET if solid == 0 else 0.0 for solid in grid.obstacles]
 
 
 def _nutrient_growth(simulation: Simulation, position: Vec3) -> float:
@@ -110,8 +106,10 @@ def _nutrient_growth(simulation: Simulation, position: Vec3) -> float:
 def _regulate(step: ControllerStep) -> StepPlan:
     if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
         mobility = colony_mobility(
-            GRID, (cell for cell in step.cells if cell.fixed),
-            base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT
+            GRID,
+            (cell for cell in step.cells if cell.fixed),
+            base=GAP_MOBILITY,
+            drag_coefficient=DRAG_COEFFICIENT,
         )
         field, _ = solve_flow_field(
             GRID,
@@ -138,6 +136,22 @@ def _regulate(step: ControllerStep) -> StepPlan:
 
 def _divided(step: ControllerStep, event: DivisionEvent) -> None:
     DIVISION.on_division(step, event)
+    daughters = {event.first.id, event.second.id}
+    contacts = step.simulation.find_cell_contacts().contacts
+    walls = step.simulation.find_external_contacts().contacts
+    if any(
+        contact.signed_separation < -1e-4
+        and (contact.first_id in daughters or contact.second_id in daughters)
+        for contact in contacts
+    ) or any(
+        contact.signed_separation < -1e-4 and contact.cell_id in daughters for contact in walls
+    ):
+        # The inherited parent axis occupies no more space than the parent.
+        # Suppress division jitter when nearby capsules leave no room for it.
+        for daughter in (event.first, event.second):
+            step.simulation.set_cell_geometry(
+                daughter.id, daughter.position, event.parent.direction, daughter.length
+            )
 
 
 def build(context: ModelContext) -> NativeController:

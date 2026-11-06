@@ -551,6 +551,10 @@ NB_MODULE(_core, module) {
       .def("divide", &cm::Simulation::divide, "parent_id"_a, "first_fraction"_a)
       .def("divide_equal", &cm::Simulation::divide_equal, "parent_id"_a)
       .def("step", &cm::Simulation::step, "dt"_a)
+      .def("step_with_mechanics", &cm::Simulation::step_with_mechanics, "dt"_a,
+           "mechanics_parameters"_a, "contact_parameters"_a, "integration_parameters"_a,
+           "constraint_parameters"_a, "passes"_a = 1, "flow_drift"_a = false)
+      .def("restore", &cm::Simulation::restore, "checkpoint"_a)
       .def("find_cell_contacts", &cm::Simulation::find_cell_contacts,
            "parameters"_a = cm::ContactParameters{})
       .def("find_external_contacts", &cm::Simulation::find_external_contacts,
