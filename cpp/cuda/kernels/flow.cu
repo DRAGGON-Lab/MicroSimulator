@@ -68,63 +68,69 @@ __device__ float harmonic_mean(float first, float second) {
   return sum > 0.0F ? 2.0F * first * second / sum : 0.0F;
 }
 
-__global__ void depth_flow_operator(const float* input, const float* mobility,
-                                    const float* diagonal, float* output, FlowGridParameters grid) {
+__global__ void depth_flow_operator_double(const double* input, const float* mobility,
+                                           double* output, FlowGridParameters grid) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (index >= grid.site_count) {
-    return;
-  }
-  if (diagonal[index] == 0.0F) {
-    output[index] = 0.0F;
+  if (index >= grid.site_count) return;
+  if (mobility[index] == 0.0F) {
+    output[index] = 0.0;
     return;
   }
   const auto coordinate = site_coordinate(index, grid);
-  auto result = diagonal[index] * input[index];
-  for (std::uint32_t axis = 0; axis < 3; ++axis) {
-    if (coordinate.values[axis] > 0) {
+  const auto axis = grid.flow_axis;
+  const auto flow_spacing = static_cast<double>(grid.spacing[axis]);
+  const auto boundary = 2.0 * mobility[index] / (flow_spacing * flow_spacing);
+  double result = 0.0;
+  if (coordinate.values[axis] == 0) result += boundary * input[index];
+  if (coordinate.values[axis] + 1 == grid.dimensions[axis]) result += boundary * input[index];
+  for (std::uint32_t component = 0; component < 3; ++component) {
+    const auto spacing = static_cast<double>(grid.spacing[component]);
+    const auto inverse_square = 1.0 / (spacing * spacing);
+    if (coordinate.values[component] > 0) {
       auto neighbor = coordinate;
-      --neighbor.values[axis];
+      --neighbor.values[component];
       const auto neighbor_index = site_index(neighbor, grid);
-      result += harmonic_mean(mobility[index], mobility[neighbor_index]) *
-                grid.inverse_spacing_squared[axis] * (input[index] - input[neighbor_index]);
+      const auto conductance =
+          static_cast<double>(harmonic_mean(mobility[index], mobility[neighbor_index])) *
+          inverse_square;
+      result += conductance * (input[index] - input[neighbor_index]);
     }
-    if (coordinate.values[axis] + 1 < grid.dimensions[axis]) {
+    if (coordinate.values[component] + 1 < grid.dimensions[component]) {
       auto neighbor = coordinate;
-      ++neighbor.values[axis];
+      ++neighbor.values[component];
       const auto neighbor_index = site_index(neighbor, grid);
-      result += harmonic_mean(mobility[index], mobility[neighbor_index]) *
-                grid.inverse_spacing_squared[axis] * (input[index] - input[neighbor_index]);
+      const auto conductance =
+          static_cast<double>(harmonic_mean(mobility[index], mobility[neighbor_index])) *
+          inverse_square;
+      result += conductance * (input[index] - input[neighbor_index]);
     }
   }
   output[index] = result;
 }
 
-__global__ void depth_flow_velocity(const float* pressure, const float* mobility, float* velocity,
-                                    FlowGridParameters grid) {
+__global__ void depth_flow_velocity_double(const double* pressure, const float* mobility,
+                                           float* velocity, FlowGridParameters grid) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (index >= grid.total_face_count) {
-    return;
-  }
+  if (index >= grid.total_face_count) return;
   const auto face = face_coordinate(index, grid);
   const auto component = face.component;
   const auto has_lower = face.coordinate.values[component] > 0;
   const auto has_upper = face.coordinate.values[component] < grid.dimensions[component];
   auto lower_coordinate = face.coordinate;
-  if (has_lower) {
-    --lower_coordinate.values[component];
-  }
+  if (has_lower) --lower_coordinate.values[component];
   const auto lower = has_lower ? site_index(lower_coordinate, grid) : 0;
   const auto upper = has_upper ? site_index(face.coordinate, grid) : 0;
-  auto value = 0.0F;
+  const auto spacing = static_cast<double>(grid.spacing[component]);
+  double value = 0.0;
   if (has_lower && has_upper) {
-    value = -harmonic_mean(mobility[lower], mobility[upper]) * (pressure[upper] - pressure[lower]) /
-            grid.spacing[component];
+    value = -static_cast<double>(harmonic_mean(mobility[lower], mobility[upper])) *
+            (pressure[upper] - pressure[lower]) / spacing;
   } else if (component == grid.flow_axis && has_upper) {
-    value = 2.0F * mobility[upper] * (1.0F - pressure[upper]) / grid.spacing[component];
+    value = 2.0 * mobility[upper] * (1.0 - pressure[upper]) / spacing;
   } else if (component == grid.flow_axis && has_lower) {
-    value = 2.0F * mobility[lower] * pressure[lower] / grid.spacing[component];
+    value = 2.0 * mobility[lower] * pressure[lower] / spacing;
   }
-  velocity[index] = value;
+  velocity[index] = static_cast<float>(value);
 }
 
 __global__ void resolved_flow_momentum(const float* input, const std::uint8_t* active,
@@ -260,6 +266,44 @@ __global__ void flow_pcg_direction(const float* preconditioned, float* direction
   }
 }
 
+__global__ void depth_flow_pcg_initialize(const double* right_hand_side, const float* diagonal,
+                                          double* solution, double* residual,
+                                          double* preconditioned, double* direction,
+                                          std::uint32_t count) {
+  const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= count) return;
+  const auto value = right_hand_side[index];
+  const auto scaled = diagonal[index] > 0.0F ? value / diagonal[index] : 0.0;
+  solution[index] = 0.0;
+  residual[index] = value;
+  preconditioned[index] = scaled;
+  direction[index] = scaled;
+}
+
+__global__ void depth_flow_pcg_update(double* solution, double* residual, const double* direction,
+                                      const double* transformed, double alpha,
+                                      std::uint32_t count) {
+  const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index < count) {
+    solution[index] += alpha * direction[index];
+    residual[index] -= alpha * transformed[index];
+  }
+}
+
+__global__ void depth_flow_pcg_precondition(const double* residual, const float* diagonal,
+                                            double* preconditioned, std::uint32_t count) {
+  const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index < count) {
+    preconditioned[index] = diagonal[index] > 0.0F ? residual[index] / diagonal[index] : 0.0;
+  }
+}
+
+__global__ void depth_flow_pcg_direction(const double* preconditioned, double* direction,
+                                         double beta, std::uint32_t count) {
+  const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index < count) direction[index] = preconditioned[index] + beta * direction[index];
+}
+
 __global__ void flow_vector_negate(const float* input, float* output, std::uint32_t count) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index < count) {
@@ -298,23 +342,69 @@ __global__ void flow_dot_partial(const float* left, const float* right, float* p
   }
 }
 
+__global__ void depth_flow_dot_partial(const double* left, const double* right, double* partials,
+                                       std::uint32_t count) {
+  __shared__ double values[flow_reduction_width];
+  const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+  values[threadIdx.x] = index < count ? left[index] * right[index] : 0.0;
+  __syncthreads();
+  for (std::uint32_t stride = flow_reduction_width / 2; stride > 0; stride >>= 1) {
+    if (threadIdx.x < stride) values[threadIdx.x] += values[threadIdx.x + stride];
+    __syncthreads();
+  }
+  if (threadIdx.x == 0) partials[blockIdx.x] = values[0];
+}
+
 std::uint32_t block_count(std::uint32_t count, std::uint32_t width = threads_per_block) {
   return ((count - 1) / width) + 1;
 }
 
 }  // namespace
 
-void launch_depth_flow_operator(const float* input, const float* mobility, const float* diagonal,
-                                float* output, const FlowGridParameters& grid,
-                                cudaStream_t stream) {
-  depth_flow_operator<<<block_count(grid.site_count), threads_per_block, 0, stream>>>(
-      input, mobility, diagonal, output, grid);
+void launch_depth_flow_operator_double(const double* input, const float* mobility, double* output,
+                                       const FlowGridParameters& grid, cudaStream_t stream) {
+  depth_flow_operator_double<<<block_count(grid.site_count), threads_per_block, 0, stream>>>(
+      input, mobility, output, grid);
 }
 
-void launch_depth_flow_velocity(const float* pressure, const float* mobility, float* velocity,
-                                const FlowGridParameters& grid, cudaStream_t stream) {
-  depth_flow_velocity<<<block_count(grid.total_face_count), threads_per_block, 0, stream>>>(
+void launch_depth_flow_velocity_double(const double* pressure, const float* mobility,
+                                       float* velocity, const FlowGridParameters& grid,
+                                       cudaStream_t stream) {
+  depth_flow_velocity_double<<<block_count(grid.total_face_count), threads_per_block, 0, stream>>>(
       pressure, mobility, velocity, grid);
+}
+
+void launch_depth_flow_pcg_initialize(const double* right_hand_side, const float* diagonal,
+                                      double* solution, double* residual, double* preconditioned,
+                                      double* direction, std::uint32_t count, cudaStream_t stream) {
+  depth_flow_pcg_initialize<<<block_count(count), threads_per_block, 0, stream>>>(
+      right_hand_side, diagonal, solution, residual, preconditioned, direction, count);
+}
+
+void launch_depth_flow_pcg_update(double* solution, double* residual, const double* direction,
+                                  const double* transformed, double alpha, std::uint32_t count,
+                                  cudaStream_t stream) {
+  depth_flow_pcg_update<<<block_count(count), threads_per_block, 0, stream>>>(
+      solution, residual, direction, transformed, alpha, count);
+}
+
+void launch_depth_flow_pcg_precondition(const double* residual, const float* diagonal,
+                                        double* preconditioned, std::uint32_t count,
+                                        cudaStream_t stream) {
+  depth_flow_pcg_precondition<<<block_count(count), threads_per_block, 0, stream>>>(
+      residual, diagonal, preconditioned, count);
+}
+
+void launch_depth_flow_pcg_direction(const double* preconditioned, double* direction, double beta,
+                                     std::uint32_t count, cudaStream_t stream) {
+  depth_flow_pcg_direction<<<block_count(count), threads_per_block, 0, stream>>>(
+      preconditioned, direction, beta, count);
+}
+
+void launch_depth_flow_dot_partial(const double* left, const double* right, double* partials,
+                                   std::uint32_t count, cudaStream_t stream) {
+  depth_flow_dot_partial<<<block_count(count, flow_reduction_width), flow_reduction_width, 0,
+                           stream>>>(left, right, partials, count);
 }
 
 void launch_resolved_flow_momentum(const float* input, const std::uint8_t* active,

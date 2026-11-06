@@ -20,10 +20,24 @@ struct alignas(16) FlowGridParameters {
 
 static_assert(sizeof(FlowGridParameters) == 96);
 
-void launch_depth_flow_operator(const float* input, const float* mobility, const float* diagonal,
-                                float* output, const FlowGridParameters& grid, cudaStream_t stream);
-void launch_depth_flow_velocity(const float* pressure, const float* mobility, float* velocity,
-                                const FlowGridParameters& grid, cudaStream_t stream);
+void launch_depth_flow_operator_double(const double* input, const float* mobility, double* output,
+                                       const FlowGridParameters& grid, cudaStream_t stream);
+void launch_depth_flow_velocity_double(const double* pressure, const float* mobility,
+                                       float* velocity, const FlowGridParameters& grid,
+                                       cudaStream_t stream);
+void launch_depth_flow_pcg_initialize(const double* right_hand_side, const float* diagonal,
+                                      double* solution, double* residual, double* preconditioned,
+                                      double* direction, std::uint32_t count, cudaStream_t stream);
+void launch_depth_flow_pcg_update(double* solution, double* residual, const double* direction,
+                                  const double* transformed, double alpha, std::uint32_t count,
+                                  cudaStream_t stream);
+void launch_depth_flow_pcg_precondition(const double* residual, const float* diagonal,
+                                        double* preconditioned, std::uint32_t count,
+                                        cudaStream_t stream);
+void launch_depth_flow_pcg_direction(const double* preconditioned, double* direction, double beta,
+                                     std::uint32_t count, cudaStream_t stream);
+void launch_depth_flow_dot_partial(const double* left, const double* right, double* partials,
+                                   std::uint32_t count, cudaStream_t stream);
 void launch_resolved_flow_momentum(const float* input, const std::uint8_t* active,
                                    const std::uint8_t* exists, const float* face_drag,
                                    float* output, const FlowGridParameters& grid,

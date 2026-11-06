@@ -211,7 +211,9 @@ if(CM_ENABLE_CUDA)
 endif()
 
 if(MSVC)
-  target_compile_options(cm_core PRIVATE /W4 /permissive-)
+  target_compile_options(cm_core PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:/W4;/permissive->"
+  )
 else()
   target_compile_options(cm_core PRIVATE
     "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic;-Wconversion>"
@@ -316,6 +318,8 @@ if(CM_BUILD_TESTS)
   target_include_directories(cm_flow_conformance_test PRIVATE tests/conformance)
   add_test(NAME flow_conformance COMMAND cm_flow_conformance_test)
   set_tests_properties(flow_conformance PROPERTIES LABELS conformance)
+  add_test(NAME flow_resolved_conformance COMMAND cm_flow_conformance_test resolved)
+  set_tests_properties(flow_resolved_conformance PROPERTIES LABELS conformance)
 
   add_executable(cm_lifecycle_conformance_test
     tests/conformance/lifecycle_conformance_test.cpp
@@ -376,4 +380,19 @@ if(CM_BUILD_TESTS)
     add_test(NAME metal_runtime_gate COMMAND cm_metal_runtime_gate_test)
     set_property(TEST metal_runtime_gate PROPERTY LABELS conformance metal)
   endif()
+
+  # Assertions are the conformance checks; keep them active in Release builds.
+  get_property(cm_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(cm_test_target IN LISTS cm_test_targets)
+    if(cm_test_target MATCHES "^cm_.*_conformance_test$" OR
+       cm_test_target STREQUAL "cm_checkpoint_test" OR
+       cm_test_target STREQUAL "cm_cuda_runtime_gate_test" OR
+       cm_test_target STREQUAL "cm_metal_runtime_gate_test")
+      if(MSVC)
+        target_compile_options(${cm_test_target} PRIVATE /UNDEBUG)
+      else()
+        target_compile_options(${cm_test_target} PRIVATE -UNDEBUG)
+      endif()
+    endif()
+  endforeach()
 endif()

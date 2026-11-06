@@ -220,6 +220,97 @@ PcgReport solve_pcg(const float* right_hand_side, const float* diagonal, float* 
                            std::to_string(relative));
 }
 
+struct DepthPcgWorkspace {
+  explicit DepthPcgWorkspace(std::uint32_t count)
+      : residual(count, "CUDA depth residual"),
+        preconditioned(count, "CUDA depth preconditioned residual"),
+        direction(count, "CUDA depth direction"),
+        transformed(count, "CUDA depth transformed vector"),
+        partials((count + flow_reduction_width - 1) / flow_reduction_width,
+                 "CUDA depth reduction partials"),
+        host_partials(partials.count()) {}
+
+  DeviceBuffer<double> residual, preconditioned, direction, transformed, partials;
+  std::vector<double> host_partials;
+};
+
+double depth_dot(const double* left, const double* right, std::uint32_t count,
+                 DepthPcgWorkspace& workspace, cudaStream_t stream) {
+  launch_depth_flow_dot_partial(left, right, workspace.partials.data(), count, stream);
+  check_launch("failed to launch CUDA depth reduction");
+  check_cuda(cudaMemcpyAsync(workspace.host_partials.data(), workspace.partials.data(),
+                             workspace.host_partials.size() * sizeof(double),
+                             cudaMemcpyDeviceToHost, stream),
+             "failed to download CUDA depth reduction");
+  check_cuda(cudaStreamSynchronize(stream), "CUDA depth reduction failed");
+  double result = 0.0;
+  for (const auto value : workspace.host_partials) result += value;
+  return result;
+}
+
+PcgReport solve_depth_pcg(const double* right_hand_side, const float* diagonal,
+                          const float* mobility, double* solution, DepthPcgWorkspace& workspace,
+                          const FlowGridParameters& grid, float tolerance,
+                          std::uint32_t max_iterations, cudaStream_t stream) {
+  launch_depth_flow_pcg_initialize(right_hand_side, diagonal, solution, workspace.residual.data(),
+                                   workspace.preconditioned.data(), workspace.direction.data(),
+                                   grid.site_count, stream);
+  check_launch("failed to initialize CUDA depth PCG");
+  const auto rhs_norm_squared =
+      depth_dot(right_hand_side, right_hand_side, grid.site_count, workspace, stream);
+  if (rhs_norm_squared == 0.0) return {};
+  const auto rhs_norm = std::sqrt(rhs_norm_squared);
+  auto rho = depth_dot(workspace.residual.data(), workspace.preconditioned.data(), grid.site_count,
+                       workspace, stream);
+  double relative = 1.0;
+  for (std::uint32_t iteration = 1; iteration <= max_iterations; ++iteration) {
+    launch_depth_flow_operator_double(workspace.direction.data(), mobility,
+                                      workspace.transformed.data(), grid, stream);
+    check_launch("failed to launch CUDA depth operator");
+    const auto curvature = depth_dot(workspace.direction.data(), workspace.transformed.data(),
+                                     grid.site_count, workspace, stream);
+    if (!std::isfinite(curvature) || curvature <= 0.0) {
+      throw std::runtime_error(
+          "CUDA depth-averaged flow conjugate gradient encountered non-positive curvature");
+    }
+    const auto alpha = rho / curvature;
+    if (!std::isfinite(alpha)) {
+      throw std::runtime_error(
+          "CUDA depth-averaged flow conjugate gradient produced a non-finite step");
+    }
+    launch_depth_flow_pcg_update(solution, workspace.residual.data(), workspace.direction.data(),
+                                 workspace.transformed.data(), alpha, grid.site_count, stream);
+    check_launch("failed to update CUDA depth PCG");
+    const auto residual_squared = depth_dot(workspace.residual.data(), workspace.residual.data(),
+                                            grid.site_count, workspace, stream);
+    relative = std::sqrt(std::max(0.0, residual_squared)) / rhs_norm;
+    if (!std::isfinite(relative)) {
+      throw std::runtime_error(
+          "CUDA depth-averaged flow conjugate gradient produced a non-finite residual");
+    }
+    if (relative <= tolerance) {
+      return {.iterations = iteration, .relative_residual = static_cast<float>(relative)};
+    }
+    launch_depth_flow_pcg_precondition(workspace.residual.data(), diagonal,
+                                       workspace.preconditioned.data(), grid.site_count, stream);
+    check_launch("failed to precondition CUDA depth residual");
+    const auto next_rho = depth_dot(workspace.residual.data(), workspace.preconditioned.data(),
+                                    grid.site_count, workspace, stream);
+    if (!std::isfinite(next_rho) || rho == 0.0) {
+      throw std::runtime_error(
+          "CUDA depth-averaged flow conjugate gradient encountered a preconditioner breakdown");
+    }
+    const auto beta = next_rho / rho;
+    launch_depth_flow_pcg_direction(workspace.preconditioned.data(), workspace.direction.data(),
+                                    beta, grid.site_count, stream);
+    check_launch("failed to update CUDA depth direction");
+    rho = next_rho;
+  }
+  throw std::runtime_error(
+      "CUDA depth-averaged flow conjugate gradient did not converge: relative " +
+      std::to_string(relative));
+}
+
 }  // namespace
 
 DepthAveragedFlowResult solve_depth_averaged_flow(const SignalGridSpec& spec,
@@ -233,27 +324,23 @@ DepthAveragedFlowResult solve_depth_averaged_flow(const SignalGridSpec& spec,
   const auto grid = make_grid_parameters(system.layout());
   DeviceBuffer<float> mobility_buffer(grid.site_count, "failed to allocate CUDA depth mobility");
   DeviceBuffer<float> diagonal_buffer(grid.site_count, "failed to allocate CUDA depth diagonal");
-  DeviceBuffer<float> rhs_buffer(grid.site_count, "failed to allocate CUDA depth right-hand side");
-  DeviceBuffer<float> pressure_buffer(grid.site_count, "failed to allocate CUDA depth pressure");
+  DeviceBuffer<double> rhs_buffer(grid.site_count, "failed to allocate CUDA depth right-hand side");
+  DeviceBuffer<double> pressure_buffer(grid.site_count, "failed to allocate CUDA depth pressure");
   DeviceBuffer<float> velocity_buffer(grid.total_face_count,
                                       "failed to allocate CUDA depth velocity");
   upload(mobility_buffer, std::span<const float>(system.mobility()), stream,
          "failed to upload CUDA depth mobility");
   upload(diagonal_buffer, std::span<const float>(system.diagonal()), stream,
          "failed to upload CUDA depth diagonal");
-  upload(rhs_buffer, std::span<const float>(system.right_hand_side()), stream,
+  const std::vector<double> rhs(system.right_hand_side().begin(), system.right_hand_side().end());
+  upload(rhs_buffer, std::span<const double>(rhs), stream,
          "failed to upload CUDA depth right-hand side");
-  PcgWorkspace workspace(grid.site_count);
-  const auto report =
-      solve_pcg(rhs_buffer.data(), diagonal_buffer.data(), pressure_buffer.data(), workspace,
-                grid.site_count, parameters.relative_tolerance, parameters.max_iterations,
-                "CUDA depth-averaged flow", stream, [&](const float* input, float* output) {
-                  launch_depth_flow_operator(input, mobility_buffer.data(), diagonal_buffer.data(),
-                                             output, grid, stream);
-                  check_launch("failed to launch CUDA depth-averaged operator");
-                });
-  launch_depth_flow_velocity(pressure_buffer.data(), mobility_buffer.data(), velocity_buffer.data(),
-                             grid, stream);
+  DepthPcgWorkspace workspace(grid.site_count);
+  const auto report = solve_depth_pcg(
+      rhs_buffer.data(), diagonal_buffer.data(), mobility_buffer.data(), pressure_buffer.data(),
+      workspace, grid, parameters.relative_tolerance, parameters.max_iterations, stream);
+  launch_depth_flow_velocity_double(pressure_buffer.data(), mobility_buffer.data(),
+                                    velocity_buffer.data(), grid, stream);
   check_launch("failed to launch CUDA depth-averaged velocity reconstruction");
   const auto velocity = download(velocity_buffer, stream, "failed to download CUDA depth velocity");
   const auto scaled =
