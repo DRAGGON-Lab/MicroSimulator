@@ -62,7 +62,13 @@ void launch_subtract_mechanics_vectors(const MechanicsDofsGpu* left, const Mecha
 void launch_mechanics_dot_terms(const MechanicsDofsGpu* left, const MechanicsDofsGpu* right,
                                 float* terms, std::uint32_t cell_count, cudaStream_t stream);
 
-void launch_reduce_sum_pairs(const float* input, float* output, std::uint32_t element_count,
-                             cudaStream_t stream);
+// One output per 512 inputs. Keep the adjacent-pair addition tree identical
+// to the reference reduction, including incomplete blocks.
+constexpr std::uint32_t reduction_block_inputs = 512;
+constexpr std::uint32_t reduction_output_count(std::uint32_t count) {
+  return count == 0 ? 0 : 1 + (count - 1) / reduction_block_inputs;
+}
+void launch_reduce_sum_blocks(const float* input, float* output, std::uint32_t element_count,
+                              cudaStream_t stream);
 
 }  // namespace cm::cuda

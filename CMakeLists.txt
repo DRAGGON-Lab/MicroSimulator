@@ -364,6 +364,11 @@ if(CM_BUILD_TESTS)
   set_tests_properties(constraint_mechanics_conformance PROPERTIES LABELS conformance)
 
   if(CM_ENABLE_CUDA)
+    add_executable(cm_cuda_reduction_test tests/conformance/cuda_reduction_test.cpp)
+    target_include_directories(cm_cuda_reduction_test PRIVATE cpp)
+    target_link_libraries(cm_cuda_reduction_test PRIVATE cm::core CUDA::cudart)
+    add_test(NAME cuda_reduction COMMAND cm_cuda_reduction_test)
+    set_property(TEST cuda_reduction PROPERTY LABELS conformance cuda)
     add_executable(cm_cuda_runtime_gate_test
       tests/conformance/cuda_runtime_gate_test.cpp
     )

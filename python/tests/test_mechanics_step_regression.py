@@ -275,6 +275,41 @@ def test_step_mechanics_uses_selected_backend_solver(backend: BackendKind) -> No
         assert left.length == pytest.approx(right.length, abs=1e-8)
 
 
+@pytest.mark.parametrize("count", [5, 16, 32])
+def test_cuda_dense_wall_mechanics_matches_cpu(count: int) -> None:
+    if not backend_available(BackendKind.CUDA):
+        pytest.skip("CUDA unavailable")
+    cuda = Simulation(BackendKind.CUDA)
+    wall = PlaneConstraintInit()
+    wall.inward_normal = Vec3(1.0, 0.0, 0.0)
+    cuda.add_plane_constraint(wall)
+    for index in range(count):
+        cell = CellInit()
+        cell.position = Vec3(0.51 + 1.01 * (index % 4), 0.95 * (index // 4), 0.0)
+        cell.direction = Vec3(0.0, 1.0, 0.0)
+        cell.length = 0.5
+        cell.radius = 0.5
+        cell.growth_rate = 0.0
+        cuda.add_cell(cell)
+    cpu = Simulation(BackendKind.CPU)
+    cpu.restore(cuda._checkpoint())
+    cpu_result = cpu.solve_cell_mechanics()
+    cuda_result = cuda.solve_cell_mechanics()
+    assert cpu_result.report.status == cuda_result.report.status
+    assert len(cpu_result.corrections) == len(cuda_result.corrections)
+    for expected, actual in zip(cpu_result.corrections, cuda_result.corrections, strict=True):
+        for field in ("translation", "rotation"):
+            left, right = getattr(expected, field), getattr(actual, field)
+            for axis in ("x", "y", "z"):
+                reference = getattr(left, axis)
+                assert getattr(right, axis) == pytest.approx(
+                    reference, abs=3e-4 + 3e-4 * abs(reference)
+                )
+        assert actual.length == pytest.approx(
+            expected.length, abs=3e-4 + 3e-4 * abs(expected.length)
+        )
+
+
 def test_restore_clears_transient_signal_report() -> None:
     simulation = Simulation(BackendKind.CPU)
     shape = GridShape()

@@ -235,17 +235,27 @@ __global__ void mechanics_dot_terms(const MechanicsDofsGpu* left, const Mechanic
   terms[cell] = dof_dot(left[cell], right[cell]);
 }
 
-__global__ void reduce_sum_pairs(const float* input, float* output, std::uint32_t element_count) {
-  const auto index = blockIdx.x * blockDim.x + threadIdx.x;
-  const auto first = index * 2;
-  if (first >= element_count) {
-    return;
+__global__ void reduce_sum_blocks(const float* input, float* output, std::uint32_t element_count) {
+  __shared__ float sums[reduction_block_inputs / 2];
+  const auto local = threadIdx.x;
+  const auto first = blockIdx.x * reduction_block_inputs + local * 2;
+  const auto remaining = element_count - blockIdx.x * reduction_block_inputs;
+  const auto valid_pairs = (min(remaining, reduction_block_inputs) + 1) / 2;
+  if (local < valid_pairs) {
+    auto value = input[first];
+    if (first + 1 < element_count) value += input[first + 1];
+    sums[local] = value;
   }
-  auto value = input[first];
-  if (first + 1 < element_count) {
-    value += input[first + 1];
+  __syncthreads();
+  // Sparse in-place tree: disjoint pairs at every level. Do not add padded
+  // zeros: incomplete pairs must preserve the reference's exact operations.
+  for (unsigned stride = 1; stride < reduction_block_inputs / 2; stride *= 2) {
+    if (local % (2 * stride) == 0 && local + stride < valid_pairs) {
+      sums[local] += sums[local + stride];
+    }
+    __syncthreads();
   }
-  output[index] = value;
+  if (local == 0) output[blockIdx.x] = sums[0];
 }
 
 std::uint32_t block_count(std::uint32_t count) { return ((count - 1) / threads_per_block) + 1; }
@@ -330,11 +340,11 @@ void launch_mechanics_dot_terms(const MechanicsDofsGpu* left, const MechanicsDof
                                                                                  cell_count);
 }
 
-void launch_reduce_sum_pairs(const float* input, float* output, std::uint32_t element_count,
-                             cudaStream_t stream) {
-  const auto output_count = (element_count + 1) / 2;
-  reduce_sum_pairs<<<block_count(output_count), threads_per_block, 0, stream>>>(input, output,
-                                                                                element_count);
+void launch_reduce_sum_blocks(const float* input, float* output, std::uint32_t element_count,
+                              cudaStream_t stream) {
+  if (element_count == 0) return;
+  reduce_sum_blocks<<<reduction_output_count(element_count), reduction_block_inputs / 2, 0,
+                      stream>>>(input, output, element_count);
 }
 
 }  // namespace cm::cuda

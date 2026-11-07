@@ -1328,21 +1328,28 @@ class CudaBackend final : public ComputeBackend {
     signal_cn_reduce_b_.reserve(level_count, "signal reduction B");
   }
 
-  [[nodiscard]] float reduce_signal_terms(std::uint32_t level_count, const char* operation) {
+  [[nodiscard]] float reduce_signal_terms(std::uint32_t level_count, const char* operation,
+                                         const std::uint32_t* error = nullptr,
+                                         std::uint32_t* error_value = nullptr) {
     const float* input = signal_cn_terms_.data();
     float* output = signal_cn_reduce_a_.data();
     auto element_count = level_count;
     while (element_count > 1) {
-      cuda::launch_reduce_sum_pairs(input, output, element_count, stream_);
+      cuda::launch_reduce_sum_blocks(input, output, element_count, stream_);
       check_cuda(cudaGetLastError(), "failed to launch the CUDA signal-reduction kernel");
       input = output;
       output = output == signal_cn_reduce_a_.data() ? signal_cn_reduce_b_.data()
                                                     : signal_cn_reduce_a_.data();
-      element_count = (element_count + 1) / 2;
+      element_count = cuda::reduction_output_count(element_count);
     }
     float result = 0.0F;
     check_cuda(cudaMemcpyAsync(&result, input, sizeof(result), cudaMemcpyDeviceToHost, stream_),
                "failed to download a CUDA signal reduction");
+    if (error != nullptr) {
+      check_cuda(cudaMemcpyAsync(error_value, error, sizeof(*error_value),
+                                 cudaMemcpyDeviceToHost, stream_),
+                 "failed to download the CUDA signal solver error flag");
+    }
     check_cuda(cudaStreamSynchronize(stream_), operation);
     return result;
   }
@@ -1353,13 +1360,15 @@ class CudaBackend final : public ComputeBackend {
       const float* reaction_loss, const std::uint8_t* obstacles, const float* x_faces,
       const float* y_faces, const float* z_faces, std::uint32_t has_velocity_field,
       cuda::SignalGridBoundariesGpu boundaries, cuda::SignalGridShapeGpu shape, float4 spacing,
-      float half_dt, std::uint32_t signal_count, std::uint32_t level_count) {
+      float half_dt, std::uint32_t signal_count, std::uint32_t level_count,
+      const std::uint32_t* error = nullptr, std::uint32_t* error_value = nullptr) {
     cuda::launch_signal_crank_nicolson_residual_terms(
         current, right_hand_side, signal_cn_terms_.data(), diffusion, advection, fixed_values,
         reaction_source, reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field,
         boundaries, shape, spacing, half_dt, signal_count, level_count, stream_);
     check_cuda(cudaGetLastError(), "failed to launch the CUDA signal-residual kernel");
-    return std::sqrt(reduce_signal_terms(level_count, "CUDA signal residual failed") /
+    return std::sqrt(reduce_signal_terms(level_count, "CUDA signal residual failed", error,
+                                         error_value) /
                      static_cast<float>(level_count));
   }
 
@@ -1416,18 +1425,14 @@ class CudaBackend final : public ComputeBackend {
           reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, error,
           boundaries, shape, spacing, half_dt, signal_count, level_count, stream_);
       check_cuda(cudaGetLastError(), "failed to launch the CUDA signal Jacobi kernel");
+      std::uint32_t error_value = 0;
       report.residual_rms = signal_residual_rms(
           output, right_hand_side, diffusion, advection, fixed_values, reaction_source,
           reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundaries,
-          shape, spacing, half_dt, signal_count, level_count);
+          shape, spacing, half_dt, signal_count, level_count, error, &error_value);
       report.iterations = iteration;
       current = output;
 
-      std::uint32_t error_value = 0;
-      check_cuda(cudaMemcpyAsync(&error_value, error, sizeof(error_value), cudaMemcpyDeviceToHost,
-                                 stream_),
-                 "failed to download the CUDA signal solver error flag");
-      check_cuda(cudaStreamSynchronize(stream_), "CUDA signal solver error check failed");
       if (error_value != 0 || !std::isfinite(report.residual_rms)) {
         report.converged = false;
         return {current, report};
@@ -1450,12 +1455,12 @@ class CudaBackend final : public ComputeBackend {
     float* output = mechanics_reduce_a_.data();
     auto element_count = cell_count;
     while (element_count > 1) {
-      cuda::launch_reduce_sum_pairs(input, output, element_count, stream_);
+      cuda::launch_reduce_sum_blocks(input, output, element_count, stream_);
       check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-reduction kernel");
       input = output;
       output = output == mechanics_reduce_a_.data() ? mechanics_reduce_b_.data()
                                                     : mechanics_reduce_a_.data();
-      element_count = (element_count + 1) / 2;
+      element_count = cuda::reduction_output_count(element_count);
     }
     float result = 0.0F;
     check_cuda(cudaMemcpyAsync(&result, input, sizeof(result), cudaMemcpyDeviceToHost, stream_),
@@ -1506,7 +1511,8 @@ class CudaBackend final : public ComputeBackend {
     cuda::launch_update_mechanics_search_direction(
         mechanics_residual_.data(), mechanics_search_.data(), beta, cell_count, stream_);
     check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-search kernel");
-    check_cuda(cudaStreamSynchronize(stream_), "CUDA mechanics search update failed");
+    // The following operator runs on this same stream; its reduction already
+    // synchronizes and reports asynchronous failures before host consumption.
   }
 
   [[nodiscard]] float recompute_residual(std::uint32_t cell_count, std::uint32_t contact_count,
