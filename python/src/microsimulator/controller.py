@@ -454,37 +454,48 @@ class NativeController:
             raise ValueError("time step must be finite and non-negative")
         if self._completed_steps == _UINT64_MAX:
             raise ControllerPlanError("native controller completed-step counter is exhausted")
-        plan = StepPlan() if self._regulate is None else self._regulate(self._context())
-        plan = self._validate_plan(plan)
-        for update in plan.updates:
-            self._apply_update(update)
-        for request in plan.divisions:
-            parent = self.simulation.cell(request.parent_id)
-            first_id, second_id = self.simulation.divide(request.parent_id, request.first_fraction)
-            if self._on_division is not None:
-                event = DivisionEvent(
-                    parent=parent,
-                    first=self.simulation.cell(first_id),
-                    second=self.simulation.cell(second_id),
+        checkpoint = self.simulation._checkpoint()
+        saved_state = _json_object(self._state, "native controller state")
+        saved_random = self._rng.getstate()
+        try:
+            plan = StepPlan() if self._regulate is None else self._regulate(self._context())
+            plan = self._validate_plan(plan)
+            for update in plan.updates:
+                self._apply_update(update)
+            for request in plan.divisions:
+                parent = self.simulation.cell(request.parent_id)
+                first_id, second_id = self.simulation.divide(
+                    request.parent_id, request.first_fraction
                 )
-                self._on_division(self._context(), event)
-        for removal in plan.removals:
-            self.simulation.remove_cell(removal)
+                if self._on_division is not None:
+                    event = DivisionEvent(
+                        parent=parent,
+                        first=self.simulation.cell(first_id),
+                        second=self.simulation.cell(second_id),
+                    )
+                    self._on_division(self._context(), event)
+            for removal in plan.removals:
+                self.simulation.remove_cell(removal)
 
-        self.simulation.step(dt)
-        reports: list[MechanicsSolveResult] = []
-        if (
-            self._mechanics is not None
-            and self._mechanics.flow_drift
-            and self.simulation.cell_count != 0
-        ):
-            _, _, integration, _ = self._mechanics.native_parameters()
-            self.simulation.apply_flow_drift(dt, integration)
-        if self._mechanics is not None and self.simulation.cell_count != 0:
-            parameters = self._mechanics.native_parameters()
-            for _ in range(self._mechanics.passes):
-                reports.append(self.simulation.relax_cell_mechanics(*parameters))
-        self._last_mechanics_reports = tuple(reports)
+            if self._mechanics is None or self.simulation.cell_count == 0:
+                self.simulation.step(dt)
+                reports: tuple[MechanicsSolveResult, ...] = ()
+            else:
+                reports = tuple(
+                    self.simulation.step_with_mechanics(
+                        dt,
+                        *self._mechanics.native_parameters(),
+                        self._mechanics.passes,
+                        self._mechanics.flow_drift,
+                    )
+                )
+        except Exception:
+            self.simulation.restore(checkpoint)
+            self._state.clear()
+            self._state.update(saved_state)
+            self._rng.setstate(saved_random)
+            raise
+        self._last_mechanics_reports = reports
         self._completed_steps += 1
 
     def controller_state(self) -> dict[str, JSONValue]:

@@ -51,6 +51,13 @@ class Simulation {
   std::pair<CellId, CellId> divide(CellId parent_id, float first_fraction);
   std::pair<CellId, CellId> divide_equal(CellId parent_id);
   void step(float dt);
+  [[nodiscard]] std::vector<MechanicsSolveResult> step_with_mechanics(
+      float dt, const MechanicsParameters& mechanics_parameters,
+      const ContactParameters& contact_parameters,
+      const MechanicsIntegrationParameters& integration_parameters,
+      const ConstraintContactParameters& constraint_parameters, std::uint32_t passes = 1,
+      bool flow_drift = false);
+  void restore(const SimulationCheckpoint& checkpoint);
   [[nodiscard]] ContactGraph find_cell_contacts(
       const ContactParameters& parameters = ContactParameters{});
   [[nodiscard]] ExternalContactGraph find_external_contacts(

@@ -703,6 +703,17 @@ class Simulation:
         integration_parameters: MechanicsIntegrationParameters = ...,
         constraint_parameters: ConstraintContactParameters = ...,
     ) -> MechanicsSolveResult: ...
+    def step_with_mechanics(
+        self,
+        dt: float,
+        mechanics_parameters: MechanicsParameters,
+        contact_parameters: ContactParameters,
+        integration_parameters: MechanicsIntegrationParameters,
+        constraint_parameters: ConstraintContactParameters,
+        passes: int = ...,
+        flow_drift: bool = ...,
+    ) -> list[MechanicsSolveResult]: ...
+    def restore(self, checkpoint: _SimulationCheckpoint) -> None: ...
     def solve_depth_averaged_flow(
         self,
         spec: SignalGridSpec,
