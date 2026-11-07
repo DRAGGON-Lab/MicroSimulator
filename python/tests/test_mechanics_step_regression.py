@@ -232,6 +232,49 @@ def test_each_mechanics_pass_enforces_convergence() -> None:
     ]
 
 
+@pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.CUDA, BackendKind.METAL])
+def test_step_mechanics_uses_selected_backend_solver(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip("backend unavailable")
+    simulation = Simulation(backend)
+    wall = PlaneConstraintInit()
+    wall.inward_normal = Vec3(1.0, 0.0, 0.0)
+    simulation.add_plane_constraint(wall)
+    for y in (0.0, 1.405):
+        cell = CellInit()
+        cell.position = Vec3(0.205, y, 0.0)
+        cell.direction = Vec3(0.0, 1.0, 0.0)
+        cell.length = 1.0
+        cell.radius = 0.2
+        cell.growth_rate = 0.0
+        simulation.add_cell(cell)
+    contacts = ContactParameters()
+    contacts.activation_margin = 0.01
+    walls = ConstraintContactParameters()
+    walls.activation_margin = 0.01
+    parameters = MechanicsParameters()
+    parameters.max_iterations = 1
+    parameters.residual_rms_tolerance = 0.0
+    integration = MechanicsIntegrationParameters()
+    integration.require_convergence = False
+    expected = simulation.solve_cell_mechanics(parameters, contacts, walls)
+    assert expected.report.status == SolverStatus.ITERATION_LIMIT
+
+    reports = simulation.step_with_mechanics(0.0, parameters, contacts, integration, walls, 2)
+
+    assert len(reports) == 2
+    actual = reports[0]
+    assert actual.report.status == expected.report.status
+    assert actual.report.iterations == expected.report.iterations
+    assert actual.report.final_residual_rms == pytest.approx(
+        expected.report.final_residual_rms, abs=1e-8
+    )
+    for left, right in zip(actual.corrections, expected.corrections, strict=True):
+        assert left.translation.x == pytest.approx(right.translation.x, abs=1e-8)
+        assert left.translation.y == pytest.approx(right.translation.y, abs=1e-8)
+        assert left.length == pytest.approx(right.length, abs=1e-8)
+
+
 def test_restore_clears_transient_signal_report() -> None:
     simulation = Simulation(BackendKind.CPU)
     shape = GridShape()

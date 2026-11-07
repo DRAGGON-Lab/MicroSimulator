@@ -134,18 +134,6 @@ ProjectionResult project_capsules(WorldState& state, const ConstraintSet& constr
           std::move(blocked)};
 }
 
-MechanicsSolveResult solve_step_mechanics(
-    const WorldState& state, const ConstraintSet& constraints,
-    const MechanicsParameters& mechanics_parameters, const ContactParameters& contact_parameters,
-    const ConstraintContactParameters& constraint_parameters) {
-  const auto contacts = find_cell_contacts_cpu(state, contact_parameters);
-  ExternalContactGraph walls(state.size(), {});
-  if (!constraints.empty()) {
-    walls = find_external_contacts_cpu(state, constraints, constraint_parameters);
-  }
-  return solve_cell_mechanics_cpu(state, contacts, walls, mechanics_parameters);
-}
-
 std::unique_ptr<ComputeBackend> make_backend(BackendKind kind, std::uint32_t device_index) {
   switch (kind) {
     case BackendKind::cpu:
@@ -548,8 +536,8 @@ std::vector<MechanicsSolveResult> Simulation::step_with_mechanics(
         }
       }
       for (std::uint32_t pass = 0; pass < passes; ++pass) {
-        auto result = solve_step_mechanics(state_, constraints_, mechanics_parameters,
-                                           contact_parameters, constraint_parameters);
+        auto result = solve_cell_mechanics(mechanics_parameters, contact_parameters,
+                                           constraint_parameters);
         if (pass == 0) state_ = feasible_start;
         integrate_mechanics_result(
             state_, result, integration_parameters,
