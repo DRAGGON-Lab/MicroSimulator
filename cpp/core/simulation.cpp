@@ -5,6 +5,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <tuple>
+#include <utility>
 
 namespace cm {
 namespace {
@@ -13,14 +14,41 @@ constexpr float projection_tolerance = 8.0e-5F;
 
 // Use the same host geometry predicates on every backend for the final,
 // discrete exclusion step.
-std::vector<bool> project_capsules(WorldState& state, const ConstraintSet& constraints,
-                                   const ContactParameters& contact_parameters,
-                                   const ConstraintContactParameters& constraint_parameters) {
-  std::vector<bool> blocked(state.size(), false);
+struct ProjectionResult {
+  bool feasible;
+  std::vector<bool> affected_cells;
+};
+
+bool trial_pair_crosses_wall(const CellSnapshot& first, Vec3 first_position,
+                             const CellSnapshot& second, Vec3 second_position,
+                             const ConstraintSet& constraints,
+                             const ConstraintContactParameters& parameters) {
+  WorldState trial(2);
+  CellInit cell;
+  cell.position = first.fixed ? first.position : first_position;
+  cell.direction = first.direction;
+  cell.length = first.length;
+  cell.radius = first.radius;
+  trial.add_cell(cell);
+  cell.position = second.fixed ? second.position : second_position;
+  cell.direction = second.direction;
+  cell.length = second.length;
+  cell.radius = second.radius;
+  trial.add_cell(cell);
+  const auto walls = find_external_contacts_cpu(trial, constraints, parameters);
+  return std::ranges::any_of(walls.contacts(), [](const auto& wall) {
+    return wall.signed_separation < -projection_tolerance;
+  });
+}
+
+ProjectionResult project_capsules(WorldState& state, const ConstraintSet& constraints,
+                                  const ContactParameters& contact_parameters,
+                                  const ConstraintContactParameters& constraint_parameters) {
+  std::vector<bool> wall_near(state.size(), false);
   for (int iteration = 0; iteration < 128; ++iteration) {
     bool clear = true;
-    std::vector<bool> wall_near(state.size(), false);
     if (!constraints.empty()) {
+      std::fill(wall_near.begin(), wall_near.end(), false);
       auto nearby_parameters = constraint_parameters;
       nearby_parameters.activation_margin = std::max(nearby_parameters.activation_margin, 0.05F);
       const auto walls = find_external_contacts_cpu(state, constraints, nearby_parameters);
@@ -28,7 +56,6 @@ std::vector<bool> project_capsules(WorldState& state, const ConstraintSet& const
         wall_near[contact.cell_slot] = true;
         if (contact.signed_separation >= -projection_tolerance) continue;
         clear = false;
-        blocked[contact.cell_slot] = true;
         const auto cell = state.cell(contact.cell_id);
         if (cell.fixed) continue;
         const auto move = contact.normal * (contact.signed_separation - projection_tolerance);
@@ -39,8 +66,6 @@ std::vector<bool> project_capsules(WorldState& state, const ConstraintSet& const
     for (const auto& contact : pairs.contacts()) {
       if (contact.signed_separation >= -projection_tolerance) continue;
       clear = false;
-      blocked[contact.first_slot] = true;
-      blocked[contact.second_slot] = true;
       const auto first = state.cell(contact.first_id);
       const auto second = state.cell(contact.second_id);
       if (first.fixed && second.fixed) continue;
@@ -62,22 +87,8 @@ std::vector<bool> project_capsules(WorldState& state, const ConstraintSet& const
       // the chamber plane to break the deadlock instead of alternating pushes.
       if ((wall_near[contact.first_slot] || wall_near[contact.second_slot]) &&
           std::abs(dot(normal, first.direction)) > 0.7F) {
-        auto trial = state;
-        if (!first.fixed)
-          trial.set_cell_geometry(first.slot, first_position, first.direction, first.length);
-        if (!second.fixed)
-          trial.set_cell_geometry(second.slot, second_position, second.direction, second.length);
-        const auto trial_walls =
-            find_external_contacts_cpu(trial, constraints, constraint_parameters);
-        bool wall_blocked = false;
-        for (const auto& wall : trial_walls.contacts()) {
-          if ((wall.cell_id == first.id || wall.cell_id == second.id) &&
-              wall.signed_separation < -projection_tolerance) {
-            wall_blocked = true;
-            break;
-          }
-        }
-        if (wall_blocked) {
+        if (trial_pair_crosses_wall(first, first_position, second, second_position, constraints,
+                                    constraint_parameters)) {
           const auto sum = first.direction + second.direction;
           const auto axis = norm(sum) > 1.0e-6F ? normalized(sum) : first.direction;
           const Vec3 lateral{-axis.y, axis.x, 0.0F};
@@ -92,10 +103,10 @@ std::vector<bool> project_capsules(WorldState& state, const ConstraintSet& const
       if (!second.fixed)
         state.set_cell_geometry(second.slot, second_position, second.direction, second.length);
     }
-    if (clear) return {};
+    if (clear) return {true, {}};
   }
   // Only unresolved contacts should restrict growth on retry.
-  std::fill(blocked.begin(), blocked.end(), false);
+  std::vector<bool> blocked(state.size(), false);
   if (!constraints.empty()) {
     const auto walls = find_external_contacts_cpu(state, constraints, constraint_parameters);
     for (const auto& wall : walls.contacts()) {
@@ -109,8 +120,8 @@ std::vector<bool> project_capsules(WorldState& state, const ConstraintSet& const
       blocked[pair.second_slot] = true;
     }
   }
-  if (std::ranges::none_of(blocked, [](bool value) { return value; })) return {};
-  return blocked;
+  return {std::ranges::none_of(blocked, [](bool value) { return value; }),
+          std::move(blocked)};
 }
 
 MechanicsSolveResult solve_step_mechanics(
@@ -122,7 +133,7 @@ MechanicsSolveResult solve_step_mechanics(
   if (!constraints.empty()) {
     walls = find_external_contacts_cpu(state, constraints, constraint_parameters);
   }
-  return make_cpu_backend(0)->solve_cell_mechanics(state, contacts, walls, mechanics_parameters);
+  return solve_cell_mechanics_cpu(state, contacts, walls, mechanics_parameters);
 }
 
 std::unique_ptr<ComputeBackend> make_backend(BackendKind kind, std::uint32_t device_index) {
@@ -464,6 +475,7 @@ void Simulation::restore(const SimulationCheckpoint& checkpoint) {
                      : std::nullopt;
   coupled_rate_plan_ = checkpoint.coupled_rate_plan;
   time_ = checkpoint.time;
+  last_signal_solve_report_.reset();
 }
 
 std::vector<MechanicsSolveResult> Simulation::step_with_mechanics(
@@ -485,83 +497,79 @@ std::vector<MechanicsSolveResult> Simulation::step_with_mechanics(
   const auto saved_time = time_;
   try {
     if (flow_drift && state_.size() != 0) apply_flow_drift(dt, integration_parameters);
-    const auto drifted_state = state_;
-    const auto before = state_.cells();
+    const auto geometry = state_.geometry_state();
+    const auto attributes = state_.cell_attributes();
     std::vector<float> previous_lengths, increments;
-    previous_lengths.reserve(before.size());
-    increments.reserve(before.size());
-    for (const auto& cell : before) previous_lengths.push_back(cell.length);
-    // Keep proposed geometry bitwise aligned across backends before the
-    // shared host mechanics and collision projection.
-    state_.advance_growth(dt);
-    const auto proposed = state_.cells();
-    for (std::size_t i = 0; i < before.size(); ++i) {
-      increments.push_back(before[i].fixed ? 0.0F
-                                           : std::max(0.0F, proposed[i].length - before[i].length));
+    previous_lengths.reserve(geometry.size());
+    increments.reserve(geometry.size());
+    for (std::size_t i = 0; i < geometry.size(); ++i) {
+      const auto length = geometry.lengths[i];
+      const auto proposed = length + attributes.growth_rates[i] * length * dt;
+      if (!std::isfinite(proposed) || proposed < 0.0F) {
+        throw std::overflow_error("growth produced an invalid cell length");
+      }
+      previous_lengths.push_back(length);
+      increments.push_back(proposed - length);
     }
-    state_ = drifted_state;
     auto starting_failure =
         project_capsules(state_, constraints_, contact_parameters, constraint_parameters);
-    if (!starting_failure.empty() && flow_drift) {
+    if (!starting_failure.feasible && flow_drift) {
       // A flow proposal can run a capsule into a corner that has no local
       // projection path. Reject that drift and retry the original geometry.
       state_ = saved_state;
       starting_failure =
           project_capsules(state_, constraints_, contact_parameters, constraint_parameters);
     }
-    if (!starting_failure.empty()) {
+    if (!starting_failure.feasible) {
       throw std::runtime_error("infeasible wall geometry or cell packing before growth");
     }
     const auto feasible_start = state_;
+    const auto start_cells = state_.cells();
     std::vector<MechanicsSolveResult> reports;
     bool accepted = false;
     for (int attempt = 0; attempt < 6; ++attempt) {
       state_ = feasible_start;
       reports.clear();
       reports.reserve(passes);
-      const auto start_cells = state_.cells();
       for (std::size_t i = 0; i < start_cells.size(); ++i) {
         if (increments[i] != 0.0F) {
           state_.set_cell_geometry(start_cells[i].slot, start_cells[i].position,
                                    start_cells[i].direction, start_cells[i].length + increments[i]);
         }
       }
-      if (attempt == 0) {
-        for (std::uint32_t pass = 0; pass < passes; ++pass) {
-          auto result = solve_step_mechanics(state_, constraints_, mechanics_parameters,
-                                             contact_parameters, constraint_parameters);
-          if (pass == 0) state_ = feasible_start;
-          integrate_mechanics_result(
-              state_, result, integration_parameters,
-              pass == 0 ? std::span<const float>(increments) : std::span<const float>{});
-          reports.push_back(std::move(result));
+      for (std::uint32_t pass = 0; pass < passes; ++pass) {
+        auto result = solve_step_mechanics(state_, constraints_, mechanics_parameters,
+                                           contact_parameters, constraint_parameters);
+        if (pass == 0) state_ = feasible_start;
+        integrate_mechanics_result(
+            state_, result, integration_parameters,
+            pass == 0 ? std::span<const float>(increments) : std::span<const float>{});
+        reports.push_back(std::move(result));
+      }
+      const auto grown_geometry = state_.geometry_state();
+      for (std::size_t i = 0; i < grown_geometry.size(); ++i) {
+        const auto lower = std::min(start_cells[i].length, start_cells[i].length + increments[i]);
+        const auto upper = std::max(start_cells[i].length, start_cells[i].length + increments[i]);
+        const auto bounded = std::clamp(grown_geometry.lengths[i], lower, upper);
+        if (bounded != grown_geometry.lengths[i]) {
+          state_.set_cell_geometry(
+              start_cells[i].slot,
+              Vec3{grown_geometry.position_x[i], grown_geometry.position_y[i],
+                   grown_geometry.position_z[i]},
+              Vec3{grown_geometry.direction_x[i], grown_geometry.direction_y[i],
+                   grown_geometry.direction_z[i]},
+              bounded);
         }
       }
-      const auto grown_cells = state_.cells();
-      for (std::size_t i = 0; i < grown_cells.size(); ++i) {
-        const auto bounded = std::clamp(grown_cells[i].length, start_cells[i].length,
-                                        start_cells[i].length + increments[i]);
-        if (bounded != grown_cells[i].length) {
-          state_.set_cell_geometry(grown_cells[i].slot, grown_cells[i].position,
-                                   grown_cells[i].direction, bounded);
-        }
-      }
-      const auto blocked =
+      const auto projection =
           project_capsules(state_, constraints_, contact_parameters, constraint_parameters);
-      if (blocked.empty()) {
-        if (reports.empty()) {
-          for (std::uint32_t pass = 0; pass < passes; ++pass) {
-            reports.push_back(solve_step_mechanics(state_, constraints_, mechanics_parameters,
-                                                   contact_parameters, constraint_parameters));
-          }
-        }
+      if (projection.feasible) {
         accepted = true;
         break;
       }
-      if (attempt == 0) continue;
       bool reduced = false;
-      for (std::size_t i = 0; i < blocked.size(); ++i) {
-        if (blocked[i] && increments[i] > 1.0e-7F) {
+      for (std::size_t i = 0; i < projection.affected_cells.size(); ++i) {
+        if (projection.affected_cells[i] && increments[i] > 1.0e-7F) {
           increments[i] *= 0.5F;
           reduced = true;
         }
@@ -569,10 +577,16 @@ std::vector<MechanicsSolveResult> Simulation::step_with_mechanics(
       if (!reduced) break;
     }
     if (!accepted) {
-      // The pre-growth configuration was already proven feasible. A soft solve
-      // can become trapped in a different arrangement even at negligible growth.
-      // In that case realize no growth for this step rather than commit overlap.
+      // Keep the feasible geometry when positive growth cannot be placed.
+      // Shrinkage still reduces each capsule without introducing a contact.
       state_ = feasible_start;
+      reports.clear();
+      for (std::size_t i = 0; i < start_cells.size(); ++i) {
+        if (increments[i] < 0.0F) {
+          state_.set_cell_geometry(start_cells[i].slot, start_cells[i].position,
+                                   start_cells[i].direction, start_cells[i].length + increments[i]);
+        }
+      }
     }
 
     last_signal_solve_report_.reset();
