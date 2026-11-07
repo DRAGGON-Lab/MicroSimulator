@@ -52,13 +52,23 @@ ProjectionResult project_capsules(WorldState& state, const ConstraintSet& constr
       auto nearby_parameters = constraint_parameters;
       nearby_parameters.activation_margin = std::max(nearby_parameters.activation_margin, 0.05F);
       const auto walls = find_external_contacts_cpu(state, constraints, nearby_parameters);
+      std::vector<const ExternalContact*> deepest(state.size(), nullptr);
       for (const auto& contact : walls.contacts()) {
         wall_near[contact.cell_slot] = true;
         if (contact.signed_separation >= -projection_tolerance) continue;
         clear = false;
-        const auto cell = state.cell(contact.cell_id);
+        auto& selected = deepest[contact.cell_slot];
+        if (selected == nullptr || contact.signed_separation < selected->signed_separation) {
+          selected = &contact;
+        }
+      }
+      // Contacts in this graph describe the geometry before any wall move.
+      // Apply only the deepest one per cell; the next sweep recomputes all gaps.
+      for (const auto* contact : deepest) {
+        if (contact == nullptr) continue;
+        const auto cell = state.cell(contact->cell_id);
         if (cell.fixed) continue;
-        const auto move = contact.normal * (contact.signed_separation - projection_tolerance);
+        const auto move = contact->normal * (contact->signed_separation - projection_tolerance);
         state.set_cell_geometry(cell.slot, cell.position + move, cell.direction, cell.length);
       }
     }

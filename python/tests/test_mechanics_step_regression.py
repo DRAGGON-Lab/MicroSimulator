@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 from microsimulator import (
     BackendKind,
@@ -47,6 +49,74 @@ def _walled_cell(
     cell.growth_rate = growth_rate
     cell.fixed = True
     return simulation, simulation.add_cell(cell)
+
+
+@pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.CUDA])
+@pytest.mark.parametrize("axis_x", [0.0, 0.1])
+def test_parallel_wall_contacts_move_cell_once(backend: BackendKind, axis_x: float) -> None:
+    if not backend_available(backend):
+        pytest.skip("backend unavailable")
+    simulation = Simulation(backend)
+    wall = PlaneConstraintInit()
+    wall.inward_normal = Vec3(1.0, 0.0, 0.0)
+    simulation.add_plane_constraint(wall)
+    cell = CellInit()
+    cell.position = Vec3(0.1, 0.0, 0.0)
+    cell.direction = Vec3(axis_x, 1.0, 0.0)
+    cell.length = 1.0
+    cell.radius = 0.2
+    cell.growth_rate = 0.0
+    cell_id = simulation.add_cell(cell)
+    assert len(simulation.find_external_contacts().contacts) == 2
+
+    _step(simulation, 0.0)
+
+    expected_x = 0.2 + 0.5 * axis_x / math.hypot(axis_x, 1.0) + 8e-5
+    assert simulation.cell(cell_id).position.x == pytest.approx(expected_x, abs=2e-6)
+    assert all(
+        contact.signed_separation >= -1e-4
+        for contact in simulation.find_external_contacts().contacts
+    )
+
+
+@pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.CUDA])
+def test_corner_contacts_are_recomputed_after_each_wall_move(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip("backend unavailable")
+    simulation = Simulation(backend)
+    for normal in (Vec3(1.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0)):
+        wall = PlaneConstraintInit()
+        wall.inward_normal = normal
+        simulation.add_plane_constraint(wall)
+    cell = CellInit()
+    cell.position = Vec3(0.1, 0.1, 0.0)
+    cell.direction = Vec3(0.0, 0.0, 1.0)
+    cell.length = 1.0
+    cell.radius = 0.2
+    cell.growth_rate = 0.0
+    cell_id = simulation.add_cell(cell)
+
+    _step(simulation, 0.0)
+
+    after = simulation.cell(cell_id)
+    assert after.position.x == pytest.approx(0.20008, abs=2e-6)
+    assert after.position.y == pytest.approx(0.20008, abs=2e-6)
+
+
+def test_fixed_penetrating_cell_does_not_move() -> None:
+    simulation = Simulation(BackendKind.CPU)
+    wall = PlaneConstraintInit()
+    wall.inward_normal = Vec3(1.0, 0.0, 0.0)
+    simulation.add_plane_constraint(wall)
+    cell = CellInit()
+    cell.position = Vec3(0.1, 0.0, 0.0)
+    cell.direction = Vec3(0.0, 1.0, 0.0)
+    cell.radius = 0.2
+    cell.fixed = True
+    cell_id = simulation.add_cell(cell)
+    with pytest.raises(RuntimeError, match="infeasible wall geometry"):
+        _step(simulation, 0.0)
+    assert simulation.cell(cell_id).position.x == pytest.approx(0.1)
 
 
 @pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.CUDA])
