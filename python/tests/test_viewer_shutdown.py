@@ -26,6 +26,7 @@ from microsimulator.viewer_server import (
     LiveController,
     LiveSession,
     LiveViewerError,
+    _close_socket,  # pyright: ignore[reportPrivateUsage]
     create_live_app,
     parse_command,
 )
@@ -42,6 +43,32 @@ def _dist(path: Path) -> Path:
     (dist / "assets").mkdir(parents=True)
     (dist / "index.html").write_text("<!doctype html><title>shutdown test</title>")
     return dist
+
+
+@pytest.mark.parametrize("queued_bytes", [0, 60])
+def test_websocket_close_releases_remaining_transport_bytes(queued_bytes: int) -> None:
+    class ClosedSocket:
+        async def close(self, *, code: int, message: bytes) -> bool:
+            assert code == 1000
+            assert message == b"session stopped"
+            return False
+
+    class BufferedTransport(asyncio.Transport):
+        def __init__(self) -> None:
+            self.queued = queued_bytes
+            self.aborted = False
+
+        def get_write_buffer_size(self) -> int:
+            return self.queued
+
+        def abort(self) -> None:
+            self.aborted = True
+            self.queued = 0
+
+    transport = BufferedTransport()
+    asyncio.run(_close_socket(cast(web.WebSocketResponse, ClosedSocket()), transport))
+    assert transport.aborted is (queued_bytes > 0)
+    assert transport.get_write_buffer_size() == 0
 
 
 class _BlockedModel:

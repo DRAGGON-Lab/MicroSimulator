@@ -417,10 +417,16 @@ async def _close_socket(socket: web.WebSocketResponse, transport: asyncio.Transp
         if task is not None and task.cancelling():
             raise
     finally:
-        if not closed and transport is not None:
-            # Transport.close() still tries to flush queued bytes; a receiver
-            # that never reads requires abort() to release the drain waiters.
-            transport.abort()
+        if transport is not None:
+            if closed and transport.get_write_buffer_size() > 0:
+                # A close frame can remain queued after aiohttp returns. Give
+                # healthy peers time to receive it before dropping stalled IO.
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + 1.0
+                while transport.get_write_buffer_size() > 0 and loop.time() < deadline:
+                    await asyncio.sleep(0.01)
+            if not closed or transport.get_write_buffer_size() > 0:
+                transport.abort()
 
 
 _CONTROLLER_KEY = web.AppKey("microsimulator.controller", LiveController)
