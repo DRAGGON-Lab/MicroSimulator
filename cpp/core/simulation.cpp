@@ -612,9 +612,25 @@ std::vector<MechanicsSolveResult> Simulation::step_with_mechanics(
 
     last_signal_solve_report_.reset();
     if (coupled_rate_plan_.has_value()) {
-      validate_coupled_step(state_, *signal_grid_, *coupled_rate_plan_, previous_lengths, dt);
+      auto biological_state = state_;
+      const auto original_geometry = saved_state.geometry_state();
+      const auto accepted_geometry = state_.geometry_state();
+      for (std::size_t i = 0; i < biological_state.size(); ++i) {
+        biological_state.set_cell_geometry(
+            static_cast<Slot>(i),
+            Vec3{original_geometry.position_x[i], original_geometry.position_y[i],
+                 original_geometry.position_z[i]},
+            Vec3{accepted_geometry.direction_x[i], accepted_geometry.direction_y[i],
+                 accepted_geometry.direction_z[i]},
+            accepted_geometry.lengths[i]);
+      }
+      validate_coupled_step(biological_state, *signal_grid_, *coupled_rate_plan_, previous_lengths,
+                            dt);
       last_signal_solve_report_ = backend_->advance_coupled(
-          state_, *signal_grid_, *coupled_rate_plan_, previous_lengths, dt);
+          biological_state, *signal_grid_, *coupled_rate_plan_, previous_lengths, dt);
+      const auto updated_species = biological_state.species_state().levels;
+      auto accepted_species = state_.species_state().levels;
+      std::copy(updated_species.begin(), updated_species.end(), accepted_species.begin());
     } else {
       if (state_.species_count() != 0) {
         backend_->advance_species(state_, species_rate_plan_, previous_lengths, dt);

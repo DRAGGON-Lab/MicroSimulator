@@ -10,12 +10,14 @@ from microsimulator import (
     CellInit,
     ConstraintContactParameters,
     ContactParameters,
+    GridBoundaryKind,
     GridShape,
     MechanicsIntegrationParameters,
     MechanicsParameters,
     PlaneConstraintInit,
     RatePlanBuilder,
     SignalGridSpec,
+    SignalGridVelocityField,
     SignalIntegrationKind,
     Simulation,
     SolverStatus,
@@ -298,6 +300,130 @@ def test_coupled_consumption_uses_growth_accepted_by_replay() -> None:
     assert simulation.cell(independent_id).length == pytest.approx(1.5)
     consumed = (10.0 - simulation.signal_levels[0]) * grid.voxel_volume
     assert consumed == pytest.approx(math.pi * 0.2**2 * 0.5, abs=3e-5)
+
+
+def _position_coupled_simulation(
+    backend: BackendKind, *, flow_speed: float = 0.0, wall: bool = False
+) -> tuple[Simulation, int]:
+    simulation = Simulation(backend, species_count=1)
+    grid = SignalGridSpec()
+    grid.signal_count = 1
+    grid.shape = GridShape()
+    grid.shape.x, grid.shape.y, grid.shape.z = 4, 1, 1
+    grid.diffusion = [0.0]
+    grid.advection = [Vec3()]
+    if flow_speed:
+        grid.x_lower.kind = GridBoundaryKind.FIXED
+        grid.x_lower.values = [2.0]
+        grid.x_upper.kind = GridBoundaryKind.FIXED
+        grid.x_upper.values = [8.0]
+        velocity = SignalGridVelocityField()
+        velocity.x_faces = [flow_speed] * 5
+        velocity.y_faces = [0.0] * 8
+        velocity.z_faces = [0.0] * 8
+        grid.velocity_field = velocity
+    simulation.configure_signal_grid(grid, [2.0, 8.0, 8.0, 8.0])
+    if wall:
+        constraint = PlaneConstraintInit()
+        constraint.point = Vec3(0.4, 0.0, 0.0)
+        constraint.inward_normal = Vec3(1.0, 0.0, 0.0)
+        simulation.add_plane_constraint(constraint)
+    cell = CellInit()
+    cell.position = Vec3(0.25, 0.0, 0.0)
+    cell.direction = Vec3(0.0, 1.0, 0.0)
+    cell.length = 1.0
+    cell.radius = 0.2
+    cell.growth_rate = 0.4
+    cell.species = [1.0]
+    cell_id = simulation.add_cell(cell)
+    rates = RatePlanBuilder()
+    simulation.set_coupled_rate_plan(
+        rates.coupled_plan(
+            1,
+            1,
+            (rates.signal(0) + rates.position_x(),),
+            (rates.constant(1.0),),
+        )
+    )
+    return simulation, cell_id
+
+
+@pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.CUDA])
+def test_coupled_rates_use_position_before_flow_drift(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip("backend unavailable")
+    reference, reference_id = _position_coupled_simulation(backend, flow_speed=1.2)
+    mechanical, mechanical_id = _position_coupled_simulation(backend, flow_speed=1.2)
+
+    reference.step(0.5)
+    mechanical.step_with_mechanics(
+        0.5,
+        MechanicsParameters(),
+        ContactParameters(),
+        MechanicsIntegrationParameters(),
+        ConstraintContactParameters(),
+        1,
+        True,
+    )
+
+    assert mechanical.cell(mechanical_id).position.x == pytest.approx(0.85, abs=2e-5)
+    assert mechanical.cell(mechanical_id).length == pytest.approx(1.2)
+    assert mechanical.cell(mechanical_id).species == pytest.approx(
+        reference.cell(reference_id).species
+    )
+    assert mechanical.signal_levels == pytest.approx(reference.signal_levels)
+    assert mechanical.last_signal_solve_report is not None
+
+
+@pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.CUDA])
+def test_coupled_rates_use_position_before_wall_projection(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip("backend unavailable")
+    reference, reference_id = _position_coupled_simulation(backend, wall=True)
+    mechanical, mechanical_id = _position_coupled_simulation(backend, wall=True)
+
+    reference.step(0.5)
+    mechanical.step_with_mechanics(
+        0.5,
+        MechanicsParameters(),
+        ContactParameters(),
+        MechanicsIntegrationParameters(),
+        ConstraintContactParameters(),
+        1,
+    )
+
+    assert mechanical.cell(mechanical_id).position.x > 0.6
+    assert mechanical.cell(mechanical_id).length == pytest.approx(1.2)
+    assert mechanical.cell(mechanical_id).species == pytest.approx(
+        reference.cell(reference_id).species
+    )
+    assert mechanical.signal_levels == pytest.approx(reference.signal_levels)
+
+
+@pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.CUDA])
+def test_failed_coupled_mechanics_restores_geometry_species_and_signal(
+    backend: BackendKind,
+) -> None:
+    if not backend_available(backend):
+        pytest.skip("backend unavailable")
+    simulation, cell_id = _position_coupled_simulation(backend, wall=True)
+    rates = RatePlanBuilder()
+    simulation.set_coupled_rate_plan(
+        rates.coupled_plan(1, 1, (rates.constant(1.0),), (rates.constant(-100.0),))
+    )
+    before_cell = simulation.cell(cell_id)
+    before_levels = simulation.signal_levels
+
+    with pytest.raises((ValueError, RuntimeError)):
+        _step(simulation, 0.5)
+
+    after_cell = simulation.cell(cell_id)
+    assert after_cell.position.x == before_cell.position.x
+    assert after_cell.length == before_cell.length
+    assert after_cell.species == before_cell.species
+    assert simulation.signal_levels == before_levels
+    assert simulation.last_signal_solve_report is None
+    assert simulation.time == 0.0
 
 
 def test_each_mechanics_pass_enforces_convergence() -> None:
