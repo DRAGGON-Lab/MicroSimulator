@@ -14,6 +14,7 @@ from microsimulator import (
     MechanicsIntegrationParameters,
     MechanicsParameters,
     PlaneConstraintInit,
+    RatePlanBuilder,
     SignalGridSpec,
     SignalIntegrationKind,
     Simulation,
@@ -195,6 +196,108 @@ def test_infeasible_positive_growth_keeps_other_cell_shrinkage() -> None:
     assert _step(simulation, 1.0) == []
     assert simulation.cell(growing_id).length == pytest.approx(1.0)
     assert simulation.cell(shrinking_id).length == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.CUDA])
+def test_blocked_wall_growth_preserves_distant_growth_and_shrinkage(
+    backend: BackendKind,
+) -> None:
+    if not backend_available(backend):
+        pytest.skip("backend unavailable")
+    simulation, blocked_id = _walled_cell(backend, 0.7, 1.0)
+    growing = CellInit()
+    growing.position = Vec3(0.0, 5.0, 0.0)
+    growing.direction = Vec3(0.0, 1.0, 0.0)
+    growing.length = 1.0
+    growing.radius = 0.2
+    growing.growth_rate = 0.5
+    growing_id = simulation.add_cell(growing)
+    shrinking = CellInit()
+    shrinking.position = Vec3(0.0, 10.0, 0.0)
+    shrinking.direction = Vec3(0.0, 1.0, 0.0)
+    shrinking.length = 1.0
+    shrinking.radius = 0.2
+    shrinking.growth_rate = -0.5
+    shrinking_id = simulation.add_cell(shrinking)
+
+    assert _step(simulation, 1.0, passes=2) == []
+    assert simulation.cell(blocked_id).length == pytest.approx(1.0)
+    assert simulation.cell(growing_id).length == pytest.approx(1.5)
+    assert simulation.cell(shrinking_id).length == pytest.approx(0.5)
+    assert simulation.time == pytest.approx(1.0)
+    assert all(
+        edge.signed_separation >= -1e-4 for edge in simulation.find_external_contacts().contacts
+    )
+    assert all(edge.signed_separation >= -1e-4 for edge in simulation.find_cell_contacts().contacts)
+
+
+@pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.CUDA])
+def test_blocked_contact_cluster_preserves_independent_growth(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip("backend unavailable")
+    simulation = Simulation(backend)
+    blocked_ids = []
+    for y in (0.0, 1.4):
+        cell = CellInit()
+        cell.position = Vec3(0.0, y, 0.0)
+        cell.direction = Vec3(0.0, 1.0, 0.0)
+        cell.length = 1.0
+        cell.radius = 0.2
+        cell.growth_rate = 1.0
+        cell.fixed = True
+        blocked_ids.append(simulation.add_cell(cell))
+    independent = CellInit()
+    independent.position = Vec3(0.0, 6.0, 0.0)
+    independent.length = 1.0
+    independent.radius = 0.2
+    independent.growth_rate = 0.5
+    independent_id = simulation.add_cell(independent)
+
+    assert _step(simulation, 1.0) == []
+    assert [simulation.cell(cell_id).length for cell_id in blocked_ids] == pytest.approx([1.0, 1.0])
+    assert simulation.cell(independent_id).length == pytest.approx(1.5)
+    assert simulation.time == pytest.approx(1.0)
+    assert all(edge.signed_separation >= -1e-4 for edge in simulation.find_cell_contacts().contacts)
+
+
+def test_coupled_consumption_uses_growth_accepted_by_replay() -> None:
+    simulation = Simulation(BackendKind.CPU)
+    grid = SignalGridSpec()
+    grid.signal_count = 1
+    grid.shape = GridShape()
+    grid.shape.x = grid.shape.y = grid.shape.z = 1
+    grid.spacing = Vec3(4.0, 4.0, 4.0)
+    grid.diffusion = [0.0]
+    grid.advection = [Vec3()]
+    simulation.configure_signal_grid(grid, [10.0])
+    for x, normal in ((-0.7, 1.0), (0.7, -1.0)):
+        wall = PlaneConstraintInit()
+        wall.point = Vec3(x, 0.0, 0.0)
+        wall.inward_normal = Vec3(normal, 0.0, 0.0)
+        simulation.add_plane_constraint(wall)
+    blocked = CellInit()
+    blocked.length = 1.0
+    blocked.radius = 0.2
+    blocked.growth_rate = 1.0
+    blocked.fixed = True
+    blocked_id = simulation.add_cell(blocked)
+    rates = RatePlanBuilder()
+    simulation.set_coupled_rate_plan(
+        rates.coupled_plan(0, 1, (), (-rates.cell_volume_change_rate(),))
+    )
+    independent = CellInit()
+    independent.position = Vec3(0.0, 2.0, 0.0)
+    independent.direction = Vec3(0.0, 1.0, 0.0)
+    independent.length = 1.0
+    independent.radius = 0.2
+    independent.growth_rate = 0.5
+    independent_id = simulation.add_cell(independent)
+
+    assert _step(simulation, 1.0) == []
+    assert simulation.cell(blocked_id).length == pytest.approx(1.0)
+    assert simulation.cell(independent_id).length == pytest.approx(1.5)
+    consumed = (10.0 - simulation.signal_levels[0]) * grid.voxel_volume
+    assert consumed == pytest.approx(math.pi * 0.2**2 * 0.5, abs=3e-5)
 
 
 def test_each_mechanics_pass_enforces_convergence() -> None:

@@ -248,15 +248,51 @@ def test_narrower_than_diameter_is_explicitly_infeasible() -> None:
     assert model.controller_state() == before
 
 
-def test_square_trap_daughters_slide_and_remain_separate() -> None:
+def test_square_trap_daughters_slide_until_unsuppressible_jam() -> None:
     model, _ = build_model(
         Path("examples/square_trap.py"), ModelContext(BackendKind.CPU, 0, seed=42)
     )
     maximum_count = 0
     maximum_lateral_offset = 0.0
     totals = []
+    jammed = False
     for _ in range(150):
-        model.step(0.05)
+        before = model.controller_state()
+        before_time = model.simulation.time
+        before_cells = [
+            (
+                cell.id,
+                cell.length,
+                cell.position.x,
+                cell.position.y,
+                cell.direction.x,
+                cell.direction.y,
+                cell.growth_rate,
+            )
+            for cell in model.simulation.cells()
+        ]
+        try:
+            model.step(0.05)
+        except RuntimeError as error:
+            # Once the packed trap has no newly suppressible growth, the step rolls back.
+            if "mechanics projection is infeasible without suppressible growth" not in str(error):
+                raise
+            assert model.controller_state() == before
+            assert model.simulation.time == before_time
+            assert [
+                (
+                    cell.id,
+                    cell.length,
+                    cell.position.x,
+                    cell.position.y,
+                    cell.direction.x,
+                    cell.direction.y,
+                    cell.growth_rate,
+                )
+                for cell in model.simulation.cells()
+            ] == before_cells
+            jammed = True
+            break
         cells = model.simulation.cells()
         maximum_count = max(maximum_count, len(cells))
         maximum_lateral_offset = max(
@@ -274,7 +310,7 @@ def test_square_trap_daughters_slide_and_remain_separate() -> None:
     assert maximum_count >= 8
     assert maximum_lateral_offset > 0.2
     assert totals[60] > totals[20] + 2.0
-    assert max(totals[-20:]) - min(totals[-20:]) < 0.1
+    assert jammed
 
 
 @pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.CUDA])

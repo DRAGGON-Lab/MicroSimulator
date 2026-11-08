@@ -525,6 +525,7 @@ std::vector<MechanicsSolveResult> Simulation::step_with_mechanics(
     const auto start_cells = state_.cells();
     std::vector<MechanicsSolveResult> reports;
     bool accepted = false;
+    ProjectionResult last_projection{true, {}};
     for (int attempt = 0; attempt < 6; ++attempt) {
       state_ = feasible_start;
       reports.clear();
@@ -565,6 +566,7 @@ std::vector<MechanicsSolveResult> Simulation::step_with_mechanics(
         accepted = true;
         break;
       }
+      last_projection = projection;
       bool reduced = false;
       for (std::size_t i = 0; i < projection.affected_cells.size(); ++i) {
         if (projection.affected_cells[i] && increments[i] > 1.0e-7F) {
@@ -575,14 +577,35 @@ std::vector<MechanicsSolveResult> Simulation::step_with_mechanics(
       if (!reduced) break;
     }
     if (!accepted) {
-      // Keep the feasible geometry when positive growth cannot be placed.
-      // Shrinkage still reduces each capsule without introducing a contact.
-      state_ = feasible_start;
+      // Retry from the feasible start, retaining growth outside unresolved contacts.
+      // Every failed replay must remove growth from another cell, so this terminates
+      // after at most one replay per growing cell and a final feasibility check.
       reports.clear();
-      for (std::size_t i = 0; i < start_cells.size(); ++i) {
-        if (increments[i] < 0.0F) {
-          state_.set_cell_geometry(start_cells[i].slot, start_cells[i].position,
-                                   start_cells[i].direction, start_cells[i].length + increments[i]);
+      std::vector<bool> suppressed(start_cells.size(), false);
+      auto suppress_blocked_growth = [&](const ProjectionResult& projection) {
+        bool newly_suppressed = false;
+        for (std::size_t i = 0; i < start_cells.size(); ++i) {
+          if (projection.affected_cells[i] && increments[i] > 0.0F && !suppressed[i]) {
+            suppressed[i] = true;
+            newly_suppressed = true;
+          }
+        }
+        return newly_suppressed;
+      };
+      suppress_blocked_growth(last_projection);
+      while (true) {
+        state_ = feasible_start;
+        for (std::size_t i = 0; i < start_cells.size(); ++i) {
+          if (increments[i] != 0.0F && !suppressed[i]) {
+            state_.set_cell_geometry(start_cells[i].slot, start_cells[i].position,
+                                     start_cells[i].direction, start_cells[i].length + increments[i]);
+          }
+        }
+        const auto projection =
+            project_capsules(state_, constraints_, contact_parameters, constraint_parameters);
+        if (projection.feasible) break;
+        if (!suppress_blocked_growth(projection)) {
+          throw std::runtime_error("mechanics projection is infeasible without suppressible growth");
         }
       }
     }
