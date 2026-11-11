@@ -5,6 +5,7 @@
 #include <nanobind/stl/vector.h>
 
 #include "cm/simulation.hpp"
+#include "native_call.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -507,59 +508,74 @@ NB_MODULE(_core, module) {
            "device_index"_a = 0)
       .def(nb::init<cm::BackendKind, const cm::SimulationCheckpoint&, std::uint32_t>(), "backend"_a,
            "checkpoint"_a, "device_index"_a = 0)
-      .def_prop_ro("backend_info", &cm::Simulation::backend_info)
-      .def("supports", &cm::Simulation::supports, "feature"_a)
-      .def_prop_ro("time", &cm::Simulation::time)
-      .def_prop_ro("cell_count", &cm::Simulation::cell_count)
-      .def_prop_ro("species_count", &cm::Simulation::species_count)
-      .def_prop_ro("signal_count", &cm::Simulation::signal_count)
-      .def_prop_ro("has_signal_grid", &cm::Simulation::has_signal_grid)
-      .def_prop_ro("last_signal_solve_report", &cm::Simulation::last_signal_solve_report)
-      .def_prop_ro("has_coupled_rate_plan", &cm::Simulation::has_coupled_rate_plan)
-      .def("add_cell", &cm::Simulation::add_cell, "cell"_a)
-      .def("remove_cell", &cm::Simulation::remove_cell, "id"_a)
-      .def("apply_flow_drift", &cm::Simulation::apply_flow_drift, "dt"_a,
+      .def_prop_ro("backend_info", cm::python::exclusive(&cm::Simulation::backend_info))
+      .def("supports", cm::python::exclusive(&cm::Simulation::supports), "feature"_a)
+      .def_prop_ro("time", cm::python::exclusive(&cm::Simulation::time))
+      .def_prop_ro("cell_count", cm::python::exclusive(&cm::Simulation::cell_count))
+      .def_prop_ro("species_count", cm::python::exclusive(&cm::Simulation::species_count))
+      .def_prop_ro("signal_count", cm::python::exclusive(&cm::Simulation::signal_count))
+      .def_prop_ro("has_signal_grid", cm::python::exclusive(&cm::Simulation::has_signal_grid))
+      .def_prop_ro("last_signal_solve_report",
+                   cm::python::exclusive(&cm::Simulation::last_signal_solve_report))
+      .def_prop_ro("has_coupled_rate_plan",
+                   cm::python::exclusive(&cm::Simulation::has_coupled_rate_plan))
+      .def("add_cell", cm::python::exclusive(&cm::Simulation::add_cell), "cell"_a)
+      .def("remove_cell", cm::python::exclusive(&cm::Simulation::remove_cell), "id"_a)
+      .def("apply_flow_drift", cm::python::released(&cm::Simulation::apply_flow_drift), "dt"_a,
            "integration"_a = cm::MechanicsIntegrationParameters{})
-      .def("add_plane_constraint", &cm::Simulation::add_plane_constraint, "plane"_a)
-      .def("add_sphere_constraint", &cm::Simulation::add_sphere_constraint, "sphere"_a)
-      .def("add_box_constraint", &cm::Simulation::add_box_constraint, "box"_a)
-      .def("add_cylinder_constraint", &cm::Simulation::add_cylinder_constraint, "cylinder"_a)
-      .def("set_cell_geometry", &cm::Simulation::set_cell_geometry, "id"_a, "position"_a,
-           "direction"_a, "length"_a)
-      .def("set_cell_attributes", &cm::Simulation::set_cell_attributes, "id"_a, "growth_rate"_a,
-           "cell_type"_a)
-      .def("set_cell_fixed", &cm::Simulation::set_cell_fixed, "id"_a, "fixed"_a)
+      .def("add_plane_constraint", cm::python::exclusive(&cm::Simulation::add_plane_constraint),
+           "plane"_a)
+      .def("add_sphere_constraint", cm::python::exclusive(&cm::Simulation::add_sphere_constraint),
+           "sphere"_a)
+      .def("add_box_constraint", cm::python::exclusive(&cm::Simulation::add_box_constraint),
+           "box"_a)
+      .def("add_cylinder_constraint",
+           cm::python::exclusive(&cm::Simulation::add_cylinder_constraint), "cylinder"_a)
+      .def("set_cell_geometry", cm::python::exclusive(&cm::Simulation::set_cell_geometry), "id"_a,
+           "position"_a, "direction"_a, "length"_a)
+      .def("set_cell_attributes", cm::python::exclusive(&cm::Simulation::set_cell_attributes),
+           "id"_a, "growth_rate"_a, "cell_type"_a)
+      .def("set_cell_fixed", cm::python::exclusive(&cm::Simulation::set_cell_fixed), "id"_a,
+           "fixed"_a)
       .def(
           "set_species",
           [](cm::Simulation& simulation, cm::CellId id, const std::vector<float>& levels) {
+            cm::python::BusyObjects::require_idle(&simulation);
             simulation.set_species(id, levels);
           },
           "id"_a, "levels"_a)
-      .def("set_species_rate_plan", &cm::Simulation::set_species_rate_plan, "plan"_a)
-      .def("set_coupled_rate_plan", &cm::Simulation::set_coupled_rate_plan, "plan"_a)
-      .def("clear_coupled_rate_plan", &cm::Simulation::clear_coupled_rate_plan)
-      .def("configure_signal_grid", &cm::Simulation::configure_signal_grid, "spec"_a,
-           "levels"_a = std::vector<float>{})
+      .def("set_species_rate_plan", cm::python::exclusive(&cm::Simulation::set_species_rate_plan),
+           "plan"_a)
+      .def("set_coupled_rate_plan", cm::python::exclusive(&cm::Simulation::set_coupled_rate_plan),
+           "plan"_a)
+      .def("clear_coupled_rate_plan",
+           cm::python::exclusive(&cm::Simulation::clear_coupled_rate_plan))
+      .def("configure_signal_grid", cm::python::exclusive(&cm::Simulation::configure_signal_grid),
+           "spec"_a, "levels"_a = std::vector<float>{})
       .def(
           "set_signal_levels",
           [](cm::Simulation& simulation, const std::vector<float>& levels) {
+            cm::python::BusyObjects::require_idle(&simulation);
             simulation.set_signal_levels(levels);
           },
           "levels"_a)
-      .def("set_velocity_field", &cm::Simulation::set_velocity_field, "field"_a.none())
-      .def("set_signal_reaction", &cm::Simulation::set_signal_reaction, "reaction"_a.none())
-      .def("divide", &cm::Simulation::divide, "parent_id"_a, "first_fraction"_a)
-      .def("divide_equal", &cm::Simulation::divide_equal, "parent_id"_a)
-      .def("step", &cm::Simulation::step, "dt"_a)
-      .def("find_cell_contacts", &cm::Simulation::find_cell_contacts,
+      .def("set_velocity_field", cm::python::exclusive(&cm::Simulation::set_velocity_field),
+           "field"_a.none())
+      .def("set_signal_reaction", cm::python::exclusive(&cm::Simulation::set_signal_reaction),
+           "reaction"_a.none())
+      .def("divide", cm::python::exclusive(&cm::Simulation::divide), "parent_id"_a,
+           "first_fraction"_a)
+      .def("divide_equal", cm::python::exclusive(&cm::Simulation::divide_equal), "parent_id"_a)
+      .def("step", cm::python::released(&cm::Simulation::step), "dt"_a)
+      .def("find_cell_contacts", cm::python::released(&cm::Simulation::find_cell_contacts),
            "parameters"_a = cm::ContactParameters{})
-      .def("find_external_contacts", &cm::Simulation::find_external_contacts,
+      .def("find_external_contacts", cm::python::released(&cm::Simulation::find_external_contacts),
            "parameters"_a = cm::ConstraintContactParameters{})
-      .def("solve_cell_mechanics", &cm::Simulation::solve_cell_mechanics,
+      .def("solve_cell_mechanics", cm::python::released(&cm::Simulation::solve_cell_mechanics),
            "mechanics_parameters"_a = cm::MechanicsParameters{},
            "contact_parameters"_a = cm::ContactParameters{},
            "constraint_parameters"_a = cm::ConstraintContactParameters{})
-      .def("relax_cell_mechanics", &cm::Simulation::relax_cell_mechanics,
+      .def("relax_cell_mechanics", cm::python::released(&cm::Simulation::relax_cell_mechanics),
            "mechanics_parameters"_a = cm::MechanicsParameters{},
            "contact_parameters"_a = cm::ContactParameters{},
            "integration_parameters"_a = cm::MechanicsIntegrationParameters{},
@@ -569,6 +585,7 @@ NB_MODULE(_core, module) {
           [](cm::Simulation& simulation, const cm::SignalGridSpec& spec,
              const std::vector<float>& mobility,
              const cm::DepthAveragedFlowParameters& parameters) {
+            const cm::python::ReleasedCall call(&simulation);
             return simulation.solve_depth_averaged_flow(spec, mobility, parameters);
           },
           "spec"_a, "mobility"_a = std::vector<float>{},
@@ -577,14 +594,15 @@ NB_MODULE(_core, module) {
           "solve_resolved_flow",
           [](cm::Simulation& simulation, const cm::SignalGridSpec& spec,
              const std::vector<float>& drag, const cm::ResolvedFlowParameters& parameters) {
+            const cm::python::ReleasedCall call(&simulation);
             return simulation.solve_resolved_flow(spec, drag, parameters);
           },
           "spec"_a, "drag"_a = std::vector<float>{}, "parameters"_a = cm::ResolvedFlowParameters{})
-      .def("cell", &cm::Simulation::cell, "id"_a)
-      .def("cells", &cm::Simulation::cells)
-      .def("lineage_parent", &cm::Simulation::lineage_parent, "id"_a)
-      .def_prop_ro("signal_levels", &cm::Simulation::signal_levels)
-      .def("sample_signals", &cm::Simulation::sample_signals, "position"_a)
-      .def("_checkpoint", &cm::Simulation::checkpoint)
-      .def("validate", &cm::Simulation::validate);
+      .def("cell", cm::python::exclusive(&cm::Simulation::cell), "id"_a)
+      .def("cells", cm::python::exclusive(&cm::Simulation::cells))
+      .def("lineage_parent", cm::python::exclusive(&cm::Simulation::lineage_parent), "id"_a)
+      .def_prop_ro("signal_levels", cm::python::exclusive(&cm::Simulation::signal_levels))
+      .def("sample_signals", cm::python::exclusive(&cm::Simulation::sample_signals), "position"_a)
+      .def("_checkpoint", cm::python::exclusive(&cm::Simulation::checkpoint))
+      .def("validate", cm::python::exclusive(&cm::Simulation::validate));
 }
