@@ -973,48 +973,54 @@ class MetalBackend final : public ComputeBackend {
     if (count <= growth_capacity_) {
       return;
     }
-    growth_capacity_ = std::bit_ceil(count);
-    const auto byte_count = growth_capacity_ * sizeof(float);
+    const auto growth_capacity = std::bit_ceil(count);
+    const auto byte_count = growth_capacity * sizeof(float);
     lengths_ = allocate_shared_buffer(device_, byte_count, "growth lengths");
     growth_rates_ = allocate_shared_buffer(device_, byte_count, "growth rates");
+    growth_capacity_ = growth_capacity;
   }
 
   void ensure_species_capacity(std::size_t cell_count, std::size_t level_count,
                                std::size_t instruction_count, std::size_t species_count,
                                std::size_t workspace_count) {
     if (cell_count > species_cell_capacity_) {
-      species_cell_capacity_ = std::bit_ceil(cell_count);
+      const auto species_cell_capacity = std::bit_ceil(cell_count);
       species_previous_lengths_ = allocate_shared_buffer(
-          device_, species_cell_capacity_ * sizeof(float), "species previous lengths");
+          device_, species_cell_capacity * sizeof(float), "species previous lengths");
       species_centers_ = allocate_shared_buffer(
-          device_, species_cell_capacity_ * sizeof(MetalFloat4), "species cell centers");
+          device_, species_cell_capacity * sizeof(MetalFloat4), "species cell centers");
       species_geometry_ = allocate_shared_buffer(
-          device_, species_cell_capacity_ * sizeof(MetalFloat4), "species cell geometry");
-      species_growth_rates_ = allocate_shared_buffer(
-          device_, species_cell_capacity_ * sizeof(float), "species growth rates");
+          device_, species_cell_capacity * sizeof(MetalFloat4), "species cell geometry");
+      species_growth_rates_ = allocate_shared_buffer(device_, species_cell_capacity * sizeof(float),
+                                                     "species growth rates");
       species_cell_types_ = allocate_shared_buffer(
-          device_, species_cell_capacity_ * sizeof(std::int32_t), "species cell types");
+          device_, species_cell_capacity * sizeof(std::int32_t), "species cell types");
+      species_cell_capacity_ = species_cell_capacity;
     }
     if (level_count > species_level_capacity_) {
-      species_level_capacity_ = std::bit_ceil(level_count);
-      species_levels_ = allocate_shared_buffer(device_, species_level_capacity_ * sizeof(float),
-                                               "species levels");
+      const auto species_level_capacity = std::bit_ceil(level_count);
+      species_levels_ =
+          allocate_shared_buffer(device_, species_level_capacity * sizeof(float), "species levels");
+      species_level_capacity_ = species_level_capacity;
     }
     if (instruction_count > species_instruction_capacity_) {
-      species_instruction_capacity_ = std::bit_ceil(instruction_count);
+      const auto species_instruction_capacity = std::bit_ceil(instruction_count);
       species_instructions_ = allocate_shared_buffer(
-          device_, species_instruction_capacity_ * sizeof(MetalRateInstruction),
+          device_, species_instruction_capacity * sizeof(MetalRateInstruction),
           "species rate instructions");
+      species_instruction_capacity_ = species_instruction_capacity;
     }
     if (species_count > species_output_capacity_) {
-      species_output_capacity_ = std::bit_ceil(species_count);
+      const auto species_output_capacity = std::bit_ceil(species_count);
       species_outputs_ = allocate_shared_buffer(
-          device_, species_output_capacity_ * sizeof(std::uint32_t), "species rate outputs");
+          device_, species_output_capacity * sizeof(std::uint32_t), "species rate outputs");
+      species_output_capacity_ = species_output_capacity;
     }
     if (workspace_count > species_workspace_capacity_) {
-      species_workspace_capacity_ = std::bit_ceil(workspace_count);
+      const auto species_workspace_capacity = std::bit_ceil(workspace_count);
       species_workspace_ = allocate_shared_buffer(
-          device_, species_workspace_capacity_ * sizeof(float), "species rate workspace");
+          device_, species_workspace_capacity * sizeof(float), "species rate workspace");
+      species_workspace_capacity_ = species_workspace_capacity;
     }
     if (species_error_ == nil) {
       species_error_ = allocate_shared_buffer(device_, sizeof(std::uint32_t), "species error flag");
@@ -1039,8 +1045,8 @@ class MetalBackend final : public ComputeBackend {
 
   void ensure_signal_capacity(std::size_t level_count, std::size_t signal_count) {
     if (level_count > signal_level_capacity_) {
-      signal_level_capacity_ = std::bit_ceil(level_count);
-      const auto byte_count = signal_level_capacity_ * sizeof(float);
+      const auto signal_level_capacity = std::bit_ceil(level_count);
+      const auto byte_count = signal_level_capacity * sizeof(float);
       signal_levels_ = allocate_shared_buffer(device_, byte_count, "signal-grid levels");
       signal_output_ = allocate_shared_buffer(device_, byte_count, "signal-grid output");
       signal_reaction_source_ =
@@ -1048,16 +1054,18 @@ class MetalBackend final : public ComputeBackend {
       signal_reaction_loss_ =
           allocate_shared_buffer(device_, byte_count, "signal-grid affine losses");
       signal_obstacles_ =
-          allocate_shared_buffer(device_, signal_level_capacity_, "signal-grid obstacles");
+          allocate_shared_buffer(device_, signal_level_capacity, "signal-grid obstacles");
+      signal_level_capacity_ = signal_level_capacity;
     }
     if (signal_count > signal_count_capacity_) {
-      signal_count_capacity_ = std::bit_ceil(signal_count);
-      signal_diffusion_ = allocate_shared_buffer(device_, signal_count_capacity_ * sizeof(float),
+      const auto signal_count_capacity = std::bit_ceil(signal_count);
+      signal_diffusion_ = allocate_shared_buffer(device_, signal_count_capacity * sizeof(float),
                                                  "signal-grid diffusion");
       signal_advection_ = allocate_shared_buffer(
-          device_, signal_count_capacity_ * sizeof(MetalFloat4), "signal-grid advection");
+          device_, signal_count_capacity * sizeof(MetalFloat4), "signal-grid advection");
       signal_fixed_values_ = allocate_shared_buffer(
-          device_, 6 * signal_count_capacity_ * sizeof(float), "signal-grid boundary values");
+          device_, 6 * signal_count_capacity * sizeof(float), "signal-grid boundary values");
+      signal_count_capacity_ = signal_count_capacity;
     }
     if (signal_error_ == nil) {
       signal_error_ =
@@ -1067,21 +1075,23 @@ class MetalBackend final : public ComputeBackend {
 
   void ensure_signal_face_capacity(std::size_t face_count) {
     if (face_count > signal_face_capacity_) {
-      signal_face_capacity_ = std::bit_ceil(face_count);
-      const auto byte_count = signal_face_capacity_ * sizeof(float);
+      const auto signal_face_capacity = std::bit_ceil(face_count);
+      const auto byte_count = signal_face_capacity * sizeof(float);
       signal_x_faces_ = allocate_shared_buffer(device_, byte_count, "signal-grid x faces");
       signal_y_faces_ = allocate_shared_buffer(device_, byte_count, "signal-grid y faces");
       signal_z_faces_ = allocate_shared_buffer(device_, byte_count, "signal-grid z faces");
+      signal_face_capacity_ = signal_face_capacity;
     }
   }
 
   void ensure_coupled_face_capacity(std::size_t face_count) {
     if (face_count > coupled_face_capacity_) {
-      coupled_face_capacity_ = std::bit_ceil(face_count);
-      const auto byte_count = coupled_face_capacity_ * sizeof(float);
+      const auto coupled_face_capacity = std::bit_ceil(face_count);
+      const auto byte_count = coupled_face_capacity * sizeof(float);
       coupled_x_faces_ = allocate_shared_buffer(device_, byte_count, "coupled x faces");
       coupled_y_faces_ = allocate_shared_buffer(device_, byte_count, "coupled y faces");
       coupled_z_faces_ = allocate_shared_buffer(device_, byte_count, "coupled z faces");
+      coupled_face_capacity_ = coupled_face_capacity;
     }
   }
 
@@ -1089,13 +1099,14 @@ class MetalBackend final : public ComputeBackend {
     if (level_count <= signal_solve_capacity_) {
       return;
     }
-    signal_solve_capacity_ = std::bit_ceil(static_cast<std::size_t>(level_count));
-    const auto byte_count = signal_solve_capacity_ * sizeof(float);
+    const auto signal_solve_capacity = std::bit_ceil(static_cast<std::size_t>(level_count));
+    const auto byte_count = signal_solve_capacity * sizeof(float);
     signal_cn_a_ = allocate_shared_buffer(device_, byte_count, "signal Jacobi field A");
     signal_cn_b_ = allocate_shared_buffer(device_, byte_count, "signal Jacobi field B");
     signal_cn_terms_ = allocate_shared_buffer(device_, byte_count, "signal residual terms");
     signal_cn_reduce_a_ = allocate_shared_buffer(device_, byte_count, "signal reduction A");
     signal_cn_reduce_b_ = allocate_shared_buffer(device_, byte_count, "signal reduction B");
+    signal_solve_capacity_ = signal_solve_capacity;
   }
 
   id<MTLBuffer> encode_signal_reduction(id<MTLComputeCommandEncoder> encoder,
@@ -1303,73 +1314,81 @@ class MetalBackend final : public ComputeBackend {
     const auto at_least_one = [](std::size_t count) { return std::max<std::size_t>(count, 1); };
     const auto requested_cells = at_least_one(cell_count);
     if (requested_cells > coupled_cell_capacity_) {
-      coupled_cell_capacity_ = std::bit_ceil(requested_cells);
+      const auto coupled_cell_capacity = std::bit_ceil(requested_cells);
       coupled_previous_lengths_ = allocate_shared_buffer(
-          device_, coupled_cell_capacity_ * sizeof(float), "coupled previous lengths");
+          device_, coupled_cell_capacity * sizeof(float), "coupled previous lengths");
       coupled_centers_ = allocate_shared_buffer(
-          device_, coupled_cell_capacity_ * sizeof(MetalFloat4), "coupled cell centers");
+          device_, coupled_cell_capacity * sizeof(MetalFloat4), "coupled cell centers");
       coupled_geometry_ = allocate_shared_buffer(
-          device_, coupled_cell_capacity_ * sizeof(MetalFloat4), "coupled cell geometry");
-      coupled_growth_rates_ = allocate_shared_buffer(
-          device_, coupled_cell_capacity_ * sizeof(float), "coupled growth rates");
+          device_, coupled_cell_capacity * sizeof(MetalFloat4), "coupled cell geometry");
+      coupled_growth_rates_ = allocate_shared_buffer(device_, coupled_cell_capacity * sizeof(float),
+                                                     "coupled growth rates");
       coupled_cell_types_ = allocate_shared_buffer(
-          device_, coupled_cell_capacity_ * sizeof(std::int32_t), "coupled cell types");
+          device_, coupled_cell_capacity * sizeof(std::int32_t), "coupled cell types");
+      coupled_cell_capacity_ = coupled_cell_capacity;
     }
     const auto requested_species_levels = at_least_one(species_level_count);
     if (requested_species_levels > coupled_species_level_capacity_) {
-      coupled_species_level_capacity_ = std::bit_ceil(requested_species_levels);
+      const auto coupled_species_level_capacity = std::bit_ceil(requested_species_levels);
       coupled_species_levels_ = allocate_shared_buffer(
-          device_, coupled_species_level_capacity_ * sizeof(float), "coupled species levels");
+          device_, coupled_species_level_capacity * sizeof(float), "coupled species levels");
+      coupled_species_level_capacity_ = coupled_species_level_capacity;
     }
     const auto requested_instructions = at_least_one(instruction_count);
     if (requested_instructions > coupled_instruction_capacity_) {
-      coupled_instruction_capacity_ = std::bit_ceil(requested_instructions);
+      const auto coupled_instruction_capacity = std::bit_ceil(requested_instructions);
       coupled_instructions_ = allocate_shared_buffer(
-          device_, coupled_instruction_capacity_ * sizeof(MetalRateInstruction),
+          device_, coupled_instruction_capacity * sizeof(MetalRateInstruction),
           "coupled rate instructions");
+      coupled_instruction_capacity_ = coupled_instruction_capacity;
     }
     const auto requested_species_outputs = at_least_one(species_count);
     if (requested_species_outputs > coupled_species_output_capacity_) {
-      coupled_species_output_capacity_ = std::bit_ceil(requested_species_outputs);
+      const auto coupled_species_output_capacity = std::bit_ceil(requested_species_outputs);
       coupled_species_outputs_ =
-          allocate_shared_buffer(device_, coupled_species_output_capacity_ * sizeof(std::uint32_t),
+          allocate_shared_buffer(device_, coupled_species_output_capacity * sizeof(std::uint32_t),
                                  "coupled species outputs");
+      coupled_species_output_capacity_ = coupled_species_output_capacity;
     }
     const auto requested_signal_outputs = at_least_one(signal_count);
     if (requested_signal_outputs > coupled_signal_output_capacity_) {
-      coupled_signal_output_capacity_ = std::bit_ceil(requested_signal_outputs);
+      const auto coupled_signal_output_capacity = std::bit_ceil(requested_signal_outputs);
       coupled_signal_outputs_ =
-          allocate_shared_buffer(device_, coupled_signal_output_capacity_ * sizeof(std::uint32_t),
+          allocate_shared_buffer(device_, coupled_signal_output_capacity * sizeof(std::uint32_t),
                                  "coupled signal outputs");
       coupled_diffusion_ = allocate_shared_buffer(
-          device_, coupled_signal_output_capacity_ * sizeof(float), "coupled diffusion");
+          device_, coupled_signal_output_capacity * sizeof(float), "coupled diffusion");
       coupled_advection_ = allocate_shared_buffer(
-          device_, coupled_signal_output_capacity_ * sizeof(MetalFloat4), "coupled advection");
+          device_, coupled_signal_output_capacity * sizeof(MetalFloat4), "coupled advection");
       coupled_fixed_values_ = allocate_shared_buffer(
-          device_, 6 * coupled_signal_output_capacity_ * sizeof(float), "coupled boundary values");
+          device_, 6 * coupled_signal_output_capacity * sizeof(float), "coupled boundary values");
+      coupled_signal_output_capacity_ = coupled_signal_output_capacity;
     }
     const auto requested_workspace = at_least_one(workspace_count);
     if (requested_workspace > coupled_workspace_capacity_) {
-      coupled_workspace_capacity_ = std::bit_ceil(requested_workspace);
+      const auto coupled_workspace_capacity = std::bit_ceil(requested_workspace);
       coupled_workspace_ = allocate_shared_buffer(
-          device_, coupled_workspace_capacity_ * sizeof(float), "coupled workspace");
+          device_, coupled_workspace_capacity * sizeof(float), "coupled workspace");
+      coupled_workspace_capacity_ = coupled_workspace_capacity;
     }
     const auto requested_cell_signals = at_least_one(cell_signal_count);
     if (requested_cell_signals > coupled_cell_signal_capacity_) {
-      coupled_cell_signal_capacity_ = std::bit_ceil(requested_cell_signals);
+      const auto coupled_cell_signal_capacity = std::bit_ceil(requested_cell_signals);
       coupled_cell_signal_rates_ = allocate_shared_buffer(
-          device_, coupled_cell_signal_capacity_ * sizeof(float), "coupled cell signal rates");
+          device_, coupled_cell_signal_capacity * sizeof(float), "coupled cell signal rates");
+      coupled_cell_signal_capacity_ = coupled_cell_signal_capacity;
     }
     if (grid_level_count > coupled_grid_level_capacity_) {
-      coupled_grid_level_capacity_ = std::bit_ceil(grid_level_count);
-      const auto byte_count = coupled_grid_level_capacity_ * sizeof(float);
+      const auto coupled_grid_level_capacity = std::bit_ceil(grid_level_count);
+      const auto byte_count = coupled_grid_level_capacity * sizeof(float);
       coupled_grid_levels_ = allocate_shared_buffer(device_, byte_count, "coupled grid levels");
       coupled_grid_output_ = allocate_shared_buffer(device_, byte_count, "coupled grid output");
       coupled_reaction_source_ =
           allocate_shared_buffer(device_, byte_count, "coupled affine sources");
       coupled_reaction_loss_ = allocate_shared_buffer(device_, byte_count, "coupled affine losses");
       coupled_obstacles_ =
-          allocate_shared_buffer(device_, coupled_grid_level_capacity_, "coupled grid obstacles");
+          allocate_shared_buffer(device_, coupled_grid_level_capacity, "coupled grid obstacles");
+      coupled_grid_level_capacity_ = coupled_grid_level_capacity;
     }
     if (coupled_error_ == nil) {
       coupled_error_ = allocate_shared_buffer(device_, sizeof(std::uint32_t), "coupled error flag");
@@ -1380,56 +1399,60 @@ class MetalBackend final : public ComputeBackend {
     if (count <= contact_cell_capacity_) {
       return;
     }
-    contact_cell_capacity_ = std::bit_ceil(count);
-    contact_ids_ = allocate_shared_buffer(device_, contact_cell_capacity_ * sizeof(std::uint64_t),
+    const auto contact_cell_capacity = std::bit_ceil(count);
+    contact_ids_ = allocate_shared_buffer(device_, contact_cell_capacity * sizeof(std::uint64_t),
                                           "contact cell IDs");
-    contact_centers_ = allocate_shared_buffer(device_, contact_cell_capacity_ * sizeof(MetalFloat4),
+    contact_centers_ = allocate_shared_buffer(device_, contact_cell_capacity * sizeof(MetalFloat4),
                                               "contact cell centers");
-    contact_axes_ = allocate_shared_buffer(device_, contact_cell_capacity_ * sizeof(MetalFloat4),
+    contact_axes_ = allocate_shared_buffer(device_, contact_cell_capacity * sizeof(MetalFloat4),
                                            "contact cell axes");
-    contact_geometry_ = allocate_shared_buffer(
-        device_, contact_cell_capacity_ * sizeof(MetalFloat4), "contact cell geometry");
+    contact_geometry_ = allocate_shared_buffer(device_, contact_cell_capacity * sizeof(MetalFloat4),
+                                               "contact cell geometry");
+    contact_cell_capacity_ = contact_cell_capacity;
   }
 
   void ensure_contact_pair_capacity(std::size_t count) {
     if (count <= contact_pair_capacity_) {
       return;
     }
-    contact_pair_capacity_ = std::bit_ceil(count);
-    const auto byte_count = contact_pair_capacity_ * sizeof(std::uint32_t);
+    const auto contact_pair_capacity = std::bit_ceil(count);
+    const auto byte_count = contact_pair_capacity * sizeof(std::uint32_t);
     contact_counts_ = allocate_shared_buffer(device_, byte_count, "contact counts");
     contact_scan_a_ = allocate_shared_buffer(device_, byte_count, "contact scan A");
     contact_scan_b_ = allocate_shared_buffer(device_, byte_count, "contact scan B");
+    contact_pair_capacity_ = contact_pair_capacity;
   }
 
   void ensure_contact_candidate_capacity(std::size_t count) {
     if (count <= contact_candidate_capacity_) {
       return;
     }
-    contact_candidate_capacity_ = std::bit_ceil(count);
+    const auto contact_candidate_capacity = std::bit_ceil(count);
     contact_candidates_ = allocate_shared_buffer(
-        device_, contact_candidate_capacity_ * sizeof(MetalUInt2), "contact candidates");
+        device_, contact_candidate_capacity * sizeof(MetalUInt2), "contact candidates");
+    contact_candidate_capacity_ = contact_candidate_capacity;
   }
 
   void ensure_external_constraint_capacity(std::size_t count) {
     if (count <= external_constraint_capacity_) {
       return;
     }
-    external_constraint_capacity_ = std::bit_ceil(count);
+    const auto external_constraint_capacity = std::bit_ceil(count);
     external_constraints_ = allocate_shared_buffer(
-        device_, external_constraint_capacity_ * sizeof(MetalExternalConstraint),
+        device_, external_constraint_capacity * sizeof(MetalExternalConstraint),
         "external constraints");
+    external_constraint_capacity_ = external_constraint_capacity;
   }
 
   void ensure_contact_output_capacity(std::size_t count) {
     if (count <= contact_output_capacity_) {
       return;
     }
-    contact_output_capacity_ = std::bit_ceil(count);
-    const auto id_bytes = contact_output_capacity_ * sizeof(std::uint64_t);
-    const auto index_bytes = contact_output_capacity_ * sizeof(std::uint32_t);
-    const auto vector_bytes = contact_output_capacity_ * sizeof(MetalFloat4);
-    const auto scalar_bytes = contact_output_capacity_ * sizeof(float);
+    const auto contact_output_capacity = std::bit_ceil(count);
+    const auto id_bytes = contact_output_capacity * sizeof(std::uint64_t);
+    const auto index_bytes = contact_output_capacity * sizeof(std::uint32_t);
+    const auto vector_bytes = contact_output_capacity * sizeof(MetalFloat4);
+    const auto scalar_bytes = contact_output_capacity * sizeof(float);
     contact_first_ids_ = allocate_shared_buffer(device_, id_bytes, "contact first IDs");
     contact_second_ids_ = allocate_shared_buffer(device_, id_bytes, "contact second IDs");
     contact_first_slots_ = allocate_shared_buffer(device_, index_bytes, "contact first slots");
@@ -1439,6 +1462,7 @@ class MetalBackend final : public ComputeBackend {
     contact_normals_ = allocate_shared_buffer(device_, vector_bytes, "contact normals");
     contact_separations_ = allocate_shared_buffer(device_, scalar_bytes, "contact separations");
     contact_weights_ = allocate_shared_buffer(device_, scalar_bytes, "contact weights");
+    contact_output_capacity_ = contact_output_capacity;
   }
 
   void upload_contact_cells(const CellGeometryView& geometry) {
@@ -1797,14 +1821,14 @@ class MetalBackend final : public ComputeBackend {
 
   void ensure_mechanics_capacity(std::size_t cell_count, std::size_t contact_count) {
     if (cell_count > mechanics_cell_capacity_) {
-      mechanics_cell_capacity_ = std::bit_ceil(cell_count);
-      const auto dof_bytes = mechanics_cell_capacity_ * sizeof(MetalDofs);
-      const auto scalar_bytes = mechanics_cell_capacity_ * sizeof(float);
+      const auto mechanics_cell_capacity = std::bit_ceil(cell_count);
+      const auto dof_bytes = mechanics_cell_capacity * sizeof(MetalDofs);
+      const auto scalar_bytes = mechanics_cell_capacity * sizeof(float);
       mechanics_incidence_offsets_ =
-          allocate_shared_buffer(device_, (mechanics_cell_capacity_ + 1) * sizeof(std::uint32_t),
+          allocate_shared_buffer(device_, (mechanics_cell_capacity + 1) * sizeof(std::uint32_t),
                                  "mechanics incidence offsets");
       mechanics_fixed_ =
-          allocate_shared_buffer(device_, mechanics_cell_capacity_, "mechanics fixed flags");
+          allocate_shared_buffer(device_, mechanics_cell_capacity, "mechanics fixed flags");
       mechanics_solution_ = allocate_shared_buffer(device_, dof_bytes, "mechanics solution");
       mechanics_rhs_ = allocate_shared_buffer(device_, dof_bytes, "mechanics right-hand side");
       mechanics_residual_ = allocate_shared_buffer(device_, dof_bytes, "mechanics residual");
@@ -1813,21 +1837,23 @@ class MetalBackend final : public ComputeBackend {
       mechanics_dot_terms_ = allocate_shared_buffer(device_, scalar_bytes, "mechanics dot terms");
       mechanics_reduce_a_ = allocate_shared_buffer(device_, scalar_bytes, "mechanics reduction A");
       mechanics_reduce_b_ = allocate_shared_buffer(device_, scalar_bytes, "mechanics reduction B");
+      mechanics_cell_capacity_ = mechanics_cell_capacity;
     }
     if (contact_count > mechanics_contact_capacity_) {
-      mechanics_contact_capacity_ = std::bit_ceil(contact_count);
-      const auto dof_bytes = mechanics_contact_capacity_ * sizeof(MetalDofs);
+      const auto mechanics_contact_capacity = std::bit_ceil(contact_count);
+      const auto dof_bytes = mechanics_contact_capacity * sizeof(MetalDofs);
       mechanics_first_rows_ =
           allocate_shared_buffer(device_, dof_bytes, "mechanics first Jacobian rows");
       mechanics_second_rows_ =
           allocate_shared_buffer(device_, dof_bytes, "mechanics second Jacobian rows");
       mechanics_row_values_ = allocate_shared_buffer(
-          device_, mechanics_contact_capacity_ * sizeof(float), "mechanics row values");
+          device_, mechanics_contact_capacity * sizeof(float), "mechanics row values");
       mechanics_row_rhs_ = allocate_shared_buffer(
-          device_, mechanics_contact_capacity_ * sizeof(float), "mechanics row right-hand side");
+          device_, mechanics_contact_capacity * sizeof(float), "mechanics row right-hand side");
       mechanics_incidence_indices_ =
-          allocate_shared_buffer(device_, mechanics_contact_capacity_ * 2 * sizeof(std::uint32_t),
+          allocate_shared_buffer(device_, mechanics_contact_capacity * 2 * sizeof(std::uint32_t),
                                  "mechanics incidence indices");
+      mechanics_contact_capacity_ = mechanics_contact_capacity;
     }
   }
 
