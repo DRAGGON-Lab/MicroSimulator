@@ -6,8 +6,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_dir="$(cd "${script_dir}/.." && pwd)"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 report_dir="${1:-${source_dir}/build/cuda-compile-${timestamp}}"
-container_image="${CM_CUDA_CONTAINER_IMAGE:-nvidia/cuda:12.8.1-devel-ubuntu24.04}"
-cuda_architectures="${CM_CUDA_ARCHITECTURES:-75}"
+container_image="${MICROSIMULATOR_CUDA_CONTAINER_IMAGE:-nvidia/cuda:12.8.1-devel-ubuntu24.04}"
+cuda_architectures="${MICROSIMULATOR_CUDA_ARCHITECTURES:-75}"
 
 if [[ -e "${report_dir}" ]]; then
   printf 'report path already exists: %s\n' "${report_dir}" >&2
@@ -71,7 +71,7 @@ docker image inspect "${container_image}" >"${report_dir}/image.json"
 
 docker run --rm \
   --mount "type=bind,src=${source_dir},dst=/source,readonly" \
-  --env "CM_CUDA_ARCHITECTURES=${cuda_architectures}" \
+  --env "MICROSIMULATOR_CUDA_ARCHITECTURES=${cuda_architectures}" \
   "${container_image}" \
   bash -lc '
     set -euo pipefail
@@ -85,11 +85,11 @@ docker run --rm \
     nvcc --version
     cmake -S /source -B /build -G Ninja \
       -DCMAKE_BUILD_TYPE=Debug \
-      -DCMAKE_CUDA_ARCHITECTURES="${CM_CUDA_ARCHITECTURES}" \
-      -DCM_BUILD_PYTHON=OFF \
-      -DCM_BUILD_TESTS=ON \
-      -DCM_ENABLE_CUDA=ON \
-      -DCM_ENABLE_METAL=OFF
+      -DCMAKE_CUDA_ARCHITECTURES="${MICROSIMULATOR_CUDA_ARCHITECTURES}" \
+      -DMICROSIMULATOR_BUILD_PYTHON=OFF \
+      -DMICROSIMULATOR_BUILD_TESTS=ON \
+      -DMICROSIMULATOR_ENABLE_CUDA=ON \
+      -DMICROSIMULATOR_ENABLE_METAL=OFF
     cmake --build /build
     ctest --test-dir /build -N
   ' 2>&1 | tee "${report_dir}/compile.log"

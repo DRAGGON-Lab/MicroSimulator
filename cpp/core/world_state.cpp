@@ -1,4 +1,4 @@
-#include "cm/world_state.hpp"
+#include "microsimulator/world_state.hpp"
 
 #include <algorithm>
 #include <array>
@@ -8,7 +8,7 @@
 #include <string>
 #include <unordered_set>
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 void validate_cell(const CellInit& cell, std::size_t species_count) {
@@ -542,4 +542,4 @@ void WorldState::validate() const {
   }
 }
 
-}  // namespace cm
+}  // namespace microsimulator

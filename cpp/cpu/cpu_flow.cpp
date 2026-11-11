@@ -10,12 +10,12 @@
 #include <utility>
 #include <vector>
 
-#include "cm/flow.hpp"
 #include "core/conjugate_gradient.hpp"
 #include "core/flexible_gmres.hpp"
 #include "core/flow_system.hpp"
+#include "microsimulator/flow.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 struct ConjugateGradientResult {
@@ -311,4 +311,4 @@ ResolvedFlowResult solve_resolved_flow_cpu(const SignalGridSpec& spec, std::span
   };
 }
 
-}  // namespace cm
+}  // namespace microsimulator

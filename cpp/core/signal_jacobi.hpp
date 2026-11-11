@@ -6,9 +6,9 @@
 #include <functional>
 #include <limits>
 
-#include "cm/signals.hpp"
+#include "microsimulator/signals.hpp"
 
-namespace cm::detail {
+namespace microsimulator::detail {
 
 struct SignalSweepResult {
   // Residual RMS of the iterate the sweep produced.
@@ -77,4 +77,4 @@ struct SignalJacobiOperations {
   return report;
 }
 
-}  // namespace cm::detail
+}  // namespace microsimulator::detail

@@ -8,9 +8,9 @@
 #include <utility>
 #include <vector>
 
-#include "cm/types.hpp"
+#include "microsimulator/types.hpp"
 
-namespace cm {
+namespace microsimulator {
 
 struct CellInit {
   Vec3 position{};
@@ -145,4 +145,4 @@ class WorldState {
   std::unordered_map<CellId, CellId> lineage_;
 };
 
-}  // namespace cm
+}  // namespace microsimulator

@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace cm {
+namespace microsimulator {
 
 using CellId = std::uint64_t;
 using Slot = std::uint32_t;
@@ -80,4 +80,4 @@ struct BackendInfo {
   bool native{false};
 };
 
-}  // namespace cm
+}  // namespace microsimulator

@@ -21,7 +21,7 @@ Every Metal-enabled test build includes `metal_runtime_gate`, which constructs e
 Run the Python, compatibility, and application gate with a checkout of the pinned original CellModeller source:
 
 ```console
-CM_LEGACY_ROOT=/path/to/pinned/CellModeller scripts/run_metal_application_conformance.sh
+MICROSIMULATOR_LEGACY_ROOT=/path/to/pinned/CellModeller scripts/run_metal_application_conformance.sh
 ```
 
 This gate builds the Python extension with Metal enabled, runs the full Python and recorded-trajectory suites, executes all 24 runnable legacy examples on CPU and every Metal device, and exercises controller resume, viewer scene semantics, and analysis export with native derived contacts.

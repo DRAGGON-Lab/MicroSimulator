@@ -7,7 +7,7 @@
 #include "signals.cuh"
 #include "species.cuh"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 
 // A trilinear stencil covers at most eight lattice sites.
 inline constexpr std::uint32_t scatter_stencil_sites = 8;
@@ -42,4 +42,4 @@ cudaError_t launch_advance_coupled(
     std::uint32_t crank_nicolson, const std::uint32_t* scatter_ends,
     const std::uint32_t* scatter_cells, cudaStream_t stream);
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

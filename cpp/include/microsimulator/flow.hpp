@@ -3,9 +3,9 @@
 #include <cstdint>
 #include <span>
 
-#include "cm/signals.hpp"
+#include "microsimulator/signals.hpp"
 
-namespace cm {
+namespace microsimulator {
 
 enum class FlowAxis : std::uint8_t {
   x,
@@ -71,4 +71,4 @@ void validate_flow_grid(const SignalGridSpec& spec, FlowAxis axis);
     const SignalGridSpec& spec, std::span<const float> drag,
     const ResolvedFlowParameters& parameters = ResolvedFlowParameters{});
 
-}  // namespace cm
+}  // namespace microsimulator

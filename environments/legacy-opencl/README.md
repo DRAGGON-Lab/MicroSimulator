@@ -5,11 +5,11 @@ This optional environment exists only to reproduce the recorded CellModeller ref
 On an Apple machine that still exposes an OpenCL device:
 
 ```console
-uv venv --python 3.13 /tmp/cm-legacy-opencl
+uv venv --python 3.13 /tmp/microsimulator-legacy-opencl
 uv pip install \
-  --python /tmp/cm-legacy-opencl/bin/python \
+  --python /tmp/microsimulator-legacy-opencl/bin/python \
   --requirement environments/legacy-opencl/requirements.txt
-/tmp/cm-legacy-opencl/bin/python scripts/record_legacy_trajectories.py \
+/tmp/microsimulator-legacy-opencl/bin/python scripts/record_legacy_trajectories.py \
   --legacy-root /path/to/CellModeller \
   --output /tmp/legacy-trajectories-v1.json
 cmp compatibility/legacy-trajectories-v1.json /tmp/legacy-trajectories-v1.json

@@ -7,11 +7,11 @@
 #include <utility>
 #include <vector>
 
-#include "cm/mechanics.hpp"
 #include "core/mechanics_solver.hpp"
 #include "core/shared_constants.hpp"
+#include "microsimulator/mechanics.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 constexpr std::size_t degrees_of_freedom = shared::mechanics_degrees_of_freedom;
@@ -377,4 +377,4 @@ MechanicsSolveResult solve_cell_mechanics_cpu(const WorldState& state, const Con
                                   parameters);
 }
 
-}  // namespace cm
+}  // namespace microsimulator

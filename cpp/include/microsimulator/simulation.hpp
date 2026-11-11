@@ -7,10 +7,10 @@
 #include <utility>
 #include <vector>
 
-#include "cm/backend.hpp"
-#include "cm/checkpoint.hpp"
+#include "microsimulator/backend.hpp"
+#include "microsimulator/checkpoint.hpp"
 
-namespace cm {
+namespace microsimulator {
 
 class Simulation {
  public:
@@ -91,4 +91,4 @@ class Simulation {
   double time_{0.0};
 };
 
-}  // namespace cm
+}  // namespace microsimulator

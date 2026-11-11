@@ -15,16 +15,16 @@
 #include <utility>
 #include <vector>
 
-#include "cm/metal/depth_flow_source.hpp"
-#include "cm/metal/flow_source.hpp"
 #include "core/conjugate_gradient.hpp"
 #include "core/device_types.hpp"
 #include "core/flexible_gmres.hpp"
 #include "core/flow_system.hpp"
 #include "core/shared_constants.hpp"
 #include "metal_flow.hpp"
+#include "microsimulator/metal/depth_flow_source.hpp"
+#include "microsimulator/metal/flow_source.hpp"
 
-namespace cm::metal {
+namespace microsimulator::metal {
 namespace {
 
 using MetalUInt4 = device::uint4;
@@ -734,4 +734,4 @@ ResolvedFlowResult FlowSolver::solve_resolved(const SignalGridSpec& spec,
   };
 }
 
-}  // namespace cm::metal
+}  // namespace microsimulator::metal

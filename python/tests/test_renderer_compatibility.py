@@ -78,9 +78,11 @@ def test_every_legacy_renderer_has_a_closed_disposition() -> None:
 
 
 def test_pinned_legacy_renderer_source_and_call_sites() -> None:
-    legacy_root_value = os.environ.get("CM_LEGACY_ROOT")
+    legacy_root_value = os.environ.get("MICROSIMULATOR_LEGACY_ROOT")
     if legacy_root_value is None:
-        pytest.skip("CM_LEGACY_ROOT is required to authenticate legacy renderer sources")
+        pytest.skip(
+            "MICROSIMULATOR_LEGACY_ROOT is required to authenticate legacy renderer sources"
+        )
     legacy_root = Path(legacy_root_value)
     document = _document()
     source = legacy_root / cast(str, document["source"])

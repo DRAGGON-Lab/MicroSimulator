@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 
 struct ContactParametersGpu {
   float activation_margin;
@@ -61,4 +61,4 @@ void launch_external_contact_fill(
     ConstraintContactParametersGpu parameters, std::uint32_t cell_count,
     std::uint32_t constraint_count, cudaStream_t stream);
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

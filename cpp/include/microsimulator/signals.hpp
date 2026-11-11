@@ -7,9 +7,9 @@
 #include <span>
 #include <vector>
 
-#include "cm/types.hpp"
+#include "microsimulator/types.hpp"
 
-namespace cm {
+namespace microsimulator {
 
 enum class GridBoundaryKind : std::uint8_t {
   no_flux,
@@ -155,4 +155,4 @@ class SignalGrid {
 [[nodiscard]] SignalSolveResult signal_grid_crank_nicolson_candidate(
     const SignalGrid& grid, float dt, std::span<const float> source_rates = {});
 
-}  // namespace cm
+}  // namespace microsimulator

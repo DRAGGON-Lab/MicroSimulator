@@ -1,4 +1,4 @@
-#include "cm/species.hpp"
+#include "microsimulator/species.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -9,7 +9,7 @@
 
 #include "core/shared_constants.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 std::uint32_t checked_index(std::size_t index) {
@@ -137,4 +137,4 @@ float effective_cell_surface_area(float length, float radius) noexcept {
   return 2.0F * shared::pi * radius * (length + 2.0F * radius);
 }
 
-}  // namespace cm
+}  // namespace microsimulator

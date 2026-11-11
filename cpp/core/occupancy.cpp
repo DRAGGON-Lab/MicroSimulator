@@ -1,4 +1,4 @@
-#include "cm/occupancy.hpp"
+#include "microsimulator/occupancy.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10,7 +10,7 @@
 
 #include "occupancy_device.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 using detail::OccupancyKernel;
 using detail::OccupancyParameters;
@@ -74,14 +74,14 @@ OccupancySolver::OccupancySolver(BackendKind backend, std::uint32_t device_index
           "epsilon cutoff must be finite and in (0, 1]");
   switch (backend) {
     case BackendKind::metal:
-#ifdef CM_HAS_METAL
+#ifdef MICROSIMULATOR_HAS_METAL
       device_ = detail::make_metal_occupancy_device(device_index);
       return;
 #else
       throw std::runtime_error("Metal occupancy backend was not built");
 #endif
     case BackendKind::cuda:
-#ifdef CM_HAS_CUDA
+#ifdef MICROSIMULATOR_HAS_CUDA
       device_ = detail::make_cuda_occupancy_device(device_index);
       return;
 #else
@@ -367,4 +367,4 @@ OccupancyStep OccupancySolver::backward_euler(
   return result;
 }
 
-}  // namespace cm
+}  // namespace microsimulator

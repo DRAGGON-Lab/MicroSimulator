@@ -7,10 +7,10 @@
 #include <limits>
 #include <stdexcept>
 
-#include "cm/mechanics.hpp"
 #include "core/shared_constants.hpp"
+#include "microsimulator/mechanics.hpp"
 
-namespace cm::detail {
+namespace microsimulator::detail {
 
 // The vector operations of the conjugate-gradient solve of the regularized
 // contact system. A backend supplies them over its own storage for the
@@ -120,4 +120,4 @@ struct MechanicsSolverOperations {
   return report;
 }
 
-}  // namespace cm::detail
+}  // namespace microsimulator::detail

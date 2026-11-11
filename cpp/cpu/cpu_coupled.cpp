@@ -6,11 +6,11 @@
 #include <string>
 #include <vector>
 
-#include "cm/coupled_rates.hpp"
-#include "cm/signals.hpp"
-#include "cm/world_state.hpp"
+#include "microsimulator/coupled_rates.hpp"
+#include "microsimulator/signals.hpp"
+#include "microsimulator/world_state.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 float evaluate_instruction(const RateInstruction& instruction, std::span<const float> workspace,
@@ -217,4 +217,4 @@ SignalSolveReport advance_coupled_cpu(WorldState& state, SignalGrid& grid,
   return signal_report;
 }
 
-}  // namespace cm
+}  // namespace microsimulator

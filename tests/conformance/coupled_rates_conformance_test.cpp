@@ -6,18 +6,19 @@
 #include <vector>
 
 #include "backend_devices.hpp"
-#include "cm/simulation.hpp"
+#include "microsimulator/simulation.hpp"
 
 namespace {
 
-cm::RateInstruction operation(cm::RateOp op, std::uint32_t first = 0, std::uint32_t second = 0,
-                               float value = 0.0F) {
+microsimulator::RateInstruction operation(microsimulator::RateOp op, std::uint32_t first = 0,
+                                          std::uint32_t second = 0, float value = 0.0F) {
   return {.operation = op, .first = first, .second = second, .value = value};
 }
 
-cm::Simulation make_reference(cm::SignalIntegrationKind integration, bool masked = false) {
-  cm::Simulation simulation(cm::BackendKind::cpu, 513, 3);
-  cm::SignalGridSpec grid;
+microsimulator::Simulation make_reference(microsimulator::SignalIntegrationKind integration,
+                                          bool masked = false) {
+  microsimulator::Simulation simulation(microsimulator::BackendKind::cpu, 513, 3);
+  microsimulator::SignalGridSpec grid;
   grid.signal_count = 2;
   grid.shape = {.x = 9, .y = 7, .z = 5};
   grid.origin = {-3.0F, -2.0F, -1.0F};
@@ -25,13 +26,13 @@ cm::Simulation make_reference(cm::SignalIntegrationKind integration, bool masked
   grid.diffusion = {0.08F, 0.03F};
   grid.advection = {{0.05F, -0.02F, 0.01F}, {-0.03F, 0.04F, -0.01F}};
   grid.integration = integration;
-  grid.x_lower.kind = cm::GridBoundaryKind::periodic;
-  grid.x_upper.kind = cm::GridBoundaryKind::periodic;
-  grid.z_lower.kind = cm::GridBoundaryKind::fixed;
+  grid.x_lower.kind = microsimulator::GridBoundaryKind::periodic;
+  grid.x_upper.kind = microsimulator::GridBoundaryKind::periodic;
+  grid.z_lower.kind = microsimulator::GridBoundaryKind::fixed;
   grid.z_lower.values = {0.9F, 1.1F};
-  grid.z_upper.kind = cm::GridBoundaryKind::fixed;
+  grid.z_upper.kind = microsimulator::GridBoundaryKind::fixed;
   grid.z_upper.values = {1.2F, 1.0F};
-  cm::SignalGridAffineReaction reaction;
+  microsimulator::SignalGridAffineReaction reaction;
   reaction.source_rates.resize(grid.level_count());
   reaction.loss_rates.resize(grid.level_count());
   for (std::size_t index = 0; index < grid.level_count(); ++index) {
@@ -69,7 +70,7 @@ cm::Simulation make_reference(cm::SignalIntegrationKind integration, bool masked
     const auto x = static_cast<float>(index % 17) / 16.0F;
     const auto y = static_cast<float>((index * 7) % 19) / 18.0F;
     const auto z = static_cast<float>((index * 11) % 23) / 22.0F;
-    cm::CellInit cell;
+    microsimulator::CellInit cell;
     cell.position = {
         grid.origin.x + (x * grid.spacing.x * static_cast<float>(grid.shape.x - 1)),
         grid.origin.y + (y * grid.spacing.y * static_cast<float>(grid.shape.y - 1)),
@@ -87,8 +88,8 @@ cm::Simulation make_reference(cm::SignalIntegrationKind integration, bool masked
     simulation.add_cell(cell);
   }
 
-  using enum cm::RateOp;
-  std::vector<cm::RateInstruction> instructions{
+  using enum microsimulator::RateOp;
+  std::vector<microsimulator::RateInstruction> instructions{
       operation(species, 0),
       operation(species, 1),
       operation(species, 2),
@@ -104,17 +105,17 @@ cm::Simulation make_reference(cm::SignalIntegrationKind integration, bool masked
       operation(multiply, 4, 6),
   };
   simulation.set_coupled_rate_plan(
-      cm::CoupledRatePlan(3, 2, std::move(instructions), {8, 9, 10}, {11, 12}));
+      microsimulator::CoupledRatePlan(3, 2, std::move(instructions), {8, 9, 10}, {11, 12}));
   return simulation;
 }
 
 // A colony whose cells crowd a few lattice sites: most share one voxel, and
 // the rest sit on lattice planes and on the upper domain faces. The y axis has
 // a single site.
-cm::Simulation make_crowded_reference() {
+microsimulator::Simulation make_crowded_reference() {
   constexpr std::size_t cell_count = 400;
-  cm::Simulation simulation(cm::BackendKind::cpu, cell_count, 1);
-  cm::SignalGridSpec grid;
+  microsimulator::Simulation simulation(microsimulator::BackendKind::cpu, cell_count, 1);
+  microsimulator::SignalGridSpec grid;
   grid.signal_count = 2;
   grid.shape = {.x = 6, .y = 1, .z = 4};
   grid.origin = {-1.0F, 0.0F, 0.5F};
@@ -135,7 +136,7 @@ cm::Simulation make_crowded_reference() {
   const auto extent_x = grid.spacing.x * static_cast<float>(grid.shape.x - 1);
   const auto extent_z = grid.spacing.z * static_cast<float>(grid.shape.z - 1);
   for (std::size_t index = 0; index < cell_count; ++index) {
-    cm::CellInit cell;
+    microsimulator::CellInit cell;
     if (index % 8 == 0) {
       // On a lattice plane in x, sweeping z up to and including the upper face.
       cell.position = {grid.origin.x + (grid.spacing.x * static_cast<float>((index / 8) % 6)),
@@ -156,8 +157,8 @@ cm::Simulation make_crowded_reference() {
     simulation.add_cell(cell);
   }
 
-  using enum cm::RateOp;
-  std::vector<cm::RateInstruction> instructions{
+  using enum microsimulator::RateOp;
+  std::vector<microsimulator::RateInstruction> instructions{
       operation(species, 0),
       operation(signal, 0),
       operation(constant, 0, 0, 0.02F),
@@ -166,11 +167,13 @@ cm::Simulation make_crowded_reference() {
       operation(multiply, 0, 2),
       operation(multiply, 0, 3),
   };
-  simulation.set_coupled_rate_plan(cm::CoupledRatePlan(1, 2, std::move(instructions), {4}, {5, 6}));
+  simulation.set_coupled_rate_plan(
+      microsimulator::CoupledRatePlan(1, 2, std::move(instructions), {4}, {5, 6}));
   return simulation;
 }
 
-void assert_close(const cm::Simulation& actual, const cm::Simulation& expected) {
+void assert_close(const microsimulator::Simulation& actual,
+                  const microsimulator::Simulation& expected) {
   assert(actual.time() == expected.time());
   const auto actual_cells = actual.cells();
   const auto expected_cells = expected.cells();
@@ -190,14 +193,15 @@ void assert_close(const cm::Simulation& actual, const cm::Simulation& expected) 
   }
 }
 
-void run_case(const cm::Simulation& source, float dt) {
+void run_case(const microsimulator::Simulation& source, float dt) {
   const auto checkpoint = source.checkpoint();
-  cm::Simulation expected(cm::BackendKind::cpu, checkpoint);
+  microsimulator::Simulation expected(microsimulator::BackendKind::cpu, checkpoint);
   expected.step(dt);
 
-  cm::test::for_each_backend_device([&](cm::BackendKind backend, std::uint32_t device_index) {
-    cm::Simulation candidate(backend, checkpoint, device_index);
-    if (!candidate.supports(cm::BackendFeature::coupled_rates)) {
+  microsimulator::test::for_each_backend_device([&](microsimulator::BackendKind backend,
+                                                    std::uint32_t device_index) {
+    microsimulator::Simulation candidate(backend, checkpoint, device_index);
+    if (!candidate.supports(microsimulator::BackendFeature::coupled_rates)) {
       std::cout << "backend " << static_cast<int>(backend)
                 << " does not advertise coupled rates; skipping\n";
       return;
@@ -209,18 +213,18 @@ void run_case(const cm::Simulation& source, float dt) {
   });
 }
 
-void run_case(cm::SignalIntegrationKind integration, float dt, bool masked = false) {
+void run_case(microsimulator::SignalIntegrationKind integration, float dt, bool masked = false) {
   run_case(make_reference(integration, masked), dt);
 }
 
 }  // namespace
 
 int main() {
-  run_case(cm::SignalIntegrationKind::forward_euler, 0.01F);
-  run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F);
-  run_case(cm::SignalIntegrationKind::backward_euler, 0.5F);
-  run_case(cm::SignalIntegrationKind::forward_euler, 0.01F, true);
-  run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F, true);
+  run_case(microsimulator::SignalIntegrationKind::forward_euler, 0.01F);
+  run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F);
+  run_case(microsimulator::SignalIntegrationKind::backward_euler, 0.5F);
+  run_case(microsimulator::SignalIntegrationKind::forward_euler, 0.01F, true);
+  run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F, true);
   run_case(make_crowded_reference(), 0.01F);
   return 0;
 }

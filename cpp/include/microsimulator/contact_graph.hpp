@@ -5,10 +5,10 @@
 #include <span>
 #include <vector>
 
-#include "cm/types.hpp"
-#include "cm/world_state.hpp"
+#include "microsimulator/types.hpp"
+#include "microsimulator/world_state.hpp"
 
-namespace cm {
+namespace microsimulator {
 
 struct ContactParameters {
   float activation_margin{0.01F};
@@ -67,4 +67,4 @@ class ContactGraph {
 [[nodiscard]] ContactGraph find_cell_contacts_cpu_exhaustive(
     const WorldState& state, const ContactParameters& parameters = ContactParameters{});
 
-}  // namespace cm
+}  // namespace microsimulator

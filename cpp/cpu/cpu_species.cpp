@@ -5,10 +5,10 @@
 #include <string>
 #include <vector>
 
-#include "cm/species.hpp"
-#include "cm/world_state.hpp"
+#include "microsimulator/species.hpp"
+#include "microsimulator/world_state.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 float evaluate_instruction(const RateInstruction& instruction, std::span<const float> workspace,
@@ -144,4 +144,4 @@ void advance_species_cpu(WorldState& state, const SpeciesRatePlan& plan,
   std::ranges::copy(next_levels, species_state.levels.begin());
 }
 
-}  // namespace cm
+}  // namespace microsimulator

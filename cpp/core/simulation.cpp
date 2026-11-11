@@ -1,4 +1,4 @@
-#include "cm/simulation.hpp"
+#include "microsimulator/simulation.hpp"
 
 #include <algorithm>
 #include <array>
@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <tuple>
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 std::unique_ptr<ComputeBackend> make_backend(BackendKind kind, std::uint32_t device_index) {
@@ -14,13 +14,13 @@ std::unique_ptr<ComputeBackend> make_backend(BackendKind kind, std::uint32_t dev
     case BackendKind::cpu:
       return make_cpu_backend(device_index);
     case BackendKind::metal:
-#if CM_HAS_METAL
+#if MICROSIMULATOR_HAS_METAL
       return make_metal_backend(device_index);
 #else
       throw std::runtime_error("Metal backend is not implemented in this build");
 #endif
     case BackendKind::cuda:
-#if CM_HAS_CUDA
+#if MICROSIMULATOR_HAS_CUDA
       return make_cuda_backend(device_index);
 #else
       throw std::runtime_error("CUDA backend is not implemented in this build");
@@ -40,12 +40,12 @@ std::size_t backend_device_count(BackendKind kind) noexcept {
   if (kind == BackendKind::cpu) {
     return 1;
   }
-#if CM_HAS_METAL
+#if MICROSIMULATOR_HAS_METAL
   if (kind == BackendKind::metal) {
     return metal_backend_device_count();
   }
 #endif
-#if CM_HAS_CUDA
+#if MICROSIMULATOR_HAS_CUDA
   if (kind == BackendKind::cuda) {
     return cuda_backend_device_count();
   }
@@ -468,4 +468,4 @@ void Simulation::validate() const {
   }
 }
 
-}  // namespace cm
+}  // namespace microsimulator

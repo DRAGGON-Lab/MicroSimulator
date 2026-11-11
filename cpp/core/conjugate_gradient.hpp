@@ -9,7 +9,7 @@
 #include <string>
 #include <string_view>
 
-namespace cm::detail {
+namespace microsimulator::detail {
 
 // The vector operations of a Jacobi-preconditioned conjugate-gradient solve of
 // A x = b. A backend supplies them over its own storage for the solution x,
@@ -87,4 +87,4 @@ struct ConjugateGradientReport {
                            std::to_string(relative));
 }
 
-}  // namespace cm::detail
+}  // namespace microsimulator::detail

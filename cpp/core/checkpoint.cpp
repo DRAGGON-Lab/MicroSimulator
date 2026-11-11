@@ -1,9 +1,9 @@
-#include "cm/checkpoint.hpp"
+#include "microsimulator/checkpoint.hpp"
 
 #include <cmath>
 #include <stdexcept>
 
-namespace cm {
+namespace microsimulator {
 
 void SimulationCheckpoint::validate() const {
   if (schema_version != checkpoint_schema_version) {
@@ -33,4 +33,4 @@ void SimulationCheckpoint::validate() const {
   }
 }
 
-}  // namespace cm
+}  // namespace microsimulator

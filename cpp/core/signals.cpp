@@ -1,4 +1,4 @@
-#include "cm/signals.hpp"
+#include "microsimulator/signals.hpp"
 
 #include <algorithm>
 #include <array>
@@ -10,7 +10,7 @@
 
 #include "core/signal_jacobi.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 std::size_t checked_multiply(std::size_t left, std::size_t right, const char* name) {
@@ -942,4 +942,4 @@ SignalSolveReport advance_signal_grid_cpu(SignalGrid& grid, float dt) {
   return result.report;
 }
 
-}  // namespace cm
+}  // namespace microsimulator

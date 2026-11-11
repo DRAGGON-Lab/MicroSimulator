@@ -1,4 +1,4 @@
-#include "cm/coupled_rates.hpp"
+#include "microsimulator/coupled_rates.hpp"
 
 #include <cmath>
 #include <limits>
@@ -6,7 +6,7 @@
 #include <string>
 #include <utility>
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 void checked_index(std::size_t index, const char* name) {
@@ -141,4 +141,4 @@ void CoupledRatePlan::validate() const {
   }
 }
 
-}  // namespace cm
+}  // namespace microsimulator

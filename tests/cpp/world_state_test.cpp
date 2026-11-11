@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <utility>
 
-#include "cm/simulation.hpp"
+#include "microsimulator/simulation.hpp"
 
 namespace {
 
@@ -13,8 +13,8 @@ bool close(float left, float right, float tolerance = 1.0e-6F) {
 }
 
 void test_growth_uses_stable_ids() {
-  cm::Simulation simulation;
-  cm::CellInit initial;
+  microsimulator::Simulation simulation;
+  microsimulator::CellInit initial;
   initial.length = 4.0F;
   initial.radius = 0.5F;
   initial.growth_rate = 0.25F;
@@ -31,11 +31,11 @@ void test_growth_uses_stable_ids() {
 
 void test_invalid_growth_result_is_rejected_atomically() {
   for (const auto [growth_rate, dt] : {std::pair{-2.0F, 1.0F}, std::pair{1.0e30F, 1.0e30F}}) {
-    cm::Simulation simulation;
-    cm::CellInit stable;
+    microsimulator::Simulation simulation;
+    microsimulator::CellInit stable;
     stable.length = 2.0F;
     stable.growth_rate = 0.5F;
-    cm::CellInit unstable;
+    microsimulator::CellInit unstable;
     unstable.position = {5.0F, 0.0F, 0.0F};
     unstable.length = 4.0F;
     unstable.growth_rate = growth_rate;
@@ -57,8 +57,8 @@ void test_invalid_growth_result_is_rejected_atomically() {
 }
 
 void test_division_reuses_slot_but_not_identity() {
-  cm::Simulation simulation;
-  cm::CellInit initial;
+  microsimulator::Simulation simulation;
+  microsimulator::CellInit initial;
   initial.position = {2.0F, 3.0F, 0.0F};
   initial.direction = {2.0F, 0.0F, 0.0F};
   initial.length = 4.0F;
@@ -96,8 +96,8 @@ void test_division_reuses_slot_but_not_identity() {
 }
 
 void test_asymmetric_division_preserves_capsule_extent() {
-  cm::Simulation simulation(cm::BackendKind::cpu, 0, 2);
-  cm::CellInit initial;
+  microsimulator::Simulation simulation(microsimulator::BackendKind::cpu, 0, 2);
+  microsimulator::CellInit initial;
   initial.position = {2.0F, 3.0F, 0.0F};
   initial.direction = {2.0F, 0.0F, 0.0F};
   initial.length = 6.0F;
@@ -127,8 +127,8 @@ void test_asymmetric_division_preserves_capsule_extent() {
 }
 
 void test_invalid_division_fraction_is_atomic() {
-  cm::Simulation simulation;
-  cm::CellInit initial;
+  microsimulator::Simulation simulation;
+  microsimulator::CellInit initial;
   initial.length = 6.0F;
   const auto parent = simulation.add_cell(initial);
 
@@ -149,8 +149,8 @@ void test_invalid_division_fraction_is_atomic() {
 }
 
 void test_invalid_state_fails_explicitly() {
-  cm::Simulation simulation;
-  cm::CellInit invalid;
+  microsimulator::Simulation simulation;
+  microsimulator::CellInit invalid;
   invalid.radius = 0.0F;
 
   bool rejected = false;
@@ -171,8 +171,8 @@ void test_invalid_state_fails_explicitly() {
 }
 
 void test_mutable_cell_attributes_keep_stable_identity() {
-  cm::Simulation simulation;
-  const auto id = simulation.add_cell(cm::CellInit{});
+  microsimulator::Simulation simulation;
+  const auto id = simulation.add_cell(microsimulator::CellInit{});
   simulation.set_cell_attributes(id, 2.5F, 7);
 
   const auto updated = simulation.cell(id);
@@ -192,9 +192,9 @@ void test_mutable_cell_attributes_keep_stable_identity() {
 }
 
 void test_geometry_can_be_updated_by_stable_id() {
-  cm::Simulation simulation;
-  const auto first = simulation.add_cell(cm::CellInit{});
-  const auto second = simulation.add_cell(cm::CellInit{});
+  microsimulator::Simulation simulation;
+  const auto first = simulation.add_cell(microsimulator::CellInit{});
+  const auto second = simulation.add_cell(microsimulator::CellInit{});
   simulation.set_cell_geometry(second, {1.0F, 2.0F, 3.0F}, {0.0F, 2.0F, 0.0F}, 4.0F);
 
   assert(simulation.cell(first).slot == 0);
@@ -209,8 +209,8 @@ void test_geometry_can_be_updated_by_stable_id() {
 }
 
 void test_fixed_state_is_mutable_persistent_and_inherited() {
-  cm::Simulation simulation;
-  cm::CellInit initial;
+  microsimulator::Simulation simulation;
+  microsimulator::CellInit initial;
   initial.length = 4.0F;
   initial.growth_rate = 0.25F;
   initial.fixed = true;
@@ -227,15 +227,15 @@ void test_fixed_state_is_mutable_persistent_and_inherited() {
   assert(simulation.cell(first).fixed);
   assert(simulation.cell(second).fixed);
   const auto checkpoint = simulation.checkpoint();
-  cm::Simulation restored(cm::BackendKind::cpu, checkpoint);
+  microsimulator::Simulation restored(microsimulator::BackendKind::cpu, checkpoint);
   assert(restored.cell(first).fixed);
   assert(restored.cell(second).fixed);
   restored.validate();
 }
 
 void test_removal_backfills_slots_and_keeps_lineage() {
-  cm::WorldState state(0, 2);
-  cm::CellInit cell;
+  microsimulator::WorldState state(0, 2);
+  microsimulator::CellInit cell;
   cell.species = {1.0F, 2.0F};
   const auto first = state.add_cell(cell);
   cell.position = {5.0F, 0.0F, 0.0F};
@@ -260,7 +260,7 @@ void test_removal_backfills_slots_and_keeps_lineage() {
 
   const auto checkpoint = state.checkpoint();
   checkpoint.validate();
-  const cm::WorldState restored(checkpoint);
+  const microsimulator::WorldState restored(checkpoint);
   assert(restored.size() == 3);
   assert(restored.lineage_parent(daughters.second) == first);
 
@@ -275,28 +275,29 @@ void test_removal_backfills_slots_and_keeps_lineage() {
 }
 
 void test_unavailable_backends_do_not_fall_back() {
-  assert(cm::backend_device_count(cm::BackendKind::cpu) == 1);
-  assert(cm::backend_available(cm::BackendKind::cpu, 0));
-  assert(!cm::backend_available(cm::BackendKind::cpu, 1));
+  assert(microsimulator::backend_device_count(microsimulator::BackendKind::cpu) == 1);
+  assert(microsimulator::backend_available(microsimulator::BackendKind::cpu, 0));
+  assert(!microsimulator::backend_available(microsimulator::BackendKind::cpu, 1));
   bool invalid_cpu_device_rejected = false;
   try {
-    cm::Simulation simulation(cm::BackendKind::cpu, 0, 0, 1);
+    microsimulator::Simulation simulation(microsimulator::BackendKind::cpu, 0, 0, 1);
   } catch (const std::out_of_range&) {
     invalid_cpu_device_rejected = true;
   }
   assert(invalid_cpu_device_rejected);
 
-  for (const auto backend : {cm::BackendKind::metal, cm::BackendKind::cuda}) {
-    if (cm::backend_available(backend)) {
-      cm::Simulation simulation(backend);
+  for (const auto backend :
+       {microsimulator::BackendKind::metal, microsimulator::BackendKind::cuda}) {
+    if (microsimulator::backend_available(backend)) {
+      microsimulator::Simulation simulation(backend);
       assert(simulation.backend_info().kind == backend);
       assert(simulation.backend_info().device_index == 0);
-      assert(cm::backend_device_count(backend) >= 1);
+      assert(microsimulator::backend_device_count(backend) >= 1);
       continue;
     }
     bool rejected = false;
     try {
-      cm::Simulation simulation(backend);
+      microsimulator::Simulation simulation(backend);
     } catch (const std::runtime_error&) {
       rejected = true;
     }

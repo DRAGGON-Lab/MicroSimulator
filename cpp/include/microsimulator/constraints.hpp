@@ -5,10 +5,10 @@
 #include <span>
 #include <vector>
 
-#include "cm/types.hpp"
-#include "cm/world_state.hpp"
+#include "microsimulator/types.hpp"
+#include "microsimulator/world_state.hpp"
 
-namespace cm {
+namespace microsimulator {
 
 using ConstraintId = std::uint64_t;
 inline constexpr ConstraintId invalid_constraint_id = 0;
@@ -181,4 +181,4 @@ class ExternalContactGraph {
     const WorldState& state, const ConstraintSet& constraints,
     const ConstraintContactParameters& parameters = ConstraintContactParameters{});
 
-}  // namespace cm
+}  // namespace microsimulator

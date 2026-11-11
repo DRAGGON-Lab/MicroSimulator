@@ -6,7 +6,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_dir="$(cd "${script_dir}/.." && pwd)"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 report_dir="${1:-${source_dir}/build/metal-application-${timestamp}}"
-legacy_root="${2:-${CM_LEGACY_ROOT:-}}"
+legacy_root="${2:-${MICROSIMULATOR_LEGACY_ROOT:-}}"
 legacy_commit="4896f543c6250f053eea2312e628cc3a96bf7408"
 
 if [[ -e "${report_dir}" ]]; then
@@ -80,7 +80,7 @@ sw_vers >"${report_dir}/macos.txt"
 xcodebuild -version >"${report_dir}/xcode.txt"
 system_profiler SPDisplaysDataType -json >"${report_dir}/displays.json"
 
-export CMAKE_ARGS="-DCM_ENABLE_METAL=ON -DCM_ENABLE_CUDA=OFF -DCM_BUILD_TESTS=OFF"
+export CMAKE_ARGS="-DMICROSIMULATOR_ENABLE_METAL=ON -DMICROSIMULATOR_ENABLE_CUDA=OFF -DMICROSIMULATOR_BUILD_TESTS=OFF"
 uv sync --locked --all-extras --reinstall-package microsimulator \
   2>&1 | tee "${report_dir}/python-build.log"
 uv run microsimulator devices --json >"${report_dir}/devices.json"
@@ -88,7 +88,7 @@ uv run python -c \
   'from microsimulator import BackendKind, backend_device_count; assert backend_device_count(BackendKind.METAL) > 0' \
   2>&1 | tee "${report_dir}/metal-runtime.log"
 
-CM_LEGACY_ROOT="${legacy_root}" uv run pytest -q \
+MICROSIMULATOR_LEGACY_ROOT="${legacy_root}" uv run pytest -q \
   --junitxml="${report_dir}/pytest.xml" 2>&1 | tee "${report_dir}/pytest.log"
 uv run python scripts/run_legacy_example_matrix.py \
   --legacy-root "${legacy_root}" \

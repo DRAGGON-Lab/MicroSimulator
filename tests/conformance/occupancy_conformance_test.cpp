@@ -3,22 +3,22 @@
 #include <iostream>
 #include <stdexcept>
 
-#include "cm/backend.hpp"
-#include "cm/occupancy.hpp"
+#include "microsimulator/backend.hpp"
+#include "microsimulator/occupancy.hpp"
 
 namespace {
 void near(double actual, double expected, double tolerance = 2e-6) {
   if (!std::isfinite(actual) || std::abs(actual - expected) > tolerance)
     throw std::runtime_error("occupancy conformance mismatch");
 }
-void check(cm::BackendKind backend, std::uint32_t device) {
-  cm::OccupancySolver solver(backend, device);
+void check(microsimulator::BackendKind backend, std::uint32_t device) {
+  microsimulator::OccupancySolver solver(backend, device);
   const std::vector<std::array<float, 3>> centers{{0, 0, 0}, {1, 0, 0}, {2, 0, 0}};
   auto epsilon = solver.geometric_porosity(centers, {1, 1, 1}, {}, 8, {0, 1, 0});
   near(epsilon[0], 1);
   near(epsilon[1], 0);
   near(epsilon[2], 1);
-  const cm::OccupancyCapsule cell{{0, 0, 0}, {2, 1, 0}, 0.5F, 0.4F};
+  const microsimulator::OccupancyCapsule cell{{0, 0, 0}, {2, 1, 0}, 0.5F, 0.4F};
   const auto single = solver.geometric_porosity(centers, {1, 1, 1}, {cell});
   const auto overlap = solver.geometric_porosity(centers, {1, 1, 1}, {cell, cell});
   if (single != overlap || single[0] >= 1) throw std::runtime_error("capsule union mismatch");
@@ -59,8 +59,9 @@ void check(cm::BackendKind backend, std::uint32_t device) {
 }  // namespace
 int main() {
   std::size_t tested = 0;
-  for (const auto backend : {cm::BackendKind::metal, cm::BackendKind::cuda})
-    for (std::uint32_t device = 0; device < cm::backend_device_count(backend); ++device) {
+  for (const auto backend : {microsimulator::BackendKind::metal, microsimulator::BackendKind::cuda})
+    for (std::uint32_t device = 0; device < microsimulator::backend_device_count(backend);
+         ++device) {
       check(backend, device);
       ++tested;
     }

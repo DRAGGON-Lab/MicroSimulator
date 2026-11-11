@@ -39,7 +39,7 @@ CPU and Metal use both a native C++ test run and an application-level test run.
 
 ```console
 scripts/run_metal_conformance.sh
-CM_LEGACY_ROOT=/path/to/pinned/CellModeller scripts/run_metal_application_conformance.sh
+MICROSIMULATOR_LEGACY_ROOT=/path/to/pinned/CellModeller scripts/run_metal_application_conformance.sh
 ```
 
 The native gate performs a fresh Metal-enabled build, constructs every enumerated device, compiles every embedded MSL library, and runs the complete CTest suite. The application gate builds the Python extension with Metal enabled, runs the full Python and recorded-trajectory suites, and executes the complete legacy-example matrix on CPU and every Metal device.
@@ -60,7 +60,7 @@ Each runner requires a clean source tree and writes a checksummed test record co
 
 ## Comparing with CellModeller
 
-The application gate pins the original example sources at CellModeller commit `4896f543c6250f053eea2312e628cc3a96bf7408`. It authenticates 15 unchanged callback models and 9 typed equation migrations, advances all 24 runnable scenarios, and records `load.py` as the one migration-only row. Set `CM_LEGACY_ROOT` to that checkout to enable the suite.
+The application gate pins the original example sources at CellModeller commit `4896f543c6250f053eea2312e628cc3a96bf7408`. It authenticates 15 unchanged callback models and 9 typed equation migrations, advances all 24 runnable scenarios, and records `load.py` as the one migration-only row. Set `MICROSIMULATOR_LEGACY_ROOT` to that checkout to enable the suite.
 
 Recorded trajectories independently compare five representative workflows with values produced by the original Apple OpenCL runtime:
 
@@ -79,7 +79,7 @@ CUDA uses three distinct checks:
 ```console
 scripts/run_cuda_compile_check.sh
 scripts/run_cuda_conformance.sh
-CM_LEGACY_ROOT=/path/to/pinned/CellModeller scripts/run_cuda_application_conformance.sh
+MICROSIMULATOR_LEGACY_ROOT=/path/to/pinned/CellModeller scripts/run_cuda_application_conformance.sh
 ```
 
 The compile check mounts the source read-only in an ephemeral CUDA 12.8.1 development container, builds every native target, lists the registered tests, and records the image and compiler versions. It is a source/link portability check and does not require an NVIDIA driver or device.

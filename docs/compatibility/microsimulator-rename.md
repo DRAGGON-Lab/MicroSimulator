@@ -16,4 +16,4 @@ New checkpoints, scenes, run manifests, analysis datasets, and controller payloa
 
 Updating a model's imports changes its source digest. Update run manifests to authenticate the revised source; checkpoint resumes that require the original model digest still enforce that requirement. The rename does not bypass model identity validation or provide an alias for the old Python package.
 
-The native C++ namespace, include paths, build options, and conformance environment variables retain their existing `cm` and `CM_` spellings. References to the original CellModeller project and its `CellModeller` Python modules continue to identify that separate upstream project.
+The native C++ namespace and include directory are `microsimulator`. CMake options, build targets, macros, and environment variables use the `MICROSIMULATOR_` and `microsimulator_` prefixes, for example `MICROSIMULATOR_ENABLE_METAL` and `MICROSIMULATOR_LEGACY_ROOT`. References to the original CellModeller project and its `CellModeller` Python modules continue to identify that separate upstream project.

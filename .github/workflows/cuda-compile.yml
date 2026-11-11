@@ -27,7 +27,7 @@ jobs:
 
       - name: Compile native CUDA targets
         env:
-          CM_CUDA_ARCHITECTURES: "75"
+          MICROSIMULATOR_CUDA_ARCHITECTURES: "75"
         run: scripts/run_cuda_compile_check.sh build/cuda-compile-report
 
       - name: Upload compile evidence

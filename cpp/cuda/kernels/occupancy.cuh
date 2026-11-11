@@ -3,7 +3,7 @@
 
 #include "core/occupancy_device.hpp"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 void launch_occupancy(detail::OccupancyKernel kernel, const detail::OccupancyParameters& parameters,
                       void* const* buffers, cudaStream_t stream);
 }

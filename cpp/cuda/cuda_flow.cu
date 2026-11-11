@@ -18,7 +18,7 @@
 #include "cuda_flow.cuh"
 #include "kernels/flow.cuh"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 namespace {
 
 void check_cuda(cudaError_t result, const char* operation) {
@@ -470,4 +470,4 @@ ResolvedFlowResult solve_resolved_flow(const SignalGridSpec& spec, std::span<con
   };
 }
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

@@ -34,7 +34,7 @@ jobs:
     env:
       CMAKE_BUILD_PARALLEL_LEVEL: "2"
       # Exercise the host reference engine without requiring a GPU toolkit.
-      CMAKE_ARGS: -DCM_ENABLE_METAL=OFF -DCM_ENABLE_CUDA=OFF -DCM_BUILD_TESTS=OFF
+      CMAKE_ARGS: -DMICROSIMULATOR_ENABLE_METAL=OFF -DMICROSIMULATOR_ENABLE_CUDA=OFF -DMICROSIMULATOR_BUILD_TESTS=OFF
       MICROSIMULATOR_COMMAND_REPORT: build/shutdown-evidence/tutorial-commands
     steps:
       - name: Check out source
