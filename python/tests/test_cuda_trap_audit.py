@@ -8,6 +8,7 @@ import math
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -15,7 +16,7 @@ _AUDIT = Path(__file__).resolve().parents[2] / "scripts" / "audit_cuda_trap.py"
 _STEPS = ("0", "1", "50", "100", "500", "1000")
 
 
-def _run_document(device: str) -> dict:
+def _run_document(device: str) -> dict[str, Any]:
     snapshot = {
         "cells": [{"id": 7, "length": 2.0, "position": [1.0, 2.0, 3.0]}],
         "nutrient": [1.0, 2.0],
@@ -33,7 +34,9 @@ def _run_document(device: str) -> dict:
     }
 
 
-def _compare(tmp_path: Path, cpu: dict, cuda: dict) -> tuple[int, dict]:
+def _compare(
+    tmp_path: Path, cpu: dict[str, Any], cuda: dict[str, Any]
+) -> tuple[int, dict[str, Any]]:
     cpu_path = tmp_path / "cpu.json"
     cuda_path = tmp_path / "cuda.json"
     report_path = tmp_path / "comparison.json"

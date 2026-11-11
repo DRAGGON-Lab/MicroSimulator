@@ -623,9 +623,8 @@ class CudaBackend final : public ComputeBackend {
       result_device = solve.first;
       report = solve.second;
       if (!report.converged) {
-        throw std::runtime_error(
-            "CUDA Implicit coupled signal solve did not converge after " +
-            std::to_string(report.iterations) + " iterations");
+        throw std::runtime_error("CUDA Implicit coupled signal solve did not converge after " +
+                                 std::to_string(report.iterations) + " iterations");
       }
     }
 
@@ -913,14 +912,14 @@ class CudaBackend final : public ComputeBackend {
     check_cuda(cudaMemcpyAsync(contact_ids_.data(), geometry.ids.data(), geometry.ids.size_bytes(),
                                cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact cell IDs");
-    check_cuda(cudaMemcpyAsync(contact_centers_.data(), centers.data(), centers.size() * sizeof(float4),
-                               cudaMemcpyHostToDevice, stream_),
+    check_cuda(cudaMemcpyAsync(contact_centers_.data(), centers.data(),
+                               centers.size() * sizeof(float4), cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact cell centers");
     check_cuda(cudaMemcpyAsync(contact_axes_.data(), axes.data(), axes.size() * sizeof(float4),
                                cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact cell axes");
-    check_cuda(cudaMemcpyAsync(contact_geometry_.data(), shapes.data(), shapes.size() * sizeof(float4),
-                               cudaMemcpyHostToDevice, stream_),
+    check_cuda(cudaMemcpyAsync(contact_geometry_.data(), shapes.data(),
+                               shapes.size() * sizeof(float4), cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact cell geometry");
     check_cuda(cudaStreamSynchronize(stream_), "CUDA contact cell upload failed");
   }
@@ -931,8 +930,8 @@ class CudaBackend final : public ComputeBackend {
     for (const auto& candidate : candidates) {
       values.push_back(make_uint2(candidate.first_slot, candidate.second_slot));
     }
-    check_cuda(cudaMemcpyAsync(contact_candidates_.data(), values.data(), values.size() * sizeof(uint2),
-                               cudaMemcpyHostToDevice, stream_),
+    check_cuda(cudaMemcpyAsync(contact_candidates_.data(), values.data(),
+                               values.size() * sizeof(uint2), cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact candidates");
     check_cuda(cudaStreamSynchronize(stream_), "CUDA contact candidate upload failed");
   }

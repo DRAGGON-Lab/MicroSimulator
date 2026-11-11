@@ -324,5 +324,5 @@ kernel void flow_vector_combine(device const float* source [[buffer(0)]],
                                 constant float& beta [[buffer(3)]],
                                 constant uint& count [[buffer(4)]],
                                 uint i [[thread_position_in_grid]]) {
-  if (i < count) target[i] = alpha*source[i] + beta*target[i];
+  if (i < count) target[i] = alpha * source[i] + beta * target[i];
 }

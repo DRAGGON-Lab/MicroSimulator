@@ -82,8 +82,7 @@ void run_depth_case(cm::BackendKind backend, std::uint32_t device_index) {
   const auto actual = candidate.solve_depth_averaged_flow(spec, mobility, parameters);
   assert(actual.report.relative_residual <= 1.1e-6F);
   assert(expected.report.relative_residual <= 1.1e-6F);
-  assert(std::abs(actual.report.relative_residual - expected.report.relative_residual) <=
-         1.0e-6F);
+  assert(std::abs(actual.report.relative_residual - expected.report.relative_residual) <= 1.0e-6F);
   compare_fields(actual.field, expected.field, "depth-averaged flow");
 }
 

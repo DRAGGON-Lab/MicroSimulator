@@ -755,9 +755,8 @@ class MetalBackend final : public ComputeBackend {
       result_buffer = solve.first;
       report = solve.second;
       if (!report.converged) {
-        throw std::runtime_error(
-            "Metal Implicit coupled signal solve did not converge after " +
-            std::to_string(report.iterations) + " iterations");
+        throw std::runtime_error("Metal Implicit coupled signal solve did not converge after " +
+                                 std::to_string(report.iterations) + " iterations");
       }
     }
     const auto* output = static_cast<const float*>(result_buffer.contents);
