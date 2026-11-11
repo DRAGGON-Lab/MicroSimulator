@@ -1,17 +1,3 @@
-#include <metal_stdlib>
-
-using namespace metal;
-
-constant float pi = 3.14159265358979323846f;
-
-struct RateInstruction {
-  uint operation;
-  uint first;
-  uint second;
-  uint third;
-  float value;
-};
-
 float effective_volume(float length, float radius) {
   return pi * radius * radius * (length + 2.0f * radius);
 }
@@ -24,61 +10,61 @@ float evaluate_instruction(const RateInstruction instruction, device const float
                            device const float* species, float4 center, float4 geometry,
                            float growth_rate, int cell_type, float volume_change_rate) {
   switch (instruction.operation) {
-    case 0:
+    case rate_op_constant:
       return instruction.value;
-    case 1:
+    case rate_op_species:
       return species[instruction.first];
-    case 2:
+    case rate_op_position_x:
       return center.x;
-    case 3:
+    case rate_op_position_y:
       return center.y;
-    case 4:
+    case rate_op_position_z:
       return center.z;
-    case 5:
+    case rate_op_cell_length:
       return geometry.x;
-    case 6:
+    case rate_op_cell_radius:
       return geometry.y;
-    case 7:
+    case rate_op_growth_rate:
       return growth_rate;
-    case 8:
+    case rate_op_cell_type:
       return float(cell_type);
-    case 28:
+    case rate_op_cell_volume_change_rate:
       return volume_change_rate;
-    case 9:
+    case rate_op_cell_volume:
       return effective_volume(geometry.x, geometry.y);
-    case 10:
+    case rate_op_cell_surface_area:
       return effective_surface_area(geometry.x, geometry.y);
-    case 11:
+    case rate_op_add:
       return workspace[instruction.first] + workspace[instruction.second];
-    case 12:
+    case rate_op_subtract:
       return workspace[instruction.first] - workspace[instruction.second];
-    case 13:
+    case rate_op_multiply:
       return workspace[instruction.first] * workspace[instruction.second];
-    case 14:
+    case rate_op_divide:
       return workspace[instruction.first] / workspace[instruction.second];
-    case 15:
+    case rate_op_power:
       return pow(workspace[instruction.first], workspace[instruction.second]);
-    case 16:
+    case rate_op_minimum:
       return min(workspace[instruction.first], workspace[instruction.second]);
-    case 17:
+    case rate_op_maximum:
       return max(workspace[instruction.first], workspace[instruction.second]);
-    case 18:
+    case rate_op_negate:
       return -workspace[instruction.first];
-    case 19:
+    case rate_op_exponential:
       return exp(workspace[instruction.first]);
-    case 20:
+    case rate_op_logarithm:
       return log(workspace[instruction.first]);
-    case 21:
+    case rate_op_less:
       return workspace[instruction.first] < workspace[instruction.second] ? 1.0f : 0.0f;
-    case 22:
+    case rate_op_less_equal:
       return workspace[instruction.first] <= workspace[instruction.second] ? 1.0f : 0.0f;
-    case 23:
+    case rate_op_greater:
       return workspace[instruction.first] > workspace[instruction.second] ? 1.0f : 0.0f;
-    case 24:
+    case rate_op_greater_equal:
       return workspace[instruction.first] >= workspace[instruction.second] ? 1.0f : 0.0f;
-    case 25:
+    case rate_op_equal:
       return workspace[instruction.first] == workspace[instruction.second] ? 1.0f : 0.0f;
-    case 26:
+    case rate_op_select:
       return workspace[instruction.first] != 0.0f ? workspace[instruction.second]
                                                   : workspace[instruction.third];
     default:

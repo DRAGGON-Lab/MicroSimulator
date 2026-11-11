@@ -45,7 +45,7 @@ The public location type is `RodContactLocation`, and `ExternalContact.location`
 
 The Metal and CUDA implementations upload stable-ID-sorted tagged constraints and run native count/scan/fill pipelines over cell-constraint pairs. Each pair emits zero, one, or two location-tagged rows into dynamic storage. Pair and external rows are then combined in the native solver buffers; a reserved invalid second slot marks the one-sided row inside each private operator without reintroducing a sentinel into the public contact model.
 
-CPU, Metal, and CUDA own separate implementations. They share contact fixtures, operator probes, tolerances, and exact location-tag invariants. Metal uses Metal compute pipelines and MSL; CUDA uses CUDA C++ and the CUDA Runtime API.
+CPU, Metal, and CUDA own separate implementations of the contact geometry and the system operator. They share the conjugate-gradient iteration in `cpp/core/mechanics_solver.hpp`, contact fixtures, operator probes, tolerances, and exact location-tag invariants. Metal uses Metal compute pipelines and MSL; CUDA uses CUDA C++ and the CUDA Runtime API.
 
 ### Neighbor reporting
 

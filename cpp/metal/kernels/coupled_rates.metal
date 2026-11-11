@@ -1,19 +1,3 @@
-#include <metal_stdlib>
-
-using namespace metal;
-
-constant float pi = 3.14159265358979323846f;
-
-struct RateInstruction {
-  uint operation;
-  uint first;
-  uint second;
-  uint third;
-  float value;
-};
-
-;
-
 float effective_volume(float length, float radius) {
   return pi * radius * radius * (length + 2.0f * radius);
 }
@@ -132,9 +116,9 @@ float sample_signal(device const float* levels, GridShape shape, float4 origin, 
 
 float cell_scatter_weight(float4 center, GridShape shape, float4 origin, float4 spacing,
                           device const uchar* obstacles, uint x, uint y, uint z) {
-  // A cell only scatters into the eight sites of its own stencil, and the
-  // weight is pure arithmetic, so testing it first keeps the obstacle mask out
-  // of the sites a cell cannot reach - which is nearly all of them.
+  // The raw weight is zero when the cell lies on a lattice plane away from
+  // this site, and it is pure arithmetic, so testing it first skips the
+  // obstacle and connectivity work for a site the cell does not feed.
   float raw = cell_site_weight(center, shape, origin, spacing, x, y, z);
   if (raw == 0.0f) {
     return 0.0f;
@@ -182,69 +166,201 @@ float cell_scatter_weight(float4 center, GridShape shape, float4 origin, float4 
   return dropped ? raw / fluid_weight : raw;
 }
 
+// The lattice sites a cell's trilinear stencil covers: the flat index of its
+// lower corner, and one bit per axis (x: 4, y: 2, z: 1) set when the stencil
+// spans a second site along that axis.
+struct ScatterStencil {
+  uint base;
+  uint spans;
+};
+
+ScatterStencil scatter_stencil(float4 center, GridShape shape, float4 origin, float4 spacing) {
+  uint lower_x = uint(floor(axis_coordinate(center.x, origin.x, spacing.x, shape.x)));
+  uint lower_y = uint(floor(axis_coordinate(center.y, origin.y, spacing.y, shape.y)));
+  uint lower_z = uint(floor(axis_coordinate(center.z, origin.z, spacing.z, shape.z)));
+  uint span_x = shape.x == 1u || lower_x == shape.x - 1u ? 0u : 4u;
+  uint span_y = shape.y == 1u || lower_y == shape.y - 1u ? 0u : 2u;
+  uint span_z = shape.z == 1u || lower_z == shape.z - 1u ? 0u : 1u;
+  return {site_index(shape, lower_x, lower_y, lower_z), span_x | span_y | span_z};
+}
+
+bool stencil_covers(uint2 stencil, uint corner) { return (corner & ~stencil.y) == 0u; }
+
+uint stencil_site(uint2 stencil, GridShape shape, uint corner) {
+  return stencil.x + (corner >> 2) * shape.y * shape.z + ((corner >> 1) & 1u) * shape.z +
+         (corner & 1u);
+}
+
+// Cell-to-grid scatter runs as a gather: every site sums the cells whose
+// stencil covers it, in ascending cell order. The kernels below build that
+// per-site cell list. Stencils are computed once and stored, so counting and
+// filling walk identical integer site lists.
+kernel void coupled_scatter_stencils(device const float4* centers [[buffer(0)]],
+                                     device uint2* stencils [[buffer(1)]],
+                                     constant GridShape& shape [[buffer(2)]],
+                                     constant float4& origin [[buffer(3)]],
+                                     constant float4& spacing [[buffer(4)]],
+                                     constant uint& cell_count [[buffer(5)]],
+                                     uint cell [[thread_position_in_grid]]) {
+  if (cell >= cell_count) {
+    return;
+  }
+  ScatterStencil stencil = scatter_stencil(centers[cell], shape, origin, spacing);
+  stencils[cell] = uint2(stencil.base, stencil.spans);
+}
+
+kernel void coupled_scatter_count(device const uint2* stencils [[buffer(0)]],
+                                  device atomic_uint* counts [[buffer(1)]],
+                                  constant GridShape& shape [[buffer(2)]],
+                                  constant uint& cell_count [[buffer(3)]],
+                                  uint cell [[thread_position_in_grid]]) {
+  if (cell >= cell_count) {
+    return;
+  }
+  uint2 stencil = stencils[cell];
+  for (uint corner = 0; corner < 8u; ++corner) {
+    if (stencil_covers(stencil, corner)) {
+      atomic_fetch_add_explicit(&counts[stencil_site(stencil, shape, corner)], 1u,
+                                memory_order_relaxed);
+    }
+  }
+}
+
+// `ends` is the inclusive prefix sum of the per-site counts; site s owns
+// entries [ends[s - 1], ends[s]). Cursors start at zero.
+kernel void coupled_scatter_fill(device const uint2* stencils [[buffer(0)]],
+                                 device atomic_uint* cursors [[buffer(1)]],
+                                 device const uint* ends [[buffer(2)]],
+                                 device uint* cells [[buffer(3)]],
+                                 constant GridShape& shape [[buffer(4)]],
+                                 constant uint& cell_count [[buffer(5)]],
+                                 uint cell [[thread_position_in_grid]]) {
+  if (cell >= cell_count) {
+    return;
+  }
+  uint2 stencil = stencils[cell];
+  for (uint corner = 0; corner < 8u; ++corner) {
+    if (!stencil_covers(stencil, corner)) {
+      continue;
+    }
+    uint site = stencil_site(stencil, shape, corner);
+    uint first = site == 0u ? 0u : ends[site - 1u];
+    uint offset = atomic_fetch_add_explicit(&cursors[site], 1u, memory_order_relaxed);
+    cells[first + offset] = cell;
+  }
+}
+
+// Restores the max-heap property below `root` in a site's list of `count`
+// cell indices.
+void scatter_sift_down(device uint* cells, uint root, uint count) {
+  uint value = cells[root];
+  for (;;) {
+    uint child = 2u * root + 1u;
+    if (child >= count) {
+      break;
+    }
+    if (child + 1u < count && cells[child + 1u] > cells[child]) {
+      ++child;
+    }
+    if (cells[child] <= value) {
+      break;
+    }
+    cells[root] = cells[child];
+    root = child;
+  }
+  cells[root] = value;
+}
+
+// Filling claims slots in arrival order; sorting each site's list restores the
+// ascending cell order that makes the per-site sum reproducible. Heapsort
+// keeps a site shared by many cells at O(n log n) without scratch storage.
+kernel void coupled_scatter_sort(device const uint* ends [[buffer(0)]],
+                                 device uint* cells [[buffer(1)]],
+                                 constant uint& site_count [[buffer(2)]],
+                                 uint site [[thread_position_in_grid]]) {
+  if (site >= site_count) {
+    return;
+  }
+  uint first = site == 0u ? 0u : ends[site - 1u];
+  uint count = ends[site] - first;
+  if (count < 2u) {
+    return;
+  }
+  device uint* list = cells + first;
+  for (uint root = count / 2u; root > 0u; --root) {
+    scatter_sift_down(list, root - 1u, count);
+  }
+  for (uint last = count - 1u; last > 0u; --last) {
+    uint largest = list[0];
+    list[0] = list[last];
+    list[last] = largest;
+    scatter_sift_down(list, 0u, last);
+  }
+}
+
 float evaluate_instruction(const RateInstruction instruction, device const float* workspace,
                            device const float* species, device const float* signals, float4 center,
                            float4 geometry, float growth_rate, int cell_type,
                            float volume_change_rate) {
   switch (instruction.operation) {
-    case 0:
+    case rate_op_constant:
       return instruction.value;
-    case 1:
+    case rate_op_species:
       return species[instruction.first];
-    case 2:
+    case rate_op_position_x:
       return center.x;
-    case 3:
+    case rate_op_position_y:
       return center.y;
-    case 4:
+    case rate_op_position_z:
       return center.z;
-    case 5:
+    case rate_op_cell_length:
       return geometry.x;
-    case 6:
+    case rate_op_cell_radius:
       return geometry.y;
-    case 7:
+    case rate_op_growth_rate:
       return growth_rate;
-    case 8:
+    case rate_op_cell_type:
       return float(cell_type);
-    case 28:
+    case rate_op_cell_volume_change_rate:
       return volume_change_rate;
-    case 9:
+    case rate_op_cell_volume:
       return effective_volume(geometry.x, geometry.y);
-    case 10:
+    case rate_op_cell_surface_area:
       return effective_surface_area(geometry.x, geometry.y);
-    case 11:
+    case rate_op_add:
       return workspace[instruction.first] + workspace[instruction.second];
-    case 12:
+    case rate_op_subtract:
       return workspace[instruction.first] - workspace[instruction.second];
-    case 13:
+    case rate_op_multiply:
       return workspace[instruction.first] * workspace[instruction.second];
-    case 14:
+    case rate_op_divide:
       return workspace[instruction.first] / workspace[instruction.second];
-    case 15:
+    case rate_op_power:
       return pow(workspace[instruction.first], workspace[instruction.second]);
-    case 16:
+    case rate_op_minimum:
       return min(workspace[instruction.first], workspace[instruction.second]);
-    case 17:
+    case rate_op_maximum:
       return max(workspace[instruction.first], workspace[instruction.second]);
-    case 18:
+    case rate_op_negate:
       return -workspace[instruction.first];
-    case 19:
+    case rate_op_exponential:
       return exp(workspace[instruction.first]);
-    case 20:
+    case rate_op_logarithm:
       return log(workspace[instruction.first]);
-    case 21:
+    case rate_op_less:
       return workspace[instruction.first] < workspace[instruction.second] ? 1.0f : 0.0f;
-    case 22:
+    case rate_op_less_equal:
       return workspace[instruction.first] <= workspace[instruction.second] ? 1.0f : 0.0f;
-    case 23:
+    case rate_op_greater:
       return workspace[instruction.first] > workspace[instruction.second] ? 1.0f : 0.0f;
-    case 24:
+    case rate_op_greater_equal:
       return workspace[instruction.first] >= workspace[instruction.second] ? 1.0f : 0.0f;
-    case 25:
+    case rate_op_equal:
       return workspace[instruction.first] == workspace[instruction.second] ? 1.0f : 0.0f;
-    case 26:
+    case rate_op_select:
       return workspace[instruction.first] != 0.0f ? workspace[instruction.second]
                                                   : workspace[instruction.third];
-    case 27:
+    case rate_op_signal:
       return signals[instruction.first];
     default:
       return NAN;
@@ -328,6 +444,7 @@ kernel void advance_coupled_grid(
     device const float* reaction_loss [[buffer(18)]], device const uchar* obstacles [[buffer(19)]],
     device const float* x_faces [[buffer(20)]], device const float* y_faces [[buffer(21)]],
     device const float* z_faces [[buffer(22)]], constant uint& has_velocity_field [[buffer(23)]],
+    device const uint* scatter_ends [[buffer(24)]], device const uint* scatter_cells [[buffer(25)]],
     uint index [[thread_position_in_grid]]) {
   if (index >= level_count) {
     return;
@@ -405,9 +522,14 @@ kernel void advance_coupled_grid(
 
   float source = 0.0f;
   float inverse_voxel_volume = 1.0f / (spacing.x * spacing.y * spacing.z);
-  for (uint cell = 0; cell < cell_count; ++cell) {
-    float weight = cell_scatter_weight(centers[cell], shape, origin, spacing, obstacles, x, y, z);
-    source += weight * cell_signal_rates[cell * signal_count + signal] * inverse_voxel_volume;
+  if (cell_count != 0u) {
+    uint first = site == 0u ? 0u : scatter_ends[site - 1u];
+    uint last = scatter_ends[site];
+    for (uint entry = first; entry < last; ++entry) {
+      uint cell = scatter_cells[entry];
+      float weight = cell_scatter_weight(centers[cell], shape, origin, spacing, obstacles, x, y, z);
+      source += weight * cell_signal_rates[cell * signal_count + signal] * inverse_voxel_volume;
+    }
   }
   float transport_scale = crank_nicolson == 0u ? dt : (crank_nicolson == 1u ? 0.5f * dt : 0.0f);
   float candidate = current + transport_scale * rate + dt * source;

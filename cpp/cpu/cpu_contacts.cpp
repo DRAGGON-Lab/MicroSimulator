@@ -9,11 +9,12 @@
 #include <vector>
 
 #include "cm/contact_graph.hpp"
+#include "core/shared_constants.hpp"
 
 namespace cm {
 namespace {
 
-constexpr float inverse_sqrt_two = 0.7071067811865475F;
+using shared::inverse_sqrt_two;
 
 struct Capsule {
   CellId id;

@@ -4,6 +4,7 @@
 #include <nanobind/stl/vector.h>
 
 #include "cm/occupancy.hpp"
+#include "native_call.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -32,11 +33,11 @@ void bind_occupancy(nb::module_& module) {
       .def_ro("relative_residual", &cm::OccupancyStep::relative_residual);
   nb::class_<cm::OccupancySolver>(module, "OccupancySolver")
       .def(nb::init<cm::BackendKind, std::uint32_t, float>())
-      .def("geometric_porosity", &cm::OccupancySolver::geometric_porosity)
-      .def("accessible_volumes", &cm::OccupancySolver::accessible_volumes)
-      .def("concentration", &cm::OccupancySolver::concentration)
-      .def("porosity_face", &cm::OccupancySolver::porosity_face)
-      .def("remap_amounts", &cm::OccupancySolver::remap_amounts)
-      .def("exchange_weights", &cm::OccupancySolver::exchange_weights)
-      .def("backward_euler", &cm::OccupancySolver::backward_euler);
+      .def("geometric_porosity", cm::python::released(&cm::OccupancySolver::geometric_porosity))
+      .def("accessible_volumes", cm::python::released(&cm::OccupancySolver::accessible_volumes))
+      .def("concentration", cm::python::released(&cm::OccupancySolver::concentration))
+      .def("porosity_face", cm::python::released(&cm::OccupancySolver::porosity_face))
+      .def("remap_amounts", cm::python::released(&cm::OccupancySolver::remap_amounts))
+      .def("exchange_weights", cm::python::released(&cm::OccupancySolver::exchange_weights))
+      .def("backward_euler", cm::python::released(&cm::OccupancySolver::backward_euler));
 }

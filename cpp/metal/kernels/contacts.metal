@@ -1,10 +1,3 @@
-#include <metal_stdlib>
-
-using namespace metal;
-
-constant float inverse_sqrt_two = 0.7071067811865475f;
-constant float float_epsilon = 1.1920928955078125e-7f;
-constant uint segment_minimization_iterations = 40;
 constant uint interior_location = 2;
 
 struct Capsule {
@@ -24,14 +17,6 @@ struct PointPair {
 struct PairPoints {
   PointPair values[2];
   uint count;
-};
-
-struct ExternalConstraint {
-  ulong id;
-  uint kind;
-  uint allowed_region;
-  float4 geometry;
-  float4 parameters;
 };
 
 struct ExternalEvaluation {

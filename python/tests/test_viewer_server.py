@@ -93,6 +93,57 @@ def test_live_session_steps_resets_and_writes_only_configured_checkpoint(
         disabled.checkpoint()
 
 
+def test_live_session_refuses_an_existing_checkpoint_output(tmp_path: Path) -> None:
+    output = tmp_path / "live.cm2.json"
+    output.write_text("earlier results", encoding="utf-8")
+
+    with pytest.raises(LiveViewerError, match="already exists"):
+        LiveSession(_factory, dt=0.25, checkpoint_output=output)
+    assert output.read_text(encoding="utf-8") == "earlier results"
+
+    with pytest.raises(LiveViewerError, match="not a file"):
+        LiveSession(_factory, dt=0.25, checkpoint_output=tmp_path, overwrite=True)
+
+    session = LiveSession(_factory, dt=0.25, checkpoint_output=output, overwrite=True)
+    session.step()
+    session.checkpoint()
+    assert load_checkpoint(output).time == 0.25
+
+
+def test_live_session_replaces_its_own_checkpoint(tmp_path: Path) -> None:
+    output = tmp_path / "live.cm2.json"
+    session = LiveSession(_factory, dt=0.25, checkpoint_output=output)
+    session.step()
+    session.checkpoint()
+    session.step()
+    session.checkpoint()
+    assert load_checkpoint(output).time == 0.5
+
+
+def test_view_refuses_to_checkpoint_over_the_resumed_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkpoint = tmp_path / "start.cm2.json"
+    checkpoint.write_text("starting state", encoding="utf-8")
+
+    status = main(
+        [
+            "view",
+            "--resume",
+            str(checkpoint),
+            "--dt",
+            "0.2",
+            "--checkpoint-output",
+            str(tmp_path / "." / "start.cm2.json"),
+            "--overwrite",
+        ]
+    )
+
+    assert status == 2
+    assert "must not be the --resume checkpoint" in capsys.readouterr().err
+    assert checkpoint.read_text(encoding="utf-8") == "starting state"
+
+
 def test_live_session_preserves_native_controller_state(tmp_path: Path) -> None:
     output = tmp_path / "controller.cm2.json"
     session = LiveSession(_controller_factory, dt=0.2, checkpoint_output=output)

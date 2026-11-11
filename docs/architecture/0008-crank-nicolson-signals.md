@@ -42,7 +42,7 @@ The grid specification records the integration kind, maximum iteration count, an
 
 ## Backend staging
 
-CPU is the numerical reference. Metal and CUDA use native Jacobi stencil kernels and compare their committed fields and reports against it. Metal forms the right-hand side, iterates, computes residual terms, and reduces them through native MSL pipelines. CUDA mirrors that sequence with native kernels ordered on one stream. In both cases the host reads only the scalar convergence result and the committed field. Calling the CPU reference from a GPU backend is not an allowed fallback.
+CPU is the numerical reference. Metal and CUDA use native Jacobi stencil kernels and compare their committed fields and reports against it. All three run the stopping rule in `cpp/core/signal_jacobi.hpp`. Metal forms the right-hand side, iterates, computes residual terms, and reduces them through native MSL pipelines. CUDA mirrors that sequence with native kernels ordered on one stream. In both cases the host reads only the scalar convergence result and the committed field. Calling the CPU reference from a GPU backend is not an allowed fallback.
 
 ## Consequences
 

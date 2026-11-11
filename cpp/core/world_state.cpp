@@ -312,8 +312,17 @@ void WorldState::advance_growth(float dt) {
   if (!std::isfinite(dt) || dt < 0.0F) {
     throw std::invalid_argument("time step must be finite and non-negative");
   }
+  const auto grown = [&](std::size_t index) {
+    return length_[index] + (growth_rate_[index] * length_[index] * dt);
+  };
   for (std::size_t index = 0; index < size(); ++index) {
-    length_[index] += growth_rate_[index] * length_[index] * dt;
+    const auto candidate = grown(index);
+    if (!std::isfinite(candidate) || candidate < 0.0F) {
+      throw std::runtime_error("growth produced a non-finite or negative cell length");
+    }
+  }
+  for (std::size_t index = 0; index < size(); ++index) {
+    length_[index] = grown(index);
   }
 }
 

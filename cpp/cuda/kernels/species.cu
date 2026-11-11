@@ -1,9 +1,11 @@
+#include "cm/species.hpp"
+#include "core/shared_constants.hpp"
 #include "species.cuh"
 
 namespace cm::cuda {
 namespace {
 
-constexpr float pi = 3.14159265358979323846F;
+using shared::pi;
 constexpr std::uint32_t threads_per_block = 256;
 
 __device__ float effective_volume(float length, float radius) {
@@ -18,62 +20,62 @@ __device__ float evaluate_instruction(const RateInstructionGpu& instruction, con
                                       const float* species, float4 center, float4 geometry,
                                       float growth_rate, std::int32_t cell_type,
                                       float volume_change_rate) {
-  switch (instruction.operation) {
-    case 0:
+  switch (static_cast<RateOp>(instruction.operation)) {
+    case RateOp::constant:
       return instruction.value;
-    case 1:
+    case RateOp::species:
       return species[instruction.first];
-    case 2:
+    case RateOp::position_x:
       return center.x;
-    case 3:
+    case RateOp::position_y:
       return center.y;
-    case 4:
+    case RateOp::position_z:
       return center.z;
-    case 5:
+    case RateOp::cell_length:
       return geometry.x;
-    case 6:
+    case RateOp::cell_radius:
       return geometry.y;
-    case 7:
+    case RateOp::growth_rate:
       return growth_rate;
-    case 8:
+    case RateOp::cell_type:
       return static_cast<float>(cell_type);
-    case 28:
+    case RateOp::cell_volume_change_rate:
       return volume_change_rate;
-    case 9:
+    case RateOp::cell_volume:
       return effective_volume(geometry.x, geometry.y);
-    case 10:
+    case RateOp::cell_surface_area:
       return effective_surface_area(geometry.x, geometry.y);
-    case 11:
+    case RateOp::add:
       return workspace[instruction.first] + workspace[instruction.second];
-    case 12:
+    case RateOp::subtract:
       return workspace[instruction.first] - workspace[instruction.second];
-    case 13:
+    case RateOp::multiply:
       return workspace[instruction.first] * workspace[instruction.second];
-    case 14:
+    case RateOp::divide:
       return workspace[instruction.first] / workspace[instruction.second];
-    case 15:
+    case RateOp::power:
       return powf(workspace[instruction.first], workspace[instruction.second]);
-    case 16:
+    case RateOp::minimum:
       return fminf(workspace[instruction.first], workspace[instruction.second]);
-    case 17:
+    case RateOp::maximum:
       return fmaxf(workspace[instruction.first], workspace[instruction.second]);
-    case 18:
+    case RateOp::negate:
       return -workspace[instruction.first];
-    case 19:
+    case RateOp::exponential:
       return expf(workspace[instruction.first]);
-    case 20:
+    case RateOp::logarithm:
       return logf(workspace[instruction.first]);
-    case 21:
+    case RateOp::less:
       return workspace[instruction.first] < workspace[instruction.second] ? 1.0F : 0.0F;
-    case 22:
+    case RateOp::less_equal:
       return workspace[instruction.first] <= workspace[instruction.second] ? 1.0F : 0.0F;
-    case 23:
+    case RateOp::greater:
       return workspace[instruction.first] > workspace[instruction.second] ? 1.0F : 0.0F;
-    case 24:
+    case RateOp::greater_equal:
       return workspace[instruction.first] >= workspace[instruction.second] ? 1.0F : 0.0F;
-    case 25:
+    case RateOp::equal:
       return workspace[instruction.first] == workspace[instruction.second] ? 1.0F : 0.0F;
-    case 26:
+    case RateOp::select:
       return workspace[instruction.first] != 0.0F ? workspace[instruction.second]
                                                   : workspace[instruction.third];
     default:

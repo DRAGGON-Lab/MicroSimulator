@@ -7,6 +7,8 @@
 #include <string>
 #include <utility>
 
+#include "core/shared_constants.hpp"
+
 namespace cm {
 namespace {
 
@@ -128,13 +130,11 @@ void SpeciesRatePlan::validate() const {
 float effective_cell_volume(float length, float radius) noexcept {
   // Conserved biomass volume for the endpoint-preserving division rule.
   // This is a biochemical measure, not the geometric capsule volume.
-  constexpr float pi = 3.14159265358979323846F;
-  return pi * radius * radius * (length + 2.0F * radius);
+  return shared::pi * radius * radius * (length + 2.0F * radius);
 }
 
 float effective_cell_surface_area(float length, float radius) noexcept {
-  constexpr float pi = 3.14159265358979323846F;
-  return 2.0F * pi * radius * (length + 2.0F * radius);
+  return 2.0F * shared::pi * radius * (length + 2.0F * radius);
 }
 
 }  // namespace cm

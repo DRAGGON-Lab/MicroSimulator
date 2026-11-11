@@ -3,17 +3,6 @@
 // path, so this fragment is concatenated ahead of each kernel source at build
 // time rather than included by it.
 
-#include <metal_stdlib>
-
-using namespace metal;
-
-struct GridShape {
-  uint x;
-  uint y;
-  uint z;
-  uint sites;
-};
-
 uint site_index(GridShape shape, uint x, uint y, uint z) {
   return x * shape.y * shape.z + y * shape.z + z;
 }

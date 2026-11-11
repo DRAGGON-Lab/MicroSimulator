@@ -2,6 +2,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 #include "cm/simulation.hpp"
 
@@ -26,6 +27,33 @@ void test_growth_uses_stable_ids() {
   assert(close(simulation.cell(id).length, 4.5F));
   assert(std::abs(simulation.time() - 0.5) <= 1.0e-12);
   simulation.validate();
+}
+
+void test_invalid_growth_result_is_rejected_atomically() {
+  for (const auto [growth_rate, dt] : {std::pair{-2.0F, 1.0F}, std::pair{1.0e30F, 1.0e30F}}) {
+    cm::Simulation simulation;
+    cm::CellInit stable;
+    stable.length = 2.0F;
+    stable.growth_rate = 0.5F;
+    cm::CellInit unstable;
+    unstable.position = {5.0F, 0.0F, 0.0F};
+    unstable.length = 4.0F;
+    unstable.growth_rate = growth_rate;
+    const auto stable_id = simulation.add_cell(stable);
+    const auto unstable_id = simulation.add_cell(unstable);
+
+    bool rejected = false;
+    try {
+      simulation.step(dt);
+    } catch (const std::runtime_error&) {
+      rejected = true;
+    }
+    assert(rejected);
+    assert(simulation.cell(stable_id).length == 2.0F);
+    assert(simulation.cell(unstable_id).length == 4.0F);
+    assert(simulation.time() == 0.0);
+    simulation.validate();
+  }
 }
 
 void test_division_reuses_slot_but_not_identity() {
@@ -280,6 +308,7 @@ void test_unavailable_backends_do_not_fall_back() {
 
 int main() {
   test_growth_uses_stable_ids();
+  test_invalid_growth_result_is_rejected_atomically();
   test_division_reuses_slot_but_not_identity();
   test_asymmetric_division_preserves_capsule_extent();
   test_invalid_division_fraction_is_atomic();

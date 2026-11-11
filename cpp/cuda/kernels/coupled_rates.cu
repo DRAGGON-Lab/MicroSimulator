@@ -1,11 +1,14 @@
 #include <cmath>
 
+#include "cm/species.hpp"
+#include "contacts.cuh"
+#include "core/shared_constants.hpp"
 #include "coupled_rates.cuh"
 
 namespace cm::cuda {
 namespace {
 
-constexpr float pi = 3.14159265358979323846F;
+using shared::pi;
 constexpr std::uint32_t threads_per_block = 256;
 
 __device__ float effective_volume(float length, float radius) {
@@ -130,9 +133,9 @@ __device__ float sample_signal(const float* levels, SignalGridShapeGpu shape, fl
 __device__ float cell_scatter_weight(float4 center, SignalGridShapeGpu shape, float4 origin,
                                      float4 spacing, const std::uint8_t* obstacles, std::uint32_t x,
                                      std::uint32_t y, std::uint32_t z) {
-  // A cell only scatters into the eight sites of its own stencil, and the
-  // weight is pure arithmetic, so testing it first keeps the obstacle mask out
-  // of the sites a cell cannot reach - which is nearly all of them.
+  // The raw weight is zero when the cell lies on a lattice plane away from
+  // this site, and it is pure arithmetic, so testing it first skips the
+  // obstacle and connectivity work for a site the cell does not feed.
   const auto raw = cell_site_weight(center, shape, origin, spacing, x, y, z);
   if (raw == 0.0F) {
     return 0.0F;
@@ -180,69 +183,192 @@ __device__ float cell_scatter_weight(float4 center, SignalGridShapeGpu shape, fl
   return dropped ? raw / fluid_weight : raw;
 }
 
+// The lattice sites a cell's trilinear stencil covers: `x` is the flat index of
+// its lower corner, and `y` holds one bit per axis (x: 4, y: 2, z: 1) set when
+// the stencil spans a second site along that axis.
+__device__ uint2 scatter_stencil(float4 center, SignalGridShapeGpu shape, float4 origin,
+                                 float4 spacing) {
+  const auto lower_x =
+      static_cast<std::uint32_t>(floorf(axis_coordinate(center.x, origin.x, spacing.x, shape.x)));
+  const auto lower_y =
+      static_cast<std::uint32_t>(floorf(axis_coordinate(center.y, origin.y, spacing.y, shape.y)));
+  const auto lower_z =
+      static_cast<std::uint32_t>(floorf(axis_coordinate(center.z, origin.z, spacing.z, shape.z)));
+  const auto span_x = shape.x == 1 || lower_x == shape.x - 1 ? 0U : 4U;
+  const auto span_y = shape.y == 1 || lower_y == shape.y - 1 ? 0U : 2U;
+  const auto span_z = shape.z == 1 || lower_z == shape.z - 1 ? 0U : 1U;
+  return make_uint2(site_index(shape, lower_x, lower_y, lower_z), span_x | span_y | span_z);
+}
+
+__device__ bool stencil_covers(uint2 stencil, std::uint32_t corner) {
+  return (corner & ~stencil.y) == 0U;
+}
+
+__device__ std::uint32_t stencil_site(uint2 stencil, SignalGridShapeGpu shape,
+                                      std::uint32_t corner) {
+  return stencil.x + (corner >> 2) * shape.y * shape.z + ((corner >> 1) & 1U) * shape.z +
+         (corner & 1U);
+}
+
+// Cell-to-grid scatter runs as a gather: every site sums the cells whose
+// stencil covers it, in ascending cell order. The kernels below build that
+// per-site cell list. Stencils are computed once and stored, so counting and
+// filling walk identical integer site lists.
+__global__ void coupled_scatter_stencils(const float4* centers, uint2* stencils,
+                                         SignalGridShapeGpu shape, float4 origin, float4 spacing,
+                                         std::uint32_t cell_count) {
+  const auto cell = blockIdx.x * blockDim.x + threadIdx.x;
+  if (cell >= cell_count) {
+    return;
+  }
+  stencils[cell] = scatter_stencil(centers[cell], shape, origin, spacing);
+}
+
+__global__ void coupled_scatter_count(const uint2* stencils, std::uint32_t* counts,
+                                      SignalGridShapeGpu shape, std::uint32_t cell_count) {
+  const auto cell = blockIdx.x * blockDim.x + threadIdx.x;
+  if (cell >= cell_count) {
+    return;
+  }
+  const auto stencil = stencils[cell];
+  for (std::uint32_t corner = 0; corner < 8; ++corner) {
+    if (stencil_covers(stencil, corner)) {
+      atomicAdd(&counts[stencil_site(stencil, shape, corner)], 1U);
+    }
+  }
+}
+
+// `ends` is the inclusive prefix sum of the per-site counts; site s owns
+// entries [ends[s - 1], ends[s]). Cursors start at zero.
+__global__ void coupled_scatter_fill(const uint2* stencils, std::uint32_t* cursors,
+                                     const std::uint32_t* ends, std::uint32_t* cells,
+                                     SignalGridShapeGpu shape, std::uint32_t cell_count) {
+  const auto cell = blockIdx.x * blockDim.x + threadIdx.x;
+  if (cell >= cell_count) {
+    return;
+  }
+  const auto stencil = stencils[cell];
+  for (std::uint32_t corner = 0; corner < 8; ++corner) {
+    if (!stencil_covers(stencil, corner)) {
+      continue;
+    }
+    const auto site = stencil_site(stencil, shape, corner);
+    const auto first = site == 0 ? 0U : ends[site - 1];
+    const auto offset = atomicAdd(&cursors[site], 1U);
+    cells[first + offset] = cell;
+  }
+}
+
+// Restores the max-heap property below `root` in a site's list of `count`
+// cell indices.
+__device__ void scatter_sift_down(std::uint32_t* cells, std::uint32_t root, std::uint32_t count) {
+  const auto value = cells[root];
+  for (;;) {
+    auto child = 2U * root + 1U;
+    if (child >= count) {
+      break;
+    }
+    if (child + 1U < count && cells[child + 1U] > cells[child]) {
+      ++child;
+    }
+    if (cells[child] <= value) {
+      break;
+    }
+    cells[root] = cells[child];
+    root = child;
+  }
+  cells[root] = value;
+}
+
+// Filling claims slots in arrival order; sorting each site's list restores the
+// ascending cell order that makes the per-site sum reproducible. Heapsort
+// keeps a site shared by many cells at O(n log n) without scratch storage.
+__global__ void coupled_scatter_sort(const std::uint32_t* ends, std::uint32_t* cells,
+                                     std::uint32_t site_count) {
+  const auto site = blockIdx.x * blockDim.x + threadIdx.x;
+  if (site >= site_count) {
+    return;
+  }
+  const auto first = site == 0 ? 0U : ends[site - 1];
+  const auto count = ends[site] - first;
+  if (count < 2U) {
+    return;
+  }
+  auto* list = cells + first;
+  for (auto root = count / 2U; root > 0U; --root) {
+    scatter_sift_down(list, root - 1U, count);
+  }
+  for (auto last = count - 1U; last > 0U; --last) {
+    const auto largest = list[0];
+    list[0] = list[last];
+    list[last] = largest;
+    scatter_sift_down(list, 0U, last);
+  }
+}
+
 __device__ float evaluate_instruction(const RateInstructionGpu& instruction, const float* workspace,
                                       const float* species, const float* signals, float4 center,
                                       float4 geometry, float growth_rate, std::int32_t cell_type,
                                       float volume_change_rate) {
-  switch (instruction.operation) {
-    case 0:
+  switch (static_cast<RateOp>(instruction.operation)) {
+    case RateOp::constant:
       return instruction.value;
-    case 1:
+    case RateOp::species:
       return species[instruction.first];
-    case 2:
+    case RateOp::position_x:
       return center.x;
-    case 3:
+    case RateOp::position_y:
       return center.y;
-    case 4:
+    case RateOp::position_z:
       return center.z;
-    case 5:
+    case RateOp::cell_length:
       return geometry.x;
-    case 6:
+    case RateOp::cell_radius:
       return geometry.y;
-    case 7:
+    case RateOp::growth_rate:
       return growth_rate;
-    case 8:
+    case RateOp::cell_type:
       return static_cast<float>(cell_type);
-    case 28:
+    case RateOp::cell_volume_change_rate:
       return volume_change_rate;
-    case 9:
+    case RateOp::cell_volume:
       return effective_volume(geometry.x, geometry.y);
-    case 10:
+    case RateOp::cell_surface_area:
       return effective_surface_area(geometry.x, geometry.y);
-    case 11:
+    case RateOp::add:
       return workspace[instruction.first] + workspace[instruction.second];
-    case 12:
+    case RateOp::subtract:
       return workspace[instruction.first] - workspace[instruction.second];
-    case 13:
+    case RateOp::multiply:
       return workspace[instruction.first] * workspace[instruction.second];
-    case 14:
+    case RateOp::divide:
       return workspace[instruction.first] / workspace[instruction.second];
-    case 15:
+    case RateOp::power:
       return powf(workspace[instruction.first], workspace[instruction.second]);
-    case 16:
+    case RateOp::minimum:
       return fminf(workspace[instruction.first], workspace[instruction.second]);
-    case 17:
+    case RateOp::maximum:
       return fmaxf(workspace[instruction.first], workspace[instruction.second]);
-    case 18:
+    case RateOp::negate:
       return -workspace[instruction.first];
-    case 19:
+    case RateOp::exponential:
       return expf(workspace[instruction.first]);
-    case 20:
+    case RateOp::logarithm:
       return logf(workspace[instruction.first]);
-    case 21:
+    case RateOp::less:
       return workspace[instruction.first] < workspace[instruction.second] ? 1.0F : 0.0F;
-    case 22:
+    case RateOp::less_equal:
       return workspace[instruction.first] <= workspace[instruction.second] ? 1.0F : 0.0F;
-    case 23:
+    case RateOp::greater:
       return workspace[instruction.first] > workspace[instruction.second] ? 1.0F : 0.0F;
-    case 24:
+    case RateOp::greater_equal:
       return workspace[instruction.first] >= workspace[instruction.second] ? 1.0F : 0.0F;
-    case 25:
+    case RateOp::equal:
       return workspace[instruction.first] == workspace[instruction.second] ? 1.0F : 0.0F;
-    case 26:
+    case RateOp::select:
       return workspace[instruction.first] != 0.0F ? workspace[instruction.second]
                                                   : workspace[instruction.third];
-    case 27:
+    case RateOp::signal:
       return signals[instruction.first];
     default:
       return nanf("");
@@ -313,7 +439,8 @@ __global__ void advance_coupled_grid(
     const float* x_faces, const float* y_faces, const float* z_faces,
     std::uint32_t has_velocity_field, std::uint32_t* error, SignalGridBoundariesGpu boundaries,
     SignalGridShapeGpu shape, float4 origin, float4 spacing, float dt, std::uint32_t signal_count,
-    std::uint32_t cell_count, std::uint32_t level_count, std::uint32_t crank_nicolson) {
+    std::uint32_t cell_count, std::uint32_t level_count, std::uint32_t crank_nicolson,
+    const std::uint32_t* scatter_ends, const std::uint32_t* scatter_cells) {
   const auto index = (blockIdx.x * blockDim.x) + threadIdx.x;
   if (index >= level_count) {
     return;
@@ -393,10 +520,15 @@ __global__ void advance_coupled_grid(
 
   float source = 0.0F;
   const auto inverse_voxel_volume = 1.0F / (spacing.x * spacing.y * spacing.z);
-  for (std::uint32_t cell = 0; cell < cell_count; ++cell) {
-    const auto weight =
-        cell_scatter_weight(centers[cell], shape, origin, spacing, obstacles, x, y, z);
-    source += weight * cell_signal_rates[cell * signal_count + signal] * inverse_voxel_volume;
+  if (cell_count != 0) {
+    const auto first = site == 0 ? 0U : scatter_ends[site - 1];
+    const auto last = scatter_ends[site];
+    for (auto entry = first; entry < last; ++entry) {
+      const auto cell = scatter_cells[entry];
+      const auto weight =
+          cell_scatter_weight(centers[cell], shape, origin, spacing, obstacles, x, y, z);
+      source += weight * cell_signal_rates[cell * signal_count + signal] * inverse_voxel_volume;
+    }
   }
   const auto transport_scale = crank_nicolson == 0 ? dt : (crank_nicolson == 1 ? 0.5F * dt : 0.0F);
   const auto candidate = current + transport_scale * rate + dt * source;
@@ -407,6 +539,65 @@ __global__ void advance_coupled_grid(
 }
 
 }  // namespace
+
+cudaError_t launch_coupled_scatter_lists(const float4* centers, uint2* stencils,
+                                         std::uint32_t* counts, std::uint32_t* cursors,
+                                         std::uint32_t* scan_a, std::uint32_t* scan_b,
+                                         std::uint32_t* cells, SignalGridShapeGpu shape,
+                                         float4 origin, float4 spacing, std::uint32_t cell_count,
+                                         cudaStream_t stream, const std::uint32_t** ends) {
+  const auto site_bytes = static_cast<std::size_t>(shape.sites) * sizeof(std::uint32_t);
+  auto status = cudaMemsetAsync(counts, 0, site_bytes, stream);
+  if (status != cudaSuccess) {
+    return status;
+  }
+  status = cudaMemsetAsync(cursors, 0, site_bytes, stream);
+  if (status != cudaSuccess) {
+    return status;
+  }
+
+  const auto cell_blocks = ((cell_count - 1) / threads_per_block) + 1;
+  const auto site_blocks = ((shape.sites - 1) / threads_per_block) + 1;
+  coupled_scatter_stencils<<<cell_blocks, threads_per_block, 0, stream>>>(
+      centers, stencils, shape, origin, spacing, cell_count);
+  status = cudaGetLastError();
+  if (status != cudaSuccess) {
+    return status;
+  }
+  coupled_scatter_count<<<cell_blocks, threads_per_block, 0, stream>>>(stencils, counts, shape,
+                                                                       cell_count);
+  status = cudaGetLastError();
+  if (status != cudaSuccess) {
+    return status;
+  }
+
+  const std::uint32_t* scan_input = counts;
+  auto* scan_output = scan_a;
+  std::uint32_t offset = 1;
+  while (offset < shape.sites) {
+    launch_inclusive_scan_step(scan_input, scan_output, offset, shape.sites, stream);
+    status = cudaGetLastError();
+    if (status != cudaSuccess) {
+      return status;
+    }
+    scan_input = scan_output;
+    scan_output = scan_output == scan_a ? scan_b : scan_a;
+    if (offset > shape.sites / 2) {
+      break;
+    }
+    offset *= 2;
+  }
+  *ends = scan_input;
+
+  coupled_scatter_fill<<<cell_blocks, threads_per_block, 0, stream>>>(stencils, cursors, *ends,
+                                                                      cells, shape, cell_count);
+  status = cudaGetLastError();
+  if (status != cudaSuccess) {
+    return status;
+  }
+  coupled_scatter_sort<<<site_blocks, threads_per_block, 0, stream>>>(*ends, cells, shape.sites);
+  return cudaGetLastError();
+}
 
 cudaError_t launch_advance_coupled(
     float* species_levels, const float* previous_lengths, const float4* centers,
@@ -420,7 +611,8 @@ cudaError_t launch_advance_coupled(
     SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape, float4 origin, float4 spacing,
     float dt, std::uint32_t species_count, std::uint32_t signal_count,
     std::uint32_t instruction_count, std::uint32_t cell_count, std::uint32_t level_count,
-    std::uint32_t crank_nicolson, cudaStream_t stream) {
+    std::uint32_t crank_nicolson, const std::uint32_t* scatter_ends,
+    const std::uint32_t* scatter_cells, cudaStream_t stream) {
   if (cell_count != 0) {
     const auto cell_blocks = ((cell_count - 1) / threads_per_block) + 1;
     advance_coupled_cells<<<cell_blocks, threads_per_block, 0, stream>>>(
@@ -437,8 +629,8 @@ cudaError_t launch_advance_coupled(
   advance_coupled_grid<<<grid_blocks, threads_per_block, 0, stream>>>(
       grid_levels, grid_output, diffusion, advection, fixed_values, reaction_source, reaction_loss,
       centers, cell_signal_rates, obstacles, x_faces, y_faces, z_faces, has_velocity_field, error,
-      boundaries, shape, origin, spacing, dt, signal_count, cell_count, level_count,
-      crank_nicolson);
+      boundaries, shape, origin, spacing, dt, signal_count, cell_count, level_count, crank_nicolson,
+      scatter_ends, scatter_cells);
   return cudaGetLastError();
 }
 

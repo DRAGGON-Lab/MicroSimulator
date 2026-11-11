@@ -7,12 +7,13 @@
 #include <vector>
 
 #include "cm/constraints.hpp"
+#include "core/shared_constants.hpp"
 
 namespace cm {
 namespace {
 
-constexpr float inverse_sqrt_two = 0.7071067811865475F;
-constexpr std::size_t segment_minimization_iterations = 40;
+using shared::inverse_sqrt_two;
+constexpr std::size_t segment_minimization_iterations = shared::segment_minimization_iterations;
 
 struct EndpointGeometry {
   RodContactLocation location;

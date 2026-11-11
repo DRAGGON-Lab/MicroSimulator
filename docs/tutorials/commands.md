@@ -146,6 +146,8 @@ Start a CPU trap session. Open the tokenized loopback URL printed in the termina
 uv run --no-sync microsimulator view --model examples/microfluidic_trap.py --backend cpu --device-index 0 --seed 42 --dt 0.02 --viewer-dist viewer/dist --checkpoint-output "results/tutorial runs/live-trap.json"
 ```
 
+The session refuses to start when `--checkpoint-output` already exists; pass `--overwrite` to replace it. The `--resume` checkpoint is never accepted as the output.
+
 To use a GPU, the only simulation selection changes are `--backend metal` or `--backend cuda` and, if needed, `--device-index`. `--port` defaults to `8765`; choose another free port explicitly if it is occupied. Use the new tokenized URL after each launch.
 
 | Control or action | Effect |
@@ -153,7 +155,7 @@ To use a GPU, the only simulation selection changes are `--backend metal` or `--
 | Pause | Stops continuous playback; keeps the model process and current state available. |
 | Reset | Rebuilds this session's original model. For a resumed session, reloads its starting checkpoint. Does not select a different model. |
 | Close the browser | Disconnects and pauses the session; the server remains available for reconnection. |
-| Checkpoint | Saves to `--checkpoint-output`; use this before Stop when restartable state is needed. |
+| Checkpoint | Saves to `--checkpoint-output`, replacing this session's previous save; use this before Stop when restartable state is needed. |
 | Stop session or one terminal Ctrl+C | Finishes the current individual step or checkpoint write, drains the worker, releases the port, and returns to the prompt. No automatic checkpoint is written. |
 
 Wait for **Stopped** and the terminal prompt before starting another command. A long `--frame-steps` batch is interrupted between individual steps; Stop does not forcibly interrupt a single model callback or solver. After stopping the trap, launch another model on the same default port:

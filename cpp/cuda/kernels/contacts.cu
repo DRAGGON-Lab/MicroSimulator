@@ -1,13 +1,14 @@
 #include <cstdint>
 
 #include "contacts.cuh"
+#include "core/shared_constants.hpp"
 
 namespace cm::cuda {
 namespace {
 
-constexpr float inverse_sqrt_two = 0.7071067811865475F;
-constexpr float float_epsilon = 1.1920928955078125e-7F;
-constexpr std::uint32_t segment_minimization_iterations = 40;
+using shared::float_epsilon;
+using shared::inverse_sqrt_two;
+using shared::segment_minimization_iterations;
 constexpr std::uint32_t interior_location = 2;
 
 struct Capsule {

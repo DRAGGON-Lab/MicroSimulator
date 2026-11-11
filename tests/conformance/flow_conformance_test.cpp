@@ -82,9 +82,59 @@ void run_depth_case(cm::BackendKind backend, std::uint32_t device_index) {
   const auto actual = candidate.solve_depth_averaged_flow(spec, mobility, parameters);
   assert(actual.report.relative_residual <= 1.1e-6F);
   assert(expected.report.relative_residual <= 1.1e-6F);
-  assert(std::abs(actual.report.relative_residual - expected.report.relative_residual) <=
-         1.0e-6F);
+  assert(std::abs(actual.report.relative_residual - expected.report.relative_residual) <= 1.0e-6F);
   compare_fields(actual.field, expected.field, "depth-averaged flow");
+}
+
+// A 64-by-64 sheet whose mobility spans three decades around square pillars.
+// The system is ill-conditioned enough that single-precision conjugate
+// gradient drifts well outside this tolerance, so the case holds every backend
+// to the double-precision iteration.
+void run_ill_conditioned_depth_case(cm::BackendKind backend, std::uint32_t device_index) {
+  constexpr std::uint32_t size = 64;
+  auto spec = duct(size, size, 1);
+  spec.obstacles.assign(spec.site_count(), 0);
+  for (std::uint32_t pillar_x = 8; pillar_x < size; pillar_x += 16) {
+    for (std::uint32_t pillar_y = 12; pillar_y + 12 < size; pillar_y += 16) {
+      for (std::uint32_t x = pillar_x; x < pillar_x + 4; ++x) {
+        for (std::uint32_t y = pillar_y; y < pillar_y + 4; ++y) {
+          spec.obstacles[site_index(spec, x, y, 0)] = 1;
+        }
+      }
+    }
+  }
+  std::vector<float> mobility(spec.site_count());
+  std::uint32_t state = 12345;
+  for (std::size_t site = 0; site < mobility.size(); ++site) {
+    state = (state * 1664525U) + 1013904223U;
+    const auto exponent = -3.0F * static_cast<float>(state >> 8) / 16777216.0F;
+    mobility[site] = spec.solid_site(site) ? 0.0F : std::pow(10.0F, exponent);
+  }
+  cm::DepthAveragedFlowParameters parameters;
+  parameters.mean_inlet_speed = 1.0F;
+  parameters.relative_tolerance = 1.0e-6F;
+  cm::Simulation reference;
+  cm::Simulation candidate(backend, 0, 0, device_index);
+  const auto expected = reference.solve_depth_averaged_flow(spec, mobility, parameters);
+  const auto actual = candidate.solve_depth_averaged_flow(spec, mobility, parameters);
+  assert(actual.report.relative_residual <= 1.1e-6F);
+
+  const auto tolerance = 1.0e-6F * expected.report.max_speed;
+  const auto compare = [&](std::span<const float> actual_faces,
+                           std::span<const float> expected_faces, std::string_view component) {
+    assert(actual_faces.size() == expected_faces.size());
+    for (std::size_t index = 0; index < actual_faces.size(); ++index) {
+      if (std::abs(actual_faces[index] - expected_faces[index]) > tolerance) {
+        std::cerr << "ill-conditioned depth-averaged flow " << component << " face " << index
+                  << ": actual=" << actual_faces[index] << " expected=" << expected_faces[index]
+                  << '\n';
+        std::abort();
+      }
+    }
+  };
+  compare(actual.field.x_faces, expected.field.x_faces, "x");
+  compare(actual.field.y_faces, expected.field.y_faces, "y");
+  compare(actual.field.z_faces, expected.field.z_faces, "z");
 }
 
 void run_resolved_case(cm::BackendKind backend, std::uint32_t device_index) {
@@ -120,7 +170,10 @@ int main(int argc, char** argv) {
     cm::Simulation probe(backend, 0, 0, device_index);
     assert(probe.supports(cm::BackendFeature::depth_averaged_flow));
     assert(probe.supports(cm::BackendFeature::resolved_flow));
-    if (!resolved_only) run_depth_case(backend, device_index);
+    if (!resolved_only) {
+      run_depth_case(backend, device_index);
+      run_ill_conditioned_depth_case(backend, device_index);
+    }
     if (resolved_only) run_resolved_case(backend, device_index);
   });
 }

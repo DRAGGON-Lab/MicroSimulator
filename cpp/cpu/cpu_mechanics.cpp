@@ -8,11 +8,13 @@
 #include <vector>
 
 #include "cm/mechanics.hpp"
+#include "core/mechanics_solver.hpp"
+#include "core/shared_constants.hpp"
 
 namespace cm {
 namespace {
 
-constexpr std::size_t degrees_of_freedom = 7;
+constexpr std::size_t degrees_of_freedom = shared::mechanics_degrees_of_freedom;
 using Dofs = std::array<float, degrees_of_freedom>;
 using DofVector = std::vector<Dofs>;
 
@@ -59,13 +61,6 @@ void add_scaled(DofVector& destination, const DofVector& source, float scale) {
   for (std::size_t index = 0; index < destination.size(); ++index) {
     add_scaled(destination[index], source[index], scale);
   }
-}
-
-[[nodiscard]] float residual_rms(const DofVector& residual) {
-  if (residual.empty()) {
-    return 0.0F;
-  }
-  return std::sqrt(vector_dot(residual, residual) / static_cast<float>(residual.size()));
 }
 
 [[nodiscard]] Dofs make_jacobian(const Vec3& normal, const Vec3& arm, const Vec3& axis,
@@ -272,17 +267,6 @@ class CpuMechanicsSystem {
   return residual;
 }
 
-[[nodiscard]] std::uint32_t iteration_limit(const MechanicsParameters& parameters,
-                                            std::size_t cell_count) {
-  if (parameters.max_iterations != 0) {
-    return parameters.max_iterations;
-  }
-  if (cell_count > std::numeric_limits<std::uint32_t>::max() / degrees_of_freedom) {
-    throw std::overflow_error("default mechanics iteration limit exceeds uint32");
-  }
-  return static_cast<std::uint32_t>(cell_count * degrees_of_freedom);
-}
-
 }  // namespace
 
 void validate_mechanics_parameters(const MechanicsParameters& parameters) {
@@ -339,90 +323,50 @@ MechanicsSolveResult solve_cell_mechanics_cpu(const WorldState& state, const Con
                                               const ExternalContactGraph& external_contacts,
                                               const MechanicsParameters& parameters) {
   const CpuMechanicsSystem system(state, contacts, external_contacts, parameters);
-  auto right_hand_side = system.right_hand_side();
+  const auto right_hand_side = system.right_hand_side();
   DofVector solution(system.cell_count());
   auto residual = right_hand_side;
   auto search_direction = residual;
+  DofVector applied;
 
   MechanicsSolveResult result;
   result.corrections.resize(system.cell_count());
-  result.report.initial_residual_rms = residual_rms(residual);
-  result.report.final_residual_rms = result.report.initial_residual_rms;
-  if (!std::isfinite(result.report.initial_residual_rms)) {
-    result.report.status = SolverStatus::breakdown;
-    result.report.breakdown = SolverBreakdown::non_finite_residual;
+  if (system.cell_count() == 0) {
     return result;
   }
-  if (result.report.initial_residual_rms <= parameters.residual_rms_tolerance) {
-    return result;
-  }
-
-  result.report.status = SolverStatus::iteration_limit;
-  auto residual_squared = vector_dot(residual, residual);
-  const auto maximum_iterations = iteration_limit(parameters, system.cell_count());
-  DofVector applied;
-  for (std::uint32_t iteration = 0; iteration < maximum_iterations; ++iteration) {
-    system.apply(search_direction, applied);
-    const auto curvature = vector_dot(search_direction, applied);
-    if (!std::isfinite(curvature)) {
-      result.report.status = SolverStatus::breakdown;
-      result.report.breakdown = SolverBreakdown::non_finite_curvature;
-      break;
-    }
-    if (curvature <= 0.0F) {
-      result.report.status = SolverStatus::breakdown;
-      result.report.breakdown = SolverBreakdown::non_positive_curvature;
-      break;
-    }
-
-    const auto alpha = residual_squared / curvature;
-    add_scaled(solution, search_direction, alpha);
-    add_scaled(residual, applied, -alpha);
-    result.report.iterations = iteration + 1;
-
-    const auto next_residual_squared = vector_dot(residual, residual);
-    const auto recurrence_rms =
-        std::sqrt(next_residual_squared / static_cast<float>(system.cell_count()));
-    if (!std::isfinite(recurrence_rms)) {
-      result.report.status = SolverStatus::breakdown;
-      result.report.breakdown = SolverBreakdown::non_finite_residual;
-      break;
-    }
-
-    if (recurrence_rms <= parameters.residual_rms_tolerance) {
-      residual = exact_residual(system, right_hand_side, solution);
-      const auto recomputed_rms = residual_rms(residual);
-      if (!std::isfinite(recomputed_rms)) {
-        result.report.status = SolverStatus::breakdown;
-        result.report.breakdown = SolverBreakdown::non_finite_residual;
-        break;
-      }
-      if (recomputed_rms <= parameters.residual_rms_tolerance) {
-        result.report.status = SolverStatus::converged;
-        break;
-      }
-      search_direction = residual;
-      residual_squared = vector_dot(residual, residual);
-      continue;
-    }
-
-    const auto beta = next_residual_squared / residual_squared;
-    for (std::size_t index = 0; index < search_direction.size(); ++index) {
-      for (std::size_t component = 0; component < degrees_of_freedom; ++component) {
-        search_direction[index][component] =
-            residual[index][component] + beta * search_direction[index][component];
-      }
-    }
-    residual_squared = next_residual_squared;
-  }
-
-  residual = exact_residual(system, right_hand_side, solution);
-  result.report.final_residual_rms = residual_rms(residual);
-  if (!std::isfinite(result.report.final_residual_rms) &&
-      result.report.status != SolverStatus::breakdown) {
-    result.report.status = SolverStatus::breakdown;
-    result.report.breakdown = SolverBreakdown::non_finite_residual;
-  }
+  const detail::MechanicsSolverOperations operations{
+      .initialize = [&] { return vector_dot(residual, residual); },
+      .apply_direction =
+          [&] {
+            system.apply(search_direction, applied);
+            return vector_dot(search_direction, applied);
+          },
+      .update =
+          [&](float alpha) {
+            add_scaled(solution, search_direction, alpha);
+            add_scaled(residual, applied, -alpha);
+            return vector_dot(residual, residual);
+          },
+      .recompute_residual =
+          [&] {
+            residual = exact_residual(system, right_hand_side, solution);
+            return vector_dot(residual, residual);
+          },
+      .update_direction =
+          [&](float beta) {
+            if (beta == 0.0F) {
+              search_direction = residual;
+              return;
+            }
+            for (std::size_t index = 0; index < search_direction.size(); ++index) {
+              for (std::size_t component = 0; component < degrees_of_freedom; ++component) {
+                search_direction[index][component] =
+                    residual[index][component] + beta * search_direction[index][component];
+              }
+            }
+          },
+  };
+  result.report = detail::solve_mechanics_system(operations, system.cell_count(), parameters);
   result.corrections = unflatten(solution);
   return result;
 }
