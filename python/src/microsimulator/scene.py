@@ -995,7 +995,7 @@ def parse_scene(source: str | bytes) -> SceneFrame:
 
     root = _object(cast(object, decoded), "$")
     _keys(root, "$", {"format", "version", "producer", "integrity", "frame"})
-    if _string(root["format"], "$.format") not in (SCENE_FORMAT, "cellmodeller2-scene"):
+    if _string(root["format"], "$.format") != SCENE_FORMAT:
         _fail("$.format", "not a MicroSimulator scene")
     schema_version = _integer(root["version"], "$.version", 0, _UINT32_MAX)
     if schema_version not in {2, SCENE_VERSION}:

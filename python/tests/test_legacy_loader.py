@@ -54,7 +54,7 @@ def test_legacy_batch_checkpoint_resumes_exactly_and_checks_source(tmp_path: Pat
     model_path = _FIXTURES / "legacy_growth.py"
     context = ModelContext(BackendKind.CPU, 0, seed=42)
     uninterrupted, uninterrupted_provenance = build_legacy_model(model_path, context)
-    uninterrupted_path = tmp_path / "uninterrupted.cm2.json"
+    uninterrupted_path = tmp_path / "uninterrupted.json"
     run_simulation(
         uninterrupted,
         steps=3,
@@ -63,7 +63,7 @@ def test_legacy_batch_checkpoint_resumes_exactly_and_checks_source(tmp_path: Pat
         provenance=uninterrupted_provenance,
     )
 
-    first_path = tmp_path / "first.cm2.json"
+    first_path = tmp_path / "first.json"
     assert (
         main(
             [
@@ -83,7 +83,7 @@ def test_legacy_batch_checkpoint_resumes_exactly_and_checks_source(tmp_path: Pat
         )
         == 0
     )
-    resumed_path = tmp_path / "resumed.cm2.json"
+    resumed_path = tmp_path / "resumed.json"
     assert (
         main(
             [
@@ -137,7 +137,7 @@ def test_legacy_batch_stops_when_division_reaches_cell_threshold(tmp_path: Path)
         _FIXTURES / "legacy_growth.py",
         ModelContext(BackendKind.CPU, 0, seed=42),
     )
-    output = tmp_path / "cell-threshold.cm2.json"
+    output = tmp_path / "cell-threshold.json"
 
     summary = run_simulation(
         model,
@@ -153,8 +153,8 @@ def test_legacy_batch_stops_when_division_reaches_cell_threshold(tmp_path: Path)
     assert summary.stop_reason == "cell_count"
     assert summary.cell_count == 2
     assert summary.periodic_checkpoints == (
-        tmp_path / "cell-threshold.step-00000001.cm2.json",
-        tmp_path / "cell-threshold.step-00000002.cm2.json",
+        tmp_path / "cell-threshold.step-00000001.json",
+        tmp_path / "cell-threshold.step-00000002.json",
     )
     run = cast(dict[str, JSONValue], load_checkpoint_bundle(output).provenance["run"])
     assert run["completed_steps"] == 2

@@ -131,7 +131,7 @@ def load_legacy_example_matrix(path: str | Path) -> LegacyExampleMatrix:
         "examples",
     }:
         raise LegacyExampleMatrixError("compatibility matrix has unexpected fields")
-    if root["format"] not in (LEGACY_EXAMPLE_MATRIX_FORMAT, "cellmodeller2-legacy-example-matrix"):
+    if root["format"] != LEGACY_EXAMPLE_MATRIX_FORMAT:
         raise LegacyExampleMatrixError("compatibility matrix format is unsupported")
     if root["version"] != LEGACY_EXAMPLE_MATRIX_VERSION:
         raise LegacyExampleMatrixError("compatibility matrix version is unsupported")

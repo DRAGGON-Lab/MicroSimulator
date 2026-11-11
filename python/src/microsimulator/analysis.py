@@ -383,7 +383,7 @@ def open_dataset(
     manifest = _manifest_object(cast(object, decoded), "$")
     top_level_keys = {"format", "version", "dataset_id", "sources", "options", "tables", "signals"}
     _manifest_keys(manifest, "$", top_level_keys)
-    if manifest["format"] not in (ANALYSIS_FORMAT, "cellmodeller2-analysis"):
+    if manifest["format"] != ANALYSIS_FORMAT:
         raise AnalysisError("$.format: not a MicroSimulator analysis dataset")
     schema_version = manifest["version"]
     if (

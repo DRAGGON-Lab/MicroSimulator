@@ -986,7 +986,7 @@ def load_checkpoint_bundle(
         "$",
         required,
     )
-    if _string(root["format"], "$.format") not in (CHECKPOINT_FORMAT, "cellmodeller2-checkpoint"):
+    if _string(root["format"], "$.format") != CHECKPOINT_FORMAT:
         _fail("$.format", "not a MicroSimulator checkpoint")
     _object(root["producer"], "$.producer")
     source_backend_data = _object(root["source_backend"], "$.source_backend")

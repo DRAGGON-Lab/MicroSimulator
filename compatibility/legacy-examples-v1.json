@@ -242,7 +242,7 @@
       "implementation_sha256": null,
       "steps": 0,
       "dt": 0.0,
-      "note": "Replaced by the explicit one-way cm import-legacy-pickle workflow."
+      "note": "Replaced by the explicit one-way microsimulator import-legacy-pickle workflow."
     },
     {
       "path": "sphere_constraints.py",

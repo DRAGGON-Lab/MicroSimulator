@@ -83,10 +83,7 @@ def _document() -> dict[str, Any]:
 
 def _scenarios() -> list[dict[str, Any]]:
     document = _document()
-    assert document["format"] in (
-        "microsimulator-recorded-legacy-trajectories",
-        "cellmodeller2-recorded-legacy-trajectories",
-    )
+    assert document["format"] == "microsimulator-recorded-legacy-trajectories"
     assert document["version"] == 1
     assert document["legacy_commit"] == "4896f543c6250f053eea2312e628cc3a96bf7408"
     scenarios = cast(list[dict[str, Any]], document["scenarios"])

@@ -199,10 +199,9 @@ def _remove_grid_obstacles(document: dict[str, Any]) -> None:
         del grid["spec"]["velocity_field"]
 
 
-@pytest.mark.parametrize("format_name", [CHECKPOINT_FORMAT, "cellmodeller2-checkpoint"])
-def test_checkpoint_round_trip_resumes_exactly(tmp_path: Path, format_name: str) -> None:
+def test_checkpoint_round_trip_resumes_exactly(tmp_path: Path) -> None:
     original, daughter_a, daughter_b = _make_simulation()
-    path = tmp_path / "colony.cm2.json"
+    path = tmp_path / "colony.json"
     save_checkpoint(
         original,
         path,
@@ -218,8 +217,6 @@ def test_checkpoint_round_trip_resumes_exactly(tmp_path: Path, format_name: str)
     assert "module_source" not in path.read_text(encoding="utf-8")
     assert list(tmp_path.glob(".*.tmp")) == []
 
-    document["format"] = format_name
-    path.write_text(json.dumps(document), encoding="utf-8")
     restored = load_checkpoint(path)
     _assert_cells_exact(restored, original)
     assert restored.lineage_parent(daughter_a) == 1
@@ -238,7 +235,7 @@ def test_checkpoint_round_trip_resumes_exactly(tmp_path: Path, format_name: str)
 
 def test_checkpoint_bundle_reports_validated_source_metadata(tmp_path: Path) -> None:
     simulation, _, _ = _make_simulation()
-    path = tmp_path / "source.cm2.json"
+    path = tmp_path / "source.json"
     save_checkpoint(simulation, path)
 
     bundle = load_checkpoint_bundle(path)
@@ -259,7 +256,7 @@ def test_checkpoint_bundle_reports_validated_source_metadata(tmp_path: Path) -> 
 
 def test_version_one_checkpoint_migrates_to_an_empty_signal_state(tmp_path: Path) -> None:
     simulation, _, _ = _make_simulation()
-    path = tmp_path / "legacy-v1.cm2.json"
+    path = tmp_path / "legacy-v1.json"
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 1
@@ -282,7 +279,7 @@ def test_version_one_checkpoint_migrates_to_an_empty_signal_state(tmp_path: Path
 
 def test_version_two_checkpoint_migrates_without_a_coupled_plan(tmp_path: Path) -> None:
     simulation, _, _ = _make_simulation()
-    path = tmp_path / "legacy-v2.cm2.json"
+    path = tmp_path / "legacy-v2.json"
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 2
@@ -307,7 +304,7 @@ def test_version_two_checkpoint_migrates_without_a_coupled_plan(tmp_path: Path) 
 
 def test_version_three_checkpoint_migrates_without_controller_state(tmp_path: Path) -> None:
     simulation, _, _ = _make_simulation()
-    path = tmp_path / "legacy-v3.cm2.json"
+    path = tmp_path / "legacy-v3.json"
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 3
@@ -332,7 +329,7 @@ def test_version_three_checkpoint_migrates_without_controller_state(tmp_path: Pa
 
 def test_version_four_signal_grid_migrates_to_forward_euler(tmp_path: Path) -> None:
     simulation, _, _ = _make_simulation()
-    path = tmp_path / "legacy-v4.cm2.json"
+    path = tmp_path / "legacy-v4.json"
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 4
@@ -354,7 +351,7 @@ def test_version_four_signal_grid_migrates_to_forward_euler(tmp_path: Path) -> N
 
 def test_version_five_cells_migrate_to_movable(tmp_path: Path) -> None:
     simulation, _, _ = _make_simulation()
-    path = tmp_path / "legacy-v5.cm2.json"
+    path = tmp_path / "legacy-v5.json"
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 5
@@ -372,7 +369,7 @@ def test_version_five_cells_migrate_to_movable(tmp_path: Path) -> None:
 
 def test_version_six_signal_grid_migrates_without_affine_reactions(tmp_path: Path) -> None:
     simulation, _, _ = _make_simulation()
-    path = tmp_path / "legacy-v6.cm2.json"
+    path = tmp_path / "legacy-v6.json"
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 6
@@ -391,7 +388,7 @@ def test_version_six_signal_grid_migrates_without_affine_reactions(tmp_path: Pat
 
 def test_version_seven_checkpoint_migrates_without_boxes(tmp_path: Path) -> None:
     simulation, _, _ = _make_simulation()
-    path = tmp_path / "legacy-v7.cm2.json"
+    path = tmp_path / "legacy-v7.json"
     save_checkpoint(simulation, path)
     document = _document(path)
     document["version"] = 7
@@ -422,7 +419,7 @@ def test_grid_obstacles_round_trip_exactly(tmp_path: Path) -> None:
     grid.advection = [Vec3()]
     grid.obstacles = [0, 1, 0]
     simulation.configure_signal_grid(grid, [2.0, 0.0, 0.5])
-    path = tmp_path / "masked.cm2.json"
+    path = tmp_path / "masked.json"
     save_checkpoint(simulation, path)
 
     document = _document(path)
@@ -452,7 +449,7 @@ def test_affine_grid_reaction_round_trips_exactly(tmp_path: Path) -> None:
     grid.advection = [Vec3()]
     grid.reaction = reaction
     simulation.configure_signal_grid(grid, [1.0, 2.0])
-    path = tmp_path / "affine-reaction.cm2.json"
+    path = tmp_path / "affine-reaction.json"
 
     save_checkpoint(simulation, path)
 
@@ -487,7 +484,7 @@ def test_crank_nicolson_signal_configuration_round_trips(tmp_path: Path) -> None
     checkpoint.signal_grid.spec.solver.absolute_tolerance = 2.0e-7
     checkpoint.signal_grid.spec.solver.relative_tolerance = 3.0e-6
     simulation = Simulation(BackendKind.CPU, checkpoint)
-    path = tmp_path / "crank-nicolson.cm2.json"
+    path = tmp_path / "crank-nicolson.json"
     save_checkpoint(simulation, path)
 
     document = _document(path)
@@ -506,7 +503,7 @@ def test_controller_state_is_authenticated_and_cannot_be_silently_discarded(
     tmp_path: Path,
 ) -> None:
     simulation, _, _ = _make_simulation()
-    path = tmp_path / "controlled.cm2.json"
+    path = tmp_path / "controlled.json"
     controller: dict[str, JSONValue] = {
         "kind": "test-controller",
         "cells": {"2": {"threshold": 3.5}},
@@ -560,7 +557,7 @@ def test_coupled_plan_round_trip_is_exact(tmp_path: Path) -> None:
             [1],
         )
     )
-    path = tmp_path / "coupled.cm2.json"
+    path = tmp_path / "coupled.json"
     save_checkpoint(simulation, path)
 
     document = _document(path)
@@ -581,7 +578,7 @@ def test_coupled_plan_round_trip_is_exact(tmp_path: Path) -> None:
 
 def test_checkpoint_rejects_corruption_and_invalid_state(tmp_path: Path) -> None:
     simulation, _, _ = _make_simulation()
-    path = tmp_path / "colony.cm2.json"
+    path = tmp_path / "colony.json"
     save_checkpoint(simulation, path)
 
     corrupted = _document(path)
@@ -614,7 +611,7 @@ def test_checkpoint_rejects_corruption_and_invalid_state(tmp_path: Path) -> None
 
 def test_checkpoint_rejects_executable_or_non_json_values(tmp_path: Path) -> None:
     simulation, _, _ = _make_simulation()
-    path = tmp_path / "colony.cm2.json"
+    path = tmp_path / "colony.json"
     with pytest.raises(CheckpointError, match="provenance"):
         save_checkpoint(simulation, path, provenance={"callback": object()})  # type: ignore[dict-item]
     assert not path.exists()

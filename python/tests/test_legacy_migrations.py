@@ -80,7 +80,7 @@ def test_species_migrations_resume_exactly(relative: str, _: object, tmp_path: P
         ModelContext(BackendKind.CPU, 0, seed=73),
     )
     assert isinstance(uninterrupted, NativeController)
-    expected_path = tmp_path / "expected.cm2.json"
+    expected_path = tmp_path / "expected.json"
     run_simulation(
         uninterrupted,
         steps=2,
@@ -93,14 +93,14 @@ def test_species_migrations_resume_exactly(relative: str, _: object, tmp_path: P
         path,
         ModelContext(BackendKind.CPU, 0, seed=73),
     )
-    midpoint = tmp_path / "midpoint.cm2.json"
+    midpoint = tmp_path / "midpoint.json"
     run_simulation(split, steps=1, dt=0.01, output=midpoint, provenance=provenance)
     resumed, resumed_provenance = build_model(
         path,
         ModelContext(BackendKind.CPU, 0, seed=73),
         checkpoint=load_checkpoint_bundle(midpoint),
     )
-    actual_path = tmp_path / "actual.cm2.json"
+    actual_path = tmp_path / "actual.json"
     run_simulation(
         resumed,
         steps=1,
@@ -161,7 +161,7 @@ def test_signal_migrations_resume_exactly(
         ModelContext(BackendKind.CPU, 0, seed=73),
     )
     assert isinstance(uninterrupted, NativeController)
-    expected_path = tmp_path / "expected.cm2.json"
+    expected_path = tmp_path / "expected.json"
     run_simulation(
         uninterrupted,
         steps=2,
@@ -174,14 +174,14 @@ def test_signal_migrations_resume_exactly(
         path,
         ModelContext(BackendKind.CPU, 0, seed=73),
     )
-    midpoint = tmp_path / "midpoint.cm2.json"
+    midpoint = tmp_path / "midpoint.json"
     run_simulation(split, steps=1, dt=0.01, output=midpoint, provenance=provenance)
     resumed, resumed_provenance = build_model(
         path,
         ModelContext(BackendKind.CPU, 0, seed=73),
         checkpoint=load_checkpoint_bundle(midpoint),
     )
-    actual_path = tmp_path / "actual.cm2.json"
+    actual_path = tmp_path / "actual.json"
     run_simulation(
         resumed,
         steps=1,
