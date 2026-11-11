@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "backend_devices.hpp"
@@ -78,9 +80,38 @@ void run_growth_scenario(cm::BackendKind backend, std::uint32_t device_index) {
   simulation.validate();
 }
 
+void run_invalid_growth_scenario(cm::BackendKind backend, std::uint32_t device_index) {
+  for (const auto [growth_rate, dt] : {std::pair{-2.0F, 1.0F}, std::pair{1.0e30F, 1.0e30F}}) {
+    cm::Simulation simulation(backend, cell_count, 0, device_index);
+    std::vector<cm::CellId> ids;
+    ids.reserve(cell_count);
+    for (std::size_t index = 0; index < cell_count; ++index) {
+      cm::CellInit cell;
+      cell.position = {static_cast<float>(index) * 0.25F, 0.0F, 0.0F};
+      cell.length = 1.0F + static_cast<float>(index % 17) * 0.1F;
+      cell.growth_rate = index == cell_count / 2 ? growth_rate : 0.025F;
+      ids.push_back(simulation.add_cell(cell));
+    }
+
+    bool rejected = false;
+    try {
+      simulation.step(dt);
+    } catch (const std::runtime_error&) {
+      rejected = true;
+    }
+    assert(rejected);
+    assert(simulation.time() == 0.0);
+    for (std::size_t index = 0; index < cell_count; ++index) {
+      assert(simulation.cell(ids[index]).length == 1.0F + static_cast<float>(index % 17) * 0.1F);
+    }
+    simulation.validate();
+  }
+}
+
 }  // namespace
 
 int main() {
   cm::test::for_each_backend_device(run_growth_scenario);
+  cm::test::for_each_backend_device(run_invalid_growth_scenario);
   return 0;
 }

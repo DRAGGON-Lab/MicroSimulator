@@ -317,6 +317,11 @@ void Simulation::step(float dt) {
   const auto saved_report = last_signal_solve_report_;
   try {
     backend_->advance_growth(state_, dt);
+    if (!std::ranges::all_of(state_.geometry_state().lengths, [](float length) {
+          return std::isfinite(length) && length >= 0.0F;
+        })) {
+      throw std::runtime_error("growth produced a non-finite or negative cell length");
+    }
     last_signal_solve_report_.reset();
     if (coupled_rate_plan_.has_value()) {
       last_signal_solve_report_ = backend_->advance_coupled(

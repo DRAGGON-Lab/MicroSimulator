@@ -280,6 +280,9 @@ class MetalBackend final : public ComputeBackend {
   }
 
   void advance_growth(WorldState& state, float dt) override {
+    if (!std::isfinite(dt) || dt < 0.0F) {
+      throw std::invalid_argument("time step must be finite and non-negative");
+    }
     auto view = state.growth_state();
     if (view.lengths.empty()) {
       return;

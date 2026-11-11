@@ -51,6 +51,28 @@ def rate_instruction(
 
 
 @pytest.mark.parametrize("backend", list(BackendKind))
+@pytest.mark.parametrize(("growth_rate", "dt"), [(-2.0, 1.0), (1.0e30, 1.0e30)])
+def test_invalid_growth_result_is_rejected_and_rolled_back(
+    backend: BackendKind, growth_rate: float, dt: float
+) -> None:
+    if not backend_available(backend):
+        pytest.skip("native backend is not built")
+
+    simulation = Simulation(backend)
+    initial = CellInit()
+    initial.length = 4.0
+    initial.growth_rate = growth_rate
+    cell = simulation.add_cell(initial)
+
+    with pytest.raises(RuntimeError, match="non-finite or negative cell length"):
+        simulation.step(dt)
+
+    assert simulation.cell(cell).length == 4.0
+    assert simulation.time == 0.0
+    simulation.validate()
+
+
+@pytest.mark.parametrize("backend", list(BackendKind))
 def test_growth_and_division_preserve_declared_semantics(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")

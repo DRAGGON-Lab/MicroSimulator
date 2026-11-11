@@ -12,6 +12,8 @@ length[n + 1] = length[n] + growth_rate * length[n] * dt
 
 Lengths use an absolute tolerance of `1e-6` and a relative tolerance of `1e-6`. Stable identifiers, compact slots, growth rates, cell types, backend identity, and structural validation are exact checks.
 
+A second growth scenario gives one of the 513 cells a growth rate whose step would produce a negative or non-finite length. Every device must reject the step with an error and leave all lengths and the simulation time exactly unchanged.
+
 A backend only earns conformance when this executable passes with that native backend enabled on its real hardware. A CPU-only run validates the scenario and reference implementation, but says nothing about GPU conformance.
 
 ## Backend contract
