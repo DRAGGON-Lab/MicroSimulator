@@ -312,7 +312,10 @@ void Simulation::step(float dt) {
     }
     signal_grid_->validate_step(dt);
   }
-  auto saved_state = state_;
+  // Growth, species, and coupled updates write only cell lengths and species
+  // levels, so those two arrays are the whole cell-state rollback record.
+  const auto species_levels = state_.species_state().levels;
+  const std::vector<float> saved_species(species_levels.begin(), species_levels.end());
   const auto saved_levels = signal_grid_.has_value() ? signal_levels() : std::vector<float>{};
   const auto saved_report = last_signal_solve_report_;
   try {
@@ -335,7 +338,8 @@ void Simulation::step(float dt) {
       }
     }
   } catch (...) {
-    state_ = std::move(saved_state);
+    std::ranges::copy(previous_lengths, state_.growth_state().lengths.begin());
+    std::ranges::copy(saved_species, state_.species_state().levels.begin());
     if (signal_grid_.has_value()) signal_grid_->set_levels(saved_levels);
     last_signal_solve_report_ = saved_report;
     throw;
