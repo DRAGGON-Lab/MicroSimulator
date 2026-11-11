@@ -275,6 +275,13 @@ int main() {
   mislabeled.channel_metadata.species = microsimulator::ChannelMetadata::Labels{std::nullopt};
   assert_rejected([&] { static_cast<void>(microsimulator::encode_checkpoint(mislabeled)); },
                   "channel_metadata.species: expected 2 labels, got 1");
+  auto deep = document;
+  deep.controller = JsonValue::array({});
+  for (int depth = 1; depth < 256; ++depth) {
+    deep.controller = JsonValue::array({std::move(deep.controller)});
+  }
+  assert_rejected([&] { static_cast<void>(microsimulator::encode_checkpoint(deep)); },
+                  "checkpoint cannot be encoded: nesting is too deep");
   auto bad_provenance = document;
   bad_provenance.provenance = JsonValue::array({});
   assert_rejected([&] { static_cast<void>(microsimulator::encode_checkpoint(bad_provenance)); },

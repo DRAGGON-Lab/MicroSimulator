@@ -14,6 +14,9 @@ class FileError : public std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
+// The path as UTF-8 text, for use in messages.
+[[nodiscard]] std::string path_text(const std::filesystem::path& path);
+
 // Replaces the destination with the contents in one step. The bytes are
 // written to a hidden sibling named ".<name>.<random>.tmp", flushed to
 // storage, and renamed over the destination, so a reader sees either the

@@ -15,8 +15,9 @@ namespace {
 // UTF-16 code-unit order differs from UTF-8 byte order only where a
 // supplementary-plane character (lead byte 0xF0 and above, encoded in UTF-16
 // as surrogates below U+E000) meets a character in U+E000..U+FFFF (lead bytes
-// 0xEE and 0xEF). Ranking supplementary lead bytes just below 0xEE restores
-// the UTF-16 order without transcoding.
+// 0xEE and 0xEF). Ranking every supplementary lead byte just below 0xEE
+// restores the UTF-16 order without transcoding; two supplementary lead bytes
+// share a rank and keep their byte order.
 [[nodiscard]] int utf16_rank(unsigned char byte) noexcept {
   return byte >= 0xF0U ? (0xED * 2) + 1 : byte * 2;
 }
@@ -27,7 +28,9 @@ namespace {
     const auto a = static_cast<unsigned char>(left[index]);
     const auto b = static_cast<unsigned char>(right[index]);
     if (a != b) {
-      return utf16_rank(a) < utf16_rank(b);
+      const auto rank_a = utf16_rank(a);
+      const auto rank_b = utf16_rank(b);
+      return rank_a != rank_b ? rank_a < rank_b : a < b;
     }
   }
   return left.size() < right.size();
@@ -99,7 +102,8 @@ void append_string(std::string& out, std::string_view text) {
 // number rather than an integer.
 void append_number(std::string& out, double value, bool keep_kind) {
   if (value == 0.0) {
-    out += keep_kind ? "0.0" : "0";
+    // The canonical form has one zero; the readable form keeps the sign.
+    out += !keep_kind ? "0" : std::signbit(value) ? "-0.0" : "0.0";
     return;
   }
   std::array<char, 40> buffer{};
@@ -204,6 +208,9 @@ void write_canonical(std::string& out, const JsonValue& value) {
 }
 
 void write_pretty(std::string& out, const JsonValue& value, std::size_t indent) {
+  if (!scalar(value) && indent / 2 >= JsonParseLimits{}.max_depth) {
+    throw JsonError("nesting is too deep");
+  }
   if (value.is_array()) {
     const auto& items = value.as_array();
     if (std::ranges::all_of(items, scalar)) {

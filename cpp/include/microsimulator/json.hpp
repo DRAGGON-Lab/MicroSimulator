@@ -114,8 +114,10 @@ struct JsonParseLimits {
 [[nodiscard]] std::string canonical_json(const JsonValue& value);
 
 // A human-readable encoding with two-space indentation and a trailing newline.
-// A number that is not an integer always carries a fraction or an exponent, so
-// parsing the text restores each value's kind.
+// A number that is not an integer always carries a fraction or an exponent,
+// and a negative zero keeps its sign, so parsing the text restores each value
+// exactly. Throws JsonError for nesting beyond the default parse limit, so
+// every document this writes can be read back.
 [[nodiscard]] std::string pretty_json(const JsonValue& value);
 
 }  // namespace microsimulator

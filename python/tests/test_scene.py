@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
+import pickle
 from pathlib import Path
 from typing import Any, cast
 
@@ -248,3 +250,21 @@ def test_scene_rejects_invalid_geometry_and_grid_shape() -> None:
 def test_scene_rejects_malformed_input(source: str | bytes) -> None:
     with pytest.raises(SceneError):
         parse_scene(source)
+
+
+def test_scene_records_copy_and_pickle_by_value() -> None:
+    frame = capture_scene(_simulation())
+    assert copy.copy(frame) == frame
+    assert copy.deepcopy(frame) == frame
+    assert pickle.loads(pickle.dumps(frame)) == frame
+    labels = frame.channel_metadata
+    assert pickle.loads(pickle.dumps(labels)) == labels
+
+
+def test_parse_scene_accepts_bytes_like_and_rejects_unencodable_text() -> None:
+    frame = capture_scene(_simulation())
+    encoded = dumps_scene(frame)
+    assert parse_scene(bytearray(encoded.encode())) == frame
+    assert parse_scene(memoryview(encoded.encode())) == frame
+    with pytest.raises(SceneError, match="not valid JSON"):
+        parse_scene(encoded + "\udc80")

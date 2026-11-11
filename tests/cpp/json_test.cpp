@@ -2,9 +2,11 @@
 
 #include <bit>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -80,6 +82,16 @@ void test_canonical_document() {
   assert(sorted.find("\xF0\x9F\x98\x80") != nullptr);
   assert(sorted.find("\xEF\xAC\xB3")->as_integer_token() == "3");
   assert(sorted.find("missing") == nullptr);
+
+  // Two supplementary-plane keys with different lead bytes keep code-point
+  // order, stay findable, and still expose a duplicate.
+  const auto planes =
+      microsimulator::parse_json(R"({"\udb80\udc00":1,"\ud83d\ude00":2,"\ue000":3})");
+  assert(microsimulator::canonical_json(planes) ==
+         "{\"\xF0\x9F\x98\x80\":2,\"\xF3\xB0\x80\x80\":1,\"\xEE\x80\x80\":3}");
+  assert(planes.find("\xF0\x9F\x98\x80")->as_integer_token() == "2");
+  assert(planes.find("\xF3\xB0\x80\x80")->as_integer_token() == "1");
+  assert_parse_rejected(R"({"\ud83d\ude00":1,"\udb80\udc00":2,"\ud83d\ude00":3})", "duplicate key");
 }
 
 void test_number_kinds() {
@@ -102,6 +114,13 @@ void test_number_kinds() {
   assert(microsimulator::parse_json(text) == document);
   assert(microsimulator::canonical_json(document) ==
          "[18446744073709551615,0,2,100,0.1,123456789012345678901234567890,-7]");
+
+  // Negative zero keeps its sign in readable text and has one canonical form.
+  const auto zeros = microsimulator::parse_json("[-0.0, 0.0]");
+  assert(microsimulator::pretty_json(zeros) == "[-0.0, 0.0]\n");
+  assert(std::signbit(
+      microsimulator::parse_json(microsimulator::pretty_json(zeros)).as_array()[0].as_number()));
+  assert(microsimulator::canonical_json(zeros) == "[0,0]");
 
   assert(JsonValue::integer(std::int64_t{-42}).as_integer_token() == "-42");
   assert(JsonValue::integer(std::uint64_t{42}).as_integer_token() == "42");
@@ -189,6 +208,15 @@ void test_rejections() {
 
   // Underflow rounds toward zero rather than failing.
   assert(microsimulator::parse_json("1e-400").as_number() == 0.0);
+
+  // The writer accepts exactly the nesting the parser does.
+  auto nested = JsonValue::array({});
+  for (int depth = 1; depth < 256; ++depth) {
+    nested = JsonValue::array({std::move(nested)});
+  }
+  assert(microsimulator::parse_json(microsimulator::pretty_json(nested)) == nested);
+  nested = JsonValue::array({std::move(nested)});
+  assert_rejected([&] { static_cast<void>(microsimulator::pretty_json(nested)); }, "too deep");
 
   std::string deep(300, '[');
   deep.append(300, ']');

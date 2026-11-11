@@ -130,6 +130,11 @@ void remove_quietly(const std::filesystem::path& path) noexcept {
 
 }  // namespace
 
+std::string path_text(const std::filesystem::path& path) {
+  const auto text = path.u8string();
+  return {reinterpret_cast<const char*>(text.data()), text.size()};
+}
+
 void write_file_atomically(const std::filesystem::path& destination, std::string_view contents) {
   if (!destination.has_filename()) {
     throw FileError("destination has no file name");

@@ -50,7 +50,16 @@ target_include_directories(microsimulator_core PUBLIC cpp/include PRIVATE cpp)
 # Vendored single-header libraries, used only inside core sources.
 target_include_directories(microsimulator_core SYSTEM PRIVATE cpp/third_party)
 set_target_properties(microsimulator_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_compile_definitions(microsimulator_core PRIVATE MICROSIMULATOR_VERSION="${PROJECT_VERSION}")
+# Documents record the version of the library that wrote them. A Python package
+# build supplies the package version; a plain CMake build uses the project's.
+if(DEFINED SKBUILD_PROJECT_VERSION)
+  set(MICROSIMULATOR_PRODUCER_VERSION "${SKBUILD_PROJECT_VERSION}")
+else()
+  set(MICROSIMULATOR_PRODUCER_VERSION "${PROJECT_VERSION}")
+endif()
+target_compile_definitions(
+  microsimulator_core PRIVATE MICROSIMULATOR_VERSION="${MICROSIMULATOR_PRODUCER_VERSION}"
+)
 
 if(MICROSIMULATOR_ENABLE_METAL)
   if(NOT APPLE)

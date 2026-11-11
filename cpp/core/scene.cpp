@@ -17,6 +17,9 @@
 namespace microsimulator {
 namespace {
 
+using detail::array_json;
+using detail::boundary_names;
+using detail::decode_array;
 using detail::expect_array;
 using detail::expect_boolean;
 using detail::expect_float;
@@ -28,12 +31,8 @@ using detail::expect_string;
 using detail::expect_unsigned;
 using detail::floats_to_json;
 using detail::JsonPath;
-
-constexpr std::uint64_t uint32_max = std::numeric_limits<std::uint32_t>::max();
-
-constexpr std::array<std::string_view, 6> boundary_names{
-    "x_lower", "x_upper", "y_lower", "y_upper", "z_lower", "z_upper",
-};
+using detail::name_json;
+using detail::uint32_max;
 
 [[noreturn]] void scene_fail(const JsonPath& path, std::string_view message) {
   throw SceneError(path.str() + ": " + std::string(message));
@@ -113,25 +112,11 @@ void check_boundary(const SceneGridBoundary& boundary, std::uint32_t signal_coun
   return {.kind = boundary.kind, .values = boundary.values};
 }
 
-[[nodiscard]] JsonValue name_json(std::string_view name) {
-  return JsonValue::string(std::string(name));
-}
-
 [[nodiscard]] JsonValue id_json(std::uint64_t id) { return JsonValue::string(std::to_string(id)); }
 
 [[nodiscard]] JsonValue vector_json(const SceneVector& value) {
   return JsonValue::array(
       {JsonValue::number(value[0]), JsonValue::number(value[1]), JsonValue::number(value[2])});
-}
-
-template <typename Items, typename Encode>
-[[nodiscard]] JsonValue array_json(const Items& items, Encode&& encode) {
-  JsonValue::Array values;
-  values.reserve(items.size());
-  for (const auto& item : items) {
-    values.push_back(encode(item));
-  }
-  return JsonValue::array(std::move(values));
 }
 
 [[nodiscard]] JsonValue boundary_json(const SceneGridBoundary& boundary) {
@@ -244,17 +229,6 @@ template <typename Items, typename Encode>
            frame.channel_metadata, frame.species_count,
            frame.signal_grid.has_value() ? frame.signal_grid->signal_count : 0)},
   });
-}
-
-template <typename Decode>
-[[nodiscard]] auto decode_array(const JsonValue& value, const JsonPath& path, Decode&& decode) {
-  const auto& items = expect_array(value, path);
-  std::vector<decltype(decode(items[0], path[0]))> result;
-  result.reserve(items.size());
-  for (std::size_t index = 0; index < items.size(); ++index) {
-    result.push_back(decode(items[index], path[index]));
-  }
-  return result;
 }
 
 [[nodiscard]] std::uint64_t decode_id(const JsonValue& value, const JsonPath& path) {
@@ -666,7 +640,7 @@ SceneFrame capture_scene(const Simulation& simulation, const ChannelMetadata& ch
   check_channel_budget(simulation.species_count(), frame_path["species_count"]);
   check_channel_budget(simulation.signal_count(), grid_path["signal_count"]);
 
-  const auto checkpoint = simulation.checkpoint();
+  auto checkpoint = simulation.checkpoint();
   const auto backend = simulation.backend_info();
   std::unordered_map<CellId, CellId> parents;
   parents.reserve(checkpoint.world.lineage.size());
@@ -685,7 +659,7 @@ SceneFrame capture_scene(const Simulation& simulation, const ChannelMetadata& ch
   };
   frame.species_count = static_cast<std::uint32_t>(checkpoint.world.species_count);
   frame.cells.reserve(checkpoint.world.cells.size());
-  for (const auto& cell : checkpoint.world.cells) {
+  for (auto& cell : checkpoint.world.cells) {
     const auto parent = parents.find(cell.id);
     frame.cells.push_back({
         .id = cell.id,
@@ -698,7 +672,7 @@ SceneFrame capture_scene(const Simulation& simulation, const ChannelMetadata& ch
         .growth_rate = cell.growth_rate,
         .cell_type = cell.cell_type,
         .fixed = cell.fixed,
-        .species = cell.species,
+        .species = std::move(cell.species),
     });
   }
   for (const auto& plane : checkpoint.constraints.planes) {
@@ -750,7 +724,7 @@ SceneFrame capture_scene(const Simulation& simulation, const ChannelMetadata& ch
         .y_upper = to_scene_boundary(spec.y_upper),
         .z_lower = to_scene_boundary(spec.z_lower),
         .z_upper = to_scene_boundary(spec.z_upper),
-        .levels = checkpoint.signal_grid->levels,
+        .levels = std::move(checkpoint.signal_grid->levels),
     };
   }
   frame.channel_metadata =
@@ -807,7 +781,7 @@ void save_scene(const std::filesystem::path& path, const SceneFrame& frame) {
   try {
     write_file_atomically(path, encoded);
   } catch (const FileError& error) {
-    throw SceneError("could not write scene " + path.string() + ": " + error.what());
+    throw SceneError("could not write scene " + path_text(path) + ": " + error.what());
   }
 }
 
@@ -816,7 +790,7 @@ SceneFrame load_scene(const std::filesystem::path& path) {
   try {
     encoded = read_file_prefix(path, max_scene_bytes + 1);
   } catch (const FileError& error) {
-    throw SceneError("could not read scene " + path.string() + ": " + error.what());
+    throw SceneError("could not read scene " + path_text(path) + ": " + error.what());
   }
   return parse_scene(encoded);
 }

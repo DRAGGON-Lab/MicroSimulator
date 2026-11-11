@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -56,6 +57,28 @@ class JsonPath {
   std::size_t index_{0};
   bool indexed_{false};
 };
+
+inline constexpr std::uint64_t uint32_max = std::numeric_limits<std::uint32_t>::max();
+
+// The six faces of a signal grid, in the member order documents use.
+inline constexpr std::array<std::string_view, 6> boundary_names{
+    "x_lower", "x_upper", "y_lower", "y_upper", "z_lower", "z_upper",
+};
+
+[[nodiscard]] inline JsonValue name_json(std::string_view name) {
+  return JsonValue::string(std::string(name));
+}
+
+// Encodes each item of a range with the given function.
+template <typename Items, typename Encode>
+[[nodiscard]] JsonValue array_json(const Items& items, Encode&& encode) {
+  JsonValue::Array values;
+  values.reserve(items.size());
+  for (const auto& item : items) {
+    values.push_back(encode(item));
+  }
+  return JsonValue::array(std::move(values));
+}
 
 [[noreturn]] inline void fail(const JsonPath& path, std::string_view message) {
   throw JsonError(path.str() + ": " + std::string(message));
@@ -225,6 +248,19 @@ inline const JsonValue& expect_object(const JsonValue& value, const JsonPath& pa
   }
   return {expect_float(items[0], path[0]), expect_float(items[1], path[1]),
           expect_float(items[2], path[2])};
+}
+
+// Decodes each item of an array with the given function, which receives the
+// item and its path.
+template <typename Decode>
+[[nodiscard]] auto decode_array(const JsonValue& value, const JsonPath& path, Decode&& decode) {
+  const auto& items = expect_array(value, path);
+  std::vector<decltype(decode(items[0], path[0]))> result;
+  result.reserve(items.size());
+  for (std::size_t index = 0; index < items.size(); ++index) {
+    result.push_back(decode(items[index], path[index]));
+  }
+  return result;
 }
 
 [[nodiscard]] inline JsonValue floats_to_json(const std::vector<float>& values) {

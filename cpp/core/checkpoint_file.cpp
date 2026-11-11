@@ -15,6 +15,9 @@
 namespace microsimulator {
 namespace {
 
+using detail::array_json;
+using detail::boundary_names;
+using detail::decode_array;
 using detail::expect_array;
 using detail::expect_boolean;
 using detail::expect_float;
@@ -28,30 +31,13 @@ using detail::expect_vec3;
 using detail::fail;
 using detail::floats_to_json;
 using detail::JsonPath;
+using detail::name_json;
+using detail::uint32_max;
 using detail::vec3_to_json;
 
-constexpr std::uint64_t uint32_max = std::numeric_limits<std::uint32_t>::max();
 constexpr std::uint64_t uint64_max = std::numeric_limits<std::uint64_t>::max();
 
-constexpr std::array<std::string_view, 6> boundary_names{
-    "x_lower", "x_upper", "y_lower", "y_upper", "z_lower", "z_upper",
-};
-
 [[nodiscard]] JsonValue unsigned_json(std::uint64_t value) { return JsonValue::integer(value); }
-
-[[nodiscard]] JsonValue name_json(std::string_view name) {
-  return JsonValue::string(std::string(name));
-}
-
-template <typename Items, typename Encode>
-[[nodiscard]] JsonValue array_json(const Items& items, Encode&& encode) {
-  JsonValue::Array values;
-  values.reserve(items.size());
-  for (const auto& item : items) {
-    values.push_back(encode(item));
-  }
-  return JsonValue::array(std::move(values));
-}
 
 [[nodiscard]] JsonValue cell_json(const CellSnapshot& cell) {
   return JsonValue::object({
@@ -221,17 +207,6 @@ template <typename Items, typename Encode>
       {"signal_grid", signal_grid_json(checkpoint.signal_grid)},
       {"coupled_rate_plan", std::move(coupled)},
   });
-}
-
-template <typename Decode>
-[[nodiscard]] auto decode_array(const JsonValue& value, const JsonPath& path, Decode&& decode) {
-  const auto& items = expect_array(value, path);
-  std::vector<decltype(decode(items[0], path[0]))> result;
-  result.reserve(items.size());
-  for (std::size_t index = 0; index < items.size(); ++index) {
-    result.push_back(decode(items[index], path[index]));
-  }
-  return result;
 }
 
 [[nodiscard]] std::uint32_t decode_uint32(const JsonValue& value, const JsonPath& path) {
@@ -633,7 +608,7 @@ std::string encode_checkpoint(const CheckpointDocument& document) {
       {"channel_metadata", JsonValue::string(sha256_hex(canonical_json(labels)))},
   });
   const auto& backend = document.source_backend;
-  return pretty_json(JsonValue::object({
+  auto root = JsonValue::object({
       {"format", name_json(checkpoint_format)},
       {"version", unsigned_json(checkpoint_format_version)},
       {"producer", detail::producer_json()},
@@ -649,7 +624,12 @@ std::string encode_checkpoint(const CheckpointDocument& document) {
       {"simulation", std::move(state)},
       {"controller", document.controller},
       {"channel_metadata", std::move(labels)},
-  }));
+  });
+  try {
+    return pretty_json(root);
+  } catch (const JsonError& error) {
+    throw CheckpointError(std::string("checkpoint cannot be encoded: ") + error.what());
+  }
 }
 
 CheckpointDocument parse_checkpoint(std::string_view text) {
@@ -679,10 +659,14 @@ CheckpointDocument parse_checkpoint(std::string_view text) {
 
 void save_checkpoint(const std::filesystem::path& path, const CheckpointDocument& document) {
   const auto encoded = encode_checkpoint(document);
+  if (encoded.size() > max_checkpoint_bytes) {
+    throw CheckpointError("checkpoint exceeds the " + std::to_string(max_checkpoint_bytes) +
+                          "-byte limit");
+  }
   try {
     write_file_atomically(path, encoded);
   } catch (const FileError& error) {
-    throw CheckpointError("could not write checkpoint " + path.string() + ": " + error.what());
+    throw CheckpointError("could not write checkpoint " + path_text(path) + ": " + error.what());
   }
 }
 
@@ -691,7 +675,7 @@ CheckpointDocument load_checkpoint(const std::filesystem::path& path) {
   try {
     encoded = read_file_prefix(path, max_checkpoint_bytes + 1);
   } catch (const FileError& error) {
-    throw CheckpointError("could not read checkpoint " + path.string() + ": " + error.what());
+    throw CheckpointError("could not read checkpoint " + path_text(path) + ": " + error.what());
   }
   return parse_checkpoint(encoded);
 }

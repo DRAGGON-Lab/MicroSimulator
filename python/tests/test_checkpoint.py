@@ -439,3 +439,32 @@ def test_checkpoint_rejects_executable_or_non_json_values(tmp_path: Path) -> Non
     path.write_text('{"format":"first","format":"second"}', encoding="utf-8")
     with pytest.raises(CheckpointError, match="duplicate key"):
         load_checkpoint(path)
+
+
+def test_checkpoint_preserves_negative_zero_and_bounds_nesting(tmp_path: Path) -> None:
+    simulation = Simulation()
+    cell = CellInit()
+    position = Vec3()
+    position.x = -0.0
+    cell.position = position
+    cell.growth_rate = -0.0
+    simulation.add_cell(cell)
+    path = tmp_path / "zero.json"
+    save_checkpoint(simulation, path, controller={"bias": -0.0})
+
+    bundle = load_checkpoint_bundle(path)
+    restored = bundle.simulation.cells()[0]
+    assert math.copysign(1.0, restored.position.x) == -1.0
+    assert math.copysign(1.0, restored.growth_rate) == -1.0
+    assert math.copysign(1.0, cast(dict[str, float], bundle.controller)["bias"]) == -1.0
+
+    # A controller is refused at save time unless the file could be read back.
+    nested: JSONValue = []
+    for _ in range(255):
+        nested = [nested]
+    with pytest.raises(CheckpointError, match="nesting is too deep"):
+        save_checkpoint(simulation, tmp_path / "deep.json", controller=nested)
+    assert not (tmp_path / "deep.json").exists()
+    nested = cast(list[JSONValue], nested)[0]
+    save_checkpoint(simulation, tmp_path / "deep.json", controller=nested)
+    assert load_checkpoint_bundle(tmp_path / "deep.json").controller == nested

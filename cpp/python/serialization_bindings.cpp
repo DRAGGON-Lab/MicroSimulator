@@ -231,9 +231,10 @@ template <typename Value>
 }
 
 // Gives a bound value type the behavior of an immutable record: equality and
-// hashing by value, a repr listing its fields, and replace(**changes), which
-// builds a new instance from the current fields with the named ones
-// substituted.
+// hashing by value, a repr listing its fields, copying and pickling through
+// its constructor, and replace(**changes), which builds a new instance from
+// the current fields with the named ones substituted. The fields are listed
+// in constructor argument order.
 template <typename Class>
 void def_record(nb::class_<Class>& bound, std::vector<const char*> fields) {
   bound.def("__eq__", [](const Class& self, nb::handle other) {
@@ -262,6 +263,13 @@ void def_record(nb::class_<Class>& bound, std::vector<const char*> fields) {
       arguments[name] = value;
     }
     return self.type()(**arguments);
+  });
+  bound.def("__reduce__", [fields](nb::handle self) {
+    nb::list values;
+    for (const char* field : fields) {
+      values.append(self.attr(field));
+    }
+    return nb::make_tuple(self.type(), nb::tuple(values));
   });
   bound.def("__hash__", [fields](nb::handle self) {
     nb::list values;
@@ -665,12 +673,21 @@ void bind_scenes(nb::module_& module) {
       [](nb::handle source) {
         std::string text;
         if (PyUnicode_Check(source.ptr())) {
-          text = nb::cast<std::string>(source);
-        } else if (PyBytes_Check(source.ptr())) {
-          text.assign(PyBytes_AsString(source.ptr()),
-                      static_cast<std::size_t>(PyBytes_Size(source.ptr())));
+          Py_ssize_t size = 0;
+          const char* data = PyUnicode_AsUTF8AndSize(source.ptr(), &size);
+          if (data == nullptr) {
+            PyErr_Clear();
+            throw SceneError("scene is not valid JSON: text is not valid Unicode");
+          }
+          text.assign(data, static_cast<std::size_t>(size));
         } else {
-          throw nb::type_error("parse_scene() expects str or bytes");
+          Py_buffer view;
+          if (PyObject_GetBuffer(source.ptr(), &view, PyBUF_SIMPLE) != 0) {
+            PyErr_Clear();
+            throw nb::type_error("parse_scene() expects str or a bytes-like object");
+          }
+          text.assign(static_cast<const char*>(view.buf), static_cast<std::size_t>(view.len));
+          PyBuffer_Release(&view);
         }
         const nb::gil_scoped_release release;
         return microsimulator::parse_scene(text);
