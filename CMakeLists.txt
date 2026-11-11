@@ -18,12 +18,19 @@ endif()
 option(MICROSIMULATOR_ENABLE_METAL "Build the native Apple Metal backend" ${MICROSIMULATOR_METAL_DEFAULT})
 
 add_library(microsimulator_core STATIC
+  cpp/core/atomic_file.cpp
+  cpp/core/channels.cpp
   cpp/core/checkpoint.cpp
+  cpp/core/checkpoint_file.cpp
   cpp/core/contact_graph.cpp
   cpp/core/constraints.cpp
   cpp/core/coupled_rates.cpp
+  cpp/core/json.cpp
   cpp/core/mechanics_integration.cpp
+  cpp/core/names.cpp
   cpp/core/occupancy.cpp
+  cpp/core/scene.cpp
+  cpp/core/sha256.cpp
   cpp/core/signals.cpp
   cpp/core/species.cpp
   cpp/core/world_state.cpp
@@ -40,7 +47,10 @@ add_library(microsimulator::core ALIAS microsimulator_core)
 
 target_compile_features(microsimulator_core PUBLIC cxx_std_23)
 target_include_directories(microsimulator_core PUBLIC cpp/include PRIVATE cpp)
+# Vendored single-header libraries, used only inside core sources.
+target_include_directories(microsimulator_core SYSTEM PRIVATE cpp/third_party)
 set_target_properties(microsimulator_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_definitions(microsimulator_core PRIVATE MICROSIMULATOR_VERSION="${PROJECT_VERSION}")
 
 if(MICROSIMULATOR_ENABLE_METAL)
   if(NOT APPLE)
@@ -166,7 +176,12 @@ if(MICROSIMULATOR_BUILD_PYTHON)
   find_package(Python 3.12 COMPONENTS Interpreter Development.Module REQUIRED)
   find_package(nanobind CONFIG REQUIRED)
 
-  nanobind_add_module(_core cpp/python/bindings.cpp cpp/python/occupancy_bindings.cpp)
+  nanobind_add_module(
+    _core
+    cpp/python/bindings.cpp
+    cpp/python/occupancy_bindings.cpp
+    cpp/python/serialization_bindings.cpp
+  )
   target_link_libraries(_core PRIVATE microsimulator::core)
   install(TARGETS _core LIBRARY DESTINATION microsimulator)
 endif()
@@ -212,6 +227,30 @@ if(MICROSIMULATOR_BUILD_TESTS)
   add_executable(microsimulator_flow_test tests/cpp/flow_test.cpp)
   target_link_libraries(microsimulator_flow_test PRIVATE microsimulator::core)
   add_test(NAME flow COMMAND microsimulator_flow_test)
+
+  add_executable(microsimulator_json_test tests/cpp/json_test.cpp)
+  target_link_libraries(microsimulator_json_test PRIVATE microsimulator::core)
+  add_test(NAME json COMMAND microsimulator_json_test)
+
+  add_executable(microsimulator_sha256_test tests/cpp/sha256_test.cpp)
+  target_link_libraries(microsimulator_sha256_test PRIVATE microsimulator::core)
+  add_test(NAME sha256 COMMAND microsimulator_sha256_test)
+
+  add_executable(microsimulator_atomic_file_test tests/cpp/atomic_file_test.cpp)
+  target_link_libraries(microsimulator_atomic_file_test PRIVATE microsimulator::core)
+  add_test(NAME atomic_file COMMAND microsimulator_atomic_file_test)
+
+  add_executable(microsimulator_checkpoint_file_test tests/cpp/checkpoint_file_test.cpp)
+  target_link_libraries(microsimulator_checkpoint_file_test PRIVATE microsimulator::core)
+  add_test(NAME checkpoint_file COMMAND microsimulator_checkpoint_file_test)
+
+  add_executable(microsimulator_scene_test tests/cpp/scene_test.cpp)
+  target_link_libraries(microsimulator_scene_test PRIVATE microsimulator::core)
+  add_test(
+    NAME scene
+    COMMAND microsimulator_scene_test
+            ${CMAKE_CURRENT_SOURCE_DIR}/viewer/tests/fixtures/channels-v3.scene.json
+  )
 
   add_executable(microsimulator_checkpoint_test tests/cpp/checkpoint_test.cpp)
   target_link_libraries(microsimulator_checkpoint_test PRIVATE microsimulator::core)

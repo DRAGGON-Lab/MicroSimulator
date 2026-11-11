@@ -21,7 +21,7 @@ Mechanics constrains all seven correction degrees of freedom for fixed cells. Wi
 
 This preserves a symmetric positive-definite operator for conjugate gradient, makes the fixed solution entries exactly zero, and lets movable cells react to contacts with immovable cells. Mechanics integration independently ignores fixed-cell translation, rotation, and contact-induced length correction. An explicit desired growth increment still increases rod length.
 
-Checkpoint schema v6 records `fixed` for every active cell. Readers migrate v1 through v5 cells to `fixed = false`, matching the behavior of files written before the attribute existed.
+Checkpoints record `fixed` for every active cell.
 
 ## Consequences
 

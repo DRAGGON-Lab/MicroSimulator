@@ -49,7 +49,7 @@ Together, these gates cover:
 - cell contacts, plane, sphere, box, and cylinder constraints, full-capsule finite-obstacle contact, fixed cells, and mechanics relaxation;
 - species, signal transport, Forward Euler, Crank-Nicolson, backward Euler, and coupled rates;
 - depth-averaged Hele-Shaw/Darcy flow and resolved MAC Stokes-Brinkman flow;
-- checkpoint migration, exact controller resume, and deterministic runtime random state;
+- checkpoint round trips, exact controller resume, and deterministic runtime random state;
 - batch execution, stopping rules, output collision handling, and run manifests;
 - scene capture, live-viewer reset and checkpoint behavior, and protocol validation;
 - Parquet/Zarr analysis export, native contact derivation, and verified Polars recipes.
@@ -80,7 +80,7 @@ The Python and C++ suites exercise more than numerical parity:
 
 - Species fixtures cover schema validation, initialization, inheritance, plan topology, effective-volume dilution, simultaneous updates, and all typed instruction operations.
 - SBML fixtures cover supported Level 3 Version 2 Core symbols and operators, ordered metadata, local and global parameters, stoichiometry, and explicit rejection of unsupported semantics.
-- Signal fixtures cover mass conservation, fixed reservoirs, periodic upwind advection, reduced dimensions, 3D interpolation, nonuniform affine sources and losses, stability rejection, checkpoint migration, and diagnosed solver convergence.
+- Signal fixtures cover mass conservation, fixed reservoirs, periodic upwind advection, reduced dimensions, 3D interpolation, nonuniform affine sources and losses, stability rejection, checkpoint round trips, and diagnosed solver convergence.
 - Coupled fixtures cover old-field sampling, post-growth intracellular rates, amount-to-voxel conversion, repeated scatter destinations, empty colonies, and failure atomicity.
 - Contact and mechanics fixtures cover sparse and dense candidate staging, coincident cells, stable ordering after slot reuse, operator properties, convergence and breakdown diagnostics, buffer growth, fixed-cell projection, and integrated geometry.
 - Checkpoint fixtures compare every persisted field before continuing execution and reject corrupt, malformed, non-finite, duplicate, unknown, or unsupported data.

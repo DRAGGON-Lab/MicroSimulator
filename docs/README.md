@@ -68,7 +68,7 @@ The [testing and validation guide](development/validation.md) distinguishes comp
 - [Run manifest v1](formats/run-manifest-v1.md) defines reproducible batch jobs and parameter sweeps.
 - [Scene format v3](formats/scene-v3.md) defines data-only visualization frames.
 - [Live viewer protocol v1](protocols/live-viewer-v1.md) defines interactive viewer messages and authority boundaries.
-- [Checkpoint design](architecture/0004-checkpoints.md) defines restart state and schema migration.
+- [Checkpoint design](architecture/0004-checkpoints.md) defines restart state and the checkpoint file format.
 - [Analysis dataset design](architecture/0013-analysis-datasets.md) defines Parquet/Zarr schemas and provenance.
 
 ## Development and validation

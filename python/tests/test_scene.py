@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -103,8 +102,7 @@ def _simulation(backend: BackendKind = BackendKind.CPU) -> Simulation:
 
 
 def _semantic_frame(frame: SceneFrame) -> SceneFrame:
-    return replace(
-        frame,
+    return frame.replace(
         backend=SceneBackend(
             kind="cpu",
             name="normalized",
@@ -234,15 +232,14 @@ def test_scene_rejects_tampering_unknown_fields_and_duplicate_keys() -> None:
 
 def test_scene_rejects_invalid_geometry_and_grid_shape() -> None:
     frame = capture_scene(_simulation())
-    bad_direction = replace(
-        frame,
-        cells=(replace(frame.cells[0], direction=(2.0, 0.0, 0.0)), *frame.cells[1:]),
+    bad_direction = frame.replace(
+        cells=(frame.cells[0].replace(direction=(2.0, 0.0, 0.0)), *frame.cells[1:]),
     )
     with pytest.raises(SceneError, match="normalized"):
         dumps_scene(bad_direction)
 
     assert frame.signal_grid is not None
-    bad_levels = replace(frame, signal_grid=replace(frame.signal_grid, levels=(1.0,)))
+    bad_levels = frame.replace(signal_grid=frame.signal_grid.replace(levels=(1.0,)))
     with pytest.raises(SceneError, match="expected 8 values"):
         dumps_scene(bad_levels)
 

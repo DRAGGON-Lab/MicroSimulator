@@ -10,6 +10,7 @@
 namespace nb = nanobind;
 using namespace nb::literals;
 void bind_occupancy(nb::module_& module);
+void bind_serialization(nb::module_& module);
 
 NB_MODULE(_core, module) {
   module.doc() = "MicroSimulator native simulation core";
@@ -655,4 +656,6 @@ NB_MODULE(_core, module) {
       .def("_checkpoint",
            microsimulator::python::exclusive(&microsimulator::Simulation::checkpoint))
       .def("validate", microsimulator::python::exclusive(&microsimulator::Simulation::validate));
+
+  bind_serialization(module);
 }

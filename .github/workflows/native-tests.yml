@@ -1,0 +1,48 @@
+name: Native CPU tests
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/native-tests.yml
+      - CMakeLists.txt
+      - CMakePresets.json
+      - cmake/**
+      - cpp/**
+      - tests/**
+      - viewer/tests/fixtures/**
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          clean: true
+          persist-credentials: false
+
+      - name: Install the build tool
+        run: sudo apt-get update && sudo apt-get install --yes ninja-build
+
+      # The CPU reference build needs no GPU toolkit. It runs every unit test
+      # and each conformance scenario against the CPU backend.
+      - name: Configure
+        run: cmake --preset cpu-debug
+
+      - name: Build
+        run: cmake --build --preset cpu-debug
+
+      - name: Test
+        run: ctest --preset cpu-debug
