@@ -74,7 +74,7 @@ The complete documentation index is available at [`docs/README.md`](docs/README.
 
 ## Origins
 
-MicroSimulator began as a rewrite of [CellModeller](https://github.com/cellmodeller/CellModeller) and has developed into an independent microfluidics simulation system. It builds on that lineage of individual-based cell modeling with its own device, flow, transport, and experiment workflows. The [compatibility guide](docs/compatibility/README.md) documents supported CellModeller models and intentional numerical differences. Users of the former CellModeller2 package can follow the [rename guide](docs/compatibility/microsimulator-rename.md).
+MicroSimulator began as a rewrite of [CellModeller](https://github.com/cellmodeller/CellModeller) and has developed into an independent microfluidics simulation system. It builds on that lineage of individual-based cell modeling with its own device, flow, transport, and experiment workflows. The [compatibility guide](docs/compatibility/README.md) documents supported CellModeller models and intentional numerical differences.
 
 ## License
 
