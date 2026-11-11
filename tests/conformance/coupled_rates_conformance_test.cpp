@@ -108,6 +108,68 @@ cm::Simulation make_reference(cm::SignalIntegrationKind integration, bool masked
   return simulation;
 }
 
+// A colony whose cells crowd a few lattice sites: most share one voxel, and
+// the rest sit on lattice planes and on the upper domain faces. The y axis has
+// a single site.
+cm::Simulation make_crowded_reference() {
+  constexpr std::size_t cell_count = 400;
+  cm::Simulation simulation(cm::BackendKind::cpu, cell_count, 1);
+  cm::SignalGridSpec grid;
+  grid.signal_count = 2;
+  grid.shape = {.x = 6, .y = 1, .z = 4};
+  grid.origin = {-1.0F, 0.0F, 0.5F};
+  grid.spacing = {1.5F, 1.0F, 0.75F};
+  grid.diffusion = {0.05F, 0.02F};
+  grid.advection = {{}, {}};
+  std::vector<std::uint8_t> obstacles(grid.site_count(), 0);
+  obstacles[(3 * grid.shape.z) + 2] = 1;
+  grid.obstacles = std::move(obstacles);
+  std::vector<float> levels(grid.level_count());
+  for (std::size_t index = 0; index < levels.size(); ++index) {
+    levels[index] = grid.solid_site(index % grid.site_count())
+                        ? 0.0F
+                        : 1.0F + (0.01F * static_cast<float>(index % 13));
+  }
+  simulation.configure_signal_grid(grid, std::move(levels));
+
+  const auto extent_x = grid.spacing.x * static_cast<float>(grid.shape.x - 1);
+  const auto extent_z = grid.spacing.z * static_cast<float>(grid.shape.z - 1);
+  for (std::size_t index = 0; index < cell_count; ++index) {
+    cm::CellInit cell;
+    if (index % 8 == 0) {
+      // On a lattice plane in x, sweeping z up to and including the upper face.
+      cell.position = {grid.origin.x + (grid.spacing.x * static_cast<float>((index / 8) % 6)),
+                       0.25F, grid.origin.z + (extent_z * static_cast<float>(index % 5) / 4.0F)};
+    } else if (index % 8 == 1) {
+      // On the upper x and z faces, where the stencil has a single site per axis.
+      cell.position = {grid.origin.x + extent_x, 0.0F, grid.origin.z + extent_z};
+    } else {
+      // Inside the voxel whose lower corner is site (1, 0, 0).
+      cell.position = {
+          grid.origin.x + (grid.spacing.x * (1.0F + (static_cast<float>(index % 37) / 37.0F))),
+          0.1F, grid.origin.z + (grid.spacing.z * static_cast<float>(index % 29) / 29.0F)};
+    }
+    cell.length = 1.0F + (0.01F * static_cast<float>(index % 31));
+    cell.radius = 0.3F;
+    cell.growth_rate = 0.01F * static_cast<float>(index % 5);
+    cell.species = {0.5F + (0.01F * static_cast<float>(index % 29))};
+    simulation.add_cell(cell);
+  }
+
+  using enum cm::RateOp;
+  std::vector<cm::RateInstruction> instructions{
+      operation(species, 0),
+      operation(signal, 0),
+      operation(constant, 0, 0, 0.02F),
+      operation(constant, 0, 0, -0.01F),
+      operation(multiply, 1, 2),
+      operation(multiply, 0, 2),
+      operation(multiply, 0, 3),
+  };
+  simulation.set_coupled_rate_plan(cm::CoupledRatePlan(1, 2, std::move(instructions), {4}, {5, 6}));
+  return simulation;
+}
+
 void assert_close(const cm::Simulation& actual, const cm::Simulation& expected) {
   assert(actual.time() == expected.time());
   const auto actual_cells = actual.cells();
@@ -128,8 +190,7 @@ void assert_close(const cm::Simulation& actual, const cm::Simulation& expected) 
   }
 }
 
-void run_case(cm::SignalIntegrationKind integration, float dt, bool masked = false) {
-  auto source = make_reference(integration, masked);
+void run_case(const cm::Simulation& source, float dt) {
   const auto checkpoint = source.checkpoint();
   cm::Simulation expected(cm::BackendKind::cpu, checkpoint);
   expected.step(dt);
@@ -148,6 +209,10 @@ void run_case(cm::SignalIntegrationKind integration, float dt, bool masked = fal
   });
 }
 
+void run_case(cm::SignalIntegrationKind integration, float dt, bool masked = false) {
+  run_case(make_reference(integration, masked), dt);
+}
+
 }  // namespace
 
 int main() {
@@ -156,5 +221,6 @@ int main() {
   run_case(cm::SignalIntegrationKind::backward_euler, 0.5F);
   run_case(cm::SignalIntegrationKind::forward_euler, 0.01F, true);
   run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F, true);
+  run_case(make_crowded_reference(), 0.01F);
   return 0;
 }

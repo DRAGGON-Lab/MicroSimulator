@@ -429,9 +429,11 @@ class CudaBackend final : public ComputeBackend {
         checked_product(cell_count_size, signal_count_size, "cell signal");
     const auto grid_level_count = grid.levels().size();
     const auto& spec = grid.spec();
-    for (const auto count :
-         {cell_count_size, species_count_size, signal_count_size, instruction_count_size,
-          species_level_count, workspace_count, cell_signal_count, grid_level_count}) {
+    const auto scatter_entry_count =
+        checked_product(cell_count_size, cuda::scatter_stencil_sites, "scatter entry");
+    for (const auto count : {cell_count_size, species_count_size, signal_count_size,
+                             instruction_count_size, species_level_count, workspace_count,
+                             cell_signal_count, grid_level_count, scatter_entry_count}) {
       if (count > std::numeric_limits<std::uint32_t>::max()) {
         throw std::overflow_error("CUDA coupled launch exceeds the uint32 index space");
       }
@@ -581,6 +583,24 @@ class CudaBackend final : public ComputeBackend {
         .sites = static_cast<std::uint32_t>(spec.site_count()),
     };
     const auto crank_nicolson = static_cast<std::uint32_t>(spec.integration);
+    const auto origin = make_float4(spec.origin.x, spec.origin.y, spec.origin.z, 0.0F);
+    const auto spacing = make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F);
+    const std::uint32_t* scatter_ends = nullptr;
+    if (cell_count_size != 0) {
+      coupled_scatter_stencils_.reserve(cell_count_size, "coupled scatter stencils");
+      coupled_scatter_cells_.reserve(scatter_entry_count, "coupled scatter cell lists");
+      coupled_scatter_counts_.reserve(spec.site_count(), "coupled scatter counts");
+      coupled_scatter_cursors_.reserve(spec.site_count(), "coupled scatter cursors");
+      coupled_scatter_scan_a_.reserve(spec.site_count(), "coupled scatter scan A");
+      coupled_scatter_scan_b_.reserve(spec.site_count(), "coupled scatter scan B");
+      check_cuda(cuda::launch_coupled_scatter_lists(
+                     coupled_centers_.data(), coupled_scatter_stencils_.data(),
+                     coupled_scatter_counts_.data(), coupled_scatter_cursors_.data(),
+                     coupled_scatter_scan_a_.data(), coupled_scatter_scan_b_.data(),
+                     coupled_scatter_cells_.data(), shape, origin, spacing,
+                     static_cast<std::uint32_t>(cell_count_size), stream_, &scatter_ends),
+                 "failed to launch the CUDA coupled scatter-list kernels");
+    }
     check_cuda(
         cuda::launch_advance_coupled(
             coupled_species_levels_.data(), coupled_previous_lengths_.data(),
@@ -592,14 +612,13 @@ class CudaBackend final : public ComputeBackend {
             coupled_reaction_source_.data(), coupled_reaction_loss_.data(),
             coupled_obstacles_.data(), coupled_x_faces_.data(), coupled_y_faces_.data(),
             coupled_z_faces_.data(), has_velocity_field, coupled_cell_signal_rates_.data(),
-            coupled_error_.data(), boundaries, shape,
-            make_float4(spec.origin.x, spec.origin.y, spec.origin.z, 0.0F),
-            make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F), dt,
+            coupled_error_.data(), boundaries, shape, origin, spacing, dt,
             static_cast<std::uint32_t>(species_count_size),
             static_cast<std::uint32_t>(signal_count_size),
             static_cast<std::uint32_t>(instruction_count_size),
             static_cast<std::uint32_t>(cell_count_size),
-            static_cast<std::uint32_t>(grid_level_count), crank_nicolson, stream_),
+            static_cast<std::uint32_t>(grid_level_count), crank_nicolson, scatter_ends,
+            coupled_scatter_cells_.data(), stream_),
         "failed to launch the CUDA coupled kernels");
 
     std::uint32_t error = 0;
@@ -1602,6 +1621,12 @@ class CudaBackend final : public ComputeBackend {
   CudaBuffer<std::uint32_t> coupled_signal_outputs_;
   CudaBuffer<float> coupled_workspace_;
   CudaBuffer<float> coupled_cell_signal_rates_;
+  CudaBuffer<uint2> coupled_scatter_stencils_;
+  CudaBuffer<std::uint32_t> coupled_scatter_cells_;
+  CudaBuffer<std::uint32_t> coupled_scatter_counts_;
+  CudaBuffer<std::uint32_t> coupled_scatter_cursors_;
+  CudaBuffer<std::uint32_t> coupled_scatter_scan_a_;
+  CudaBuffer<std::uint32_t> coupled_scatter_scan_b_;
   CudaBuffer<float> coupled_grid_levels_;
   CudaBuffer<float> coupled_grid_output_;
   CudaBuffer<float> coupled_diffusion_;

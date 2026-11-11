@@ -206,13 +206,26 @@ class MetalBackend final : public ComputeBackend {
                            "failed to create the Metal coupled-cell pipeline");
       coupled_grid_pipeline_ = compile_pipeline(device_, coupled_library, @"advance_coupled_grid",
                                                 "failed to create the Metal coupled-grid pipeline");
+      coupled_scatter_stencil_pipeline_ =
+          compile_pipeline(device_, coupled_library, @"coupled_scatter_stencils",
+                           "failed to create the Metal coupled scatter-stencil pipeline");
+      coupled_scatter_count_pipeline_ =
+          compile_pipeline(device_, coupled_library, @"coupled_scatter_count",
+                           "failed to create the Metal coupled scatter-count pipeline");
+      coupled_scatter_fill_pipeline_ =
+          compile_pipeline(device_, coupled_library, @"coupled_scatter_fill",
+                           "failed to create the Metal coupled scatter-fill pipeline");
+      coupled_scatter_sort_pipeline_ =
+          compile_pipeline(device_, coupled_library, @"coupled_scatter_sort",
+                           "failed to create the Metal coupled scatter-sort pipeline");
       const auto contacts_library =
           compile_library(device_, metal::contacts_source, "failed to compile Metal contacts");
       contact_count_pipeline_ =
           compile_pipeline(device_, contacts_library, @"count_cell_contacts",
                            "failed to create the Metal contact-count pipeline");
-      contact_scan_pipeline_ = compile_pipeline(device_, contacts_library, @"inclusive_scan_step",
-                                                "failed to create the Metal contact-scan pipeline");
+      inclusive_scan_pipeline_ =
+          compile_pipeline(device_, contacts_library, @"inclusive_scan_step",
+                           "failed to create the Metal inclusive-scan pipeline");
       contact_fill_pipeline_ = compile_pipeline(device_, contacts_library, @"fill_cell_contacts",
                                                 "failed to create the Metal contact-fill pipeline");
       external_contact_count_pipeline_ =
@@ -573,13 +586,16 @@ class MetalBackend final : public ComputeBackend {
     const auto cell_signal_count =
         checked_product(cell_count_size, signal_count_size, "cell signal");
     const auto grid_level_count = grid.levels().size();
-    for (const auto count :
-         {cell_count_size, species_count_size, signal_count_size, instruction_count_size,
-          species_level_count, workspace_count, cell_signal_count, grid_level_count}) {
+    const auto scatter_entry_count =
+        checked_product(cell_count_size, scatter_stencil_sites, "scatter entry");
+    for (const auto count : {cell_count_size, species_count_size, signal_count_size,
+                             instruction_count_size, species_level_count, workspace_count,
+                             cell_signal_count, grid_level_count, scatter_entry_count}) {
       if (count > std::numeric_limits<std::uint32_t>::max()) {
         throw std::overflow_error("Metal coupled launch exceeds the uint32 index space");
       }
     }
+    ensure_coupled_scatter_capacity(cell_count_size, grid.spec().site_count());
     ensure_coupled_capacity(cell_count_size, species_level_count, instruction_count_size,
                             species_count_size, signal_count_size, workspace_count,
                             cell_signal_count, grid_level_count);
@@ -682,6 +698,7 @@ class MetalBackend final : public ComputeBackend {
       if (command_buffer == nil || encoder == nil) {
         throw std::runtime_error("failed to create a Metal coupled-rate command");
       }
+      id<MTLBuffer> scatter_ends = coupled_scatter_counts_;
       if (cell_count != 0) {
         [encoder setComputePipelineState:coupled_cells_pipeline_];
         [encoder setBuffer:coupled_species_levels_ offset:0 atIndex:0];
@@ -708,6 +725,7 @@ class MetalBackend final : public ComputeBackend {
         [encoder setBuffer:coupled_obstacles_ offset:0 atIndex:21];
         dispatch_1d(encoder, coupled_cells_pipeline_, cell_count);
         [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+        scatter_ends = encode_coupled_scatter_lists(encoder, shape, origin, spacing, cell_count);
       }
 
       [encoder setComputePipelineState:coupled_grid_pipeline_];
@@ -737,6 +755,8 @@ class MetalBackend final : public ComputeBackend {
       [encoder setBuffer:coupled_y_faces_ offset:0 atIndex:21];
       [encoder setBuffer:coupled_z_faces_ offset:0 atIndex:22];
       [encoder setBytes:&has_velocity_field length:sizeof(has_velocity_field) atIndex:23];
+      [encoder setBuffer:scatter_ends offset:0 atIndex:24];
+      [encoder setBuffer:coupled_scatter_cells_ offset:0 atIndex:25];
       dispatch_1d(encoder, coupled_grid_pipeline_, level_count);
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal coupled-rate command failed");
@@ -1540,26 +1560,113 @@ class MetalBackend final : public ComputeBackend {
                 values.size() * sizeof(MetalExternalConstraint));
   }
 
-  void encode_contact_scan(id<MTLComputeCommandEncoder> encoder, std::uint32_t element_count) {
-    id<MTLBuffer> scan_input = contact_counts_;
-    id<MTLBuffer> scan_output = contact_scan_a_;
+  // Encodes an inclusive prefix sum of `counts` and returns the buffer that
+  // holds it: one of the two scratch buffers, or `counts` itself when there is
+  // a single element.
+  id<MTLBuffer> encode_inclusive_scan(id<MTLComputeCommandEncoder> encoder, id<MTLBuffer> counts,
+                                      id<MTLBuffer> scratch_a, id<MTLBuffer> scratch_b,
+                                      std::uint32_t element_count) {
+    id<MTLBuffer> scan_input = counts;
+    id<MTLBuffer> scan_output = scratch_a;
     std::uint32_t offset = 1;
     while (offset < element_count) {
-      [encoder setComputePipelineState:contact_scan_pipeline_];
+      [encoder setComputePipelineState:inclusive_scan_pipeline_];
       [encoder setBuffer:scan_input offset:0 atIndex:0];
       [encoder setBuffer:scan_output offset:0 atIndex:1];
       [encoder setBytes:&offset length:sizeof(offset) atIndex:2];
       [encoder setBytes:&element_count length:sizeof(element_count) atIndex:3];
-      dispatch_1d(encoder, contact_scan_pipeline_, element_count);
+      dispatch_1d(encoder, inclusive_scan_pipeline_, element_count);
       [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
       scan_input = scan_output;
-      scan_output = scan_output == contact_scan_a_ ? contact_scan_b_ : contact_scan_a_;
+      scan_output = scan_output == scratch_a ? scratch_b : scratch_a;
       if (offset > element_count / 2) {
         break;
       }
       offset *= 2;
     }
-    contact_inclusive_counts_ = scan_input;
+    return scan_input;
+  }
+
+  void encode_contact_scan(id<MTLComputeCommandEncoder> encoder, std::uint32_t element_count) {
+    contact_inclusive_counts_ = encode_inclusive_scan(encoder, contact_counts_, contact_scan_a_,
+                                                      contact_scan_b_, element_count);
+  }
+
+  // Encodes the per-site cell lists the coupled grid kernel gathers from and
+  // returns the buffer holding each site's inclusive end offset into
+  // `coupled_scatter_cells_`.
+  id<MTLBuffer> encode_coupled_scatter_lists(id<MTLComputeCommandEncoder> encoder,
+                                             const MetalUInt4& shape, const MetalFloat4& origin,
+                                             const MetalFloat4& spacing, std::uint32_t cell_count) {
+    const auto site_count = shape.w;
+    std::memset(coupled_scatter_counts_.contents, 0, site_count * sizeof(std::uint32_t));
+    std::memset(coupled_scatter_cursors_.contents, 0, site_count * sizeof(std::uint32_t));
+
+    [encoder setComputePipelineState:coupled_scatter_stencil_pipeline_];
+    [encoder setBuffer:coupled_centers_ offset:0 atIndex:0];
+    [encoder setBuffer:coupled_scatter_stencils_ offset:0 atIndex:1];
+    [encoder setBytes:&shape length:sizeof(shape) atIndex:2];
+    [encoder setBytes:&origin length:sizeof(origin) atIndex:3];
+    [encoder setBytes:&spacing length:sizeof(spacing) atIndex:4];
+    [encoder setBytes:&cell_count length:sizeof(cell_count) atIndex:5];
+    dispatch_1d(encoder, coupled_scatter_stencil_pipeline_, cell_count);
+    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+
+    [encoder setComputePipelineState:coupled_scatter_count_pipeline_];
+    [encoder setBuffer:coupled_scatter_stencils_ offset:0 atIndex:0];
+    [encoder setBuffer:coupled_scatter_counts_ offset:0 atIndex:1];
+    [encoder setBytes:&shape length:sizeof(shape) atIndex:2];
+    [encoder setBytes:&cell_count length:sizeof(cell_count) atIndex:3];
+    dispatch_1d(encoder, coupled_scatter_count_pipeline_, cell_count);
+    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+
+    id<MTLBuffer> ends =
+        encode_inclusive_scan(encoder, coupled_scatter_counts_, coupled_scatter_scan_a_,
+                              coupled_scatter_scan_b_, site_count);
+
+    [encoder setComputePipelineState:coupled_scatter_fill_pipeline_];
+    [encoder setBuffer:coupled_scatter_stencils_ offset:0 atIndex:0];
+    [encoder setBuffer:coupled_scatter_cursors_ offset:0 atIndex:1];
+    [encoder setBuffer:ends offset:0 atIndex:2];
+    [encoder setBuffer:coupled_scatter_cells_ offset:0 atIndex:3];
+    [encoder setBytes:&shape length:sizeof(shape) atIndex:4];
+    [encoder setBytes:&cell_count length:sizeof(cell_count) atIndex:5];
+    dispatch_1d(encoder, coupled_scatter_fill_pipeline_, cell_count);
+    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+
+    [encoder setComputePipelineState:coupled_scatter_sort_pipeline_];
+    [encoder setBuffer:ends offset:0 atIndex:0];
+    [encoder setBuffer:coupled_scatter_cells_ offset:0 atIndex:1];
+    [encoder setBytes:&site_count length:sizeof(site_count) atIndex:2];
+    dispatch_1d(encoder, coupled_scatter_sort_pipeline_, site_count);
+    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+    return ends;
+  }
+
+  void ensure_coupled_scatter_capacity(std::size_t cell_count, std::size_t site_count) {
+    const auto requested_cells = std::max<std::size_t>(cell_count, 1);
+    if (requested_cells > coupled_scatter_cell_capacity_) {
+      const auto coupled_scatter_cell_capacity = std::bit_ceil(requested_cells);
+      coupled_scatter_stencils_ = allocate_shared_buffer(
+          device_, coupled_scatter_cell_capacity * sizeof(MetalUInt2), "coupled scatter stencils");
+      coupled_scatter_cells_ = allocate_shared_buffer(
+          device_, coupled_scatter_cell_capacity * scatter_stencil_sites * sizeof(std::uint32_t),
+          "coupled scatter cell lists");
+      coupled_scatter_cell_capacity_ = coupled_scatter_cell_capacity;
+    }
+    if (site_count > coupled_scatter_site_capacity_) {
+      const auto coupled_scatter_site_capacity = std::bit_ceil(site_count);
+      const auto byte_count = coupled_scatter_site_capacity * sizeof(std::uint32_t);
+      coupled_scatter_counts_ =
+          allocate_shared_buffer(device_, byte_count, "coupled scatter counts");
+      coupled_scatter_cursors_ =
+          allocate_shared_buffer(device_, byte_count, "coupled scatter cursors");
+      coupled_scatter_scan_a_ =
+          allocate_shared_buffer(device_, byte_count, "coupled scatter scan A");
+      coupled_scatter_scan_b_ =
+          allocate_shared_buffer(device_, byte_count, "coupled scatter scan B");
+      coupled_scatter_site_capacity_ = coupled_scatter_site_capacity;
+    }
   }
 
   [[nodiscard]] std::uint32_t count_contacts(std::uint32_t candidate_count,
@@ -2156,8 +2263,12 @@ class MetalBackend final : public ComputeBackend {
   id<MTLComputePipelineState> signals_reduce_pipeline_{nil};
   id<MTLComputePipelineState> coupled_cells_pipeline_{nil};
   id<MTLComputePipelineState> coupled_grid_pipeline_{nil};
+  id<MTLComputePipelineState> coupled_scatter_stencil_pipeline_{nil};
+  id<MTLComputePipelineState> coupled_scatter_count_pipeline_{nil};
+  id<MTLComputePipelineState> coupled_scatter_fill_pipeline_{nil};
+  id<MTLComputePipelineState> coupled_scatter_sort_pipeline_{nil};
   id<MTLComputePipelineState> contact_count_pipeline_{nil};
-  id<MTLComputePipelineState> contact_scan_pipeline_{nil};
+  id<MTLComputePipelineState> inclusive_scan_pipeline_{nil};
   id<MTLComputePipelineState> contact_fill_pipeline_{nil};
   id<MTLComputePipelineState> external_contact_count_pipeline_{nil};
   id<MTLComputePipelineState> external_contact_fill_pipeline_{nil};
@@ -2247,6 +2358,16 @@ class MetalBackend final : public ComputeBackend {
   std::size_t coupled_workspace_capacity_{0};
   std::size_t coupled_cell_signal_capacity_{0};
   std::size_t coupled_grid_level_capacity_{0};
+  // A trilinear stencil covers at most eight lattice sites.
+  static constexpr std::size_t scatter_stencil_sites = 8;
+  id<MTLBuffer> coupled_scatter_stencils_{nil};
+  id<MTLBuffer> coupled_scatter_cells_{nil};
+  id<MTLBuffer> coupled_scatter_counts_{nil};
+  id<MTLBuffer> coupled_scatter_cursors_{nil};
+  id<MTLBuffer> coupled_scatter_scan_a_{nil};
+  id<MTLBuffer> coupled_scatter_scan_b_{nil};
+  std::size_t coupled_scatter_cell_capacity_{0};
+  std::size_t coupled_scatter_site_capacity_{0};
 
   id<MTLBuffer> contact_ids_{nil};
   id<MTLBuffer> contact_centers_{nil};

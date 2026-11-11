@@ -46,7 +46,7 @@ The `occupancy_conformance` scenario explicitly selects every enumerated Metal/C
 
 ## Coupled rates
 
-The coupled scenario uses 513 heterogeneous cells, three intracellular species, and two signals on a 9-by-7-by-5 anisotropic lattice. It combines post-growth dilution, fractional old-field sampling, typed species and signal outputs, transport, and repeated trilinear scatter destinations in one step. Cell state uses an absolute tolerance of `2e-5` and grid state uses `1e-4` to allow backend-specific floating-point accumulation order. An available backend is skipped until it advertises the complete native coupled operation; after advertisement this executable becomes its hardware gate.
+The coupled scenario uses 513 heterogeneous cells, three intracellular species, and two signals on a 9-by-7-by-5 anisotropic lattice. It combines post-growth dilution, fractional old-field sampling, typed species and signal outputs, transport, and repeated trilinear scatter destinations in one step. Cell state uses an absolute tolerance of `2e-5` and grid state uses `1e-4` to allow backend-specific floating-point accumulation order. A crowded scenario places 400 cells on a 6-by-1-by-4 lattice with one obstacle: most share a single voxel, and the rest sit on lattice planes and on the upper domain faces, so many cells scatter into the same few sites and stencils with one site per axis are exercised. An available backend is skipped until it advertises the complete native coupled operation; after advertisement this executable becomes its hardware gate.
 
 ## Checkpoint resume
 
