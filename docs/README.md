@@ -16,7 +16,6 @@ MicroSimulator models microbial populations in microfluidic environments, connec
 | Understand numerical conventions | [Numerical contract](architecture/numerical-contract.md) |
 | Analyze simulation output | [Analysis recipes](analysis/recipes.md) |
 | Configure an accelerator | [Execution environments](#execution-environments) |
-| Migrate a CellModeller model or snapshot | [Compatibility and migration](compatibility/README.md) |
 | Test a contribution or backend | [Testing and validation](development/validation.md) |
 
 ## Tutorials
@@ -61,7 +60,6 @@ The CPU backend uses the base C++23/Python toolchain described in the top-level 
 
 - [Apple Metal](../environments/metal/README.md)
 - [NVIDIA CUDA](../environments/cuda/README.md)
-- [Legacy OpenCL trajectory environment](../environments/legacy-opencl/README.md)
 
 The [testing and validation guide](development/validation.md) distinguishes compile checks, native numerical tests, and full application tests. Accelerator support requires execution on corresponding hardware with fallback disabled.
 
@@ -72,10 +70,6 @@ The [testing and validation guide](development/validation.md) distinguishes comp
 - [Live viewer protocol v1](protocols/live-viewer-v1.md) defines interactive viewer messages and authority boundaries.
 - [Checkpoint design](architecture/0004-checkpoints.md) defines restart state and schema migration.
 - [Analysis dataset design](architecture/0013-analysis-datasets.md) defines Parquet/Zarr schemas and provenance.
-
-## CellModeller compatibility
-
-MicroSimulator originated as a CellModeller rewrite and now has an independent device, flow, and transport modeling workflow. The [compatibility and migration guide](compatibility/README.md) explains which CellModeller models and artifacts can be used directly, which require a typed translation, and where behavior intentionally differs. Source-pinned matrices and subsystem comparisons preserve the evidence behind those migration decisions.
 
 ## Development and validation
 

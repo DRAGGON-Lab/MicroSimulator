@@ -5,7 +5,7 @@
 
 ## Context
 
-Legacy analysis reads executable pickle snapshots directly into ad hoc NumPy, NetworkX, Matplotlib, or ReportLab scripts. Geometry, species, contacts, simulation time, filesystem time, compact slots, and stable identities are mixed without a schema or provenance boundary. Signal grids are flattened into private implementation layouts.
+Analysis scripts that read executable pickle snapshots directly into ad hoc NumPy, NetworkX, Matplotlib, or ReportLab code mix geometry, species, contacts, simulation time, filesystem time, compact slots, and stable identities without a schema or provenance boundary, and flatten signal grids into private implementation layouts.
 
 MicroSimulator checkpoints are safe, exact restart artifacts, but JSON is not an efficient scan format for large ensembles or time series. Scene files are presentation projections and intentionally omit restart and equation state.
 
@@ -65,7 +65,7 @@ Checkpoint state exports are backend-neutral because loading reconstructs the sa
 
 Replicate and parameter-sweep planning uses data-only run manifests containing one explicit run ID, seed, parameter map, source model digest, backend/device, stopping rule, and output path per job. Execution remains ordinary `microsimulator run` invocations under a caller-chosen local, CI, or cluster scheduler. The engine does not embed a second job scheduler.
 
-Cell-count stopping is a first-class run condition rather than the legacy scripts' implicit relationship to preallocated capacity. A maximum step count is still required so a non-growing model terminates deterministically.
+Cell-count stopping is a first-class run condition rather than an implicit relationship to preallocated capacity. A maximum step count is still required so a non-growing model terminates deterministically.
 
 ## Consequences
 

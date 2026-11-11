@@ -6,7 +6,7 @@
 
 ## Context
 
-The legacy `CLCrankNicIntegrator` was intended to remove the explicit diffusion time-step restriction. Its comments and construction define a Crank-Nicolson transport stage, but the result of the final SciPy convolution was discarded. Observable legacy execution therefore stopped at the explicit right-hand side and did not apply the inverse operator.
+An implicit transport stage removes the explicit diffusion time-step restriction. A stage that forms the Crank-Nicolson right-hand side but never applies the inverse operator does not: it is an explicit update under another name.
 
 MicroSimulator needs a named, checkpointed integration choice with the same equation on CPU, Metal, and CUDA. It must also diagnose convergence rather than hide a fixed iteration count.
 
@@ -19,7 +19,7 @@ c_(n+1) - dt/2 (T + R)(c_(n+1))
   = c_n + dt/2 (T + R)(c_n) + dt s(cells, c_n).
 ```
 
-This deliberately implements the intended legacy equation instead of its ignored-return bug. The standard diffusion coefficient, three-dimensional upwind advection, boundary semantics, and source units remain those of ADR 0006; the historical extra factor of one sixth is not restored.
+The standard diffusion coefficient, three-dimensional upwind advection, boundary semantics, and source units remain those of ADR 0006.
 
 Fixed reservoir boundaries make `T` affine, and a nonzero field source makes `R` affine. Applying both complete operators on both sides includes their constant contributions for the full time step. Spatial loss `-lambda*c` enters the implicit diagonal. Periodic and no-flux boundaries remain homogeneous.
 
@@ -49,7 +49,6 @@ CPU is the numerical reference. Metal and CUDA use native Jacobi stencil kernels
 - Forward Euler remains the default and retains its explicit stability check.
 - Checkpoint version 5 records the integration and solver configuration; versions 1 through 4 migrate signal grids to Forward Euler defaults.
 - Coupled rates use the same semi-implicit transport solve with explicit cell sources, preserving old-field sampling and simultaneous commit semantics.
-- The legacy Green's-function truncation and ignored convolution are not compatibility targets.
 
 ## Positivity-preserving baseline
 

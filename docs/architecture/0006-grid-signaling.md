@@ -5,7 +5,7 @@
 
 ## Context
 
-Diffusible signals connect the intracellular rate model to a spatial transport model. This is one numerical system: independently updating a host grid and a device cell model would change sampling time, conservation, and reproducibility. The CellModeller comparison documents ambiguous historical coefficient scaling and unit conventions.
+Diffusible signals connect the intracellular rate model to a spatial transport model. This is one numerical system: independently updating a host grid and a device cell model would change sampling time, conservation, and reproducibility. Coefficient scaling and unit conventions need an explicit definition.
 
 MicroSimulator needs a portable state model and one stage contract that can be implemented independently with native CPU, Metal, and CUDA APIs.
 
@@ -87,4 +87,3 @@ Changing grid geometry after cells exist is outside the current API. Any remeshi
 - Boundary and edge behavior is inspectable and backend-conformable.
 - Cell/grid exchange has a stated conservation unit rather than model-source convention.
 - Explicit Euler failures are early and deterministic.
-- Legacy signaling models require a reviewed coefficient and unit migration.

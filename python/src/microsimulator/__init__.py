@@ -73,19 +73,6 @@ from .checkpoint import (
     load_checkpoint_bundle,
     save_checkpoint,
 )
-from .compatibility import (
-    LEGACY_EXAMPLE_MATRIX_FORMAT,
-    LEGACY_EXAMPLE_MATRIX_VERSION,
-    MAX_LEGACY_EXAMPLE_MATRIX_BYTES,
-    BackendTarget,
-    LegacyExample,
-    LegacyExampleMatrix,
-    LegacyExampleMatrixError,
-    LegacyExampleStatus,
-    enumerate_backend_targets,
-    load_legacy_example_matrix,
-    run_legacy_example_matrix,
-)
 from .controller import (
     CellUpdate,
     ControllerPlanError,
@@ -103,9 +90,6 @@ from .controller import (
     restore_random_state,
 )
 from .division import UniformLengthDivision, capped_founder_length
-from .legacy import LegacyCell, LegacyCompatibilityError, LegacyModelAdapter
-from .legacy_loader import build_legacy_model, resume_legacy_model
-from .legacy_pickle import LegacyPickleError, LegacyPickleImport, import_legacy_pickle
 from .rates import RateExpression, RatePlanBuilder, RatePlanError
 from .run_manifest import (
     MAX_RUN_MANIFEST_BYTES,
@@ -154,9 +138,6 @@ from .scene import (
 __all__ = [
     "CHECKPOINT_FORMAT",
     "CHECKPOINT_VERSION",
-    "LEGACY_EXAMPLE_MATRIX_FORMAT",
-    "LEGACY_EXAMPLE_MATRIX_VERSION",
-    "MAX_LEGACY_EXAMPLE_MATRIX_BYTES",
     "MAX_RUN_MANIFEST_BYTES",
     "MAX_SCENE_BYTES",
     "MAX_SCENE_CHANNELS",
@@ -167,7 +148,6 @@ __all__ = [
     "BackendFeature",
     "BackendInfo",
     "BackendKind",
-    "BackendTarget",
     "BatchError",
     "BoxConstraintInit",
     "CellContact",
@@ -202,15 +182,6 @@ __all__ = [
     "GridBoundary",
     "GridBoundaryKind",
     "GridShape",
-    "LegacyCell",
-    "LegacyCompatibilityError",
-    "LegacyExample",
-    "LegacyExampleMatrix",
-    "LegacyExampleMatrixError",
-    "LegacyExampleStatus",
-    "LegacyModelAdapter",
-    "LegacyPickleError",
-    "LegacyPickleImport",
     "MechanicsConfig",
     "MechanicsIntegrationParameters",
     "MechanicsParameters",
@@ -268,26 +239,20 @@ __all__ = [
     "Vec3",
     "backend_available",
     "backend_device_count",
-    "build_legacy_model",
     "build_model",
     "capped_founder_length",
     "capture_random_state",
     "capture_scene",
     "dumps_scene",
-    "enumerate_backend_targets",
     "execute_run_job",
-    "import_legacy_pickle",
     "load_checkpoint",
     "load_checkpoint_bundle",
-    "load_legacy_example_matrix",
     "load_run_manifest",
     "load_sbml",
     "load_scene",
     "parse_sbml",
     "parse_scene",
     "restore_random_state",
-    "resume_legacy_model",
-    "run_legacy_example_matrix",
     "run_simulation",
     "save_checkpoint",
     "save_scene",

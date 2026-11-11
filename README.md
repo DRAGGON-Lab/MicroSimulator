@@ -67,14 +67,9 @@ Both flow solvers have native CPU, Metal, and CUDA implementations. CPU and Meta
 | Architecture and numerics | [Design documents](docs/README.md#architecture-and-numerics) |
 | HPC environments | [CPU, Metal, and CUDA setup](docs/README.md#execution-environments) |
 | Analysis and visualization | [Research output workflows](docs/README.md#analysis-and-visualization) |
-| CellModeller compatibility | [Scope and evidence](docs/README.md#cellmodeller-compatibility) |
 | Development | [Testing and validation](docs/development/validation.md) |
 
 The complete documentation index is available at [`docs/README.md`](docs/README.md).
-
-## Origins
-
-MicroSimulator began as a rewrite of [CellModeller](https://github.com/cellmodeller/CellModeller) and has developed into an independent microfluidics simulation system. It builds on that lineage of individual-based cell modeling with its own device, flow, transport, and experiment workflows. The [compatibility guide](docs/compatibility/README.md) documents supported CellModeller models and intentional numerical differences.
 
 ## License
 

@@ -6,7 +6,7 @@ The six circuit models start in XY and use XY-only division jitter without mecha
 
 For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
 
-These are explicit example models, not a general SBOL-to-rate-plan import path. The [source reference](../compatibility/tutorial-source-provenance.md#simbol-source-workflow) describes how they relate to the SimBOL notebook, generated Python, and JSON fixtures.
+These are explicit example models, not a general SBOL-to-rate-plan import path.
 
 ## Run the six circuits
 
@@ -156,8 +156,8 @@ A run at seed 42 measures the result: the trap is quiet through the colony's gro
 
 ### Device flow and washout
 
-`CM_Danino.py` subclasses the legacy grid to fake the channel with an x-dependent AHL sink and
-nutrient source field. The MicroSimulator model expresses the channel physically: a
+SimBOL's `CM_Danino.py` represents the channel with an x-dependent AHL sink and nutrient
+source field. The MicroSimulator model expresses the channel physically: a
 `TrapChannelDevice` projects one geometry description into box wall constraints, a signal-grid
 obstacle mask, a numerically solved steady flow field along the channel, and fixed inlet
 and outlet boundaries; as the colony packs the trap, the model re-solves the flow with the

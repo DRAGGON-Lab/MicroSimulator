@@ -4,7 +4,7 @@ Status: accepted
 
 ## Context
 
-Legacy CellModeller splices model-provided OpenCL source into an Euler integrator. That makes the model difficult to validate, inspect, serialize, or execute consistently through independent Metal and CUDA APIs. The legacy step also carries an important concentration convention: growth dilution happens before rates are evaluated, and the resulting rates are applied with an explicit Euler update.
+Splicing model-provided kernel source into an integrator makes a model difficult to validate, inspect, serialize, or execute consistently through independent Metal and CUDA APIs. The species step carries an important concentration convention: growth dilution happens before rates are evaluated, and the resulting rates are applied with an explicit Euler update.
 
 ## Decision
 
@@ -19,7 +19,7 @@ For one biological step:
 3. evaluate every rate output from the complete diluted pre-Euler state;
 4. update every species simultaneously with `c_next = c_diluted + dt * rate`.
 
-For compatibility with the legacy `CLBacterium` geometry kernels, `V = pi * r^2 * (length + 2r)` and `A = 2 * pi * r * (length + 2r)`. Negative finite concentrations remain legal; the engine does not silently clamp model dynamics. Non-finite instructions or updates fail explicitly.
+The effective volume and surface area are `V = pi * r^2 * (length + 2r)` and `A = 2 * pi * r * (length + 2r)`. Negative finite concentrations remain legal; the engine does not silently clamp model dynamics. Non-finite instructions or updates fail explicitly.
 
 ## Consequences
 

@@ -1,6 +1,6 @@
-"""Native ports of the CellModeller intracellular-dynamics tutorials.
+"""Intracellular-dynamics teaching models.
 
-Select ``constitutive``, ``legacy_constitutive``, ``dilution``,
+Select ``constitutive``, ``unit_rate_constitutive``, ``dilution``,
 ``derepression``, or ``oscillator`` with the JSON-valued ``scenario`` model
 parameter.
 """
@@ -26,7 +26,7 @@ from microsimulator.checkpoint import CheckpointBundle, JSONValue
 MODEL_ID = "tutorials.gene-expression"
 MODEL_VERSION = 1
 _SCENARIOS = frozenset(
-    {"constitutive", "legacy_constitutive", "dilution", "derepression", "oscillator"}
+    {"constitutive", "unit_rate_constitutive", "dilution", "derepression", "oscillator"}
 )
 
 
@@ -61,7 +61,7 @@ def _rate_plan(scenario: str) -> SpeciesRatePlan:
     rates = RatePlanBuilder()
     if scenario == "constitutive":
         return rates.species_plan(1, (rates.constant(2.0),))
-    if scenario == "legacy_constitutive":
+    if scenario == "unit_rate_constitutive":
         return rates.species_plan(1, (rates.constant(1.0),))
     if scenario == "dilution":
         return rates.species_plan(1, (rates.constant(0.0),))

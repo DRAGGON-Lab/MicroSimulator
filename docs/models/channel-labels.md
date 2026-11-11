@@ -30,7 +30,7 @@ uv run microsimulator run --model examples/named_channels.py --backend cpu --see
 uv run microsimulator view --model examples/named_channels.py --resume named.json --backend cpu --dt 0.01
 ```
 
-`NativeController.from_checkpoint` restores the persisted labels automatically. A custom controller may optionally expose a typed `channel_metadata: ChannelMetadata` attribute; this is not a required member of `SimulationController`. Its `resume` function must restore `checkpoint.channel_metadata`. The native model runner rejects a resumed model that changes the saved labels. Unnamed native models and legacy adapters need no changes.
+`NativeController.from_checkpoint` restores the persisted labels automatically. A custom controller may optionally expose a typed `channel_metadata: ChannelMetadata` attribute; this is not a required member of `SimulationController`. Its `resume` function must restore `checkpoint.channel_metadata`. The native model runner rejects a resumed model that changes the saved labels. Unnamed native models need no changes.
 
 ## Data-only export and low-level APIs
 
