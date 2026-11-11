@@ -16,6 +16,8 @@
 #include <vector>
 
 #include "cm/backend.hpp"
+#include "core/mechanics_solver.hpp"
+#include "core/signal_jacobi.hpp"
 #include "cuda_flow.cuh"
 #include "kernels/contacts.cuh"
 #include "kernels/coupled_rates.cuh"
@@ -782,72 +784,16 @@ class CudaBackend final : public ComputeBackend {
 
     const auto cell_count = static_cast<std::uint32_t>(geometry.size());
     const auto contact_count = static_cast<std::uint32_t>(row_count);
-    auto residual_squared = initialize_mechanics(cell_count, contact_count);
-    result.report.initial_residual_rms =
-        std::sqrt(residual_squared / static_cast<float>(cell_count));
-    result.report.final_residual_rms = result.report.initial_residual_rms;
-    if (!std::isfinite(result.report.initial_residual_rms)) {
-      result.report.status = SolverStatus::breakdown;
-      result.report.breakdown = SolverBreakdown::non_finite_residual;
-      return result;
-    }
-    if (result.report.initial_residual_rms <= parameters.residual_rms_tolerance) {
-      return result;
-    }
-
-    result.report.status = SolverStatus::iteration_limit;
-    const auto maximum_iterations = mechanics_iteration_limit(parameters, geometry.size());
-    for (std::uint32_t iteration = 0; iteration < maximum_iterations; ++iteration) {
-      const auto curvature = apply_search_direction(cell_count, contact_count, parameters);
-      if (!std::isfinite(curvature)) {
-        result.report.status = SolverStatus::breakdown;
-        result.report.breakdown = SolverBreakdown::non_finite_curvature;
-        break;
-      }
-      if (curvature <= 0.0F) {
-        result.report.status = SolverStatus::breakdown;
-        result.report.breakdown = SolverBreakdown::non_positive_curvature;
-        break;
-      }
-
-      const auto alpha = residual_squared / curvature;
-      const auto next_residual_squared = update_solution_residual(cell_count, alpha);
-      result.report.iterations = iteration + 1;
-      const auto recurrence_rms = std::sqrt(next_residual_squared / static_cast<float>(cell_count));
-      if (!std::isfinite(recurrence_rms)) {
-        result.report.status = SolverStatus::breakdown;
-        result.report.breakdown = SolverBreakdown::non_finite_residual;
-        break;
-      }
-
-      if (recurrence_rms <= parameters.residual_rms_tolerance) {
-        residual_squared = recompute_residual(cell_count, contact_count, parameters);
-        const auto recomputed_rms = std::sqrt(residual_squared / static_cast<float>(cell_count));
-        if (!std::isfinite(recomputed_rms)) {
-          result.report.status = SolverStatus::breakdown;
-          result.report.breakdown = SolverBreakdown::non_finite_residual;
-          break;
-        }
-        if (recomputed_rms <= parameters.residual_rms_tolerance) {
-          result.report.status = SolverStatus::converged;
-          break;
-        }
-        update_search_direction(cell_count, 0.0F);
-        continue;
-      }
-
-      const auto beta = next_residual_squared / residual_squared;
-      update_search_direction(cell_count, beta);
-      residual_squared = next_residual_squared;
-    }
-
-    residual_squared = recompute_residual(cell_count, contact_count, parameters);
-    result.report.final_residual_rms = std::sqrt(residual_squared / static_cast<float>(cell_count));
-    if (!std::isfinite(result.report.final_residual_rms) &&
-        result.report.status != SolverStatus::breakdown) {
-      result.report.status = SolverStatus::breakdown;
-      result.report.breakdown = SolverBreakdown::non_finite_residual;
-    }
+    const detail::MechanicsSolverOperations operations{
+        .initialize = [&] { return initialize_mechanics(cell_count, contact_count); },
+        .apply_direction =
+            [&] { return apply_search_direction(cell_count, contact_count, parameters); },
+        .update = [&](float alpha) { return update_solution_residual(cell_count, alpha); },
+        .recompute_residual =
+            [&] { return recompute_residual(cell_count, contact_count, parameters); },
+        .update_direction = [&](float beta) { update_search_direction(cell_count, beta); },
+    };
+    result.report = detail::solve_mechanics_system(operations, geometry.size(), parameters);
     result.corrections = download_mechanics_solution(geometry.size());
     return result;
   }
@@ -1217,18 +1163,6 @@ class CudaBackend final : public ComputeBackend {
     }
   }
 
-  static std::uint32_t mechanics_iteration_limit(const MechanicsParameters& parameters,
-                                                 std::size_t cell_count) {
-    if (parameters.max_iterations != 0) {
-      return parameters.max_iterations;
-    }
-    constexpr std::size_t degrees_of_freedom = 7;
-    if (cell_count > std::numeric_limits<std::uint32_t>::max() / degrees_of_freedom) {
-      throw std::overflow_error("default mechanics iteration limit exceeds uint32");
-    }
-    return static_cast<std::uint32_t>(cell_count * degrees_of_freedom);
-  }
-
   void ensure_mechanics_capacity(std::size_t cell_count, std::size_t contact_count) {
     mechanics_incidence_offsets_.reserve(cell_count + 1, "mechanics incidence offsets");
     mechanics_fixed_.reserve(cell_count, "mechanics fixed flags");
@@ -1402,63 +1336,48 @@ class CudaBackend final : public ComputeBackend {
       std::uint32_t level_count, const SignalSolveParameters& parameters) {
     ensure_signal_solve_capacity(level_count);
     const auto half_dt = dt;
-    SignalSolveReport report;
-    report.residual_rms = signal_residual_rms(
-        initial, right_hand_side, diffusion, advection, fixed_values, reaction_source,
-        reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundaries, shape,
-        spacing, half_dt, signal_count, level_count);
-    // The relative term scales the residual the step starts with, matching the
-    // CPU reference: the field's own magnitude says nothing about how much of
-    // it this step has to change.
-    // A residual cannot fall below what float32 can represent for a field of
-    // this magnitude, and the right-hand side carries both the field and the
-    // operator terms of the step, so it sets that floor. An absolute tolerance
-    // asking for less than the floor is raised to it rather than making the
-    // solve unreachable.
-    const auto floor =
-        std::numeric_limits<float>::epsilon() * signal_rhs_rms(right_hand_side, level_count);
-    const auto threshold = std::max(parameters.absolute_tolerance, floor) +
-                           (parameters.relative_tolerance * report.residual_rms);
-    if (std::isfinite(report.residual_rms) && report.residual_rms <= threshold) {
-      return {initial, report};
-    }
-    if (!std::isfinite(report.residual_rms) || !std::isfinite(threshold)) {
-      report.converged = false;
-      return {initial, report};
-    }
-
-    check_cuda(cudaMemsetAsync(error, 0, sizeof(std::uint32_t), stream_),
-               "failed to clear the CUDA signal solver error flag");
     const float* current = initial;
-    for (std::uint32_t iteration = 1; iteration <= parameters.max_iterations; ++iteration) {
-      float* output = current == signal_cn_a_.data() ? signal_cn_b_.data() : signal_cn_a_.data();
-      cuda::launch_signal_crank_nicolson_jacobi(
-          current, output, right_hand_side, diffusion, advection, fixed_values, reaction_source,
-          reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, error,
-          boundaries, shape, spacing, half_dt, signal_count, level_count, stream_);
-      check_cuda(cudaGetLastError(), "failed to launch the CUDA signal Jacobi kernel");
-      report.residual_rms = signal_residual_rms(
-          output, right_hand_side, diffusion, advection, fixed_values, reaction_source,
-          reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundaries,
-          shape, spacing, half_dt, signal_count, level_count);
-      report.iterations = iteration;
-      current = output;
+    const detail::SignalJacobiOperations operations{
+        .initial_residual_rms =
+            [&] {
+              return signal_residual_rms(initial, right_hand_side, diffusion, advection,
+                                         fixed_values, reaction_source, reaction_loss, obstacles,
+                                         x_faces, y_faces, z_faces, has_velocity_field, boundaries,
+                                         shape, spacing, half_dt, signal_count, level_count);
+            },
+        .right_hand_side_rms = [&] { return signal_rhs_rms(right_hand_side, level_count); },
+        .begin_sweeps =
+            [&] {
+              check_cuda(cudaMemsetAsync(error, 0, sizeof(std::uint32_t), stream_),
+                         "failed to clear the CUDA signal solver error flag");
+            },
+        .sweep =
+            [&] {
+              float* output =
+                  current == signal_cn_a_.data() ? signal_cn_b_.data() : signal_cn_a_.data();
+              cuda::launch_signal_crank_nicolson_jacobi(
+                  current, output, right_hand_side, diffusion, advection, fixed_values,
+                  reaction_source, reaction_loss, obstacles, x_faces, y_faces, z_faces,
+                  has_velocity_field, error, boundaries, shape, spacing, half_dt, signal_count,
+                  level_count, stream_);
+              check_cuda(cudaGetLastError(), "failed to launch the CUDA signal Jacobi kernel");
+              detail::SignalSweepResult result;
+              result.residual_rms = signal_residual_rms(
+                  output, right_hand_side, diffusion, advection, fixed_values, reaction_source,
+                  reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field,
+                  boundaries, shape, spacing, half_dt, signal_count, level_count);
+              current = output;
 
-      std::uint32_t error_value = 0;
-      check_cuda(cudaMemcpyAsync(&error_value, error, sizeof(error_value), cudaMemcpyDeviceToHost,
-                                 stream_),
-                 "failed to download the CUDA signal solver error flag");
-      check_cuda(cudaStreamSynchronize(stream_), "CUDA signal solver error check failed");
-      if (error_value != 0 || !std::isfinite(report.residual_rms)) {
-        report.converged = false;
-        return {current, report};
-      }
-      if (report.residual_rms <= threshold) {
-        report.converged = true;
-        return {current, report};
-      }
-    }
-    report.converged = false;
+              std::uint32_t error_value = 0;
+              check_cuda(cudaMemcpyAsync(&error_value, error, sizeof(error_value),
+                                         cudaMemcpyDeviceToHost, stream_),
+                         "failed to download the CUDA signal solver error flag");
+              check_cuda(cudaStreamSynchronize(stream_), "CUDA signal solver error check failed");
+              result.valid = error_value == 0;
+              return result;
+            },
+    };
+    const auto report = detail::solve_signal_jacobi(operations, parameters);
     return {current, report};
   }
 
