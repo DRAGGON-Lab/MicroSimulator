@@ -5,7 +5,7 @@
 
 ## Context
 
-Legacy CellModeller couples simulation modules through PyOpenCL contexts, queues, arrays, and raw buffer handles. A direct translation would reproduce those ownership boundaries and keep important spatial and reduction work on the host.
+Coupling simulation modules through device contexts, queues, arrays, and raw buffer handles ties every module to one GPU API's ownership model and keeps important spatial and reduction work on the host.
 
 MicroSimulator must run the same scientific model on Apple GPUs through Metal and on NVIDIA GPUs through CUDA while allowing each platform to use its native execution and memory model.
 

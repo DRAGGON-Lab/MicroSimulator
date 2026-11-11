@@ -5,7 +5,7 @@
 
 ## Context
 
-The legacy PyQt/OpenGL application owns the OpenCL device, simulator lifetime, model imports, simulation clock, pickle persistence, selection, and rendering. Models install renderers into the simulation itself. This prevents headless execution, makes renderer behavior depend on mutable implementation details, and would force CUDA and Metal concerns into the UI.
+A viewer application that owns the compute device, simulator lifetime, model imports, simulation clock, persistence, selection, and rendering, with models installing renderers into the simulation itself, prevents headless execution, makes renderer behavior depend on mutable implementation details, and would force CUDA and Metal concerns into the UI.
 
 MicroSimulator needs interactive inspection on Apple and NVIDIA systems without creating a fourth simulation implementation or weakening the native backend contract.
 
@@ -39,5 +39,5 @@ Presentation mappings are declarative viewer state. The initial mapping modes ar
 - Viewer work is implemented once and consumes CPU, Metal, and CUDA results through the same boundary.
 - Headless batch execution has no UI dependency.
 - Scene files are safe to inspect but cannot resume a run.
-- Legacy sphere-cell, plant, periodic-image, collision-grid, and static-mesh renderers are explicitly retired from compatibility. A future feature in one of those domains requires a new typed engine, checkpoint, and scene proposal.
+- Sphere-cell, plant, periodic-image, collision-grid, and static-mesh rendering are not provided. A feature in one of those domains requires a new typed engine, checkpoint, and scene proposal.
 - The viewer can evolve or be replaced without changing backend kernels.

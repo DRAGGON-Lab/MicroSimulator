@@ -37,5 +37,3 @@ The [dimensionality audit and planarity diagnostic](planarity.md) explain XY-onl
 Teaching models are under [`examples/tutorials`](../../examples/tutorials). Scenario parameters are JSON values passed with `--parameter`; every command in the tutorials can be run from the repository root.
 
 The tutorials state numerical assumptions where they affect interpretation, including the meaning of cell length and volume, concentration dilution, time-step-dependent probabilities, signal units, and boundary conditions. For quantitative studies, follow the convergence and comparison guidance in each lesson rather than relying on viewer appearance alone.
-
-Readers comparing these models with the CellModeller wiki, legacy examples, or SimBOL sources can consult [tutorial sources and model translations](../compatibility/tutorial-source-provenance.md).

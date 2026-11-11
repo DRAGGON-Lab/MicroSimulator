@@ -5,7 +5,7 @@
 
 ## Context
 
-Legacy CellModeller writes Python pickle files containing live `CellState` objects, model source text, lineage, selected integrator arrays, and a step number. Loading a pickle can execute arbitrary Python. The legacy resume path also reconstructs the next cell identifier from active cells, which loses the true allocation frontier when the largest allocated cells are no longer active. The saved fields vary with the configured integrator and signaling model.
+A checkpoint built from Python pickle files of live objects and model source text executes arbitrary Python on load. Reconstructing the next cell identifier from the active cells loses the true allocation frontier when the largest allocated cells are no longer active, and a format whose saved fields vary with the configured integrator and signaling model cannot be validated against one schema.
 
 MicroSimulator needs reproducible restart files that can cross CPU, Metal, and CUDA hosts without serializing device resources or executable model code.
 
@@ -41,4 +41,3 @@ The digest detects accidental corruption but is not an authenticity signature. U
 - Allocation counters are first-class state rather than inferred metadata.
 - Exact restart includes lineage, model equations, and authenticated controller data, not only visible cells.
 - Schema evolution requires a new version and a tested migration path.
-- Legacy pickle ingestion, if added, must be a separate one-way conversion tool run under an explicitly untrusted-code policy.

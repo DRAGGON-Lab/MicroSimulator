@@ -45,13 +45,13 @@ Pass a path as the script's sole argument to select a different new evidence dir
 
 ## Application conformance
 
-Run the Python, compatibility, and application gate with a checkout of the pinned original CellModeller source:
+Run the Python and application gate:
 
 ```console
-MICROSIMULATOR_LEGACY_ROOT=/path/to/pinned/CellModeller scripts/run_cuda_application_conformance.sh
+scripts/run_cuda_application_conformance.sh
 ```
 
-This gate builds the Python extension with CUDA enabled, runs the full Python and recorded-trajectory suites, executes all 24 runnable legacy examples on CPU and every CUDA device, and exercises controller resume, viewer scene semantics, and analysis export with native derived contacts.
+This gate builds the Python extension with CUDA enabled, runs the full Python suite on CPU and every CUDA device, and exercises controller resume, viewer scene semantics, and analysis export with native derived contacts.
 
 The manually dispatched `CUDA conformance` workflow runs both hardware gates on a self-hosted runner with the `self-hosted`, `linux`, `x64`, and `gpu` labels. It always uploads evidence, including failed results, and is intentionally not triggered by pull requests. Keep the runner compatible with the workflow's pinned action versions.
 

@@ -27,7 +27,6 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 - [Cell-occupied extracellular volume: design, CPU reference, and native GPU primitives](0025-cell-occupied-volume.md)
 - [Grid signaling and cell coupling](0006-grid-signaling.md)
 - [Crank-Nicolson signal transport](0008-crank-nicolson-signals.md)
-- [Neighbor diffusion](0010-neighbor-diffusion.md)
 - [Bounded SBML import](0011-sbml-import.md)
 - [Affine grid reactions](0015-affine-grid-reactions.md)
 
