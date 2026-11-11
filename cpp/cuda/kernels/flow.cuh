@@ -4,6 +4,8 @@
 
 #include <cstdint>
 
+#include "core/shared_constants.hpp"
+
 namespace cm::cuda {
 
 struct alignas(16) FlowGridParameters {
@@ -67,6 +69,6 @@ void launch_flow_vector_subtract(const float* left, const float* right, float* o
 void launch_flow_dot_partial(const float* left, const float* right, float* partials,
                              std::uint32_t count, cudaStream_t stream);
 
-inline constexpr std::uint32_t flow_reduction_width = 64;
+using shared::flow_reduction_width;
 
 }  // namespace cm::cuda

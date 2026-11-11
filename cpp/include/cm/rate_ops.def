@@ -1,0 +1,35 @@
+// Opcodes of the typed rate-expression instruction set: CM_RATE_OP(name, code).
+//
+// This list is the one definition of the numbering. cm/species.hpp expands it
+// into the RateOp enumeration, which the CPU and CUDA interpreters switch on,
+// and the Metal build expands it into the rate_op_* constants its shaders
+// switch on. A code is part of the checkpoint format and never changes.
+CM_RATE_OP(constant, 0)
+CM_RATE_OP(species, 1)
+CM_RATE_OP(position_x, 2)
+CM_RATE_OP(position_y, 3)
+CM_RATE_OP(position_z, 4)
+CM_RATE_OP(cell_length, 5)
+CM_RATE_OP(cell_radius, 6)
+CM_RATE_OP(growth_rate, 7)
+CM_RATE_OP(cell_type, 8)
+CM_RATE_OP(cell_volume, 9)
+CM_RATE_OP(cell_surface_area, 10)
+CM_RATE_OP(add, 11)
+CM_RATE_OP(subtract, 12)
+CM_RATE_OP(multiply, 13)
+CM_RATE_OP(divide, 14)
+CM_RATE_OP(power, 15)
+CM_RATE_OP(minimum, 16)
+CM_RATE_OP(maximum, 17)
+CM_RATE_OP(negate, 18)
+CM_RATE_OP(exponential, 19)
+CM_RATE_OP(logarithm, 20)
+CM_RATE_OP(less, 21)
+CM_RATE_OP(less_equal, 22)
+CM_RATE_OP(greater, 23)
+CM_RATE_OP(greater_equal, 24)
+CM_RATE_OP(equal, 25)
+CM_RATE_OP(select, 26)
+CM_RATE_OP(signal, 27)
+CM_RATE_OP(cell_volume_change_rate, 28)

@@ -3,22 +3,6 @@
 // fragment is concatenated ahead of each flow kernel source at build time
 // rather than included by it.
 
-#include <metal_stdlib>
-
-using namespace metal;
-
-struct FlowGridParameters {
-  uint4 dimensions;
-  float4 spacing;
-  float4 inverse_spacing_squared;
-  uint4 face_offsets;
-  uint4 face_counts;
-  uint flow_axis;
-  uint site_count;
-  uint total_face_count;
-  uint padding;
-};
-
 struct FaceCoordinate {
   uint component;
   uint3 coordinate;

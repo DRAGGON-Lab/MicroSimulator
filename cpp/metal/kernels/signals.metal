@@ -1,9 +1,3 @@
-#include <metal_stdlib>
-
-using namespace metal;
-
-;
-
 struct TransportPoint {
   float rate;
   float diagonal;

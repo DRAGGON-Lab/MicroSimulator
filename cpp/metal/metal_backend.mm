@@ -23,69 +23,20 @@
 #include "cm/metal/mechanics_source.hpp"
 #include "cm/metal/signals_source.hpp"
 #include "cm/metal/species_source.hpp"
+#include "core/device_types.hpp"
 #include "metal_flow.hpp"
 
 namespace cm {
 namespace {
 
-struct MetalFloat2 {
-  float x;
-  float y;
-};
-
-static_assert(sizeof(MetalFloat2) == 8);
-
-struct MetalUInt2 {
-  std::uint32_t x;
-  std::uint32_t y;
-};
-
-static_assert(sizeof(MetalUInt2) == 8);
-
-struct alignas(16) MetalFloat4 {
-  float x;
-  float y;
-  float z;
-  float w;
-};
-
-static_assert(sizeof(MetalFloat4) == 16);
-
-struct alignas(16) MetalUInt4 {
-  std::uint32_t x;
-  std::uint32_t y;
-  std::uint32_t z;
-  std::uint32_t w;
-};
-
-static_assert(sizeof(MetalUInt4) == 16);
-
-struct alignas(16) MetalDofs {
-  MetalFloat4 linear_length;
-  MetalFloat4 rotation;
-};
-
-static_assert(sizeof(MetalDofs) == 32);
-
-struct alignas(16) MetalExternalConstraint {
-  std::uint64_t id;
-  std::uint32_t kind;
-  std::uint32_t allowed_region;
-  MetalFloat4 geometry;
-  MetalFloat4 parameters;
-};
-
-static_assert(sizeof(MetalExternalConstraint) == 48);
-
-struct MetalRateInstruction {
-  std::uint32_t operation;
-  std::uint32_t first;
-  std::uint32_t second;
-  std::uint32_t third;
-  float value;
-};
-
-static_assert(sizeof(MetalRateInstruction) == 20);
+using MetalFloat2 = device::float2;
+using MetalUInt2 = device::uint2;
+using MetalFloat4 = device::float4;
+using MetalUInt4 = device::uint4;
+using MetalDofs = device::MechanicsDofs;
+using MetalExternalConstraint = device::ExternalConstraint;
+using MetalRateInstruction = device::RateInstruction;
+using MetalGridShape = device::GridShape;
 
 [[noreturn]] void throw_metal_error(const char* operation, NSError* error) {
   const char* detail = error == nil ? "unknown Metal error" : error.localizedDescription.UTF8String;
@@ -503,8 +454,8 @@ class MetalBackend final : public ComputeBackend {
     }
     *static_cast<std::uint32_t*>(signal_error_.contents) = 0;
 
-    const MetalUInt4 shape{spec.shape.x, spec.shape.y, spec.shape.z,
-                           static_cast<std::uint32_t>(spec.site_count())};
+    const MetalGridShape shape{spec.shape.x, spec.shape.y, spec.shape.z,
+                               static_cast<std::uint32_t>(spec.site_count())};
     const MetalFloat4 spacing{spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F};
     const auto crank_nicolson = static_cast<std::uint32_t>(spec.integration);
     @autoreleasepool {
@@ -687,8 +638,8 @@ class MetalBackend final : public ComputeBackend {
     const auto signal_count = static_cast<std::uint32_t>(signal_count_size);
     const auto instruction_count = static_cast<std::uint32_t>(instruction_count_size);
     const auto level_count = static_cast<std::uint32_t>(grid_level_count);
-    const MetalUInt4 shape{spec.shape.x, spec.shape.y, spec.shape.z,
-                           static_cast<std::uint32_t>(spec.site_count())};
+    const MetalGridShape shape{spec.shape.x, spec.shape.y, spec.shape.z,
+                               static_cast<std::uint32_t>(spec.site_count())};
     const MetalFloat4 origin{spec.origin.x, spec.origin.y, spec.origin.z, 0.0F};
     const MetalFloat4 spacing{spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F};
     const auto crank_nicolson = static_cast<std::uint32_t>(spec.integration);
@@ -1155,7 +1106,7 @@ class MetalBackend final : public ComputeBackend {
       id<MTLBuffer> reaction_source, id<MTLBuffer> reaction_loss, id<MTLBuffer> obstacles,
       id<MTLBuffer> x_faces, id<MTLBuffer> y_faces, id<MTLBuffer> z_faces,
       std::uint32_t has_velocity_field, const std::array<std::uint32_t, 6>& boundary_kinds,
-      const MetalUInt4& shape, const MetalFloat4& spacing, float half_dt,
+      const MetalGridShape& shape, const MetalFloat4& spacing, float half_dt,
       std::uint32_t signal_count, std::uint32_t level_count) {
     [encoder setComputePipelineState:signals_cn_residual_pipeline_];
     [encoder setBuffer:current offset:0 atIndex:0];
@@ -1191,7 +1142,7 @@ class MetalBackend final : public ComputeBackend {
                                           id<MTLBuffer> x_faces, id<MTLBuffer> y_faces,
                                           id<MTLBuffer> z_faces, std::uint32_t has_velocity_field,
                                           const std::array<std::uint32_t, 6>& boundary_kinds,
-                                          const MetalUInt4& shape, const MetalFloat4& spacing,
+                                          const MetalGridShape& shape, const MetalFloat4& spacing,
                                           float half_dt, std::uint32_t signal_count,
                                           std::uint32_t level_count) {
     @autoreleasepool {
@@ -1238,7 +1189,7 @@ class MetalBackend final : public ComputeBackend {
       id<MTLBuffer> reaction_loss, id<MTLBuffer> obstacles, id<MTLBuffer> x_faces,
       id<MTLBuffer> y_faces, id<MTLBuffer> z_faces, std::uint32_t has_velocity_field,
       id<MTLBuffer> error, const std::array<std::uint32_t, 6>& boundary_kinds,
-      const MetalUInt4& shape, const MetalFloat4& spacing, float dt, std::uint32_t signal_count,
+      const MetalGridShape& shape, const MetalFloat4& spacing, float dt, std::uint32_t signal_count,
       std::uint32_t level_count, const SignalSolveParameters& parameters) {
     ensure_signal_solve_capacity(level_count);
     const auto half_dt = dt;
@@ -1596,9 +1547,9 @@ class MetalBackend final : public ComputeBackend {
   // returns the buffer holding each site's inclusive end offset into
   // `coupled_scatter_cells_`.
   id<MTLBuffer> encode_coupled_scatter_lists(id<MTLComputeCommandEncoder> encoder,
-                                             const MetalUInt4& shape, const MetalFloat4& origin,
+                                             const MetalGridShape& shape, const MetalFloat4& origin,
                                              const MetalFloat4& spacing, std::uint32_t cell_count) {
-    const auto site_count = shape.w;
+    const auto site_count = shape.sites;
     std::memset(coupled_scatter_counts_.contents, 0, site_count * sizeof(std::uint32_t));
     std::memset(coupled_scatter_cursors_.contents, 0, site_count * sizeof(std::uint32_t));
 

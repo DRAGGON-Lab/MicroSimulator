@@ -52,14 +52,47 @@ if(CM_ENABLE_METAL)
   find_library(CM_METAL_FRAMEWORK Metal REQUIRED)
 
   set(CM_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-  set(CM_METAL_GROWTH_HEADER "${CM_GENERATED_DIR}/cm/metal/growth_source.hpp")
-  set(CM_METAL_FLOW_HEADER "${CM_GENERATED_DIR}/cm/metal/flow_source.hpp")
-  set(CM_METAL_DEPTH_FLOW_HEADER "${CM_GENERATED_DIR}/cm/metal/depth_flow_source.hpp")
-  set(CM_METAL_CONTACTS_HEADER "${CM_GENERATED_DIR}/cm/metal/contacts_source.hpp")
-  set(CM_METAL_COUPLED_RATES_HEADER "${CM_GENERATED_DIR}/cm/metal/coupled_rates_source.hpp")
-  set(CM_METAL_MECHANICS_HEADER "${CM_GENERATED_DIR}/cm/metal/mechanics_source.hpp")
-  set(CM_METAL_SIGNALS_HEADER "${CM_GENERATED_DIR}/cm/metal/signals_source.hpp")
-  set(CM_METAL_SPECIES_HEADER "${CM_GENERATED_DIR}/cm/metal/species_source.hpp")
+
+  # Every shader source opens with the prelude, the shared definition lists it
+  # gives meaning to, and the shared structure layouts.
+  set(CM_METAL_SHARED_SOURCES
+    cpp/metal/kernels/prelude.metal
+    cpp/shared/constants.def
+    cpp/include/cm/rate_ops.def
+    cpp/shared/device_types.h
+  )
+
+  # Embeds the shared sources followed by the given kernel sources, in order,
+  # as the string cm::metal::<name>_source in cm/metal/<name>_source.hpp.
+  function(cm_embed_metal_source name)
+    set(sources ${CM_METAL_SHARED_SOURCES} ${ARGN})
+    list(TRANSFORM sources PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/" OUTPUT_VARIABLE inputs)
+    set(output "${CM_GENERATED_DIR}/cm/metal/${name}_source.hpp")
+    add_custom_command(
+      OUTPUT "${output}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DINPUT=${inputs}"
+        "-DOUTPUT=${output}"
+        "-DSYMBOL=${name}_source"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedMetalSource.cmake"
+      DEPENDS ${sources} cmake/EmbedMetalSource.cmake
+      VERBATIM
+    )
+    target_sources(cm_core PRIVATE "${output}")
+  endfunction()
+
+  cm_embed_metal_source(growth cpp/metal/kernels/growth.metal)
+  cm_embed_metal_source(species cpp/metal/kernels/species.metal)
+  cm_embed_metal_source(contacts cpp/metal/kernels/contacts.metal)
+  cm_embed_metal_source(mechanics cpp/metal/kernels/mechanics.metal)
+  cm_embed_metal_source(signals
+    cpp/metal/kernels/grid_transport.metal cpp/metal/kernels/signals.metal)
+  cm_embed_metal_source(coupled_rates
+    cpp/metal/kernels/grid_transport.metal cpp/metal/kernels/coupled_rates.metal)
+  cm_embed_metal_source(flow cpp/metal/kernels/flow_grid.metal cpp/metal/kernels/flow.metal)
+  cm_embed_metal_source(depth_flow
+    cpp/metal/kernels/flow_grid.metal cpp/metal/kernels/depth_flow.metal)
+
   set(CM_METAL_OCCUPANCY_HEADER "${CM_GENERATED_DIR}/cm/metal/occupancy_source.hpp")
   add_custom_command(
     OUTPUT "${CM_METAL_OCCUPANCY_HEADER}"
@@ -71,120 +104,12 @@ if(CM_ENABLE_METAL)
     DEPENDS cpp/metal/kernels/occupancy.metal cmake/EmbedMetalSource.cmake
     VERBATIM
   )
-  add_custom_command(
-    OUTPUT "${CM_METAL_GROWTH_HEADER}"
-    COMMAND "${CMAKE_COMMAND}"
-      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/growth.metal"
-      "-DOUTPUT=${CM_METAL_GROWTH_HEADER}"
-      "-DSYMBOL=growth_source"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedMetalSource.cmake"
-    DEPENDS
-      cpp/metal/kernels/growth.metal
-      cmake/EmbedMetalSource.cmake
-    VERBATIM
-  )
-  add_custom_command(
-    OUTPUT "${CM_METAL_FLOW_HEADER}"
-    COMMAND "${CMAKE_COMMAND}"
-      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/flow_grid.metal;${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/flow.metal"
-      "-DOUTPUT=${CM_METAL_FLOW_HEADER}"
-      "-DSYMBOL=flow_source"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedMetalSource.cmake"
-    DEPENDS
-      cpp/metal/kernels/flow_grid.metal
-      cpp/metal/kernels/flow.metal
-      cmake/EmbedMetalSource.cmake
-    VERBATIM
-  )
-  add_custom_command(
-    OUTPUT "${CM_METAL_DEPTH_FLOW_HEADER}"
-    COMMAND "${CMAKE_COMMAND}"
-      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/flow_grid.metal;${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/depth_flow.metal"
-      "-DOUTPUT=${CM_METAL_DEPTH_FLOW_HEADER}"
-      "-DSYMBOL=depth_flow_source"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedMetalSource.cmake"
-    DEPENDS
-      cpp/metal/kernels/flow_grid.metal
-      cpp/metal/kernels/depth_flow.metal
-      cmake/EmbedMetalSource.cmake
-    VERBATIM
-  )
-  add_custom_command(
-    OUTPUT "${CM_METAL_CONTACTS_HEADER}"
-    COMMAND "${CMAKE_COMMAND}"
-      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/contacts.metal"
-      "-DOUTPUT=${CM_METAL_CONTACTS_HEADER}"
-      "-DSYMBOL=contacts_source"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedMetalSource.cmake"
-    DEPENDS
-      cpp/metal/kernels/contacts.metal
-      cmake/EmbedMetalSource.cmake
-    VERBATIM
-  )
-  add_custom_command(
-    OUTPUT "${CM_METAL_COUPLED_RATES_HEADER}"
-    COMMAND "${CMAKE_COMMAND}"
-      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/grid_transport.metal;${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/coupled_rates.metal"
-      "-DOUTPUT=${CM_METAL_COUPLED_RATES_HEADER}"
-      "-DSYMBOL=coupled_rates_source"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedMetalSource.cmake"
-    DEPENDS
-      cpp/metal/kernels/grid_transport.metal
-      cpp/metal/kernels/coupled_rates.metal
-      cmake/EmbedMetalSource.cmake
-    VERBATIM
-  )
-  add_custom_command(
-    OUTPUT "${CM_METAL_MECHANICS_HEADER}"
-    COMMAND "${CMAKE_COMMAND}"
-      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/mechanics.metal"
-      "-DOUTPUT=${CM_METAL_MECHANICS_HEADER}"
-      "-DSYMBOL=mechanics_source"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedMetalSource.cmake"
-    DEPENDS
-      cpp/metal/kernels/mechanics.metal
-      cmake/EmbedMetalSource.cmake
-    VERBATIM
-  )
-  add_custom_command(
-    OUTPUT "${CM_METAL_SIGNALS_HEADER}"
-    COMMAND "${CMAKE_COMMAND}"
-      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/grid_transport.metal;${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/signals.metal"
-      "-DOUTPUT=${CM_METAL_SIGNALS_HEADER}"
-      "-DSYMBOL=signals_source"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedMetalSource.cmake"
-    DEPENDS
-      cpp/metal/kernels/grid_transport.metal
-      cpp/metal/kernels/signals.metal
-      cmake/EmbedMetalSource.cmake
-    VERBATIM
-  )
-  add_custom_command(
-    OUTPUT "${CM_METAL_SPECIES_HEADER}"
-    COMMAND "${CMAKE_COMMAND}"
-      "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/cpp/metal/kernels/species.metal"
-      "-DOUTPUT=${CM_METAL_SPECIES_HEADER}"
-      "-DSYMBOL=species_source"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedMetalSource.cmake"
-    DEPENDS
-      cpp/metal/kernels/species.metal
-      cmake/EmbedMetalSource.cmake
-    VERBATIM
-  )
 
   target_sources(cm_core PRIVATE
     cpp/metal/metal_backend.mm
     cpp/metal/metal_flow.mm
     cpp/metal/metal_occupancy.mm
     "${CM_METAL_OCCUPANCY_HEADER}"
-    "${CM_METAL_CONTACTS_HEADER}"
-    "${CM_METAL_COUPLED_RATES_HEADER}"
-    "${CM_METAL_GROWTH_HEADER}"
-    "${CM_METAL_FLOW_HEADER}"
-    "${CM_METAL_DEPTH_FLOW_HEADER}"
-    "${CM_METAL_MECHANICS_HEADER}"
-    "${CM_METAL_SIGNALS_HEADER}"
-    "${CM_METAL_SPECIES_HEADER}"
   )
   target_include_directories(cm_core PRIVATE "${CM_GENERATED_DIR}")
   target_compile_definitions(cm_core PRIVATE CM_HAS_METAL=1)

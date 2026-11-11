@@ -171,10 +171,10 @@ kernel void flow_dot_partial(device const float* left [[buffer(0)]],
                              uint index [[thread_position_in_grid]],
                              uint local_index [[thread_index_in_threadgroup]],
                              uint group_index [[threadgroup_position_in_grid]]) {
-  threadgroup float values[64];
+  threadgroup float values[flow_reduction_width];
   values[local_index] = index < count ? left[index] * right[index] : 0.0f;
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  for (uint stride = 32; stride > 0; stride >>= 1) {
+  for (uint stride = flow_reduction_width / 2u; stride > 0; stride >>= 1) {
     if (local_index < stride) {
       values[local_index] += values[local_index + stride];
     }

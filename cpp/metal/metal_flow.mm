@@ -17,55 +17,28 @@
 
 #include "cm/metal/depth_flow_source.hpp"
 #include "cm/metal/flow_source.hpp"
+#include "core/device_types.hpp"
 #include "core/flexible_gmres.hpp"
 #include "core/flow_system.hpp"
+#include "core/shared_constants.hpp"
 #include "metal_flow.hpp"
 
 namespace cm::metal {
 namespace {
 
-struct alignas(16) MetalUInt4 {
-  std::uint32_t x;
-  std::uint32_t y;
-  std::uint32_t z;
-  std::uint32_t w;
-};
+using MetalUInt4 = device::uint4;
+using MetalFloat4 = device::float4;
+using MetalFlowGridParameters = device::FlowGridParameters;
+using MetalDepthFlowScales = device::DepthFlowScales;
 
-struct alignas(16) MetalFloat4 {
-  float x;
-  float y;
-  float z;
-  float w;
-};
-
-struct alignas(16) MetalFlowGridParameters {
-  MetalUInt4 dimensions;
-  MetalFloat4 spacing;
-  MetalFloat4 inverse_spacing_squared;
-  MetalUInt4 face_offsets;
-  MetalUInt4 face_counts;
-  std::uint32_t flow_axis;
-  std::uint32_t site_count;
-  std::uint32_t total_face_count;
-  std::uint32_t padding;
-};
-
-// A double-word value: an unevaluated sum of two floats.
-struct alignas(8) MetalFloatPair {
+// A double-word value: an unevaluated sum of two floats, laid out as a Metal
+// float2.
+struct MetalFloatPair {
   float high;
   float low;
 };
 
-struct alignas(16) MetalDepthFlowScales {
-  MetalFloat4 inverse_square_high;
-  MetalFloat4 inverse_square_low;
-};
-
-static_assert(sizeof(MetalUInt4) == 16);
-static_assert(sizeof(MetalFloat4) == 16);
-static_assert(sizeof(MetalFlowGridParameters) == 96);
-static_assert(sizeof(MetalFloatPair) == 8);
-static_assert(sizeof(MetalDepthFlowScales) == 32);
+static_assert(sizeof(MetalFloatPair) == sizeof(device::float2));
 
 MetalFloatPair split(double value) {
   const auto high = static_cast<float>(value);
@@ -227,7 +200,8 @@ struct FlowSolver::Impl {
       vector_subtract = make_pipeline(device, library, @"flow_vector_subtract");
       dot_partial = make_pipeline(device, library, @"flow_dot_partial");
       if (dot_partial.maxTotalThreadsPerThreadgroup < reduction_width) {
-        throw std::runtime_error("Metal flow reduction requires 64 threads per threadgroup");
+        throw std::runtime_error("Metal flow reduction requires " +
+                                 std::to_string(reduction_width) + " threads per threadgroup");
       }
     }
   }
@@ -638,7 +612,7 @@ struct FlowSolver::Impl {
   id<MTLComputePipelineState> vector_subtract;
   id<MTLComputePipelineState> vector_combine;
   id<MTLComputePipelineState> dot_partial;
-  static constexpr std::uint32_t reduction_width = 64;
+  static constexpr std::uint32_t reduction_width = shared::flow_reduction_width;
 };
 
 FlowSolver::FlowSolver(std::uint32_t device_index) : impl_(std::make_unique<Impl>(device_index)) {}

@@ -56,12 +56,6 @@ inline float2 pair_divide(float2 a, float b) {
   return quick_two_sum(quotient, (remainder.x + remainder.y) / b);
 }
 
-// 1 / spacing^2 per axis as a double-word value.
-struct DepthFlowScales {
-  float4 inverse_square_high;
-  float4 inverse_square_low;
-};
-
 inline float2 inverse_square(constant DepthFlowScales& scales, uint axis) {
   return float2(scales.inverse_square_high[axis], scales.inverse_square_low[axis]);
 }
