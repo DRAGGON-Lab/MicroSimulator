@@ -6,7 +6,7 @@
 
 #include "core/shared_constants.hpp"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 
 struct alignas(16) FlowGridParameters {
   std::uint32_t dimensions[4];
@@ -71,4 +71,4 @@ void launch_flow_dot_partial(const float* left, const float* right, float* parti
 
 using shared::flow_reduction_width;
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

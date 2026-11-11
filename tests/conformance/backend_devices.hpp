@@ -6,9 +6,9 @@
 #include <limits>
 #include <stdexcept>
 
-#include "cm/backend.hpp"
+#include "microsimulator/backend.hpp"
 
-namespace cm::test {
+namespace microsimulator::test {
 
 template <typename Function>
 void for_each_backend_device(Function&& function) {
@@ -24,4 +24,4 @@ void for_each_backend_device(Function&& function) {
   }
 }
 
-}  // namespace cm::test
+}  // namespace microsimulator::test

@@ -12,9 +12,9 @@
 #include <utility>
 #include <vector>
 
-#include "cm/flow.hpp"
+#include "microsimulator/flow.hpp"
 
-namespace cm::detail {
+namespace microsimulator::detail {
 
 class FlowGridLayout {
  public:
@@ -777,4 +777,4 @@ struct ScaledVelocity {
           .factor = factor};
 }
 
-}  // namespace cm::detail
+}  // namespace microsimulator::detail

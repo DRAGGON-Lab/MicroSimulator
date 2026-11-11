@@ -3,41 +3,48 @@
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/vector.h>
 
-#include "cm/occupancy.hpp"
+#include "microsimulator/occupancy.hpp"
 #include "native_call.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
 
 void bind_occupancy(nb::module_& module) {
-  nb::class_<cm::OccupancyCapsule>(module, "OccupancyCapsule")
+  nb::class_<microsimulator::OccupancyCapsule>(module, "OccupancyCapsule")
       .def(nb::init<std::array<float, 3>, std::array<float, 3>, float, float>());
-  nb::class_<cm::OccupancyFace>(module, "OccupancyFace")
+  nb::class_<microsimulator::OccupancyFace>(module, "OccupancyFace")
       .def(nb::init<std::uint32_t, std::uint32_t, float, float>())
-      .def_ro("first", &cm::OccupancyFace::first)
-      .def_ro("second", &cm::OccupancyFace::second)
-      .def_ro("conductance", &cm::OccupancyFace::conductance)
-      .def_ro("volume_flux", &cm::OccupancyFace::volume_flux);
-  nb::class_<cm::OccupancyReservoir>(module, "OccupancyReservoir")
+      .def_ro("first", &microsimulator::OccupancyFace::first)
+      .def_ro("second", &microsimulator::OccupancyFace::second)
+      .def_ro("conductance", &microsimulator::OccupancyFace::conductance)
+      .def_ro("volume_flux", &microsimulator::OccupancyFace::volume_flux);
+  nb::class_<microsimulator::OccupancyReservoir>(module, "OccupancyReservoir")
       .def(nb::init<std::uint32_t, float, float, float>());
-  nb::class_<cm::OccupancyBalance>(module, "OccupancyBalance")
-      .def_ro("before", &cm::OccupancyBalance::before)
-      .def_ro("after", &cm::OccupancyBalance::after)
-      .def_ro("source", &cm::OccupancyBalance::source)
-      .def_ro("reaction", &cm::OccupancyBalance::reaction)
-      .def_ro("boundary", &cm::OccupancyBalance::boundary);
-  nb::class_<cm::OccupancyStep>(module, "OccupancyStep")
-      .def_ro("amount", &cm::OccupancyStep::amount)
-      .def_ro("balance", &cm::OccupancyStep::balance)
-      .def_ro("iterations", &cm::OccupancyStep::iterations)
-      .def_ro("relative_residual", &cm::OccupancyStep::relative_residual);
-  nb::class_<cm::OccupancySolver>(module, "OccupancySolver")
-      .def(nb::init<cm::BackendKind, std::uint32_t, float>())
-      .def("geometric_porosity", cm::python::released(&cm::OccupancySolver::geometric_porosity))
-      .def("accessible_volumes", cm::python::released(&cm::OccupancySolver::accessible_volumes))
-      .def("concentration", cm::python::released(&cm::OccupancySolver::concentration))
-      .def("porosity_face", cm::python::released(&cm::OccupancySolver::porosity_face))
-      .def("remap_amounts", cm::python::released(&cm::OccupancySolver::remap_amounts))
-      .def("exchange_weights", cm::python::released(&cm::OccupancySolver::exchange_weights))
-      .def("backward_euler", cm::python::released(&cm::OccupancySolver::backward_euler));
+  nb::class_<microsimulator::OccupancyBalance>(module, "OccupancyBalance")
+      .def_ro("before", &microsimulator::OccupancyBalance::before)
+      .def_ro("after", &microsimulator::OccupancyBalance::after)
+      .def_ro("source", &microsimulator::OccupancyBalance::source)
+      .def_ro("reaction", &microsimulator::OccupancyBalance::reaction)
+      .def_ro("boundary", &microsimulator::OccupancyBalance::boundary);
+  nb::class_<microsimulator::OccupancyStep>(module, "OccupancyStep")
+      .def_ro("amount", &microsimulator::OccupancyStep::amount)
+      .def_ro("balance", &microsimulator::OccupancyStep::balance)
+      .def_ro("iterations", &microsimulator::OccupancyStep::iterations)
+      .def_ro("relative_residual", &microsimulator::OccupancyStep::relative_residual);
+  nb::class_<microsimulator::OccupancySolver>(module, "OccupancySolver")
+      .def(nb::init<microsimulator::BackendKind, std::uint32_t, float>())
+      .def("geometric_porosity",
+           microsimulator::python::released(&microsimulator::OccupancySolver::geometric_porosity))
+      .def("accessible_volumes",
+           microsimulator::python::released(&microsimulator::OccupancySolver::accessible_volumes))
+      .def("concentration",
+           microsimulator::python::released(&microsimulator::OccupancySolver::concentration))
+      .def("porosity_face",
+           microsimulator::python::released(&microsimulator::OccupancySolver::porosity_face))
+      .def("remap_amounts",
+           microsimulator::python::released(&microsimulator::OccupancySolver::remap_amounts))
+      .def("exchange_weights",
+           microsimulator::python::released(&microsimulator::OccupancySolver::exchange_weights))
+      .def("backward_euler",
+           microsimulator::python::released(&microsimulator::OccupancySolver::backward_euler));
 }

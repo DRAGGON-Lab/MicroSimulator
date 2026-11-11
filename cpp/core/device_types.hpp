@@ -6,7 +6,7 @@
 // Host view of the structures in shared/device_types.h. The scalar and vector
 // names below reproduce the size and alignment of the Metal types of the same
 // name, so the shared definitions lay out identically on both sides.
-namespace cm::device {
+namespace microsimulator::device {
 
 using uint = std::uint32_t;
 using ulong = std::uint64_t;
@@ -48,4 +48,4 @@ static_assert(sizeof(GridShape) == 16);
 static_assert(sizeof(FlowGridParameters) == 96 && offsetof(FlowGridParameters, flow_axis) == 80);
 static_assert(sizeof(DepthFlowScales) == 32);
 
-}  // namespace cm::device
+}  // namespace microsimulator::device

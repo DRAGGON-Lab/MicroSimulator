@@ -4,7 +4,7 @@
 #include <cstdint>
 
 #include "backend_devices.hpp"
-#include "cm/simulation.hpp"
+#include "microsimulator/simulation.hpp"
 
 namespace {
 
@@ -16,9 +16,9 @@ bool close(float actual, float expected) {
   return std::abs(actual - expected) <= tolerance;
 }
 
-void add_capsule(cm::Simulation& simulation, cm::Vec3 center, cm::Vec3 axis, float length = 2.0F,
-                 float radius = 0.5F) {
-  cm::CellInit cell;
+void add_capsule(microsimulator::Simulation& simulation, microsimulator::Vec3 center,
+                 microsimulator::Vec3 axis, float length = 2.0F, float radius = 0.5F) {
+  microsimulator::CellInit cell;
   cell.position = center;
   cell.direction = axis;
   cell.length = length;
@@ -26,7 +26,8 @@ void add_capsule(cm::Simulation& simulation, cm::Vec3 center, cm::Vec3 axis, flo
   simulation.add_cell(cell);
 }
 
-void compare_graphs(const cm::ContactGraph& actual, const cm::ContactGraph& expected) {
+void compare_graphs(const microsimulator::ContactGraph& actual,
+                    const microsimulator::ContactGraph& expected) {
   assert(actual.cell_count() == expected.cell_count());
   assert(actual.size() == expected.size());
   for (std::size_t index = 0; index < expected.size(); ++index) {
@@ -47,8 +48,10 @@ void compare_graphs(const cm::ContactGraph& actual, const cm::ContactGraph& expe
     assert(close(actual_contact.weight, expected_contact.weight));
   }
   for (std::size_t slot = 0; slot < expected.cell_count(); ++slot) {
-    const auto actual_indices = actual.incident_contact_indices(static_cast<cm::Slot>(slot));
-    const auto expected_indices = expected.incident_contact_indices(static_cast<cm::Slot>(slot));
+    const auto actual_indices =
+        actual.incident_contact_indices(static_cast<microsimulator::Slot>(slot));
+    const auto expected_indices =
+        expected.incident_contact_indices(static_cast<microsimulator::Slot>(slot));
     assert(actual_indices.size() == expected_indices.size());
     for (std::size_t index = 0; index < expected_indices.size(); ++index) {
       assert(actual_indices[index] == expected_indices[index]);
@@ -56,7 +59,7 @@ void compare_graphs(const cm::ContactGraph& actual, const cm::ContactGraph& expe
   }
 }
 
-void populate_mixed_geometry(cm::Simulation& simulation) {
+void populate_mixed_geometry(microsimulator::Simulation& simulation) {
   add_capsule(simulation, {0.0F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F}, 4.0F);
   add_capsule(simulation, {0.0F, 0.8F, 0.0F}, {-1.0F, 0.0F, 0.0F}, 4.0F);
   add_capsule(simulation, {4.9F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F}, 4.0F);
@@ -66,30 +69,30 @@ void populate_mixed_geometry(cm::Simulation& simulation) {
   add_capsule(simulation, {15.0F, 0.8F, 0.0F}, {1.0F, 0.0F, 0.0F}, 0.0F);
 }
 
-void run_mixed_geometry(cm::BackendKind backend, std::uint32_t device_index) {
-  cm::Simulation reference(cm::BackendKind::cpu);
-  cm::Simulation candidate(backend, 0, 0, device_index);
+void run_mixed_geometry(microsimulator::BackendKind backend, std::uint32_t device_index) {
+  microsimulator::Simulation reference(microsimulator::BackendKind::cpu);
+  microsimulator::Simulation candidate(backend, 0, 0, device_index);
   populate_mixed_geometry(reference);
   populate_mixed_geometry(candidate);
   compare_graphs(candidate.find_cell_contacts(), reference.find_cell_contacts());
 }
 
-void run_empty_and_single_cell(cm::BackendKind backend, std::uint32_t device_index) {
-  cm::Simulation empty(backend, 0, 0, device_index);
+void run_empty_and_single_cell(microsimulator::BackendKind backend, std::uint32_t device_index) {
+  microsimulator::Simulation empty(backend, 0, 0, device_index);
   const auto empty_graph = empty.find_cell_contacts();
   assert(empty_graph.cell_count() == 0);
   assert(empty_graph.empty());
 
-  cm::Simulation single(backend, 0, 0, device_index);
+  microsimulator::Simulation single(backend, 0, 0, device_index);
   add_capsule(single, {0.0F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F});
   const auto single_graph = single.find_cell_contacts();
   assert(single_graph.cell_count() == 1);
   assert(single_graph.empty());
 }
 
-void run_dense_geometry(cm::BackendKind backend, std::uint32_t device_index) {
-  cm::Simulation reference(cm::BackendKind::cpu, 31);
-  cm::Simulation candidate(backend, 31, 0, device_index);
+void run_dense_geometry(microsimulator::BackendKind backend, std::uint32_t device_index) {
+  microsimulator::Simulation reference(microsimulator::BackendKind::cpu, 31);
+  microsimulator::Simulation candidate(backend, 31, 0, device_index);
   for (std::size_t index = 0; index < 31; ++index) {
     add_capsule(reference, {0.0F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F});
     add_capsule(candidate, {0.0F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F});
@@ -101,15 +104,16 @@ void run_dense_geometry(cm::BackendKind backend, std::uint32_t device_index) {
   compare_graphs(actual, expected);
 }
 
-void run_parameters_and_buffer_reuse(cm::BackendKind backend, std::uint32_t device_index) {
-  cm::Simulation reference(cm::BackendKind::cpu);
-  cm::Simulation candidate(backend, 0, 0, device_index);
+void run_parameters_and_buffer_reuse(microsimulator::BackendKind backend,
+                                     std::uint32_t device_index) {
+  microsimulator::Simulation reference(microsimulator::BackendKind::cpu);
+  microsimulator::Simulation candidate(backend, 0, 0, device_index);
   for (auto* simulation : {&reference, &candidate}) {
     add_capsule(*simulation, {0.0F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F}, 0.0F);
     add_capsule(*simulation, {1.005F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F}, 0.0F);
   }
 
-  cm::ContactParameters strict;
+  microsimulator::ContactParameters strict;
   strict.activation_margin = 0.0F;
   compare_graphs(candidate.find_cell_contacts(strict), reference.find_cell_contacts(strict));
   assert(candidate.find_cell_contacts(strict).empty());
@@ -120,14 +124,15 @@ void run_parameters_and_buffer_reuse(cm::BackendKind backend, std::uint32_t devi
   compare_graphs(candidate.find_cell_contacts(), reference.find_cell_contacts());
 }
 
-void run_compacted_identity_geometry(cm::BackendKind backend, std::uint32_t device_index) {
-  cm::Simulation reference(cm::BackendKind::cpu);
-  cm::Simulation candidate(backend, 0, 0, device_index);
+void run_compacted_identity_geometry(microsimulator::BackendKind backend,
+                                     std::uint32_t device_index) {
+  microsimulator::Simulation reference(microsimulator::BackendKind::cpu);
+  microsimulator::Simulation candidate(backend, 0, 0, device_index);
   for (auto* simulation : {&reference, &candidate}) {
-    cm::CellInit first;
+    microsimulator::CellInit first;
     first.length = 4.0F;
     const auto parent = simulation->add_cell(first);
-    cm::CellInit second = first;
+    microsimulator::CellInit second = first;
     second.position.y = 0.2F;
     simulation->add_cell(second);
     simulation->divide_equal(parent);
@@ -138,16 +143,17 @@ void run_compacted_identity_geometry(cm::BackendKind backend, std::uint32_t devi
 }  // namespace
 
 int main() {
-  cm::test::for_each_backend_device([](cm::BackendKind backend, std::uint32_t device_index) {
-    cm::Simulation capability_probe(backend, 0, 0, device_index);
-    if (!capability_probe.supports(cm::BackendFeature::cell_contacts)) {
-      return;
-    }
-    run_empty_and_single_cell(backend, device_index);
-    run_mixed_geometry(backend, device_index);
-    run_dense_geometry(backend, device_index);
-    run_parameters_and_buffer_reuse(backend, device_index);
-    run_compacted_identity_geometry(backend, device_index);
-  });
+  microsimulator::test::for_each_backend_device(
+      [](microsimulator::BackendKind backend, std::uint32_t device_index) {
+        microsimulator::Simulation capability_probe(backend, 0, 0, device_index);
+        if (!capability_probe.supports(microsimulator::BackendFeature::cell_contacts)) {
+          return;
+        }
+        run_empty_and_single_cell(backend, device_index);
+        run_mixed_geometry(backend, device_index);
+        run_dense_geometry(backend, device_index);
+        run_parameters_and_buffer_reuse(backend, device_index);
+        run_compacted_identity_geometry(backend, device_index);
+      });
   return 0;
 }

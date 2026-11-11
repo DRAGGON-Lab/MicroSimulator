@@ -4,12 +4,12 @@
 #include <span>
 #include <vector>
 
-#include "cm/constraints.hpp"
-#include "cm/contact_graph.hpp"
-#include "cm/types.hpp"
-#include "cm/world_state.hpp"
+#include "microsimulator/constraints.hpp"
+#include "microsimulator/contact_graph.hpp"
+#include "microsimulator/types.hpp"
+#include "microsimulator/world_state.hpp"
 
-namespace cm {
+namespace microsimulator {
 
 struct CellCorrection {
   Vec3 translation{};
@@ -94,4 +94,4 @@ void integrate_mechanics_result(
     const WorldState& state, const ContactGraph& contacts,
     const MechanicsParameters& parameters = MechanicsParameters{});
 
-}  // namespace cm
+}  // namespace microsimulator

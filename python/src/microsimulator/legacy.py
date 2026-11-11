@@ -378,7 +378,7 @@ class LegacyModelAdapter:
             raise LegacyCompatibilityError("legacy controller has unexpected fields")
         version = data["version"]
         if (
-            data["kind"] not in ("microsimulator-legacy-python", "cellmodeller2-legacy-python")
+            data["kind"] != "microsimulator-legacy-python"
             or not isinstance(version, int)
             or isinstance(version, bool)
             or version not in (2, 3, 4)

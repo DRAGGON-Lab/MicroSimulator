@@ -14,7 +14,7 @@
 // keep running. While such a call is in flight its object is registered as
 // busy, and any other bound call on the same object raises RuntimeError
 // rather than reading or writing state the running call is changing.
-namespace cm::python {
+namespace microsimulator::python {
 
 class BusyObjects {
  public:
@@ -128,4 +128,4 @@ auto released(Result (Class::*method)(Arguments...) const) {
   };
 }
 
-}  // namespace cm::python
+}  // namespace microsimulator::python

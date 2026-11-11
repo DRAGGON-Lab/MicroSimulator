@@ -1,4 +1,4 @@
-#include "cm/checkpoint.hpp"
+#include "microsimulator/checkpoint.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -7,24 +7,25 @@
 #include <stdexcept>
 
 #include "backend_devices.hpp"
-#include "cm/simulation.hpp"
+#include "microsimulator/simulation.hpp"
 
 namespace {
 
-cm::SpeciesRatePlan make_rate_plan() {
-  using enum cm::RateOp;
-  return cm::SpeciesRatePlan(2,
-                              {
-                                  {.operation = species, .first = 0},
-                                  {.operation = species, .first = 1},
-                                  {.operation = constant, .value = 0.125F},
-                                  {.operation = add, .first = 0, .second = 2},
-                                  {.operation = negate, .first = 1},
-                              },
-                              {3, 4});
+microsimulator::SpeciesRatePlan make_rate_plan() {
+  using enum microsimulator::RateOp;
+  return microsimulator::SpeciesRatePlan(2,
+                                         {
+                                             {.operation = species, .first = 0},
+                                             {.operation = species, .first = 1},
+                                             {.operation = constant, .value = 0.125F},
+                                             {.operation = add, .first = 0, .second = 2},
+                                             {.operation = negate, .first = 1},
+                                         },
+                                         {3, 4});
 }
 
-void assert_cells_equal(const cm::CellSnapshot& actual, const cm::CellSnapshot& expected) {
+void assert_cells_equal(const microsimulator::CellSnapshot& actual,
+                        const microsimulator::CellSnapshot& expected) {
   assert(actual.id == expected.id);
   assert(actual.slot == expected.slot);
   assert(actual.position.x == expected.position.x);
@@ -40,8 +41,8 @@ void assert_cells_equal(const cm::CellSnapshot& actual, const cm::CellSnapshot& 
   assert(actual.species == expected.species);
 }
 
-void assert_rate_plans_equal(const cm::SpeciesRatePlan& actual,
-                             const cm::SpeciesRatePlan& expected) {
+void assert_rate_plans_equal(const microsimulator::SpeciesRatePlan& actual,
+                             const microsimulator::SpeciesRatePlan& expected) {
   assert(actual.species_count() == expected.species_count());
   assert(actual.outputs().size() == expected.outputs().size());
   for (std::size_t index = 0; index < actual.outputs().size(); ++index) {
@@ -59,8 +60,8 @@ void assert_rate_plans_equal(const cm::SpeciesRatePlan& actual,
   }
 }
 
-void assert_checkpoints_equal(const cm::SimulationCheckpoint& actual,
-                              const cm::SimulationCheckpoint& expected) {
+void assert_checkpoints_equal(const microsimulator::SimulationCheckpoint& actual,
+                              const microsimulator::SimulationCheckpoint& expected) {
   assert(actual.schema_version == expected.schema_version);
   assert(actual.time == expected.time);
   assert(actual.world.species_count == expected.world.species_count);
@@ -103,7 +104,8 @@ void assert_checkpoints_equal(const cm::SimulationCheckpoint& actual,
   assert_rate_plans_equal(actual.species_rate_plan, expected.species_rate_plan);
 }
 
-void assert_resumed_step_close(const cm::Simulation& actual, const cm::Simulation& expected) {
+void assert_resumed_step_close(const microsimulator::Simulation& actual,
+                               const microsimulator::Simulation& expected) {
   assert(actual.time() == expected.time());
   const auto actual_cells = actual.cells();
   const auto expected_cells = expected.cells();
@@ -134,10 +136,10 @@ void assert_invalid(Function&& function) {
 }  // namespace
 
 int main() {
-  cm::Simulation original(cm::BackendKind::cpu, 8, 2);
+  microsimulator::Simulation original(microsimulator::BackendKind::cpu, 8, 2);
   original.set_species_rate_plan(make_rate_plan());
 
-  cm::CellInit first;
+  microsimulator::CellInit first;
   first.position = {1.25F, -2.5F, 0.75F};
   first.direction = {0.0F, 1.0F, 0.0F};
   first.length = 4.5F;
@@ -147,7 +149,7 @@ int main() {
   first.species = {3.0F, 1.5F};
   const auto first_id = original.add_cell(first);
 
-  cm::CellInit second;
+  microsimulator::CellInit second;
   second.position = {-0.5F, 1.0F, 2.0F};
   second.direction = {1.0F, 0.0F, 0.0F};
   second.length = 2.75F;
@@ -157,16 +159,16 @@ int main() {
   second.species = {0.25F, 4.0F};
   original.add_cell(second);
 
-  cm::PlaneConstraintInit plane;
+  microsimulator::PlaneConstraintInit plane;
   plane.point = {0.0F, -3.0F, 0.0F};
   plane.inward_normal = {0.0F, 2.0F, 0.0F};
   plane.coefficient = 1.25F;
   assert(original.add_plane_constraint(plane) == 1);
-  cm::SphereConstraintInit sphere;
+  microsimulator::SphereConstraintInit sphere;
   sphere.center = {1.0F, 2.0F, 3.0F};
   sphere.radius = 8.0F;
   sphere.coefficient = 0.75F;
-  sphere.allowed_region = cm::SphereRegion::inside;
+  sphere.allowed_region = microsimulator::SphereRegion::inside;
   assert(original.add_sphere_constraint(sphere) == 2);
 
   original.step(0.125F);
@@ -174,26 +176,27 @@ int main() {
   original.step(0.03125F);
 
   const auto saved = original.checkpoint();
-  assert(saved.schema_version == cm::checkpoint_schema_version);
+  assert(saved.schema_version == microsimulator::checkpoint_schema_version);
   assert(saved.world.next_id == 5);
   assert(saved.constraints.next_id == 3);
   assert(saved.world.lineage.size() == 2);
 
-  cm::Simulation restored(cm::BackendKind::cpu, saved);
+  microsimulator::Simulation restored(microsimulator::BackendKind::cpu, saved);
   assert_checkpoints_equal(restored.checkpoint(), saved);
   assert(restored.lineage_parent(daughter_a) == first_id);
   assert(restored.lineage_parent(daughter_b) == first_id);
 
-  cm::test::for_each_backend_device([&](cm::BackendKind backend, std::uint32_t device_index) {
-    cm::Simulation candidate(backend, saved, device_index);
-    assert_checkpoints_equal(candidate.checkpoint(), saved);
-    cm::Simulation reference(cm::BackendKind::cpu, saved);
-    candidate.step(0.02F);
-    reference.step(0.02F);
-    assert_resumed_step_close(candidate, reference);
-  });
+  microsimulator::test::for_each_backend_device(
+      [&](microsimulator::BackendKind backend, std::uint32_t device_index) {
+        microsimulator::Simulation candidate(backend, saved, device_index);
+        assert_checkpoints_equal(candidate.checkpoint(), saved);
+        microsimulator::Simulation reference(microsimulator::BackendKind::cpu, saved);
+        candidate.step(0.02F);
+        reference.step(0.02F);
+        assert_resumed_step_close(candidate, reference);
+      });
 
-  cm::CellInit added;
+  microsimulator::CellInit added;
   added.species = {0.5F, 0.75F};
   assert(original.add_cell(added) == restored.add_cell(added));
   assert(original.add_plane_constraint(plane) == restored.add_plane_constraint(plane));
@@ -203,17 +206,23 @@ int main() {
 
   auto invalid_version = saved;
   invalid_version.schema_version += 1;
-  assert_invalid([&] { cm::Simulation rejected(cm::BackendKind::cpu, invalid_version); });
+  assert_invalid([&] {
+    microsimulator::Simulation rejected(microsimulator::BackendKind::cpu, invalid_version);
+  });
 
   auto invalid_slot = saved;
   invalid_slot.world.cells.front().slot = 1;
-  assert_invalid([&] { cm::Simulation rejected(cm::BackendKind::cpu, invalid_slot); });
+  assert_invalid(
+      [&] { microsimulator::Simulation rejected(microsimulator::BackendKind::cpu, invalid_slot); });
 
   auto invalid_next_id = saved;
   invalid_next_id.world.next_id = daughter_b;
-  assert_invalid([&] { cm::Simulation rejected(cm::BackendKind::cpu, invalid_next_id); });
+  assert_invalid([&] {
+    microsimulator::Simulation rejected(microsimulator::BackendKind::cpu, invalid_next_id);
+  });
 
   auto invalid_plan = saved;
-  invalid_plan.species_rate_plan = cm::SpeciesRatePlan::zero(1);
-  assert_invalid([&] { cm::Simulation rejected(cm::BackendKind::cpu, invalid_plan); });
+  invalid_plan.species_rate_plan = microsimulator::SpeciesRatePlan::zero(1);
+  assert_invalid(
+      [&] { microsimulator::Simulation rejected(microsimulator::BackendKind::cpu, invalid_plan); });
 }

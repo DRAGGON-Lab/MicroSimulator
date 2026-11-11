@@ -5,9 +5,9 @@
 #include <span>
 #include <vector>
 
-#include "cm/species.hpp"
+#include "microsimulator/species.hpp"
 
-namespace cm {
+namespace microsimulator {
 
 class SignalGrid;
 class WorldState;
@@ -47,4 +47,4 @@ void validate_coupled_step(const WorldState& state, const SignalGrid& grid,
                                                     std::span<const float> previous_lengths,
                                                     float dt);
 
-}  // namespace cm
+}  // namespace microsimulator

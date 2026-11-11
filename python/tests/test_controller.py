@@ -160,7 +160,7 @@ def test_native_controller_resume_preserves_flow_drift_trajectory(tmp_path: Path
     split = build()
     for _ in range(2):
         split.step(0.25)
-    midpoint = tmp_path / "flow-midpoint.cm2.json"
+    midpoint = tmp_path / "flow-midpoint.json"
     save_checkpoint(split.simulation, midpoint, controller=split.controller_state())
     resumed = NativeController.from_checkpoint(
         load_checkpoint_bundle(midpoint),
@@ -170,8 +170,8 @@ def test_native_controller_resume_preserves_flow_drift_trajectory(tmp_path: Path
     for _ in range(2):
         resumed.step(0.25)
 
-    expected = tmp_path / "flow-expected.cm2.json"
-    actual = tmp_path / "flow-actual.cm2.json"
+    expected = tmp_path / "flow-expected.json"
+    actual = tmp_path / "flow-actual.json"
     save_checkpoint(
         uninterrupted.simulation,
         expected,
@@ -238,12 +238,7 @@ def test_native_controller_composes_regulation_division_and_mechanics(
         assert math.isclose(daughter.growth_rate, 0.2, rel_tol=1.0e-6)
 
 
-@pytest.mark.parametrize(
-    "controller_kind", ["microsimulator-native-controller", "cellmodeller2-native-controller"]
-)
-def test_native_controller_resumes_model_state_rng_and_mechanics(
-    tmp_path: Path, controller_kind: str
-) -> None:
+def test_native_controller_resumes_model_state_rng_and_mechanics(tmp_path: Path) -> None:
     def regulate(step: ControllerStep) -> StepPlan:
         draws = step.state.get("draws", 0)
         if not isinstance(draws, int):
@@ -277,9 +272,8 @@ def test_native_controller_resumes_model_state_rng_and_mechanics(
     split = build()
     for _ in range(2):
         split.step(0.125)
-    midpoint = tmp_path / "midpoint.cm2.json"
+    midpoint = tmp_path / "midpoint.json"
     controller_state = split.controller_state()
-    controller_state["kind"] = controller_kind
     save_checkpoint(
         split.simulation,
         midpoint,
@@ -294,8 +288,8 @@ def test_native_controller_resumes_model_state_rng_and_mechanics(
     for _ in range(3):
         resumed.step(0.125)
 
-    expected = tmp_path / "expected.cm2.json"
-    actual = tmp_path / "actual.cm2.json"
+    expected = tmp_path / "expected.json"
+    actual = tmp_path / "actual.json"
     save_checkpoint(
         uninterrupted.simulation,
         expected,
@@ -347,7 +341,7 @@ def test_native_controller_rejects_wrong_model_identity(tmp_path: Path) -> None:
         model_version=1,
         rng=random.Random(0),
     )
-    path = tmp_path / "identity.cm2.json"
+    path = tmp_path / "identity.json"
     save_checkpoint(
         controller.simulation,
         path,
@@ -373,7 +367,7 @@ def test_native_controller_example_builds_and_resumes(tmp_path: Path) -> None:
         ModelContext(BackendKind.CPU, 0, seed=31, parameters=parameters),
     )
     assert isinstance(controller, NativeController)
-    first = tmp_path / "first.cm2.json"
+    first = tmp_path / "first.json"
     run_simulation(
         controller,
         steps=3,
@@ -388,7 +382,7 @@ def test_native_controller_example_builds_and_resumes(tmp_path: Path) -> None:
         checkpoint=load_checkpoint_bundle(first),
     )
     assert isinstance(resumed, NativeController)
-    output = tmp_path / "resumed.cm2.json"
+    output = tmp_path / "resumed.json"
     run_simulation(
         resumed,
         steps=2,

@@ -1,11 +1,11 @@
 #include <cmath>
 
-#include "cm/species.hpp"
 #include "contacts.cuh"
 #include "core/shared_constants.hpp"
 #include "coupled_rates.cuh"
+#include "microsimulator/species.hpp"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 namespace {
 
 using shared::pi;
@@ -634,4 +634,4 @@ cudaError_t launch_advance_coupled(
   return cudaGetLastError();
 }
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

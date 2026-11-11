@@ -5,14 +5,14 @@
 #include <span>
 #include <vector>
 
-namespace cm {
+namespace microsimulator {
 
 class WorldState;
 
 enum class RateOp : std::uint8_t {
-#define CM_RATE_OP(name, code) name = code,
-#include "cm/rate_ops.def"
-#undef CM_RATE_OP
+#define MICROSIMULATOR_RATE_OP(name, code) name = code,
+#include "microsimulator/rate_ops.def"
+#undef MICROSIMULATOR_RATE_OP
 };
 
 struct RateInstruction {
@@ -50,4 +50,4 @@ class SpeciesRatePlan {
 void advance_species_cpu(WorldState& state, const SpeciesRatePlan& plan,
                          std::span<const float> previous_lengths, float dt);
 
-}  // namespace cm
+}  // namespace microsimulator

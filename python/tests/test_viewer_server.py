@@ -69,7 +69,7 @@ def _dist(path: Path) -> Path:
 def test_live_session_steps_resets_and_writes_only_configured_checkpoint(
     tmp_path: Path,
 ) -> None:
-    output = tmp_path / "live.cm2.json"
+    output = tmp_path / "live.json"
     session = LiveSession(_factory, dt=0.25, checkpoint_output=output)
     initial = session.frame_message(playing=False)
     assert initial["revision"] == 0
@@ -94,7 +94,7 @@ def test_live_session_steps_resets_and_writes_only_configured_checkpoint(
 
 
 def test_live_session_refuses_an_existing_checkpoint_output(tmp_path: Path) -> None:
-    output = tmp_path / "live.cm2.json"
+    output = tmp_path / "live.json"
     output.write_text("earlier results", encoding="utf-8")
 
     with pytest.raises(LiveViewerError, match="already exists"):
@@ -111,7 +111,7 @@ def test_live_session_refuses_an_existing_checkpoint_output(tmp_path: Path) -> N
 
 
 def test_live_session_replaces_its_own_checkpoint(tmp_path: Path) -> None:
-    output = tmp_path / "live.cm2.json"
+    output = tmp_path / "live.json"
     session = LiveSession(_factory, dt=0.25, checkpoint_output=output)
     session.step()
     session.checkpoint()
@@ -123,7 +123,7 @@ def test_live_session_replaces_its_own_checkpoint(tmp_path: Path) -> None:
 def test_view_refuses_to_checkpoint_over_the_resumed_file(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    checkpoint = tmp_path / "start.cm2.json"
+    checkpoint = tmp_path / "start.json"
     checkpoint.write_text("starting state", encoding="utf-8")
 
     status = main(
@@ -134,7 +134,7 @@ def test_view_refuses_to_checkpoint_over_the_resumed_file(
             "--dt",
             "0.2",
             "--checkpoint-output",
-            str(tmp_path / "." / "start.cm2.json"),
+            str(tmp_path / "." / "start.json"),
             "--overwrite",
         ]
     )
@@ -145,7 +145,7 @@ def test_view_refuses_to_checkpoint_over_the_resumed_file(
 
 
 def test_live_session_preserves_native_controller_state(tmp_path: Path) -> None:
-    output = tmp_path / "controller.cm2.json"
+    output = tmp_path / "controller.json"
     session = LiveSession(_controller_factory, dt=0.2, checkpoint_output=output)
     session.step(3)
     session.checkpoint()
@@ -175,7 +175,7 @@ def test_command_protocol_is_closed(encoded: str, message: str) -> None:
 
 def test_live_websocket_requires_same_origin_token_and_controls_session(tmp_path: Path) -> None:
     async def exercise() -> None:
-        checkpoint = tmp_path / "socket.cm2.json"
+        checkpoint = tmp_path / "socket.json"
         application, token = create_live_app(
             LiveSession(_factory, dt=0.1, checkpoint_output=checkpoint),
             _dist(tmp_path),

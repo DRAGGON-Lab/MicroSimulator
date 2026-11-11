@@ -83,7 +83,7 @@ def test_application_workflow(
     tmp_path: Path,
 ) -> None:
     uninterrupted_model, uninterrupted_provenance = _build(backend, device_index)
-    uninterrupted = tmp_path / "uninterrupted.cm2.json"
+    uninterrupted = tmp_path / "uninterrupted.json"
     run_simulation(
         uninterrupted_model,
         steps=4,
@@ -93,7 +93,7 @@ def test_application_workflow(
     )
 
     split_model, split_provenance = _build(backend, device_index)
-    midpoint = tmp_path / "midpoint.cm2.json"
+    midpoint = tmp_path / "midpoint.json"
     run_simulation(
         split_model,
         steps=2,
@@ -111,7 +111,7 @@ def test_application_workflow(
         device_index,
         checkpoint=midpoint_bundle,
     )
-    resumed = tmp_path / "resumed.cm2.json"
+    resumed = tmp_path / "resumed.json"
     run_simulation(
         resumed_model,
         steps=2,
@@ -127,7 +127,7 @@ def test_application_workflow(
     assert actual.source_backend.kind == backend.name.lower()
     assert actual.source_backend.device_index == device_index
 
-    live_checkpoint = tmp_path / "live.cm2.json"
+    live_checkpoint = tmp_path / "live.json"
 
     def factory() -> tuple[NativeController, dict[str, JSONValue]]:
         return _build(backend, device_index)
@@ -148,7 +148,7 @@ def test_application_workflow(
     assert reset_scene["frame"] == initial_scene["frame"]
     assert load_checkpoint_bundle(live_checkpoint).controller is not None
 
-    dataset_path = tmp_path / "application.cm2.dataset"
+    dataset_path = tmp_path / "application.dataset"
     summary = export_dataset(
         [midpoint, resumed],
         dataset_path,

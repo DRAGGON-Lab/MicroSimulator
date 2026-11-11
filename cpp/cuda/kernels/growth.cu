@@ -1,6 +1,6 @@
 #include "growth.cuh"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 namespace {
 
 __global__ void advance_growth(float* lengths, const float* growth_rates, float dt,
@@ -21,4 +21,4 @@ void launch_growth(float* lengths, const float* growth_rates, float dt, std::uin
   advance_growth<<<block_count, threads_per_block, 0, stream>>>(lengths, growth_rates, dt, count);
 }
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

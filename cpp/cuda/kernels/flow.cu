@@ -1,6 +1,6 @@
 #include "flow.cuh"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 namespace {
 
 constexpr std::uint32_t threads_per_block = 256;
@@ -478,4 +478,4 @@ void launch_flow_dot_partial(const float* left, const float* right, float* parti
       left, right, partials, count);
 }
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

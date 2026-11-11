@@ -2,7 +2,7 @@
 
 #include "occupancy.cuh"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 namespace {
 using uint = unsigned int;
 using detail::OccupancyParameters;
@@ -296,4 +296,4 @@ void launch_occupancy(detail::OccupancyKernel kernel, const detail::OccupancyPar
       break;
   }
 }
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

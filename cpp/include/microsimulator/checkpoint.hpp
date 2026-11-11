@@ -3,13 +3,13 @@
 #include <cstdint>
 #include <optional>
 
-#include "cm/constraints.hpp"
-#include "cm/coupled_rates.hpp"
-#include "cm/signals.hpp"
-#include "cm/species.hpp"
-#include "cm/world_state.hpp"
+#include "microsimulator/constraints.hpp"
+#include "microsimulator/coupled_rates.hpp"
+#include "microsimulator/signals.hpp"
+#include "microsimulator/species.hpp"
+#include "microsimulator/world_state.hpp"
 
-namespace cm {
+namespace microsimulator {
 
 inline constexpr std::uint32_t checkpoint_schema_version = 4;
 
@@ -25,4 +25,4 @@ struct SimulationCheckpoint {
   void validate() const;
 };
 
-}  // namespace cm
+}  // namespace microsimulator

@@ -4,7 +4,7 @@
 #include <stdexcept>
 
 #include "backend_devices.hpp"
-#include "cm/simulation.hpp"
+#include "microsimulator/simulation.hpp"
 
 namespace {
 
@@ -16,7 +16,7 @@ bool close(float actual, float expected) {
   return std::abs(actual - expected) <= tolerance;
 }
 
-void assert_missing(const cm::Simulation& simulation, cm::CellId id) {
+void assert_missing(const microsimulator::Simulation& simulation, microsimulator::CellId id) {
   bool rejected = false;
   try {
     static_cast<void>(simulation.cell(id));
@@ -26,9 +26,9 @@ void assert_missing(const cm::Simulation& simulation, cm::CellId id) {
   assert(rejected);
 }
 
-void run_lifecycle_scenario(cm::BackendKind backend, std::uint32_t device_index) {
-  cm::Simulation simulation(backend, 0, 0, device_index);
-  cm::CellInit initial;
+void run_lifecycle_scenario(microsimulator::BackendKind backend, std::uint32_t device_index) {
+  microsimulator::Simulation simulation(backend, 0, 0, device_index);
+  microsimulator::CellInit initial;
   initial.position = {2.0F, 3.0F, 1.0F};
   initial.direction = {2.0F, 0.0F, 0.0F};
   initial.length = 4.0F;
@@ -92,7 +92,7 @@ void run_lifecycle_scenario(cm::BackendKind backend, std::uint32_t device_index)
   assert(simulation.backend_info().kind == backend);
   simulation.validate();
 
-  cm::Simulation asymmetric(backend, 0, 0, device_index);
+  microsimulator::Simulation asymmetric(backend, 0, 0, device_index);
   initial.length = 6.0F;
   initial.radius = 0.5F;
   const auto asymmetric_parent = asymmetric.add_cell(initial);
@@ -109,6 +109,6 @@ void run_lifecycle_scenario(cm::BackendKind backend, std::uint32_t device_index)
 }  // namespace
 
 int main() {
-  cm::test::for_each_backend_device(run_lifecycle_scenario);
+  microsimulator::test::for_each_backend_device(run_lifecycle_scenario);
   return 0;
 }

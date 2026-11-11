@@ -6,9 +6,9 @@
 #include <utility>
 #include <vector>
 
-#include "cm/types.hpp"
+#include "microsimulator/types.hpp"
 
-namespace cm {
+namespace microsimulator {
 
 struct OccupancyCapsule {
   std::array<float, 3> center;
@@ -89,4 +89,4 @@ class OccupancySolver {
   float cutoff_;
 };
 
-}  // namespace cm
+}  // namespace microsimulator

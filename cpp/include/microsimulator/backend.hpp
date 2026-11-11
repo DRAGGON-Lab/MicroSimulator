@@ -5,17 +5,17 @@
 #include <memory>
 #include <span>
 
-#include "cm/constraints.hpp"
-#include "cm/contact_graph.hpp"
-#include "cm/coupled_rates.hpp"
-#include "cm/flow.hpp"
-#include "cm/mechanics.hpp"
-#include "cm/signals.hpp"
-#include "cm/species.hpp"
-#include "cm/types.hpp"
-#include "cm/world_state.hpp"
+#include "microsimulator/constraints.hpp"
+#include "microsimulator/contact_graph.hpp"
+#include "microsimulator/coupled_rates.hpp"
+#include "microsimulator/flow.hpp"
+#include "microsimulator/mechanics.hpp"
+#include "microsimulator/signals.hpp"
+#include "microsimulator/species.hpp"
+#include "microsimulator/types.hpp"
+#include "microsimulator/world_state.hpp"
 
-namespace cm {
+namespace microsimulator {
 
 class ComputeBackend {
  public:
@@ -55,4 +55,4 @@ class ComputeBackend {
 [[nodiscard]] std::size_t backend_device_count(BackendKind kind) noexcept;
 [[nodiscard]] bool backend_available(BackendKind kind, std::uint32_t device_index = 0) noexcept;
 
-}  // namespace cm
+}  // namespace microsimulator

@@ -6,10 +6,10 @@
 #include <stdexcept>
 #include <string>
 
-#include "cm/metal/occupancy_source.hpp"
 #include "core/occupancy_device.hpp"
+#include "microsimulator/metal/occupancy_source.hpp"
 
-namespace cm::detail {
+namespace microsimulator::detail {
 namespace {
 [[noreturn]] void fail(const char* action, NSError* error) {
   throw std::runtime_error(
@@ -40,10 +40,11 @@ class MetalOccupancyDevice final : public OccupancyDevice {
         options.fastMathEnabled = NO;
       }
       NSError* error = nil;
-      id<MTLLibrary> library =
-          [device_ newLibraryWithSource:[NSString stringWithUTF8String:cm::metal::occupancy_source]
-                                options:options
-                                  error:&error];
+      id<MTLLibrary> library = [device_
+          newLibraryWithSource:[NSString
+                                   stringWithUTF8String:microsimulator::metal::occupancy_source]
+                       options:options
+                         error:&error];
       if (!library) fail("compile Metal occupancy kernels", error);
       for (const char* name : occupancy_kernel_names) {
         id<MTLFunction> function =
@@ -103,4 +104,4 @@ class MetalOccupancyDevice final : public OccupancyDevice {
 std::unique_ptr<OccupancyDevice> make_metal_occupancy_device(std::uint32_t index) {
   return std::make_unique<MetalOccupancyDevice>(index);
 }
-}  // namespace cm::detail
+}  // namespace microsimulator::detail

@@ -7,6 +7,6 @@
 
 using namespace metal;
 
-#define CM_SHARED_FLOAT(name, value) constant float name = value##f;
-#define CM_SHARED_UINT(name, value) constant uint name = value##u;
-#define CM_RATE_OP(name, code) constant uint rate_op_##name = code##u;
+#define MICROSIMULATOR_SHARED_FLOAT(name, value) constant float name = value##f;
+#define MICROSIMULATOR_SHARED_UINT(name, value) constant uint name = value##u;
+#define MICROSIMULATOR_RATE_OP(name, code) constant uint rate_op_##name = code##u;

@@ -6,10 +6,10 @@
 #include <tuple>
 #include <vector>
 
-#include "cm/constraints.hpp"
 #include "core/shared_constants.hpp"
+#include "microsimulator/constraints.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 using shared::inverse_sqrt_two;
@@ -503,4 +503,4 @@ ExternalContactGraph find_external_contacts_cpu(const WorldState& state,
   return ExternalContactGraph(geometry.size(), std::move(contacts));
 }
 
-}  // namespace cm
+}  // namespace microsimulator

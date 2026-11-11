@@ -6,7 +6,6 @@ The compatibility interfaces preserve supported CellModeller modeling semantics 
 
 ## Using CellModeller material
 
-- [Updating from CellModeller2](microsimulator-rename.md) covers the MicroSimulator package and command rename and existing output files.
 - [Running CellModeller Python models](legacy-python-models.md) describes the supported callback interface and its limits.
 - [Importing CellModeller pickle snapshots](legacy-pickle-import.md) explains the trusted, one-way state migration command.
 - [Example compatibility matrix](legacy-example-matrix.md) lists the pinned examples exercised through the callback adapter or typed translations.

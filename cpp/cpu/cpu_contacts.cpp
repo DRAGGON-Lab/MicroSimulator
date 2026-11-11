@@ -8,10 +8,10 @@
 #include <utility>
 #include <vector>
 
-#include "cm/contact_graph.hpp"
 #include "core/shared_constants.hpp"
+#include "microsimulator/contact_graph.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 using shared::inverse_sqrt_two;
@@ -225,4 +225,4 @@ ContactGraph find_cell_contacts_cpu_exhaustive(const WorldState& state,
   return contacts_for_candidates(state, parameters, candidates);
 }
 
-}  // namespace cm
+}  // namespace microsimulator

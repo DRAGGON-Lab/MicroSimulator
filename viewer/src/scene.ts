@@ -742,11 +742,7 @@ export async function parseScene(source: string): Promise<SceneFrame> {
 
   const root = record(decoded, "$");
   exactKeys(root, "$", ["format", "version", "producer", "integrity", "frame"]);
-  if (
-    ![SCENE_FORMAT, "cellmodeller2-scene"].includes(
-      string(root.format, "$.format"),
-    )
-  ) {
+  if (string(root.format, "$.format") !== SCENE_FORMAT) {
     return fail("$.format", "not a MicroSimulator scene");
   }
   const version = integer(root.version, "$.version", 0, UINT32_MAX);

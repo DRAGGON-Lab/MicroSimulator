@@ -230,18 +230,11 @@ describe("scene reader", () => {
     expect(frame.constraints.cylinders[0]?.allowedRegion).toBe("inside");
   });
 
-  it("reads the previous scene format and still rejects tampering", async () => {
-    const document = JSON.parse(PYTHON_SCENE) as {
-      format: string;
-      frame: { time: number };
-    };
-    document.format = "cellmodeller2-scene";
-    expect(await parseScene(JSON.stringify(document))).toEqual(
-      await parseScene(PYTHON_SCENE),
-    );
-    document.frame.time = 2;
+  it("rejects a document that is not a MicroSimulator scene", async () => {
+    const document = JSON.parse(PYTHON_SCENE) as { format: string };
+    document.format = "another-scene";
     await expect(parseScene(JSON.stringify(document))).rejects.toThrow(
-      "frame digest does not match",
+      "not a MicroSimulator scene",
     );
   });
 

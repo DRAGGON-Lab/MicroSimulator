@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 
 struct RateInstructionGpu {
   std::uint32_t operation;
@@ -23,4 +23,4 @@ void launch_advance_species(float* levels, const float* previous_lengths, const 
                             float dt, std::uint32_t species_count, std::uint32_t instruction_count,
                             std::uint32_t cell_count, cudaStream_t stream);
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

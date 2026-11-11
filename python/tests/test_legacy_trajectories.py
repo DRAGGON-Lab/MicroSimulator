@@ -23,7 +23,7 @@ from microsimulator.runner import native_simulation
 
 _ROOT = Path(__file__).resolve().parents[2]
 _REFERENCE = _ROOT / "compatibility" / "legacy-trajectories-v1.json"
-_LEGACY_ROOT_VALUE = os.environ.get("CM_LEGACY_ROOT")
+_LEGACY_ROOT_VALUE = os.environ.get("MICROSIMULATOR_LEGACY_ROOT")
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,10 +83,7 @@ def _document() -> dict[str, Any]:
 
 def _scenarios() -> list[dict[str, Any]]:
     document = _document()
-    assert document["format"] in (
-        "microsimulator-recorded-legacy-trajectories",
-        "cellmodeller2-recorded-legacy-trajectories",
-    )
+    assert document["format"] == "microsimulator-recorded-legacy-trajectories"
     assert document["version"] == 1
     assert document["legacy_commit"] == "4896f543c6250f053eea2312e628cc3a96bf7408"
     scenarios = cast(list[dict[str, Any]], document["scenarios"])
@@ -203,7 +200,7 @@ def test_recorded_legacy_trajectory_contract(
     scenario: dict[str, Any],
 ) -> None:
     if _LEGACY_ROOT_VALUE is None:
-        pytest.skip("CM_LEGACY_ROOT is required for recorded legacy trajectory tests")
+        pytest.skip("MICROSIMULATOR_LEGACY_ROOT is required for recorded legacy trajectory tests")
     if not backend_available(backend):
         pytest.skip("native backend is not built")
     legacy_root = Path(_LEGACY_ROOT_VALUE)

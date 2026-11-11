@@ -3,7 +3,7 @@
 #include "contacts.cuh"
 #include "core/shared_constants.hpp"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 namespace {
 
 using shared::float_epsilon;
@@ -703,4 +703,4 @@ void launch_external_contact_fill(
       parameters, cell_count, constraint_count);
 }
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

@@ -15,7 +15,6 @@
 #include <utility>
 #include <vector>
 
-#include "cm/backend.hpp"
 #include "core/mechanics_solver.hpp"
 #include "core/signal_jacobi.hpp"
 #include "cuda_flow.cuh"
@@ -25,8 +24,9 @@
 #include "kernels/mechanics.cuh"
 #include "kernels/signals.cuh"
 #include "kernels/species.cuh"
+#include "microsimulator/backend.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 void check_cuda(cudaError_t result, const char* operation) {
@@ -1614,4 +1614,4 @@ std::size_t cuda_backend_device_count() noexcept {
   return device_count > 0 ? static_cast<std::size_t>(device_count) : 0;
 }
 
-}  // namespace cm
+}  // namespace microsimulator

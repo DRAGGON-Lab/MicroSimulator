@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace cm::detail {
+namespace microsimulator::detail {
 
 // The same scalar Arnoldi control is used with CPU or device-resident vectors.
 // Only the preconditioner may vary; apply must represent a fixed linear map.
@@ -107,4 +107,4 @@ FlexibleKrylovResult<Vector> flexible_gmres(const FlexibleKrylovOperations<Vecto
   }
 }
 
-}  // namespace cm::detail
+}  // namespace microsimulator::detail

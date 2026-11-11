@@ -16,19 +16,19 @@
 #include <utility>
 #include <vector>
 
-#include "cm/backend.hpp"
-#include "cm/metal/contacts_source.hpp"
-#include "cm/metal/coupled_rates_source.hpp"
-#include "cm/metal/growth_source.hpp"
-#include "cm/metal/mechanics_source.hpp"
-#include "cm/metal/signals_source.hpp"
-#include "cm/metal/species_source.hpp"
 #include "core/device_types.hpp"
 #include "core/mechanics_solver.hpp"
 #include "core/signal_jacobi.hpp"
 #include "metal_flow.hpp"
+#include "microsimulator/backend.hpp"
+#include "microsimulator/metal/contacts_source.hpp"
+#include "microsimulator/metal/coupled_rates_source.hpp"
+#include "microsimulator/metal/growth_source.hpp"
+#include "microsimulator/metal/mechanics_source.hpp"
+#include "microsimulator/metal/signals_source.hpp"
+#include "microsimulator/metal/species_source.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 using MetalFloat2 = device::float2;
@@ -2295,4 +2295,4 @@ std::size_t metal_backend_device_count() noexcept {
   }
 }
 
-}  // namespace cm
+}  // namespace microsimulator

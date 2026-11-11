@@ -110,7 +110,7 @@ def test_trusted_pickle_migrates_geometry_species_identity_and_lineage(
     assert provenance["time_basis"] == "step-number-times-dt"
     assert provenance["migration_mode"] == "geometry-species"
 
-    converted = tmp_path / "converted.cm2.json"
+    converted = tmp_path / "converted.json"
     save_checkpoint(imported.simulation, converted, provenance=imported.provenance)
     bundle = load_checkpoint_bundle(converted)
     assert bundle.simulation.cell(3).species == [1.5, 2.5]
@@ -163,7 +163,7 @@ def test_cli_requires_explicit_trust_and_geometry_mode(
 ) -> None:
     source = tmp_path / "legacy.pickle"
     source.write_bytes(_snapshot_bytes(monkeypatch))
-    output = tmp_path / "converted.cm2.json"
+    output = tmp_path / "converted.json"
     arguments = [
         "import-legacy-pickle",
         str(source),

@@ -525,7 +525,7 @@ class NativeController:
         }:
             raise ControllerStateError("native controller state is invalid")
         if (
-            value["kind"] not in (_NATIVE_CONTROLLER_KIND, "cellmodeller2-native-controller")
+            value["kind"] != _NATIVE_CONTROLLER_KIND
             or value["version"] != _NATIVE_CONTROLLER_VERSION
         ):
             raise ControllerStateError("native controller kind or version is unsupported")

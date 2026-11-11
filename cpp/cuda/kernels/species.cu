@@ -1,8 +1,8 @@
-#include "cm/species.hpp"
 #include "core/shared_constants.hpp"
+#include "microsimulator/species.hpp"
 #include "species.cuh"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 namespace {
 
 using shared::pi;
@@ -143,4 +143,4 @@ void launch_advance_species(float* levels, const float* previous_lengths, const 
       workspace, error, dt, species_count, instruction_count, cell_count);
 }
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

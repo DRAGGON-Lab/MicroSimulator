@@ -47,6 +47,6 @@ python scripts/record_legacy_trajectories.py \
 To execute the comparison suite against a pinned legacy checkout:
 
 ```console
-CM_LEGACY_ROOT=/path/to/CellModeller \
+MICROSIMULATOR_LEGACY_ROOT=/path/to/CellModeller \
   pytest -q python/tests/test_legacy_trajectories.py
 ```
