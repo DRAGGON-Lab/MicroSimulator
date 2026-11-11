@@ -86,6 +86,11 @@ def _parser() -> argparse.ArgumentParser:
     view.add_argument("--frame-steps", type=int, default=1)
     view.add_argument("--fps", type=float, default=30.0)
     view.add_argument("--checkpoint-output", type=Path)
+    view.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="allow --checkpoint-output to replace an existing file",
+    )
     view.add_argument("--viewer-dist", type=Path)
     view.add_argument("--open", action="store_true", help="open the live URL in a browser")
 
@@ -413,11 +418,20 @@ def _view(arguments: argparse.Namespace) -> int:
             raise BatchError("live viewer requires `microsimulator[viewer]`") from error
         raise
 
+    checkpoint_output = cast(Path | None, arguments.checkpoint_output)
+    resume = cast(Path | None, arguments.resume)
+    if (
+        checkpoint_output is not None
+        and resume is not None
+        and checkpoint_output.resolve() == resume.resolve()
+    ):
+        raise BatchError("--checkpoint-output must not be the --resume checkpoint")
     viewer_dist = _viewer_distribution(cast(Path | None, arguments.viewer_dist))
     session = LiveSession(
         _model_factory(arguments),
         dt=cast(float, arguments.dt),
-        checkpoint_output=cast(Path | None, arguments.checkpoint_output),
+        checkpoint_output=checkpoint_output,
+        overwrite=cast(bool, arguments.overwrite),
     )
     serve_live(
         session,
