@@ -381,13 +381,10 @@ if(CM_BUILD_TESTS)
     set_property(TEST metal_runtime_gate PROPERTY LABELS conformance metal)
   endif()
 
-  # Assertions are the conformance checks; keep them active in Release builds.
+  # Assertions are the test checks; keep them active in every build type.
   get_property(cm_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
   foreach(cm_test_target IN LISTS cm_test_targets)
-    if(cm_test_target MATCHES "^cm_.*_conformance_test$" OR
-       cm_test_target STREQUAL "cm_checkpoint_test" OR
-       cm_test_target STREQUAL "cm_cuda_runtime_gate_test" OR
-       cm_test_target STREQUAL "cm_metal_runtime_gate_test")
+    if(cm_test_target MATCHES "^cm_.*_test$")
       if(MSVC)
         target_compile_options(${cm_test_target} PRIVATE /UNDEBUG)
       else()
