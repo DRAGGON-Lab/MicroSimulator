@@ -6,8 +6,6 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_dir="$(cd "${script_dir}/.." && pwd)"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 report_dir="${1:-${source_dir}/build/cuda-application-${timestamp}}"
-legacy_root="${2:-${MICROSIMULATOR_LEGACY_ROOT:-}}"
-legacy_commit="4896f543c6250f053eea2312e628cc3a96bf7408"
 
 if [[ -e "${report_dir}" ]]; then
   printf 'report path already exists: %s\n' "${report_dir}" >&2
@@ -50,16 +48,6 @@ if [[ "$(uname -s)" != Linux ]]; then
   printf 'CUDA application conformance requires Linux\n' >&2
   exit 2
 fi
-if [[ -z "${legacy_root}" || ! -d "${legacy_root}/.git" ]]; then
-  printf 'a pinned CellModeller checkout is required as the second argument\n' >&2
-  exit 2
-fi
-actual_legacy_commit="$(git -C "${legacy_root}" rev-parse HEAD)"
-if [[ "${actual_legacy_commit}" != "${legacy_commit}" ]]; then
-  printf 'legacy checkout must be at %s, found %s\n' \
-    "${legacy_commit}" "${actual_legacy_commit}" >&2
-  exit 2
-fi
 
 cd "${source_dir}"
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -78,7 +66,6 @@ fi
 
 {
   printf 'source_commit\t%s\n' "$(git rev-parse HEAD)"
-  printf 'legacy_commit\t%s\n' "${actual_legacy_commit}"
   printf 'started_utc\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'host\t%s\n' "$(hostname)"
   printf 'kernel\t%s\n' "$(uname -a)"
@@ -99,11 +86,5 @@ uv run python -c \
   'from microsimulator import BackendKind, backend_device_count; assert backend_device_count(BackendKind.CUDA) > 0' \
   2>&1 | tee "${report_dir}/cuda-runtime.log"
 
-MICROSIMULATOR_LEGACY_ROOT="${legacy_root}" uv run pytest -q \
+uv run pytest -q \
   --junitxml="${report_dir}/pytest.xml" 2>&1 | tee "${report_dir}/pytest.log"
-uv run python scripts/run_legacy_example_matrix.py \
-  --legacy-root "${legacy_root}" \
-  --backend cpu \
-  --backend cuda \
-  --output "${report_dir}/legacy-example-matrix.json" \
-  2>&1 | tee "${report_dir}/legacy-example-matrix.log"

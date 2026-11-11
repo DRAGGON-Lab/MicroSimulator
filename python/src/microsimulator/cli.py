@@ -22,10 +22,7 @@ from .checkpoint import (
     JSONValue,
     load_checkpoint,
     load_checkpoint_bundle,
-    save_checkpoint,
 )
-from .legacy_loader import build_legacy_model, resume_legacy_model
-from .legacy_pickle import LegacyPickleError, import_legacy_pickle
 from .runner import (
     BatchError,
     ModelContext,
@@ -50,18 +47,6 @@ def _parser() -> argparse.ArgumentParser:
 
     devices = commands.add_parser("devices", help="list available native compute devices")
     devices.add_argument("--json", action="store_true", help="emit machine-readable JSON")
-
-    legacy_pickle = commands.add_parser(
-        "import-legacy-pickle", help="migrate a trusted CellModeller 1 snapshot"
-    )
-    legacy_pickle.add_argument("input", type=Path, help="legacy .pickle snapshot")
-    legacy_pickle.add_argument("--output", type=Path, required=True)
-    time_source = legacy_pickle.add_mutually_exclusive_group(required=True)
-    time_source.add_argument("--time", type=float, help="physical simulation time")
-    time_source.add_argument("--dt", type=float, help="legacy step duration")
-    legacy_pickle.add_argument("--trust-legacy-pickle", action="store_true")
-    legacy_pickle.add_argument("--native-state-only", action="store_true")
-    legacy_pickle.add_argument("--overwrite", action="store_true")
 
     run = commands.add_parser("run", help="run a model or resume a checkpoint")
     _add_source_arguments(run)
@@ -130,8 +115,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _add_source_arguments(parser: argparse.ArgumentParser) -> None:
-    source = parser.add_mutually_exclusive_group()
-    source.add_argument(
+    parser.add_argument(
         "--model",
         type=Path,
         help=(
@@ -139,7 +123,6 @@ def _add_source_arguments(parser: argparse.ArgumentParser) -> None:
             "resume(context, checkpoint)"
         ),
     )
-    source.add_argument("--legacy-model", type=Path, help="CellModeller 1 growth/mechanics model")
     parser.add_argument("--resume", type=Path, help="MicroSimulator checkpoint to resume")
     parser.add_argument("--backend", choices=tuple(_BACKENDS), default="cpu")
     parser.add_argument("--device-index", type=int, default=0)
@@ -265,7 +248,6 @@ def _model_factory(
         )
     parameters = _parameters(cast(list[str], arguments.parameter))
     model_path = cast(Path | None, arguments.model)
-    legacy_model_path = cast(Path | None, arguments.legacy_model)
     resume_path = cast(Path | None, arguments.resume)
     if model_path is not None:
         if resume_path is None:
@@ -314,53 +296,6 @@ def _model_factory(
             return model, provenance
 
         return resume_native_model
-    elif legacy_model_path is not None:
-        if resume_path is None:
-            seed = cast(int, arguments.seed)
-
-            def build_legacy() -> tuple[RunnableModel, dict[str, JSONValue]]:
-                context = ModelContext(backend, device_index, seed, parameters)
-                return build_legacy_model(legacy_model_path, context)
-
-            return build_legacy
-        if parameters:
-            raise BatchError(
-                "legacy resume uses the checkpoint parameters; do not pass --parameter"
-            )
-
-        def resume_legacy() -> tuple[RunnableModel, dict[str, JSONValue]]:
-            bundle = load_checkpoint_bundle(
-                resume_path,
-                backend=backend,
-                device_index=device_index,
-            )
-            model_value = bundle.provenance.get("model")
-            if not isinstance(model_value, dict):
-                raise BatchError("legacy checkpoint is missing model provenance")
-            seed_value = model_value.get("seed")
-            saved_parameters = model_value.get("parameters")
-            if (
-                not isinstance(seed_value, int)
-                or isinstance(seed_value, bool)
-                or not isinstance(saved_parameters, dict)
-            ):
-                raise BatchError("legacy checkpoint model provenance is invalid")
-            context = ModelContext(
-                backend=backend,
-                device_index=device_index,
-                seed=seed_value,
-                parameters=cast(dict[str, JSONValue], saved_parameters),
-            )
-            simulation, model_provenance = resume_legacy_model(
-                legacy_model_path,
-                context,
-                bundle,
-            )
-            provenance = dict(model_provenance)
-            provenance.update(_resume_provenance(resume_path))
-            return simulation, provenance
-
-        return resume_legacy
     else:
         if resume_path is None:
             raise BatchError("a model or checkpoint is required")
@@ -445,26 +380,6 @@ def _view(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def _import_legacy_pickle(arguments: argparse.Namespace) -> int:
-    output = cast(Path, arguments.output)
-    if output.exists() and not cast(bool, arguments.overwrite):
-        raise BatchError(f"output already exists: {output}")
-    imported = import_legacy_pickle(
-        cast(Path, arguments.input),
-        time=cast(float | None, arguments.time),
-        dt=cast(float | None, arguments.dt),
-        trusted=cast(bool, arguments.trust_legacy_pickle),
-        native_state_only=cast(bool, arguments.native_state_only),
-    )
-    output.parent.mkdir(parents=True, exist_ok=True)
-    save_checkpoint(imported.simulation, output, provenance=imported.provenance)
-    print(
-        f"wrote {output} cells={imported.simulation.cell_count} "
-        f"dropped_fields={len(imported.dropped_cell_fields)}"
-    )
-    return 0
-
-
 def _export_analysis(arguments: argparse.Namespace) -> int:
     try:
         from .analysis import export_dataset
@@ -524,8 +439,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if arguments.command == "devices":
             return _devices(cast(bool, arguments.json))
-        if arguments.command == "import-legacy-pickle":
-            return _import_legacy_pickle(arguments)
         if arguments.command == "view":
             return _view(arguments)
         if arguments.command == "export-analysis":
@@ -544,7 +457,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (
         BatchError,
         CheckpointError,
-        LegacyPickleError,
         IndexError,
         ValueError,
         RuntimeError,

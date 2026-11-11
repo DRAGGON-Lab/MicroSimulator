@@ -1,4 +1,4 @@
-"""Native ports of the CellModeller biophysics and simple-growth tutorials.
+"""Biophysics and simple-growth teaching models.
 
 Select a lesson with ``--parameter scenario='"basics"'``.  The supported
 scenarios are ``basics``, ``two_types``, ``short_cells``, ``competition``,

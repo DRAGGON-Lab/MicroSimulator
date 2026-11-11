@@ -29,7 +29,7 @@ _MODELS: tuple[tuple[str, dict[str, JSONValue], float], ...] = (
     )),
     *(("gene_expression.py", {"scenario": scenario}, 0.001) for scenario in (
         "constitutive",
-        "legacy_constitutive",
+        "unit_rate_constitutive",
         "dilution",
         "derepression",
         "oscillator",

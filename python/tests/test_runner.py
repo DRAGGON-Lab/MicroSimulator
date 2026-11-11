@@ -163,7 +163,7 @@ def test_batch_library_is_deterministic_and_preflights_outputs(tmp_path: Path) -
     assert _document(second_output)["simulation"] == document["simulation"]
 
 
-def test_periodic_checkpoint_preserves_legacy_suffix(tmp_path: Path) -> None:
+def test_periodic_checkpoint_inserts_the_step_before_the_suffix(tmp_path: Path) -> None:
     model = tmp_path / "model.py"
     _write_model(model)
     simulation, provenance = build_model(model, ModelContext(BackendKind.CPU, 0, seed=7))
@@ -173,12 +173,12 @@ def test_periodic_checkpoint_preserves_legacy_suffix(tmp_path: Path) -> None:
         simulation,
         steps=1,
         dt=0.1,
-        output=tmp_path / "legacy.json",
+        output=tmp_path / "colony.json",
         checkpoint_every=1,
         provenance=provenance,
     )
 
-    assert summary.periodic_checkpoints == (tmp_path / "legacy.step-00000001.json",)
+    assert summary.periodic_checkpoints == (tmp_path / "colony.step-00000001.json",)
 
 
 def test_native_controller_resumes_exact_runtime_state(tmp_path: Path) -> None:

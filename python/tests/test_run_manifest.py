@@ -261,8 +261,8 @@ def test_manifest_rejects_duplicate_ids_and_output_collisions(tmp_path: Path) ->
     with pytest.raises(RunManifestError, match="colliding final/periodic outputs"):
         load_run_manifest(manifest_path)
 
-    first["output"] = "runs/legacy.json"
-    second["output"] = "runs/legacy.step-00000002.json"
+    first["output"] = "runs/colony.json"
+    second["output"] = "runs/colony.step-00000002.json"
     _write_manifest(manifest_path, [first, second])
     with pytest.raises(RunManifestError, match="colliding final/periodic outputs"):
         load_run_manifest(manifest_path)
