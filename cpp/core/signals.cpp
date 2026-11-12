@@ -331,6 +331,21 @@ SignalGridStencil signal_grid_stencil(const SignalGridSpec& spec, Vec3 position,
   return result;
 }
 
+float signal_implicit_operator_scale(const SignalGridSpec& spec, float implicit_dt) {
+  auto scale = 1.0F;
+  for (std::size_t signal = 0; signal < spec.signal_count; ++signal) {
+    for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
+      for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
+        for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
+          scale = std::max(scale,
+                           1.0F - (implicit_dt * signal_operator_diagonal(spec, signal, x, y, z)));
+        }
+      }
+    }
+  }
+  return scale;
+}
+
 void GridBoundary::validate(std::size_t signal_count) const {
   switch (kind) {
     case GridBoundaryKind::no_flux:
@@ -911,6 +926,7 @@ SignalSolveResult signal_grid_crank_nicolson_candidate(const SignalGrid& grid, f
   const detail::SignalJacobiOperations operations{
       .initial_residual_rms = residual_rms,
       .right_hand_side_rms = [&] { return rms(right_hand_side); },
+      .operator_scale = signal_implicit_operator_scale(spec, half_dt),
       .begin_sweeps = [] {},
       .sweep =
           [&] {

@@ -577,4 +577,36 @@ int main() {
     assert_close(frozen.cell(frozen_id).direction.x, 0.0F);
     assert_close(frozen.cell(frozen_id).direction.y, 1.0F);
   }
+  {
+    // A lattice fine enough through the depth that the implicit operator's
+    // diagonal is several times the identity. The residual of a field near
+    // ten cannot reach the default absolute tolerance in single precision, so
+    // the solve converges only if its floor accounts for that diagonal.
+    microsimulator::SignalGridSpec spec;
+    spec.signal_count = 1;
+    spec.shape = {4, 8, 4};
+    spec.spacing = {2.0F, 2.0F, 0.75F};
+    spec.diffusion = {40.0F};
+    spec.advection = {microsimulator::Vec3{}};
+    spec.integration = microsimulator::SignalIntegrationKind::backward_euler;
+    spec.y_lower.kind = microsimulator::GridBoundaryKind::fixed;
+    spec.y_lower.values = {10.0F};
+    spec.y_upper.kind = microsimulator::GridBoundaryKind::fixed;
+    spec.y_upper.values = {0.0F};
+    const auto dt = 0.02F;
+    const auto interior_diagonal = 2.0F * 40.0F * (0.25F + 0.25F + (1.0F / 0.5625F));
+    const auto scale = microsimulator::signal_implicit_operator_scale(spec, dt);
+    assert(scale >= 1.0F + (dt * interior_diagonal));
+    assert(scale <= 1.0F + (dt * (interior_diagonal + 20.0F)) + 1.0e-3F);
+
+    // As the field settles toward its steady profile each step starts with
+    // less to resolve, until the floor alone decides convergence.
+    microsimulator::SignalGrid grid(spec, std::vector<float>(spec.level_count(), 10.0F));
+    for (int step = 0; step < 1500; ++step) {
+      const auto report = microsimulator::advance_signal_grid_cpu(grid, dt);
+      assert(report.converged);
+      assert(report.iterations < 200);
+    }
+  }
+
 }

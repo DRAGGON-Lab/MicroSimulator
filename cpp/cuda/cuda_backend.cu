@@ -395,7 +395,8 @@ class CudaBackend final : public ComputeBackend {
           signal_reaction_loss_.data(), signal_obstacles_.data(), signal_x_faces_.data(),
           signal_y_faces_.data(), signal_z_faces_.data(), has_velocity_field, signal_error_.data(),
           boundaries, shape, make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F),
-          (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count, level_count, spec.solver);
+          (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count, level_count, spec.solver,
+          signal_implicit_operator_scale(spec, crank_nicolson == 2 ? dt : 0.5F * dt));
       result_device = solve.first;
       report = solve.second;
       if (!report.converged) {
@@ -647,7 +648,8 @@ class CudaBackend final : public ComputeBackend {
           coupled_error_.data(), boundaries, shape,
           make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F),
           (crank_nicolson == 2 ? dt : 0.5F * dt), static_cast<std::uint32_t>(signal_count_size),
-          static_cast<std::uint32_t>(grid_level_count), spec.solver);
+          static_cast<std::uint32_t>(grid_level_count), spec.solver,
+          signal_implicit_operator_scale(spec, crank_nicolson == 2 ? dt : 0.5F * dt));
       result_device = solve.first;
       report = solve.second;
       if (!report.converged) {
@@ -1337,7 +1339,7 @@ class CudaBackend final : public ComputeBackend {
       const float* y_faces, const float* z_faces, std::uint32_t has_velocity_field,
       std::uint32_t* error, cuda::SignalGridBoundariesGpu boundaries,
       cuda::SignalGridShapeGpu shape, float4 spacing, float dt, std::uint32_t signal_count,
-      std::uint32_t level_count, const SignalSolveParameters& parameters) {
+      std::uint32_t level_count, const SignalSolveParameters& parameters, float operator_scale) {
     ensure_signal_solve_capacity(level_count);
     const auto half_dt = dt;
     const float* current = initial;
@@ -1350,6 +1352,7 @@ class CudaBackend final : public ComputeBackend {
                                          shape, spacing, half_dt, signal_count, level_count);
             },
         .right_hand_side_rms = [&] { return signal_rhs_rms(right_hand_side, level_count); },
+        .operator_scale = operator_scale,
         .begin_sweeps =
             [&] {
               check_cuda(cudaMemsetAsync(error, 0, sizeof(std::uint32_t), stream_),
