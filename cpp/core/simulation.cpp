@@ -312,11 +312,27 @@ std::pair<CellId, CellId> Simulation::divide_equal(CellId parent_id) {
 }
 
 void Simulation::step(float dt) {
+  advance(dt, nullptr);
+}
+
+void Simulation::step(float dt, const GrowthLimitParameters& growth_limit) {
+  validate_growth_limit_parameters(growth_limit);
+  advance(dt, &growth_limit);
+}
+
+void Simulation::advance(float dt, const GrowthLimitParameters* growth_limit) {
   if (!std::isfinite(dt) || dt < 0.0F) {
     throw std::invalid_argument("time step must be finite and non-negative");
   }
   const auto geometry = state_.geometry_state();
   const std::vector<float> previous_lengths(geometry.lengths.begin(), geometry.lengths.end());
+  // Compression is read from the geometry the step starts from, which is the
+  // outcome of the previous step's relaxation.
+  std::vector<float> growth_factors;
+  if (growth_limit != nullptr && !state_.empty()) {
+    growth_factors = growth_limit_factors(
+        state_, backend_->find_cell_contacts(state_, growth_limit->contacts), *growth_limit);
+  }
   if (coupled_rate_plan_.has_value()) {
     if (!backend_->supports(BackendFeature::coupled_rates)) {
       throw std::runtime_error("selected backend does not implement coupled rates");
@@ -345,6 +361,15 @@ void Simulation::step(float dt) {
           return std::isfinite(length) && length >= 0.0F;
         })) {
       throw std::runtime_error("growth produced a non-finite or negative cell length");
+    }
+    if (!growth_factors.empty()) {
+      const auto lengths = state_.growth_state().lengths;
+      for (std::size_t slot = 0; slot < lengths.size(); ++slot) {
+        const auto elongation = lengths[slot] - previous_lengths[slot];
+        if (elongation > 0.0F) {
+          lengths[slot] = previous_lengths[slot] + (growth_factors[slot] * elongation);
+        }
+      }
     }
     last_signal_solve_report_.reset();
     if (coupled_rate_plan_.has_value()) {

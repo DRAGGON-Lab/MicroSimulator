@@ -51,6 +51,10 @@ class Simulation {
   std::pair<CellId, CellId> divide(CellId parent_id, float first_fraction);
   std::pair<CellId, CellId> divide_equal(CellId parent_id);
   void step(float dt);
+  // A step whose growth responds to compression: each cell's elongation is
+  // scaled by its growth limit factor before species and signals advance, so
+  // they see the growth that happened.
+  void step(float dt, const GrowthLimitParameters& growth_limit);
   [[nodiscard]] ContactGraph find_cell_contacts(
       const ContactParameters& parameters = ContactParameters{});
   [[nodiscard]] ExternalContactGraph find_external_contacts(
@@ -81,6 +85,8 @@ class Simulation {
   void validate() const;
 
  private:
+  void advance(float dt, const GrowthLimitParameters* growth_limit);
+
   WorldState state_;
   ConstraintSet constraints_;
   std::unique_ptr<ComputeBackend> backend_;

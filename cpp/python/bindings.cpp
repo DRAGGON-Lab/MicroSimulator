@@ -505,6 +505,12 @@ NB_MODULE(_core, module) {
       .def_rw("require_convergence",
               &microsimulator::MechanicsIntegrationParameters::require_convergence);
 
+  nb::class_<microsimulator::GrowthLimitParameters>(module, "GrowthLimitParameters")
+      .def(nb::init<>())
+      .def_rw("free_overlap", &microsimulator::GrowthLimitParameters::free_overlap)
+      .def_rw("stall_overlap", &microsimulator::GrowthLimitParameters::stall_overlap)
+      .def_rw("contacts", &microsimulator::GrowthLimitParameters::contacts);
+
   nb::class_<microsimulator::SolverReport>(module, "SolverReport")
       .def_ro("status", &microsimulator::SolverReport::status)
       .def_ro("breakdown", &microsimulator::SolverReport::breakdown)
@@ -606,7 +612,17 @@ NB_MODULE(_core, module) {
       .def("divide_equal",
            microsimulator::python::exclusive(&microsimulator::Simulation::divide_equal),
            "parent_id"_a)
-      .def("step", microsimulator::python::released(&microsimulator::Simulation::step), "dt"_a)
+      .def(
+          "step",
+          microsimulator::python::released(static_cast<void (microsimulator::Simulation::*)(float)>(
+              &microsimulator::Simulation::step)),
+          "dt"_a)
+      .def("step",
+           microsimulator::python::released(
+               static_cast<void (microsimulator::Simulation::*)(
+                   float, const microsimulator::GrowthLimitParameters&)>(
+                   &microsimulator::Simulation::step)),
+           "dt"_a, "growth_limit"_a)
       .def("find_cell_contacts",
            microsimulator::python::released(&microsimulator::Simulation::find_cell_contacts),
            "parameters"_a = microsimulator::ContactParameters{})

@@ -21,7 +21,7 @@ Run any of them live:
 uv run microsimulator view --model examples/microfluidic_trap.py --seed 42 --dt 0.02 --backend cpu --open
 ```
 
-The trap example is sized to one population: a 40 by 20 micrometer trap, 1.5 micrometers deep, beside a 20 micrometer channel. A few hundred cells fill it as a monolayer. Its growth rule multiplies the Monod rate by a compression factor that falls linearly to zero as a cell's deepest overlap with a neighbor reaches a fifth of its diameter, so the packed interior stops elongating while cells at the mouth keep growing, spill into the channel, and wash out. The population settles near 320 cells with continuous turnover. The compression limit is a model choice, not a measured mechanical response.
+The trap example is sized to one population: a 40 by 20 micrometer trap, 1.5 micrometers deep, beside a 20 micrometer channel. A few hundred cells fill it as a monolayer. Its controller runs with `MechanicsConfig(growth_limit=True, growth_free_overlap=0.0, growth_stall_overlap=0.4)`, which scales each cell's elongation by a factor that falls linearly to zero as its deepest overlap with a neighbor reaches 0.4 radii, a fifth of its diameter. The packed interior stops elongating while cells at the mouth keep growing, spill into the channel, and wash out, and nutrient is consumed only for the growth that happened. The population settles near 320 cells with continuous turnover. The stall overlap is a model choice, not a measured mechanical response.
 
 ## Walls that cells and chemistry both respect
 

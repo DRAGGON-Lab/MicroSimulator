@@ -13,6 +13,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     CellSnapshot,
     ConstraintContactParameters,
     ContactParameters,
+    GrowthLimitParameters,
     MechanicsIntegrationParameters,
     MechanicsParameters,
     MechanicsSolveResult,
@@ -170,6 +171,11 @@ def _json_object(value: Mapping[str, JSONValue], path: str) -> dict[str, JSONVal
     return cast(dict[str, JSONValue], decoded)
 
 
+_OPTIONAL_MECHANICS_FIELDS = frozenset(
+    {"growth_limit", "growth_free_overlap", "growth_stall_overlap"}
+)
+
+
 @dataclass(frozen=True, slots=True)
 class MechanicsConfig:
     """Checkpointable parameters for exact mechanics passes after each step."""
@@ -187,6 +193,9 @@ class MechanicsConfig:
     constraint_activation_margin: float = 0.0
     constraint_degeneracy_epsilon: float = 1.0e-6
     flow_drift: bool = False
+    growth_limit: bool = False
+    growth_free_overlap: float = 0.1
+    growth_stall_overlap: float = 0.4
 
     def __post_init__(self) -> None:
         _integer(self.passes, "mechanics.passes", 1, _UINT32_MAX)
@@ -225,6 +234,25 @@ class MechanicsConfig:
             raise ControllerStateError("mechanics.require_convergence must be Boolean")
         if not isinstance(cast(object, self.flow_drift), bool):
             raise ControllerStateError("mechanics.flow_drift must be Boolean")
+        if not isinstance(cast(object, self.growth_limit), bool):
+            raise ControllerStateError("mechanics.growth_limit must be Boolean")
+        free_overlap = _finite_number(self.growth_free_overlap, "mechanics.growth_free_overlap")
+        stall_overlap = _finite_number(self.growth_stall_overlap, "mechanics.growth_stall_overlap")
+        if free_overlap < 0.0 or stall_overlap <= free_overlap:
+            raise ControllerStateError(
+                "mechanics growth limit overlaps must be non-negative and increasing"
+            )
+
+    def growth_limit_parameters(self) -> GrowthLimitParameters | None:
+        """The compression response of growth, or None when growth ignores contact."""
+
+        if not self.growth_limit:
+            return None
+        limit = GrowthLimitParameters()
+        limit.free_overlap = self.growth_free_overlap
+        limit.stall_overlap = self.growth_stall_overlap
+        limit.contacts = self.native_parameters()[1]
+        return limit
 
     def native_parameters(
         self,
@@ -259,10 +287,18 @@ class MechanicsConfig:
 
     @classmethod
     def from_json(cls, value: JSONValue) -> MechanicsConfig:
-        if not isinstance(value, dict) or set(value) != {
-            field.name for field in fields(MechanicsConfig)
-        }:
+        names = {field.name for field in fields(MechanicsConfig)}
+        # A checkpoint written by a controller without the growth limit carries
+        # none of its fields, and resumes with growth that ignores contact.
+        if (
+            not isinstance(value, dict)
+            or not set(value) <= names
+            or not names - _OPTIONAL_MECHANICS_FIELDS <= set(value)
+        ):
             raise ControllerStateError("controller mechanics configuration is invalid")
+        growth_limit = value.get("growth_limit", False)
+        if not isinstance(growth_limit, bool):
+            raise ControllerStateError("mechanics.growth_limit must be Boolean")
         require_convergence = value["require_convergence"]
         if not isinstance(require_convergence, bool):
             raise ControllerStateError("mechanics.require_convergence must be Boolean")
@@ -304,6 +340,13 @@ class MechanicsConfig:
                 "mechanics.constraint_degeneracy_epsilon",
             ),
             flow_drift=flow_drift,
+            growth_limit=growth_limit,
+            growth_free_overlap=_finite_number(
+                value.get("growth_free_overlap", 0.1), "mechanics.growth_free_overlap"
+            ),
+            growth_stall_overlap=_finite_number(
+                value.get("growth_stall_overlap", 0.4), "mechanics.growth_stall_overlap"
+            ),
         )
 
 
@@ -471,7 +514,13 @@ class NativeController:
         for removal in plan.removals:
             self.simulation.remove_cell(removal)
 
-        self.simulation.step(dt)
+        growth_limit = (
+            None if self._mechanics is None else self._mechanics.growth_limit_parameters()
+        )
+        if growth_limit is None:
+            self.simulation.step(dt)
+        else:
+            self.simulation.step(dt, growth_limit)
         reports: list[MechanicsSolveResult] = []
         if (
             self._mechanics is not None

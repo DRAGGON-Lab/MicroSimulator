@@ -42,7 +42,7 @@ from microsimulator.flow import colony_mobility, gap_mobility, solve_flow_field
 from microsimulator.microfluidics import TrapChannelDevice
 
 MODEL_ID = "examples.microfluidic-trap"
-MODEL_VERSION = 5
+MODEL_VERSION = 6
 DIVISION = UniformLengthDivision(3.2, 3.8, jitter_z=False)
 
 FLOW_SPEED = 20.0
@@ -68,11 +68,12 @@ NUTRIENT_K = 5.0
 # The value is illustrative; penetration and growth require refinement checks.
 NUTRIENT_YIELD = 0.5
 # Growth stops under compression: a cell whose deepest overlap with a neighbor
-# reaches this depth does not elongate, and growth falls off linearly up to
-# it. Contact relaxation spreads overlap over several steps, so growth that
-# ignored it would keep packing cells into a full trap. The value is a model
-# choice, a fifth of a cell's diameter, not a measured mechanical response.
-COMPRESSION_LIMIT = 0.2
+# reaches this many cell radii does not elongate, and growth falls off
+# linearly up to it. Contact relaxation spreads overlap over several steps, so
+# growth that ignored it would keep packing cells into a full trap. The value
+# is a model choice, a fifth of a cell's diameter, not a measured mechanical
+# response.
+STALL_OVERLAP = 0.4
 WASHOUT_Y = DEVICE.channel_half_length - 10.0
 
 # Resistance feedback uses only fixed (attached) cells, with a physical
@@ -129,18 +130,6 @@ def _nutrient_growth(simulation: Simulation, position: Vec3) -> float:
     return BASE_GROWTH_RATE * nutrient / (NUTRIENT_K + nutrient)
 
 
-def _compression(simulation: Simulation) -> dict[int, float]:
-    """Each cell's deepest overlap with a neighbor, for the cells that have one."""
-
-    deepest: dict[int, float] = {}
-    for contact in simulation.find_cell_contacts().contacts:
-        overlap = -contact.signed_separation
-        if overlap > 0.0:
-            for cell_id in (contact.first_id, contact.second_id):
-                deepest[cell_id] = max(deepest.get(cell_id, 0.0), overlap)
-    return deepest
-
-
 def _regulate(step: ControllerStep) -> StepPlan:
     if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
         mobility = colony_mobility(
@@ -159,14 +148,9 @@ def _regulate(step: ControllerStep) -> StepPlan:
     if washed:
         DIVISION.forget(step, washed)
         divisions = tuple(request for request in divisions if request.parent_id not in washed)
-    compression = _compression(step.simulation)
     return StepPlan(
         updates=tuple(
-            CellUpdate(
-                cell.id,
-                growth_rate=_nutrient_growth(step.simulation, cell.position)
-                * max(0.0, 1.0 - compression.get(cell.id, 0.0) / COMPRESSION_LIMIT),
-            )
+            CellUpdate(cell.id, growth_rate=_nutrient_growth(step.simulation, cell.position))
             for cell in step.cells
             if cell.id not in washed
         ),
@@ -200,7 +184,12 @@ def build(context: ModelContext) -> NativeController:
         rng=context.rng,
         regulate=_regulate,
         on_division=_divided,
-        mechanics=MechanicsConfig(flow_drift=True),
+        mechanics=MechanicsConfig(
+            flow_drift=True,
+            growth_limit=True,
+            growth_free_overlap=0.0,
+            growth_stall_overlap=STALL_OVERLAP,
+        ),
         state=state,
     )
 

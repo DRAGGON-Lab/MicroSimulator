@@ -41,6 +41,42 @@ void validate_mechanics_integration_parameters(const MechanicsIntegrationParamet
   }
 }
 
+void validate_growth_limit_parameters(const GrowthLimitParameters& parameters) {
+  if (!std::isfinite(parameters.free_overlap) || parameters.free_overlap < 0.0F ||
+      !std::isfinite(parameters.stall_overlap) ||
+      parameters.stall_overlap <= parameters.free_overlap) {
+    throw std::invalid_argument(
+        "growth limit overlaps must be finite, non-negative, and increasing");
+  }
+}
+
+std::vector<float> growth_limit_factors(const WorldState& state, const ContactGraph& contacts,
+                                        const GrowthLimitParameters& parameters) {
+  validate_growth_limit_parameters(parameters);
+  if (contacts.cell_count() != state.size()) {
+    throw std::invalid_argument("contact graph and world state cell counts disagree");
+  }
+  std::vector<float> deepest(state.size(), 0.0F);
+  for (const auto& contact : contacts.contacts()) {
+    const auto overlap = -contact.signed_separation;
+    for (const auto slot : {contact.first_slot, contact.second_slot}) {
+      auto& depth = deepest[static_cast<std::size_t>(slot)];
+      depth = std::max(depth, overlap);
+    }
+  }
+  const auto radii = state.geometry_state().radii;
+  const auto band = parameters.stall_overlap - parameters.free_overlap;
+  std::vector<float> factors(state.size(), 1.0F);
+  for (std::size_t slot = 0; slot < factors.size(); ++slot) {
+    if (radii[slot] <= 0.0F) {
+      continue;
+    }
+    const auto excess = (deepest[slot] / radii[slot]) - parameters.free_overlap;
+    factors[slot] = std::clamp(1.0F - (excess / band), 0.0F, 1.0F);
+  }
+  return factors;
+}
+
 void integrate_mechanics_result(WorldState& state, const MechanicsSolveResult& result,
                                 const MechanicsIntegrationParameters& parameters,
                                 std::span<const float> desired_length_increments) {

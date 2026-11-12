@@ -195,6 +195,74 @@ void test_simulation_relaxation_cannot_carry_a_cell_through_a_thin_wall() {
   assert(deepest_wall_penetration(simulation) >= -1.0e-4F);
 }
 
+// Two parallel rods side by side, overlapping by `overlap`.
+microsimulator::Simulation overlapping_pair(float overlap) {
+  microsimulator::Simulation simulation(microsimulator::BackendKind::cpu, 0, 0, 0);
+  microsimulator::CellInit cell;
+  cell.length = 2.0F;
+  cell.radius = 0.5F;
+  cell.growth_rate = 1.0F;
+  simulation.add_cell(cell);
+  cell.position = {0.0F, 1.0F - overlap, 0.0F};
+  simulation.add_cell(cell);
+  return simulation;
+}
+
+void test_growth_limit_scales_elongation_by_compression() {
+  microsimulator::GrowthLimitParameters limit;
+  limit.free_overlap = 0.1F;
+  limit.stall_overlap = 0.5F;
+  const float dt = 0.1F;
+  const float full = 2.0F * dt;
+  // Overlap in radii, and the fraction of the full elongation it leaves.
+  const float cases[][2] = {{0.0F, 1.0F}, {0.1F, 1.0F}, {0.3F, 0.5F}, {0.5F, 0.0F}, {0.9F, 0.0F}};
+  for (const auto& [overlap_radii, expected] : cases) {
+    auto simulation = overlapping_pair(overlap_radii * 0.5F);
+    simulation.step(dt, limit);
+    for (const auto& cell : simulation.cells()) {
+      assert(close(cell.length, 2.0F + (expected * full), 1.0e-4F));
+    }
+    assert(close(static_cast<float>(simulation.time()), dt));
+  }
+
+  // Cells out of contact grow as an unlimited step grows them.
+  auto apart = overlapping_pair(-1.0F);
+  auto reference = overlapping_pair(-1.0F);
+  apart.step(dt, limit);
+  reference.step(dt);
+  assert(apart.cells()[0].length == reference.cells()[0].length);
+
+  // The limit never turns shrinkage into growth or holds it back.
+  auto shrinking = overlapping_pair(0.45F);
+  for (const auto& cell : shrinking.cells()) {
+    shrinking.set_cell_attributes(cell.id, -1.0F, cell.cell_type);
+  }
+  shrinking.step(dt, limit);
+  assert(close(shrinking.cells()[0].length, 2.0F - full, 1.0e-4F));
+}
+
+void test_growth_limit_rejects_invalid_parameters() {
+  auto simulation = overlapping_pair(0.1F);
+  const auto rejected = [&](float free_overlap, float stall_overlap) {
+    microsimulator::GrowthLimitParameters limit;
+    limit.free_overlap = free_overlap;
+    limit.stall_overlap = stall_overlap;
+    try {
+      simulation.step(0.1F, limit);
+    } catch (const std::invalid_argument&) {
+      return true;
+    }
+    return false;
+  };
+  assert(rejected(-0.1F, 0.4F));
+  assert(rejected(0.4F, 0.4F));
+  assert(rejected(0.1F, std::numeric_limits<float>::infinity()));
+  assert(rejected(std::numeric_limits<float>::quiet_NaN(), 0.4F));
+  // A rejected step leaves the cells and the clock as they were.
+  assert(simulation.cells()[0].length == 2.0F);
+  assert(simulation.time() == 0.0);
+}
+
 }  // namespace
 
 int main() {
@@ -205,5 +273,7 @@ int main() {
   test_simulation_relaxation_reduces_penetration();
   test_simulation_relaxation_leaves_no_cell_inside_a_wall();
   test_simulation_relaxation_cannot_carry_a_cell_through_a_thin_wall();
+  test_growth_limit_scales_elongation_by_compression();
+  test_growth_limit_rejects_invalid_parameters();
   return 0;
 }
