@@ -463,11 +463,15 @@ evaluate_external_constraint(const Capsule& cell, const ExternalConstraintGpu& c
     if (minimum.surface.signed_distance - cell.radius >= contact_parameters.activation_margin) {
       return result;
     }
-    for (std::uint32_t endpoint = 0; endpoint < 2; ++endpoint) {
+    // A minimum attained at an endpoint leaves the other endpoint free to be
+    // inside the surface too, so every active endpoint gets its own row.
+    const auto nearest_endpoint_distance =
+        fminf(endpoint_surfaces[0].signed_distance, endpoint_surfaces[1].signed_distance);
+    const auto minimum_at_endpoint = nearest_endpoint_distance - minimum.surface.signed_distance <=
+                                     contact_parameters.degeneracy_epsilon;
+    for (std::uint32_t endpoint = 0; minimum_at_endpoint && endpoint < 2; ++endpoint) {
       const auto separation = endpoint_surfaces[endpoint].signed_distance - cell.radius;
-      if (separation < contact_parameters.activation_margin &&
-          fabsf(endpoint_surfaces[endpoint].signed_distance - minimum.surface.signed_distance) <=
-              contact_parameters.degeneracy_epsilon) {
+      if (separation < contact_parameters.activation_margin) {
         add_external_contact(result, endpoint, endpoints[endpoint], endpoint_surfaces[endpoint],
                              cell.radius, true);
       }

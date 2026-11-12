@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <limits>
@@ -136,6 +137,64 @@ void test_simulation_relaxation_reduces_penetration() {
   simulation.validate();
 }
 
+float deepest_wall_penetration(microsimulator::Simulation& simulation) {
+  auto deepest = 0.0F;
+  const auto graph = simulation.find_external_contacts();
+  for (const auto& contact : graph.contacts()) {
+    deepest = std::min(deepest, contact.signed_separation);
+  }
+  return deepest;
+}
+
+void test_simulation_relaxation_leaves_no_cell_inside_a_wall() {
+  microsimulator::Simulation simulation;
+  microsimulator::CellInit cell;
+  cell.position = {1.3F, 0.0F, 0.0F};
+  cell.direction = {0.1F, 1.0F, 0.0F};
+  cell.length = 1.0F;
+  cell.radius = 0.5F;
+  simulation.add_cell(cell);
+  microsimulator::BoxConstraintInit wall;
+  wall.half_extents = {1.0F, 2.0F, 3.0F};
+  simulation.add_box_constraint(wall);
+  assert(deepest_wall_penetration(simulation) < -0.2F);
+
+  const auto result = simulation.relax_cell_mechanics();
+  assert(result.report.status == microsimulator::SolverStatus::converged);
+  assert(deepest_wall_penetration(simulation) >= -1.0e-4F);
+  simulation.validate();
+}
+
+void test_simulation_relaxation_cannot_carry_a_cell_through_a_thin_wall() {
+  microsimulator::Simulation simulation;
+  // A wall barely wider than the cell's radius, with a fixed neighbor that
+  // overlaps the cell almost completely from the side away from the wall.
+  microsimulator::BoxConstraintInit wall;
+  wall.center = {0.3F, 0.0F, 0.0F};
+  wall.half_extents = {0.3F, 5.0F, 5.0F};
+  simulation.add_box_constraint(wall);
+  microsimulator::CellInit cell;
+  cell.position = {-0.55F, 0.0F, 0.0F};
+  cell.direction = {0.0F, 1.0F, 0.0F};
+  cell.length = 1.0F;
+  cell.radius = 0.5F;
+  const auto cell_id = simulation.add_cell(cell);
+  microsimulator::CellInit neighbor = cell;
+  neighbor.position = {-0.6F, 0.0F, 0.0F};
+  neighbor.fixed = true;
+  simulation.add_cell(neighbor);
+
+  microsimulator::MechanicsParameters parameters;
+  parameters.gamma = 1.0e4F;
+  const auto result = simulation.relax_cell_mechanics(parameters);
+  assert(result.report.status == microsimulator::SolverStatus::converged);
+  // The correction alone would put the centerline past the wall's mid-plane,
+  // where the nearest face is the far one.
+  assert(result.corrections[0].translation.x > 0.85F);
+  assert(simulation.cell(cell_id).position.x < -0.49F);
+  assert(deepest_wall_penetration(simulation) >= -1.0e-4F);
+}
+
 }  // namespace
 
 int main() {
@@ -144,5 +203,7 @@ int main() {
   test_validation_is_atomic_and_requires_convergence();
   test_fixed_cell_integration_only_applies_declared_growth();
   test_simulation_relaxation_reduces_penetration();
+  test_simulation_relaxation_leaves_no_cell_inside_a_wall();
+  test_simulation_relaxation_cannot_carry_a_cell_through_a_thin_wall();
   return 0;
 }

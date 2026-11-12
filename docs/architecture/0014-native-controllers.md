@@ -31,7 +31,7 @@ A controller-backed model resumes through `resume(context, checkpoint)`. The ope
 4. apply requested cell removals;
 5. execute `Simulation.step(dt)` for growth and typed rate plans;
 6. apply flow drift when enabled in the mechanics configuration; and
-7. execute exactly `MechanicsConfig.passes` contact/relaxation passes when mechanics is configured and cells remain.
+7. execute exactly `MechanicsConfig.passes` contact/relaxation passes when mechanics is configured and cells remain. Each pass ends by projecting mobile cells out of the external constraints, so cells end the step resting on or clear of the walls.
 
 `UniformLengthDivision.jitter_z` controls only the random perturbation added to daughter orientation: `None` disables jitter, `False` adds XY-only jitter, and `True` adds XYZ jitter. Native normalization can change an inherited nonzero Z component even when the added Z perturbation is zero. Division places daughters along the parent's three-dimensional axis; subsequent contact relaxation and flow drift remain three-dimensional. See the [planarity diagnostics and tutorial audit](../tutorials/planarity.md) for reproducible examples and the limits of finite-height confinement.
 

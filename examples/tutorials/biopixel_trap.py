@@ -95,9 +95,8 @@ def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
     grid.signal_count = 1
     grid.shape = shape
     # The lattice of site centers covers every position a cell can reach, with
-    # a margin of one voxel past the floor and the far channel wall: contact
-    # relaxation lets a crowded cell press slightly into a wall, and sampling
-    # outside the lattice is an error. Two z layers span the cavity exactly;
+    # a margin of one voxel past the floor and the far channel wall, because
+    # sampling outside the lattice is an error. Two z layers span the cavity exactly;
     # the resulting gap-height mobility ratio belongs to this model geometry.
     grid.origin = Vec3(-100.0, -147.5, -0.4125)
     grid.spacing = Vec3(5.0, 5.0, 0.825)
