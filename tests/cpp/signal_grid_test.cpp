@@ -609,4 +609,37 @@ int main() {
     }
   }
 
+  {
+    // A fixed boundary's values are replaceable during a run; the boundary
+    // kinds and every other face stay as configured.
+    auto spec = line_spec(2);
+    spec.x_lower.kind = microsimulator::GridBoundaryKind::fixed;
+    spec.x_lower.values = {2.0F};
+    microsimulator::SignalGrid grid(spec, {0.0F, 0.0F});
+    static_cast<void>(microsimulator::advance_signal_grid_cpu(grid, 0.25F));
+    assert_close(grid.levels()[0], 0.5F);
+
+    const float richer[] = {6.0F};
+    grid.set_boundary_values(microsimulator::GridFace::x_lower, richer);
+    assert_close(grid.spec().boundary(microsimulator::GridFace::x_lower).values[0], 6.0F);
+    assert(grid.checkpoint().spec.x_lower.values == std::vector<float>{6.0F});
+    static_cast<void>(microsimulator::advance_signal_grid_cpu(grid, 0.25F));
+    // Site 0 exchanges with the ghost value 6 and with its empty neighbor.
+    assert_close(grid.levels()[0], 0.5F + (0.25F * ((6.0F - 0.5F) + (0.0F - 0.5F))));
+
+    assert_throws<std::logic_error>(
+        [&] { grid.set_boundary_values(microsimulator::GridFace::x_upper, richer); });
+    const float negative[] = {-1.0F};
+    assert_throws<std::invalid_argument>(
+        [&] { grid.set_boundary_values(microsimulator::GridFace::x_lower, negative); });
+    const float extra[] = {1.0F, 1.0F};
+    assert_throws<std::invalid_argument>(
+        [&] { grid.set_boundary_values(microsimulator::GridFace::x_lower, extra); });
+    assert_close(grid.spec().x_lower.values[0], 6.0F);
+
+    microsimulator::Simulation without_grid(microsimulator::BackendKind::cpu, 0, 0, 0);
+    assert_throws<std::logic_error>([&] {
+      without_grid.set_signal_boundary_values(microsimulator::GridFace::x_lower, richer);
+    });
+  }
 }

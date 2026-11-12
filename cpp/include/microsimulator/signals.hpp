@@ -17,6 +17,16 @@ enum class GridBoundaryKind : std::uint8_t {
   fixed,
 };
 
+// The six faces of the lattice's bounding box, one per grid boundary.
+enum class GridFace : std::uint8_t {
+  x_lower,
+  x_upper,
+  y_lower,
+  y_upper,
+  z_lower,
+  z_upper,
+};
+
 enum class SignalIntegrationKind : std::uint8_t {
   forward_euler,
   crank_nicolson,
@@ -95,6 +105,8 @@ struct SignalGridSpec {
   [[nodiscard]] std::size_t x_face_count() const;
   [[nodiscard]] std::size_t y_face_count() const;
   [[nodiscard]] std::size_t z_face_count() const;
+  [[nodiscard]] const GridBoundary& boundary(GridFace face) const;
+  [[nodiscard]] GridBoundary& boundary(GridFace face);
   void validate_lattice() const;
   void validate() const;
 };
@@ -145,6 +157,10 @@ class SignalGrid {
   void replace_levels(std::vector<float> levels);
   void set_velocity_field(std::optional<SignalGridVelocityField> field);
   void set_reaction(std::optional<SignalGridAffineReaction> reaction);
+  // Replaces the per-signal values of a fixed boundary, such as the
+  // composition of the media entering at an inlet. The boundary kind does not
+  // change, so only a boundary configured as fixed has values to replace.
+  void set_boundary_values(GridFace face, std::span<const float> values);
   void validate_step(float dt) const;
   void validate() const;
 

@@ -7,6 +7,10 @@ signal grid, and a numerically solved face-staggered flow field for advection
 fluxes through supported column geometries). The runtime receives only materialized data;
 every predicate here is authoring-time.
 
+The media entering at the inlet carries one concentration per signal. A model
+changes that composition during a run with `set_inlet_values`, and
+`InletSchedule` describes a composition that switches or ramps over model time.
+
 Voxel centers are classified against the same physical wall predicates used by
 mechanics. For axis-aligned planes the staircase wall offset is at most half a
 voxel spacing. Curved geometry requires convergence checks; unresolved narrow
@@ -15,6 +19,8 @@ features cannot be recovered by renaming or enlarging the fluid region.
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
@@ -22,6 +28,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BoxConstraintInit,
     ConstraintRegion,
     GridBoundaryKind,
+    GridFace,
     PlaneConstraintInit,
     SignalGridSpec,
     Simulation,
@@ -50,6 +57,73 @@ def _recedes(edge: float, wall: float, half: float) -> bool:
     return edge <= wall + _EDGE_TOLERANCE * half
 
 
+@dataclass(frozen=True, slots=True)
+class InletSchedule:
+    """The composition of the inlet media as a function of model time.
+
+    A composition holds one concentration per signal. The inlet carries
+    ``initial`` until ``times[0]`` and ``values[i]`` from ``times[i]``. With
+    ``ramp=False`` the composition switches at each time, as when a valve
+    selects another reservoir. With ``ramp=True`` it varies linearly from each
+    listed composition to the next and holds the last one afterwards.
+
+    The schedule is a pure function of time, so a model that applies it from
+    its regulation callback resumes from a checkpoint on the same composition.
+    """
+
+    initial: tuple[float, ...]
+    times: tuple[float, ...] = ()
+    values: tuple[tuple[float, ...], ...] = ()
+    ramp: bool = False
+
+    def __post_init__(self) -> None:
+        if len(self.times) != len(self.values):
+            raise ValueError("inlet schedule needs one composition per time")
+        if any(not math.isfinite(time) for time in self.times) or any(
+            later <= earlier for earlier, later in zip(self.times, self.times[1:], strict=False)
+        ):
+            raise ValueError("inlet schedule times must be finite and strictly increasing")
+        if not self.initial:
+            raise ValueError("inlet schedule compositions need at least one signal")
+        for composition in (self.initial, *self.values):
+            if len(composition) != len(self.initial):
+                raise ValueError("inlet schedule compositions must share one signal count")
+            if any(not math.isfinite(value) or value < 0.0 for value in composition):
+                raise ValueError("inlet schedule concentrations must be finite and non-negative")
+
+    @classmethod
+    def pulse(
+        cls,
+        baseline: Sequence[float],
+        pulse: Sequence[float],
+        *,
+        start: float,
+        end: float,
+    ) -> InletSchedule:
+        """Baseline media, replaced by the pulse composition from ``start`` until ``end``."""
+
+        return cls(tuple(baseline), (start, end), (tuple(pulse), tuple(baseline)))
+
+    def values_at(self, time: float) -> list[float]:
+        """The inlet concentration of every signal at a model time."""
+
+        if not math.isfinite(time):
+            raise ValueError("inlet schedule time must be finite")
+        passed = sum(1 for change in self.times if change <= time)
+        if passed == 0:
+            return list(self.initial)
+        current = self.values[passed - 1]
+        if not self.ramp or passed == len(self.times):
+            return list(current)
+        following = self.values[passed]
+        begin, finish = self.times[passed - 1], self.times[passed]
+        fraction = (time - begin) / (finish - begin)
+        return [
+            before + (after - before) * fraction
+            for before, after in zip(current, following, strict=True)
+        ]
+
+
 class _ChannelDevice:
     """A trap fed by a straight channel along y, projected onto engine inputs.
 
@@ -67,6 +141,15 @@ class _ChannelDevice:
         """Whether a voxel lies entirely inside a wall."""
 
         raise NotImplementedError
+
+    def set_inlet_values(self, simulation: Simulation, values: Sequence[float]) -> None:
+        """Set the concentration of every signal in the media entering at the inlet.
+
+        The simulation's grid must come from `apply_to_grid`, which makes the
+        lower y face the fixed inlet boundary.
+        """
+
+        simulation.set_signal_boundary_values(GridFace.Y_LOWER, list(values))
 
     def _wall_boxes(
         self, simulation: Simulation, blocks: _Blocks, region: ConstraintRegion

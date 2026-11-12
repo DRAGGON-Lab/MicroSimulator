@@ -22,7 +22,7 @@ Each signal declares a non-negative diffusion coefficient and a finite 3D advect
 
 - `no_flux`: diffusive and advective face fluxes are zero;
 - `periodic`: the stencil wraps to the opposite face; or
-- `fixed`: the exterior stencil value is the declared non-negative reservoir concentration for that signal.
+- `fixed`: the exterior stencil value is the declared non-negative reservoir concentration for that signal. The reservoir concentrations of a fixed boundary may be replaced between steps with `SignalGrid::set_boundary_values`; the boundary kind of each face is set when the grid is configured and does not change.
 
 Periodic faces must occur in opposing pairs on an axis. For diffusion, a no-flux exterior stencil value equals the boundary lattice value. Fixed values are defined at the exterior stencil location one grid spacing beyond the boundary, which removes half-cell ambiguity.
 

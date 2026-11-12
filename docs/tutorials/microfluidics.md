@@ -63,6 +63,35 @@ DEVICE.apply_to_grid(
 
 The constructor's keyword arguments set the trap, channel, and wall dimensions; the trap example passes its own, and the Danino clock uses the defaults. `apply_to_grid` materializes the solid mask, fixed inlet and outlet boundaries on the y axis, and the numerically solved steady device flow on the grid's face-staggered velocity field (see the next section). Passing the model's `Simulation` makes the solve execute through the backend selected by the runner. Flow runs through the channel, circulates weakly at the open trap face, and the dead-end trap exchanges with the channel chiefly by diffusion in this model.
 
+## Changing the inlet media
+
+The media entering at the inlet carries one concentration per signal, and the solved flow
+carries that composition down the channel. `apply_to_grid` sets the starting composition;
+`set_inlet_values` replaces it between steps, so a model can switch reservoirs, pulse an
+inducer, or ramp a nutrient as an experiment's valves and pumps would:
+
+```python
+from microsimulator.microfluidics import InletSchedule
+
+# Signal 0 is nutrient, signal 1 an inducer supplied from t = 5 until t = 8.
+INLET = InletSchedule.pulse([10.0, 0.0], [10.0, 2.0], start=5.0, end=8.0)
+
+def _regulate(step):
+    DEVICE.set_inlet_values(step.simulation, INLET.values_at(step.time))
+    return StepPlan(...)
+```
+
+`InletSchedule(initial, times, values)` holds `initial` until `times[0]` and `values[i]` from
+`times[i]`; `ramp=True` varies the composition linearly between the listed times instead of
+switching. The composition set in a regulation callback applies to the step that follows it.
+Because the schedule depends only on model time and the current inlet values are part of the
+checkpointed grid, a resumed run continues on the same composition.
+
+A change at the inlet reaches a point downstream after the transit time of the flow, and the
+first-order upwind transport spreads a sharp switch over a few voxels on the way. Outside a
+device, `Simulation.set_signal_boundary_values(face, values)` replaces the values of any
+fixed boundary of the signal grid.
+
 ## Flow on signals and on cells
 
 The velocity field advects every signal with conservative upwind face fluxes under all three signal integrators. With `MechanicsConfig(flow_drift=True)`, the controller translates each non-fixed cell using the velocity sampled at its center and rotates it with a finite-aspect Jeffery approximation, so escaped cells travel down the channel and rods rotate in shear. Contact relaxation then resolves overlaps with walls or neighbors. The [flow-drift design](../architecture/0021-flow-drift.md) describes this kinematic approximation and its integration limits.

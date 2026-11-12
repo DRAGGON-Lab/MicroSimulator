@@ -398,6 +398,28 @@ void SignalGridAffineReaction::validate(std::size_t level_count) const {
   }
 }
 
+const GridBoundary& SignalGridSpec::boundary(GridFace face) const {
+  switch (face) {
+    case GridFace::x_lower:
+      return x_lower;
+    case GridFace::x_upper:
+      return x_upper;
+    case GridFace::y_lower:
+      return y_lower;
+    case GridFace::y_upper:
+      return y_upper;
+    case GridFace::z_lower:
+      return z_lower;
+    case GridFace::z_upper:
+      return z_upper;
+  }
+  throw std::invalid_argument("unknown signal grid face");
+}
+
+GridBoundary& SignalGridSpec::boundary(GridFace face) {
+  return const_cast<GridBoundary&>(std::as_const(*this).boundary(face));
+}
+
 std::size_t SignalGridSpec::site_count() const {
   const auto xy = checked_multiply(shape.x, shape.y, "site count");
   return checked_multiply(xy, shape.z, "site count");
@@ -701,6 +723,17 @@ void SignalGrid::set_velocity_field(std::optional<SignalGridVelocityField> field
   candidate.spec.velocity_field = std::move(field);
   candidate.validate();
   spec_ = std::move(candidate.spec);
+}
+
+void SignalGrid::set_boundary_values(GridFace face, std::span<const float> values) {
+  auto& boundary = spec_.boundary(face);
+  if (boundary.kind != GridBoundaryKind::fixed) {
+    throw std::logic_error("only a fixed signal grid boundary has values to set");
+  }
+  GridBoundary candidate{.kind = GridBoundaryKind::fixed,
+                         .values = std::vector<float>(values.begin(), values.end())};
+  candidate.validate(spec_.signal_count);
+  boundary = std::move(candidate);
 }
 
 void SignalGrid::set_reaction(std::optional<SignalGridAffineReaction> reaction) {

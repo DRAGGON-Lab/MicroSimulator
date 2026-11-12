@@ -303,6 +303,13 @@ void Simulation::set_signal_reaction(std::optional<SignalGridAffineReaction> rea
   signal_grid_->set_reaction(std::move(reaction));
 }
 
+void Simulation::set_signal_boundary_values(GridFace face, std::span<const float> values) {
+  if (!signal_grid_.has_value()) {
+    throw std::logic_error("simulation does not have a signal grid");
+  }
+  signal_grid_->set_boundary_values(face, values);
+}
+
 std::pair<CellId, CellId> Simulation::divide(CellId parent_id, float first_fraction) {
   return state_.divide(parent_id, first_fraction);
 }
