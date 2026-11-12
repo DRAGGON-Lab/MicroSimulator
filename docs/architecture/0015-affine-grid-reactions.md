@@ -5,7 +5,7 @@
 
 ## Context
 
-Some spatial models apply a reaction throughout a physical region rather than at cell locations. The SimBOL Danino tutorial, for example, removes AHL in a flow channel, replenishes nutrient toward a target inside a trap, and decays nutrient outside it. Legacy CellModeller implements these terms by overriding a Python grid class and mutating its rate array.
+Some spatial models apply a reaction throughout a physical region rather than at cell locations. The SimBOL Danino tutorial, for example, removes AHL in a flow channel, replenishes nutrient toward a target inside a trap, and decays nutrient outside it. Overriding a grid class and mutating its rate array is one way to express such terms, but it leaves them outside the validated, checkpointed model.
 
 MicroSimulator cannot admit arbitrary host callbacks or injected device source without losing its typed, data-only checkpoint contract and independent CPU, Metal, and CUDA implementations. A biological special case named for AHL, nutrient, or trap geometry would instead put model vocabulary into the numerical engine.
 
@@ -21,7 +21,7 @@ Both arrays must match the complete grid level count and contain only finite, no
 
 The affine reaction is part of the signal operator. Forward Euler evaluates it from the old field and adds the largest per-signal loss coefficient to the preflight stability bound. Crank-Nicolson includes loss in the matrix diagonal and the constant source on both trapezoidal halves. Backward Euler includes the complete affine reaction implicitly and preserves positivity for nonnegative explicit input at arbitrary reaction stiffness. Cell-scattered sources stay explicit and retain their amount-per-time convention.
 
-CPU, Metal, and CUDA implement the same fixed operation. Device implementations receive source and loss buffers; they do not compile a model callback or branch on biological region names. Coefficients are exact checkpoint state. Version 7 checkpoints record an object or `null`; versions 1 through 6 migrate to no affine field reaction.
+CPU, Metal, and CUDA implement the same fixed operation. Device implementations receive source and loss buffers; they do not compile a model callback or branch on biological region names. Coefficients are exact checkpoint state, recorded as an object or `null`.
 
 ## Deliberate limits
 

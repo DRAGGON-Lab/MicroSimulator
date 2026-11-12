@@ -1,12 +1,3 @@
-#include <metal_stdlib>
-
-using namespace metal;
-
-struct MechanicsDofs {
-  float4 linear_length;
-  float4 rotation;
-};
-
 MechanicsDofs zero_dofs() {
   MechanicsDofs result;
   result.linear_length = 0.0f;

@@ -1,6 +1,6 @@
 # Metal environment
 
-Metal is the feature-complete Apple GPU backend. It is implemented directly with the Metal API and independent Metal Shading Language kernels, and it is validated against both the CPU reference and recorded behavior from the original CellModeller OpenCL runtime.
+Metal is the feature-complete Apple GPU backend. It is implemented directly with the Metal API and independent Metal Shading Language kernels, and it is validated against the CPU reference.
 
 For application commands, use the [shared CPU, Metal, and CUDA tutorial examples](../../docs/tutorials/commands.md#run-the-same-trap-on-cpu-metal-or-cuda), [device discovery](../../docs/tutorials/commands.md#prepare-and-discover-devices), and [shell quoting guide](../../docs/tutorials/commands.md#choose-a-shell). Select this backend with `--backend metal` and an enumerated `--device-index`; the model syntax is unchanged.
 
@@ -18,13 +18,13 @@ Every Metal-enabled test build includes `metal_runtime_gate`, which constructs e
 
 ## Application conformance
 
-Run the Python, compatibility, and application gate with a checkout of the pinned original CellModeller source:
+Run the Python and application gate:
 
 ```console
-CM_LEGACY_ROOT=/path/to/pinned/CellModeller scripts/run_metal_application_conformance.sh
+scripts/run_metal_application_conformance.sh
 ```
 
-This gate builds the Python extension with Metal enabled, runs the full Python and recorded-trajectory suites, executes all 24 runnable legacy examples on CPU and every Metal device, and exercises controller resume, viewer scene semantics, and analysis export with native derived contacts.
+This gate builds the Python extension with Metal enabled, runs the full Python suite on CPU and every Metal device, and exercises controller resume, viewer scene semantics, and analysis export with native derived contacts.
 
 The manually dispatched `Metal conformance` workflow runs both gates on a self-hosted macOS runner carrying the `metal` label and always uploads its evidence. It is intentionally not triggered by pull requests.
 

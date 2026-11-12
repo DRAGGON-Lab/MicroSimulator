@@ -1,4 +1,6 @@
+from collections.abc import Mapping, Sequence
 from enum import Enum
+from os import PathLike
 from typing import overload
 
 class OccupancyCapsule:
@@ -734,3 +736,384 @@ class Simulation:
     def sample_signals(self, position: Vec3) -> list[float]: ...
     def _checkpoint(self) -> _SimulationCheckpoint: ...
     def validate(self) -> None: ...
+
+class ChannelMetadataError(ValueError): ...
+class CheckpointError(ValueError): ...
+class SceneError(ValueError): ...
+
+class ChannelMetadata:
+    def __init__(
+        self,
+        species: tuple[str | None, ...] | None = None,
+        signals: tuple[str | None, ...] | None = None,
+    ) -> None: ...
+    @property
+    def species(self) -> tuple[str | None, ...] | None: ...
+    @property
+    def signals(self) -> tuple[str | None, ...] | None: ...
+    def resolved(self, species_count: int, signal_count: int) -> ChannelMetadata: ...
+    def to_json(self, species_count: int, signal_count: int) -> dict[str, list[str | None]]: ...
+    @staticmethod
+    def from_json(value: object, species_count: int, signal_count: int) -> ChannelMetadata: ...
+    def replace(
+        self,
+        *,
+        species: tuple[str | None, ...] | None = ...,
+        signals: tuple[str | None, ...] | None = ...,
+    ) -> ChannelMetadata: ...
+
+CHECKPOINT_FORMAT: str
+CHECKPOINT_VERSION: int
+MAX_CHECKPOINT_BYTES: int
+
+type _JSON = str | int | float | bool | list[_JSON] | dict[str, _JSON] | None
+
+class _CheckpointDocument:
+    @property
+    def simulation(self) -> _SimulationCheckpoint: ...
+    @property
+    def controller(self) -> _JSON: ...
+    @property
+    def provenance(self) -> dict[str, _JSON]: ...
+    @property
+    def source_backend(self) -> BackendInfo: ...
+    @property
+    def channel_metadata(self) -> ChannelMetadata: ...
+
+def _save_checkpoint(
+    simulation: Simulation,
+    path: str | PathLike[str],
+    provenance: Mapping[str, _JSON],
+    controller: _JSON,
+    channel_metadata: ChannelMetadata,
+) -> None: ...
+def _load_checkpoint(path: str | PathLike[str]) -> _CheckpointDocument: ...
+
+SCENE_FORMAT: str
+SCENE_VERSION: int
+MAX_SCENE_BYTES: int
+MAX_SCENE_CHANNELS: int
+
+class SceneBackend:
+    def __init__(
+        self, kind: str, name: str, device: str, device_index: int, native: bool
+    ) -> None: ...
+    @property
+    def kind(self) -> str: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def device(self) -> str: ...
+    @property
+    def device_index(self) -> int: ...
+    @property
+    def native(self) -> bool: ...
+    def replace(
+        self,
+        *,
+        kind: str = ...,
+        name: str = ...,
+        device: str = ...,
+        device_index: int = ...,
+        native: bool = ...,
+    ) -> SceneBackend: ...
+
+class SceneCell:
+    def __init__(
+        self,
+        id: int,
+        parent_id: int | None,
+        slot: int,
+        position: tuple[float, float, float],
+        direction: tuple[float, float, float],
+        length: float,
+        radius: float,
+        growth_rate: float,
+        cell_type: int,
+        fixed: bool,
+        species: Sequence[float],
+    ) -> None: ...
+    @property
+    def id(self) -> int: ...
+    @property
+    def parent_id(self) -> int | None: ...
+    @property
+    def slot(self) -> int: ...
+    @property
+    def position(self) -> tuple[float, float, float]: ...
+    @property
+    def direction(self) -> tuple[float, float, float]: ...
+    @property
+    def length(self) -> float: ...
+    @property
+    def radius(self) -> float: ...
+    @property
+    def growth_rate(self) -> float: ...
+    @property
+    def cell_type(self) -> int: ...
+    @property
+    def fixed(self) -> bool: ...
+    @property
+    def species(self) -> tuple[float, ...]: ...
+    def replace(
+        self,
+        *,
+        id: int = ...,
+        parent_id: int | None = ...,
+        slot: int = ...,
+        position: tuple[float, float, float] = ...,
+        direction: tuple[float, float, float] = ...,
+        length: float = ...,
+        radius: float = ...,
+        growth_rate: float = ...,
+        cell_type: int = ...,
+        fixed: bool = ...,
+        species: Sequence[float] = ...,
+    ) -> SceneCell: ...
+
+class SceneGridBoundary:
+    def __init__(self, kind: str, values: Sequence[float]) -> None: ...
+    @property
+    def kind(self) -> str: ...
+    @property
+    def values(self) -> tuple[float, ...]: ...
+    def replace(self, *, kind: str = ..., values: Sequence[float] = ...) -> SceneGridBoundary: ...
+
+class SceneSignalGrid:
+    def __init__(
+        self,
+        signal_count: int,
+        shape: tuple[int, int, int],
+        origin: tuple[float, float, float],
+        spacing: tuple[float, float, float],
+        x_lower: SceneGridBoundary,
+        x_upper: SceneGridBoundary,
+        y_lower: SceneGridBoundary,
+        y_upper: SceneGridBoundary,
+        z_lower: SceneGridBoundary,
+        z_upper: SceneGridBoundary,
+        levels: Sequence[float],
+    ) -> None: ...
+    @property
+    def signal_count(self) -> int: ...
+    @property
+    def shape(self) -> tuple[int, int, int]: ...
+    @property
+    def origin(self) -> tuple[float, float, float]: ...
+    @property
+    def spacing(self) -> tuple[float, float, float]: ...
+    @property
+    def x_lower(self) -> SceneGridBoundary: ...
+    @property
+    def x_upper(self) -> SceneGridBoundary: ...
+    @property
+    def y_lower(self) -> SceneGridBoundary: ...
+    @property
+    def y_upper(self) -> SceneGridBoundary: ...
+    @property
+    def z_lower(self) -> SceneGridBoundary: ...
+    @property
+    def z_upper(self) -> SceneGridBoundary: ...
+    @property
+    def levels(self) -> tuple[float, ...]: ...
+    def replace(
+        self,
+        *,
+        signal_count: int = ...,
+        shape: tuple[int, int, int] = ...,
+        origin: tuple[float, float, float] = ...,
+        spacing: tuple[float, float, float] = ...,
+        x_lower: SceneGridBoundary = ...,
+        x_upper: SceneGridBoundary = ...,
+        y_lower: SceneGridBoundary = ...,
+        y_upper: SceneGridBoundary = ...,
+        z_lower: SceneGridBoundary = ...,
+        z_upper: SceneGridBoundary = ...,
+        levels: Sequence[float] = ...,
+    ) -> SceneSignalGrid: ...
+
+class ScenePlaneConstraint:
+    def __init__(
+        self,
+        id: int,
+        point: tuple[float, float, float],
+        inward_normal: tuple[float, float, float],
+        coefficient: float,
+    ) -> None: ...
+    @property
+    def id(self) -> int: ...
+    @property
+    def point(self) -> tuple[float, float, float]: ...
+    @property
+    def inward_normal(self) -> tuple[float, float, float]: ...
+    @property
+    def coefficient(self) -> float: ...
+    def replace(
+        self,
+        *,
+        id: int = ...,
+        point: tuple[float, float, float] = ...,
+        inward_normal: tuple[float, float, float] = ...,
+        coefficient: float = ...,
+    ) -> ScenePlaneConstraint: ...
+
+class SceneSphereConstraint:
+    def __init__(
+        self,
+        id: int,
+        center: tuple[float, float, float],
+        radius: float,
+        coefficient: float,
+        allowed_region: str,
+    ) -> None: ...
+    @property
+    def id(self) -> int: ...
+    @property
+    def center(self) -> tuple[float, float, float]: ...
+    @property
+    def radius(self) -> float: ...
+    @property
+    def coefficient(self) -> float: ...
+    @property
+    def allowed_region(self) -> str: ...
+    def replace(
+        self,
+        *,
+        id: int = ...,
+        center: tuple[float, float, float] = ...,
+        radius: float = ...,
+        coefficient: float = ...,
+        allowed_region: str = ...,
+    ) -> SceneSphereConstraint: ...
+
+class SceneBoxConstraint:
+    def __init__(
+        self,
+        id: int,
+        center: tuple[float, float, float],
+        half_extents: tuple[float, float, float],
+        coefficient: float,
+        allowed_region: str,
+    ) -> None: ...
+    @property
+    def id(self) -> int: ...
+    @property
+    def center(self) -> tuple[float, float, float]: ...
+    @property
+    def half_extents(self) -> tuple[float, float, float]: ...
+    @property
+    def coefficient(self) -> float: ...
+    @property
+    def allowed_region(self) -> str: ...
+    def replace(
+        self,
+        *,
+        id: int = ...,
+        center: tuple[float, float, float] = ...,
+        half_extents: tuple[float, float, float] = ...,
+        coefficient: float = ...,
+        allowed_region: str = ...,
+    ) -> SceneBoxConstraint: ...
+
+class SceneCylinderConstraint:
+    def __init__(
+        self,
+        id: int,
+        center: tuple[float, float, float],
+        radius: float,
+        half_height: float,
+        coefficient: float,
+        allowed_region: str,
+    ) -> None: ...
+    @property
+    def id(self) -> int: ...
+    @property
+    def center(self) -> tuple[float, float, float]: ...
+    @property
+    def radius(self) -> float: ...
+    @property
+    def half_height(self) -> float: ...
+    @property
+    def coefficient(self) -> float: ...
+    @property
+    def allowed_region(self) -> str: ...
+    def replace(
+        self,
+        *,
+        id: int = ...,
+        center: tuple[float, float, float] = ...,
+        radius: float = ...,
+        half_height: float = ...,
+        coefficient: float = ...,
+        allowed_region: str = ...,
+    ) -> SceneCylinderConstraint: ...
+
+class SceneConstraints:
+    def __init__(
+        self,
+        planes: Sequence[ScenePlaneConstraint],
+        spheres: Sequence[SceneSphereConstraint],
+        boxes: Sequence[SceneBoxConstraint],
+        cylinders: Sequence[SceneCylinderConstraint],
+    ) -> None: ...
+    @property
+    def planes(self) -> tuple[ScenePlaneConstraint, ...]: ...
+    @property
+    def spheres(self) -> tuple[SceneSphereConstraint, ...]: ...
+    @property
+    def boxes(self) -> tuple[SceneBoxConstraint, ...]: ...
+    @property
+    def cylinders(self) -> tuple[SceneCylinderConstraint, ...]: ...
+    def replace(
+        self,
+        *,
+        planes: Sequence[ScenePlaneConstraint] = ...,
+        spheres: Sequence[SceneSphereConstraint] = ...,
+        boxes: Sequence[SceneBoxConstraint] = ...,
+        cylinders: Sequence[SceneCylinderConstraint] = ...,
+    ) -> SceneConstraints: ...
+
+class SceneFrame:
+    def __init__(
+        self,
+        time: float,
+        backend: SceneBackend,
+        species_count: int,
+        cells: Sequence[SceneCell],
+        constraints: SceneConstraints,
+        signal_grid: SceneSignalGrid | None,
+        channel_metadata: ChannelMetadata = ...,
+    ) -> None: ...
+    @property
+    def time(self) -> float: ...
+    @property
+    def backend(self) -> SceneBackend: ...
+    @property
+    def species_count(self) -> int: ...
+    @property
+    def cells(self) -> tuple[SceneCell, ...]: ...
+    @property
+    def constraints(self) -> SceneConstraints: ...
+    @property
+    def signal_grid(self) -> SceneSignalGrid | None: ...
+    @property
+    def channel_metadata(self) -> ChannelMetadata: ...
+    def replace(
+        self,
+        *,
+        time: float = ...,
+        backend: SceneBackend = ...,
+        species_count: int = ...,
+        cells: Sequence[SceneCell] = ...,
+        constraints: SceneConstraints = ...,
+        signal_grid: SceneSignalGrid | None = ...,
+        channel_metadata: ChannelMetadata = ...,
+    ) -> SceneFrame: ...
+
+def capture_scene(
+    simulation: Simulation, *, channel_metadata: ChannelMetadata = ...
+) -> SceneFrame: ...
+def dumps_scene(frame: SceneFrame) -> str: ...
+def save_scene(frame: SceneFrame, path: str | PathLike[str]) -> None: ...
+def parse_scene(source: str | bytes | bytearray | memoryview) -> SceneFrame: ...
+def load_scene(path: str | PathLike[str]) -> SceneFrame: ...

@@ -103,7 +103,7 @@ def _recipe_simulation() -> Simulation:
 
 
 @pytest.mark.parametrize("schema_version", [1, ANALYSIS_VERSION])
-def test_previous_dataset_format_preserves_identity_and_verification(
+def test_each_dataset_version_preserves_identity_and_verification(
     tmp_path: Path, schema_version: int
 ) -> None:
     simulation, _ = _simulation()
@@ -112,7 +112,6 @@ def test_previous_dataset_format_preserves_identity_and_verification(
     output = tmp_path / "dataset"
     export_dataset([checkpoint], output)
     manifest = _manifest(output)
-    manifest["format"] = "cellmodeller2-analysis"
     manifest["version"] = schema_version
     identity_keys = ["format", "version", "sources", "options"]
     if schema_version >= 2:
@@ -128,24 +127,24 @@ def test_previous_dataset_format_preserves_identity_and_verification(
     assert open_dataset(output).verified
     assert _manifest(output)["dataset_id"] == manifest["dataset_id"]
 
-    # Changing the envelope must not silently replace the authenticated identity.
-    manifest["format"] = ANALYSIS_FORMAT
+    # Changing an identity field must not silently replace the authenticated identity.
+    manifest["options"] = {**manifest["options"], "tampered": True}
     manifest_path.write_text(json.dumps(manifest))
-    with pytest.raises(AnalysisError, match="dataset identity digest"):
+    with pytest.raises(AnalysisError):
         open_dataset(output)
 
 
 def test_export_dataset_preserves_typed_state_contacts_and_signals(tmp_path: Path) -> None:
     simulation, parent = _simulation()
-    first = tmp_path / "frame-0000.cm2.json"
-    second = tmp_path / "frame-0001.cm2.json"
+    first = tmp_path / "frame-0000.json"
+    second = tmp_path / "frame-0001.json"
     save_checkpoint(simulation, first, provenance={"run_id": "analysis-test"})
     simulation.step(0.25)
     daughters = simulation.divide_equal(parent)
     simulation.set_signal_levels([4.0, 8.0])
     save_checkpoint(simulation, second, provenance={"run_id": "analysis-test"})
 
-    output = tmp_path / "run.cm2.dataset"
+    output = tmp_path / "run.dataset"
     summary = export_dataset(
         [first, second],
         output,
@@ -234,7 +233,7 @@ def test_export_dataset_preserves_typed_state_contacts_and_signals(tmp_path: Pat
         },
     ]
 
-    repeated = tmp_path / "repeated.cm2.dataset"
+    repeated = tmp_path / "repeated.dataset"
     repeated_summary = export_dataset(
         [first, second],
         repeated,
@@ -257,8 +256,8 @@ def test_external_contact_export_records_interior_centerline_location(tmp_path: 
     wall.half_extents = Vec3(1.0, 1.0, 5.0)
     simulation.add_box_constraint(wall)
 
-    checkpoint = tmp_path / "midspan.cm2.json"
-    output = tmp_path / "midspan.cm2.dataset"
+    checkpoint = tmp_path / "midspan.json"
+    output = tmp_path / "midspan.dataset"
     save_checkpoint(simulation, checkpoint)
     export_dataset([checkpoint], output, include_external_contacts=True)
 
@@ -270,17 +269,17 @@ def test_external_contact_export_records_interior_centerline_location(tmp_path: 
 
 def test_export_dataset_rejects_existing_output_and_reverse_time(tmp_path: Path) -> None:
     simulation, _ = _simulation()
-    later = tmp_path / "later.cm2.json"
-    earlier = tmp_path / "earlier.cm2.json"
+    later = tmp_path / "later.json"
+    earlier = tmp_path / "earlier.json"
     simulation.step(0.5)
     save_checkpoint(simulation, later)
     pristine, _ = _simulation()
     save_checkpoint(pristine, earlier)
 
     with pytest.raises(AnalysisError, match="before prior time"):
-        export_dataset([later, earlier], tmp_path / "reverse.cm2.dataset")
+        export_dataset([later, earlier], tmp_path / "reverse.dataset")
 
-    output = tmp_path / "existing.cm2.dataset"
+    output = tmp_path / "existing.dataset"
     output.mkdir()
     sentinel = output / "keep.txt"
     sentinel.write_text("mine")
@@ -296,8 +295,8 @@ def test_export_dataset_rejects_existing_output_and_reverse_time(tmp_path: Path)
 
 def test_signal_geometry_changes_start_a_new_epoch(tmp_path: Path) -> None:
     simulation, _ = _simulation()
-    first = tmp_path / "first.cm2.json"
-    second = tmp_path / "second.cm2.json"
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
     save_checkpoint(simulation, first)
     changed_simulation = Simulation(BackendKind.CPU, species_count=2)
     shape = GridShape()
@@ -313,7 +312,7 @@ def test_signal_geometry_changes_start_a_new_epoch(tmp_path: Path) -> None:
     changed_simulation.configure_signal_grid(changed, [1.0, 2.0, 3.0])
     save_checkpoint(changed_simulation, second)
 
-    output = tmp_path / "epochs.cm2.dataset"
+    output = tmp_path / "epochs.dataset"
     summary = export_dataset([first, second], output)
 
     assert summary.signal_epochs == 2
@@ -325,10 +324,10 @@ def test_signal_geometry_changes_start_a_new_epoch(tmp_path: Path) -> None:
 @pytest.mark.parametrize("device_index", range(backend_device_count(BackendKind.CUDA)))
 def test_cuda_contact_derivation_runs_on_hardware(tmp_path: Path, device_index: int) -> None:
     simulation, _ = _simulation()
-    checkpoint = tmp_path / "frame.cm2.json"
+    checkpoint = tmp_path / "frame.json"
     save_checkpoint(simulation, checkpoint)
 
-    output = tmp_path / "cuda.cm2.dataset"
+    output = tmp_path / "cuda.dataset"
     summary = export_dataset(
         [checkpoint],
         output,
@@ -347,8 +346,8 @@ def test_cli_exports_an_analysis_dataset(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     simulation, _ = _simulation()
-    checkpoint = tmp_path / "frame.cm2.json"
-    output = tmp_path / "cli.cm2.dataset"
+    checkpoint = tmp_path / "frame.json"
+    output = tmp_path / "cli.dataset"
     save_checkpoint(simulation, checkpoint)
 
     status = main(["export-analysis", str(checkpoint), "--output", str(output)])
@@ -359,8 +358,8 @@ def test_cli_exports_an_analysis_dataset(
 
 
 def test_lazy_recipes_preserve_explicit_bins_weights_and_nulls(tmp_path: Path) -> None:
-    checkpoint = tmp_path / "recipes.cm2.json"
-    output = tmp_path / "recipes.cm2.dataset"
+    checkpoint = tmp_path / "recipes.json"
+    output = tmp_path / "recipes.dataset"
     save_checkpoint(_recipe_simulation(), checkpoint)
     export_dataset([checkpoint], output)
     dataset = open_dataset(output)
@@ -407,8 +406,8 @@ def test_neighbor_recipes_collapse_contact_rows_and_count_sisters(tmp_path: Path
     parent.radius = 0.5
     parent_id = simulation.add_cell(parent)
     daughters = simulation.divide_equal(parent_id)
-    checkpoint = tmp_path / "sisters.cm2.json"
-    output = tmp_path / "sisters.cm2.dataset"
+    checkpoint = tmp_path / "sisters.json"
+    output = tmp_path / "sisters.dataset"
     save_checkpoint(simulation, checkpoint)
     summary = export_dataset([checkpoint], output, include_contacts=True)
     dataset = open_dataset(output)
@@ -426,17 +425,17 @@ def test_neighbor_recipes_collapse_contact_rows_and_count_sisters(tmp_path: Path
 
 
 def test_dataset_reader_detects_manifest_and_table_tampering(tmp_path: Path) -> None:
-    checkpoint = tmp_path / "frame.cm2.json"
+    checkpoint = tmp_path / "frame.json"
     save_checkpoint(_recipe_simulation(), checkpoint)
 
-    table_output = tmp_path / "table-tamper.cm2.dataset"
+    table_output = tmp_path / "table-tamper.dataset"
     export_dataset([checkpoint], table_output)
     table = table_output / "cells.parquet"
     table.write_bytes(table.read_bytes() + b"tampered")
     with pytest.raises(AnalysisError, match="table digest"):
         open_dataset(table_output)
 
-    manifest_output = tmp_path / "manifest-tamper.cm2.dataset"
+    manifest_output = tmp_path / "manifest-tamper.dataset"
     export_dataset([checkpoint], manifest_output)
     manifest = _manifest(manifest_output)
     manifest["options"]["path_provenance"] = True
@@ -444,7 +443,7 @@ def test_dataset_reader_detects_manifest_and_table_tampering(tmp_path: Path) -> 
     with pytest.raises(AnalysisError, match="dataset_id"):
         open_dataset(manifest_output)
 
-    v1_output = tmp_path / "v1.cm2.dataset"
+    v1_output = tmp_path / "v1.dataset"
     export_dataset([checkpoint], v1_output)
     v1_manifest = _manifest(v1_output)
     v1_manifest["version"] = 1
@@ -472,8 +471,8 @@ def test_dataset_reader_detects_manifest_and_table_tampering(tmp_path: Path) -> 
     [[], [0.0], [0.0, 0.0], [0.0, float("inf")]],
 )
 def test_recipes_reject_invalid_edges(tmp_path: Path, edges: list[float]) -> None:
-    checkpoint = tmp_path / "frame.cm2.json"
-    output = tmp_path / "invalid-bins.cm2.dataset"
+    checkpoint = tmp_path / "frame.json"
+    output = tmp_path / "invalid-bins.dataset"
     save_checkpoint(_recipe_simulation(), checkpoint)
     export_dataset([checkpoint], output)
 

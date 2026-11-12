@@ -24,7 +24,7 @@ For an inside box, both endpoints remain sufficient because the box is convex an
 
 Box rows use the existing one-sided seven-DOF external Jacobian and flow through the mechanics operator unchanged. Backends advertise boxes through the existing `external_constraints` feature; the CPU, Metal, and CUDA constraint pipelines all evaluate the box kind natively, and the GPU payload packs the center into the geometry vector and the half-extents plus coefficient into the parameter vector without widening the constraint record.
 
-Boxes are stored in the simulation-owned constraint set with the same shared stable identifier space as planes and spheres. Checkpoint version 8 records a `boxes` array in the constraint envelope; versions 1 through 7 migrate to an empty box list.
+Boxes are stored in the simulation-owned constraint set with the same shared stable identifier space as planes and spheres. Checkpoints record a `boxes` array in the constraint envelope.
 
 ## Validation sequence
 

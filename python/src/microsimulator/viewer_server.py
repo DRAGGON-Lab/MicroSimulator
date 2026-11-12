@@ -85,7 +85,14 @@ class LiveSession:
         *,
         dt: float,
         checkpoint_output: str | Path | None = None,
+        overwrite: bool = False,
     ) -> None:
+        """Create a session that may save checkpoints to ``checkpoint_output``.
+
+        An existing ``checkpoint_output`` is rejected unless ``overwrite`` is
+        true. Every checkpoint the session saves replaces the previous one at
+        that path.
+        """
         if not math.isfinite(dt) or dt <= 0.0:
             raise LiveViewerError("time step must be finite and positive")
         self._factory = factory
@@ -93,6 +100,15 @@ class LiveSession:
         self._checkpoint_output = (
             Path(checkpoint_output).resolve() if checkpoint_output is not None else None
         )
+        if self._checkpoint_output is not None and self._checkpoint_output.exists():
+            if not overwrite:
+                raise LiveViewerError(
+                    f"checkpoint output already exists: {self._checkpoint_output}"
+                )
+            if not self._checkpoint_output.is_file():
+                raise LiveViewerError(
+                    f"checkpoint output is not a file: {self._checkpoint_output}"
+                )
         self._model, self._provenance = self._build()
         self._completed_steps = 0
         self._revision = 0

@@ -2,7 +2,7 @@
 
 #include "signals.cuh"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 namespace {
 
 struct TransportPoint {
@@ -235,4 +235,4 @@ void launch_signal_crank_nicolson_residual_terms(
       spacing, half_dt, signal_count, level_count);
 }
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 
 struct alignas(16) MechanicsDofsGpu {
   float4 linear_length;
@@ -71,4 +71,4 @@ constexpr std::uint32_t reduction_output_count(std::uint32_t count) {
 void launch_reduce_sum_blocks(const float* input, float* output, std::uint32_t element_count,
                               cudaStream_t stream);
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

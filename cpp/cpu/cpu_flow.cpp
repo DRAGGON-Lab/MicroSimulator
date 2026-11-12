@@ -10,11 +10,12 @@
 #include <utility>
 #include <vector>
 
-#include "cm/flow.hpp"
+#include "core/conjugate_gradient.hpp"
 #include "core/flexible_gmres.hpp"
 #include "core/flow_system.hpp"
+#include "microsimulator/flow.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 struct ConjugateGradientResult {
@@ -43,58 +44,47 @@ template <typename Apply>
   }
   std::vector<double> solution(right_hand_side.size(), 0.0);
   std::vector<double> residual(right_hand_side.begin(), right_hand_side.end());
-  const auto rhs_norm_squared = dot_product(residual, residual);
-  if (rhs_norm_squared == 0.0) {
-    return {.solution = std::move(solution)};
-  }
-  const auto rhs_norm = std::sqrt(rhs_norm_squared);
   std::vector<double> preconditioned(residual.size(), 0.0);
-  for (std::size_t index = 0; index < residual.size(); ++index) {
-    if (diagonal[index] > 0.0F) {
-      preconditioned[index] = residual[index] / diagonal[index];
-    }
-  }
-  auto direction = preconditioned;
-  auto rho = dot_product(residual, preconditioned);
-  auto relative = 1.0;
-  for (std::uint32_t iteration = 1; iteration <= max_iterations; ++iteration) {
-    std::vector<double> transformed;
-    apply(direction, transformed);
-    const auto curvature = dot_product(direction, transformed);
-    if (!std::isfinite(curvature) || curvature <= 0.0) {
-      throw std::runtime_error(std::string(label) +
-                               " conjugate gradient encountered non-positive curvature");
-    }
-    const auto alpha = rho / curvature;
-    for (std::size_t index = 0; index < solution.size(); ++index) {
-      solution[index] += alpha * direction[index];
-      residual[index] -= alpha * transformed[index];
-    }
-    relative = std::sqrt(dot_product(residual, residual)) / rhs_norm;
-    if (!std::isfinite(relative)) {
-      throw std::runtime_error(std::string(label) +
-                               " conjugate gradient produced a non-finite residual");
-    }
-    if (relative <= tolerance) {
-      return {
-          .solution = std::move(solution), .iterations = iteration, .relative_residual = relative};
-    }
+  std::vector<double> direction;
+  std::vector<double> transformed;
+  const auto precondition = [&] {
     for (std::size_t index = 0; index < residual.size(); ++index) {
       preconditioned[index] = diagonal[index] > 0.0F ? residual[index] / diagonal[index] : 0.0;
     }
-    const auto next_rho = dot_product(residual, preconditioned);
-    if (!std::isfinite(next_rho) || rho == 0.0) {
-      throw std::runtime_error(std::string(label) +
-                               " conjugate gradient encountered a preconditioner breakdown");
-    }
-    const auto beta = next_rho / rho;
-    for (std::size_t index = 0; index < direction.size(); ++index) {
-      direction[index] = preconditioned[index] + beta * direction[index];
-    }
-    rho = next_rho;
-  }
-  throw std::runtime_error(std::string(label) + " conjugate gradient did not converge: relative " +
-                           std::to_string(relative));
+  };
+  const detail::ConjugateGradientOperations operations{
+      .initialize =
+          [&] {
+            precondition();
+            direction = preconditioned;
+          },
+      .residual_dot_residual = [&] { return dot_product(residual, residual); },
+      .residual_dot_preconditioned = [&] { return dot_product(residual, preconditioned); },
+      .apply_direction =
+          [&] {
+            apply(direction, transformed);
+            return dot_product(direction, transformed);
+          },
+      .update =
+          [&](double alpha) {
+            for (std::size_t index = 0; index < solution.size(); ++index) {
+              solution[index] += alpha * direction[index];
+              residual[index] -= alpha * transformed[index];
+            }
+          },
+      .precondition = precondition,
+      .update_direction =
+          [&](double beta) {
+            for (std::size_t index = 0; index < direction.size(); ++index) {
+              direction[index] = preconditioned[index] + beta * direction[index];
+            }
+          },
+  };
+  const auto report =
+      detail::preconditioned_conjugate_gradient(operations, tolerance, max_iterations, label);
+  return {.solution = std::move(solution),
+          .iterations = report.iterations,
+          .relative_residual = report.relative_residual};
 }
 
 [[nodiscard]] std::array<const GridBoundary*, 2> axis_boundaries(const SignalGridSpec& spec,
@@ -321,4 +311,4 @@ ResolvedFlowResult solve_resolved_flow_cpu(const SignalGridSpec& spec, std::span
   };
 }
 
-}  // namespace cm
+}  // namespace microsimulator

@@ -16,7 +16,7 @@ A document is UTF-8 JSON with these root fields:
 }
 ```
 
-The digest is SHA-256 over the frame encoded with the RFC 8785 JSON Canonicalization Scheme (JCS). This gives Python and browser readers the same object-key, string, and ECMAScript-number representation. Readers reject missing, duplicate, and unknown fields. The maximum encoded size is 1 GiB.
+The digest is SHA-256 over the frame encoded with the RFC 8785 JSON Canonicalization Scheme (JCS). This gives the C++ core and browser readers the same object-key, string, and ECMAScript-number representation. Readers reject missing, duplicate, and unknown fields. The maximum encoded size is 1 GiB.
 
 ## Frame
 

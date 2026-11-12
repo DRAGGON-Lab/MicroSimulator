@@ -5,7 +5,7 @@
 
 ## Context
 
-The first native model contract returned a bare `Simulation`. That was enough for fixed growth, species, signal, and coupled-rate plans, but it could not own per-step regulation, division policy, mechanics scheduling, runtime randomness, or other evolving Python state. The legacy adapter implemented those concerns behind a concrete special case in the runner.
+The first native model contract returned a bare `Simulation`. That was enough for fixed growth, species, signal, and coupled-rate plans, but it could not own per-step regulation, division policy, mechanics scheduling, runtime randomness, or other evolving Python state.
 
 Checkpoint files must remain non-executable data. Restoring Python behavior therefore requires an explicitly selected model source, a verified source digest, and a clear division between native state and controller state.
 
@@ -17,7 +17,7 @@ Checkpoint files must remain non-executable data. Restoring Python behavior ther
 - `step(dt)` advances exactly one biological step; and
 - `controller_state()` returns complete finite, non-null JSON data for exact restart.
 
-The batch runner, data-only run manifests, and live viewer all operate on that same structural contract. They checkpoint the controller payload alongside the native state without serializing code or live Python objects. The legacy adapter conforms without inheritance and no longer receives special handling in the run loop.
+The batch runner, data-only run manifests, and live viewer all operate on that same structural contract. They checkpoint the controller payload alongside the native state without serializing code or live Python objects. Any object that satisfies the protocol conforms; no inheritance is required.
 
 A controller-backed model resumes through `resume(context, checkpoint)`. The operator must explicitly provide both `--model` and `--resume`; MicroSimulator does not execute a path found in checkpoint provenance. Before compiling the model, the runner verifies its SHA-256 against the checkpoint, reconstructs the original seed and immutable parameters, and rejects a mismatched resume context. The returned controller must own the exact `checkpoint.simulation` instance so native state cannot be silently rebuilt or discarded. A bare native checkpoint with a null controller remains resumable with `--resume` alone.
 
@@ -37,7 +37,7 @@ Each configured mechanics pass discovers contacts and solves through the selecte
 
 `UniformLengthDivision.jitter_z` controls only the random perturbation added to daughter orientation: `None` disables jitter, `False` adds XY-only jitter, and `True` adds XYZ jitter. Native normalization can change an inherited nonzero Z component even when the added Z perturbation is zero. Division places daughters along the parent's three-dimensional axis; subsequent contact relaxation and flow drift remain three-dimensional. See the [planarity diagnostics and tutorial audit](../tutorials/planarity.md) for reproducible examples and the limits of finite-height confinement.
 
-The standard payload records a stable model ID and version, completed-step counter, model JSON state, random stream, and every mechanics parameter. `NativeController.from_checkpoint` validates and restores that payload while the checkpoint's native state retains rate plans, signal grids, geometry, and lineage. Exact mechanics passes are a new explicit native-controller contract. The legacy adapter separately preserves the intent of `max_substeps` as a bounded new-contact frontier: it performs at most `max_substeps - 1` solves and stops when rediscovery produces no contact identity not seen earlier in the biological step. This distinction is checkpointed and supported by recorded colony trajectories; native models never inherit the legacy heuristic silently.
+The standard payload records a stable model ID and version, completed-step counter, model JSON state, random stream, and every mechanics parameter. `NativeController.from_checkpoint` validates and restores that payload while the checkpoint's native state retains rate plans, signal grids, geometry, and lineage. The number of mechanics passes is an explicit part of the native-controller contract.
 
 ## Consequences
 

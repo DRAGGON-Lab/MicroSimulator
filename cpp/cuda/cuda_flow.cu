@@ -12,12 +12,13 @@
 #include <utility>
 #include <vector>
 
+#include "core/conjugate_gradient.hpp"
 #include "core/flexible_gmres.hpp"
 #include "core/flow_system.hpp"
 #include "cuda_flow.cuh"
 #include "kernels/flow.cuh"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 namespace {
 
 void check_cuda(cudaError_t result, const char* operation) {
@@ -26,7 +27,9 @@ void check_cuda(cudaError_t result, const char* operation) {
   }
 }
 
-void check_launch(const char* operation) { check_cuda(cudaGetLastError(), operation); }
+void check_launch(const char* operation) {
+  check_cuda(cudaGetLastError(), operation);
+}
 
 std::uint32_t checked_count(std::size_t count, const char* description) {
   if (count == 0 || count > std::numeric_limits<std::uint32_t>::max()) {
@@ -83,9 +86,15 @@ class DeviceBuffer {
     }
   }
 
-  [[nodiscard]] T* data() noexcept { return data_; }
-  [[nodiscard]] const T* data() const noexcept { return data_; }
-  [[nodiscard]] std::size_t count() const noexcept { return count_; }
+  [[nodiscard]] T* data() noexcept {
+    return data_;
+  }
+  [[nodiscard]] const T* data() const noexcept {
+    return data_;
+  }
+  [[nodiscard]] std::size_t count() const noexcept {
+    return count_;
+  }
 
  private:
   T* data_{nullptr};
@@ -121,7 +130,8 @@ struct PcgWorkspace {
         transformed(count, "failed to allocate CUDA flow transformed vector"),
         partials((count + flow_reduction_width - 1) / flow_reduction_width,
                  "failed to allocate CUDA flow reduction partials"),
-        host_partials(partials.count()) {}
+        host_partials(partials.count()) {
+  }
 
   DeviceBuffer<float> residual;
   DeviceBuffer<float> preconditioned;
@@ -157,67 +167,55 @@ PcgReport solve_pcg(const float* right_hand_side, const float* diagonal, float* 
                     PcgWorkspace& workspace, std::uint32_t count, float tolerance,
                     std::uint32_t max_iterations, const char* label, cudaStream_t stream,
                     Apply&& apply) {
-  launch_flow_pcg_initialize(right_hand_side, diagonal, solution, workspace.residual.data(),
-                             workspace.preconditioned.data(), workspace.direction.data(), count,
-                             stream);
-  check_launch("failed to launch CUDA flow PCG initialization");
-  const auto rhs_norm_squared = dot(right_hand_side, right_hand_side, count, workspace, stream);
-  if (rhs_norm_squared == 0.0) {
-    return {};
-  }
-  const auto rhs_norm = std::sqrt(rhs_norm_squared);
-  auto rho =
-      dot(workspace.residual.data(), workspace.preconditioned.data(), count, workspace, stream);
-  auto relative = 1.0;
-  for (std::uint32_t iteration = 1; iteration <= max_iterations; ++iteration) {
-    apply(workspace.direction.data(), workspace.transformed.data());
-    const auto curvature =
-        dot(workspace.direction.data(), workspace.transformed.data(), count, workspace, stream);
-    if (!std::isfinite(curvature) || curvature <= 0.0) {
-      throw std::runtime_error(std::string(label) +
-                               " conjugate gradient encountered non-positive curvature");
-    }
-    const auto alpha_double = rho / curvature;
-    if (!std::isfinite(alpha_double) ||
-        std::abs(alpha_double) > std::numeric_limits<float>::max()) {
-      throw std::runtime_error(std::string(label) +
-                               " conjugate gradient produced a non-finite step");
-    }
-    const auto alpha = static_cast<float>(alpha_double);
-    launch_flow_pcg_update(solution, workspace.residual.data(), workspace.direction.data(),
-                           workspace.transformed.data(), alpha, count, stream);
-    check_launch("failed to launch CUDA flow PCG update");
-    const auto residual_squared =
-        dot(workspace.residual.data(), workspace.residual.data(), count, workspace, stream);
-    relative = std::sqrt(std::max(0.0, residual_squared)) / rhs_norm;
-    if (!std::isfinite(relative)) {
-      throw std::runtime_error(std::string(label) +
-                               " conjugate gradient produced a non-finite residual");
-    }
-    if (relative <= tolerance) {
-      return {.iterations = iteration, .relative_residual = static_cast<float>(relative)};
-    }
-    launch_flow_pcg_precondition(workspace.residual.data(), diagonal,
-                                 workspace.preconditioned.data(), count, stream);
-    check_launch("failed to launch CUDA flow PCG preconditioner");
-    const auto next_rho =
-        dot(workspace.residual.data(), workspace.preconditioned.data(), count, workspace, stream);
-    if (!std::isfinite(next_rho) || rho == 0.0) {
-      throw std::runtime_error(std::string(label) +
-                               " conjugate gradient encountered a preconditioner breakdown");
-    }
-    const auto beta_double = next_rho / rho;
-    if (!std::isfinite(beta_double) || std::abs(beta_double) > std::numeric_limits<float>::max()) {
-      throw std::runtime_error(std::string(label) +
-                               " conjugate gradient produced a non-finite direction");
-    }
-    launch_flow_pcg_direction(workspace.preconditioned.data(), workspace.direction.data(),
-                              static_cast<float>(beta_double), count, stream);
-    check_launch("failed to launch CUDA flow PCG direction update");
-    rho = next_rho;
-  }
-  throw std::runtime_error(std::string(label) + " conjugate gradient did not converge: relative " +
-                           std::to_string(relative));
+  const detail::ConjugateGradientOperations operations{
+      .initialize =
+          [&] {
+            launch_flow_pcg_initialize(right_hand_side, diagonal, solution,
+                                       workspace.residual.data(), workspace.preconditioned.data(),
+                                       workspace.direction.data(), count, stream);
+            check_launch("failed to launch CUDA flow PCG initialization");
+          },
+      .residual_dot_residual =
+          [&] {
+            return dot(workspace.residual.data(), workspace.residual.data(), count, workspace,
+                       stream);
+          },
+      .residual_dot_preconditioned =
+          [&] {
+            return dot(workspace.residual.data(), workspace.preconditioned.data(), count, workspace,
+                       stream);
+          },
+      .apply_direction =
+          [&] {
+            apply(workspace.direction.data(), workspace.transformed.data());
+            return dot(workspace.direction.data(), workspace.transformed.data(), count, workspace,
+                       stream);
+          },
+      .update =
+          [&](double alpha) {
+            launch_flow_pcg_update(solution, workspace.residual.data(), workspace.direction.data(),
+                                   workspace.transformed.data(), static_cast<float>(alpha), count,
+                                   stream);
+            check_launch("failed to launch CUDA flow PCG update");
+          },
+      .precondition =
+          [&] {
+            launch_flow_pcg_precondition(workspace.residual.data(), diagonal,
+                                         workspace.preconditioned.data(), count, stream);
+            check_launch("failed to launch CUDA flow PCG preconditioner");
+          },
+      .update_direction =
+          [&](double beta) {
+            launch_flow_pcg_direction(workspace.preconditioned.data(), workspace.direction.data(),
+                                      static_cast<float>(beta), count, stream);
+            check_launch("failed to launch CUDA flow PCG direction update");
+          },
+      .step_limit = std::numeric_limits<float>::max(),
+  };
+  const auto report =
+      detail::preconditioned_conjugate_gradient(operations, tolerance, max_iterations, label);
+  return {.iterations = report.iterations,
+          .relative_residual = static_cast<float>(report.relative_residual)};
 }
 
 struct DepthPcgWorkspace {
@@ -228,7 +226,8 @@ struct DepthPcgWorkspace {
         transformed(count, "CUDA depth transformed vector"),
         partials((count + flow_reduction_width - 1) / flow_reduction_width,
                  "CUDA depth reduction partials"),
-        host_partials(partials.count()) {}
+        host_partials(partials.count()) {
+  }
 
   DeviceBuffer<double> residual, preconditioned, direction, transformed, partials;
   std::vector<double> host_partials;
@@ -252,63 +251,57 @@ PcgReport solve_depth_pcg(const double* right_hand_side, const float* diagonal,
                           const float* mobility, double* solution, DepthPcgWorkspace& workspace,
                           const FlowGridParameters& grid, float tolerance,
                           std::uint32_t max_iterations, cudaStream_t stream) {
-  launch_depth_flow_pcg_initialize(right_hand_side, diagonal, solution, workspace.residual.data(),
-                                   workspace.preconditioned.data(), workspace.direction.data(),
-                                   grid.site_count, stream);
-  check_launch("failed to initialize CUDA depth PCG");
-  const auto rhs_norm_squared =
-      depth_dot(right_hand_side, right_hand_side, grid.site_count, workspace, stream);
-  if (rhs_norm_squared == 0.0) return {};
-  const auto rhs_norm = std::sqrt(rhs_norm_squared);
-  auto rho = depth_dot(workspace.residual.data(), workspace.preconditioned.data(), grid.site_count,
-                       workspace, stream);
-  double relative = 1.0;
-  for (std::uint32_t iteration = 1; iteration <= max_iterations; ++iteration) {
-    launch_depth_flow_operator_double(workspace.direction.data(), mobility,
-                                      workspace.transformed.data(), grid, stream);
-    check_launch("failed to launch CUDA depth operator");
-    const auto curvature = depth_dot(workspace.direction.data(), workspace.transformed.data(),
-                                     grid.site_count, workspace, stream);
-    if (!std::isfinite(curvature) || curvature <= 0.0) {
-      throw std::runtime_error(
-          "CUDA depth-averaged flow conjugate gradient encountered non-positive curvature");
-    }
-    const auto alpha = rho / curvature;
-    if (!std::isfinite(alpha)) {
-      throw std::runtime_error(
-          "CUDA depth-averaged flow conjugate gradient produced a non-finite step");
-    }
-    launch_depth_flow_pcg_update(solution, workspace.residual.data(), workspace.direction.data(),
-                                 workspace.transformed.data(), alpha, grid.site_count, stream);
-    check_launch("failed to update CUDA depth PCG");
-    const auto residual_squared = depth_dot(workspace.residual.data(), workspace.residual.data(),
-                                            grid.site_count, workspace, stream);
-    relative = std::sqrt(std::max(0.0, residual_squared)) / rhs_norm;
-    if (!std::isfinite(relative)) {
-      throw std::runtime_error(
-          "CUDA depth-averaged flow conjugate gradient produced a non-finite residual");
-    }
-    if (relative <= tolerance) {
-      return {.iterations = iteration, .relative_residual = static_cast<float>(relative)};
-    }
-    launch_depth_flow_pcg_precondition(workspace.residual.data(), diagonal,
-                                       workspace.preconditioned.data(), grid.site_count, stream);
-    check_launch("failed to precondition CUDA depth residual");
-    const auto next_rho = depth_dot(workspace.residual.data(), workspace.preconditioned.data(),
-                                    grid.site_count, workspace, stream);
-    if (!std::isfinite(next_rho) || rho == 0.0) {
-      throw std::runtime_error(
-          "CUDA depth-averaged flow conjugate gradient encountered a preconditioner breakdown");
-    }
-    const auto beta = next_rho / rho;
-    launch_depth_flow_pcg_direction(workspace.preconditioned.data(), workspace.direction.data(),
-                                    beta, grid.site_count, stream);
-    check_launch("failed to update CUDA depth direction");
-    rho = next_rho;
-  }
-  throw std::runtime_error(
-      "CUDA depth-averaged flow conjugate gradient did not converge: relative " +
-      std::to_string(relative));
+  const auto count = grid.site_count;
+  const detail::ConjugateGradientOperations operations{
+      .initialize =
+          [&] {
+            launch_depth_flow_pcg_initialize(
+                right_hand_side, diagonal, solution, workspace.residual.data(),
+                workspace.preconditioned.data(), workspace.direction.data(), count, stream);
+            check_launch("failed to initialize CUDA depth PCG");
+          },
+      .residual_dot_residual =
+          [&] {
+            return depth_dot(workspace.residual.data(), workspace.residual.data(), count, workspace,
+                             stream);
+          },
+      .residual_dot_preconditioned =
+          [&] {
+            return depth_dot(workspace.residual.data(), workspace.preconditioned.data(), count,
+                             workspace, stream);
+          },
+      .apply_direction =
+          [&] {
+            launch_depth_flow_operator_double(workspace.direction.data(), mobility,
+                                              workspace.transformed.data(), grid, stream);
+            check_launch("failed to launch CUDA depth operator");
+            return depth_dot(workspace.direction.data(), workspace.transformed.data(), count,
+                             workspace, stream);
+          },
+      .update =
+          [&](double alpha) {
+            launch_depth_flow_pcg_update(solution, workspace.residual.data(),
+                                         workspace.direction.data(), workspace.transformed.data(),
+                                         alpha, count, stream);
+            check_launch("failed to update CUDA depth PCG");
+          },
+      .precondition =
+          [&] {
+            launch_depth_flow_pcg_precondition(workspace.residual.data(), diagonal,
+                                               workspace.preconditioned.data(), count, stream);
+            check_launch("failed to precondition CUDA depth residual");
+          },
+      .update_direction =
+          [&](double beta) {
+            launch_depth_flow_pcg_direction(workspace.preconditioned.data(),
+                                            workspace.direction.data(), beta, count, stream);
+            check_launch("failed to update CUDA depth direction");
+          },
+  };
+  const auto report = detail::preconditioned_conjugate_gradient(
+      operations, tolerance, max_iterations, "CUDA depth-averaged flow");
+  return {.iterations = report.iterations,
+          .relative_residual = static_cast<float>(report.relative_residual)};
 }
 
 }  // namespace
@@ -393,7 +386,8 @@ ResolvedFlowResult solve_resolved_flow(const SignalGridSpec& spec, std::span<con
   struct Block {
     DeviceBuffer<float> u, p;
     Block(std::size_t nu, std::size_t np)
-        : u(nu, "CUDA Krylov velocity"), p(np, "CUDA Krylov pressure") {}
+        : u(nu, "CUDA Krylov velocity"), p(np, "CUDA Krylov pressure") {
+    }
   };
   using Vector = std::shared_ptr<Block>;
   const double continuity_scale =
@@ -487,4 +481,4 @@ ResolvedFlowResult solve_resolved_flow(const SignalGridSpec& spec, std::span<con
   };
 }
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

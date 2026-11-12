@@ -40,9 +40,9 @@ int main() {
       auto* output = b.data;
       auto remaining = count;
       while (remaining > 1) {
-        cm::cuda::launch_reduce_sum_blocks(input, output, remaining, nullptr);
+        microsimulator::cuda::launch_reduce_sum_blocks(input, output, remaining, nullptr);
         check(cudaGetLastError());
-        remaining = cm::cuda::reduction_output_count(remaining);
+        remaining = microsimulator::cuda::reduction_output_count(remaining);
         std::swap(input, output);
       }
       float actual;

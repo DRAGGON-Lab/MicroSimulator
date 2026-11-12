@@ -1,3 +1,4 @@
+# pyright: reportUnknownMemberType=false
 """Signed growth, retry reporting, and transient solve state."""
 
 from __future__ import annotations
@@ -238,7 +239,7 @@ def test_blocked_contact_cluster_preserves_independent_growth(backend: BackendKi
     if not backend_available(backend):
         pytest.skip("backend unavailable")
     simulation = Simulation(backend)
-    blocked_ids = []
+    blocked_ids: list[int] = []
     for y in (0.0, 1.4):
         cell = CellInit()
         cell.position = Vec3(0.0, y, 0.0)

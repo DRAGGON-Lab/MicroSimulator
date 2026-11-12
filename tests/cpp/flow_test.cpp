@@ -7,24 +7,24 @@
 #include <vector>
 
 #include "../../cpp/core/flow_system.hpp"
-#include "cm/simulation.hpp"
+#include "microsimulator/simulation.hpp"
 
 namespace {
 
-cm::SignalGridSpec duct(std::uint32_t nx, std::uint32_t ny, std::uint32_t nz,
-                        cm::Vec3 spacing = {1.0F, 1.0F, 1.0F}) {
-  cm::SignalGridSpec spec;
+microsimulator::SignalGridSpec duct(std::uint32_t nx, std::uint32_t ny, std::uint32_t nz,
+                                    microsimulator::Vec3 spacing = {1.0F, 1.0F, 1.0F}) {
+  microsimulator::SignalGridSpec spec;
   spec.signal_count = 1;
   spec.shape = {.x = nx, .y = ny, .z = nz};
   spec.spacing = spacing;
   spec.diffusion = {0.0F};
   spec.advection = {{0.0F, 0.0F, 0.0F}};
-  spec.y_lower = {.kind = cm::GridBoundaryKind::fixed, .values = {0.0F}};
-  spec.y_upper = {.kind = cm::GridBoundaryKind::fixed, .values = {0.0F}};
+  spec.y_lower = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {0.0F}};
+  spec.y_upper = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {0.0F}};
   return spec;
 }
 
-std::size_t y_face(const cm::SignalGridSpec& spec, std::uint32_t x, std::uint32_t y,
+std::size_t y_face(const microsimulator::SignalGridSpec& spec, std::uint32_t x, std::uint32_t y,
                    std::uint32_t z) {
   return (static_cast<std::size_t>(x) * (spec.shape.y + 1) + y) * spec.shape.z + z;
 }
@@ -48,7 +48,8 @@ int main() {
     spec.obstacles.assign(spec.site_count(), 0);
     spec.obstacles[22] = 1;
     std::vector<float> drag(spec.site_count(), 0.3F);
-    const cm::detail::ResolvedFlowSystem system(spec, drag, cm::FlowAxis::y);
+    const microsimulator::detail::ResolvedFlowSystem system(spec, drag,
+                                                            microsimulator::FlowAxis::y);
     std::vector<double> u(system.active().size()), v(u.size()), p(spec.site_count());
     for (std::size_t i = 0; i < u.size(); ++i) {
       u[i] = system.active()[i] ? std::sin(static_cast<double>(i)) : 0;
@@ -70,10 +71,10 @@ int main() {
   }
   {
     const auto spec = duct(4, 8, 3);
-    cm::Simulation simulation;
+    microsimulator::Simulation simulation;
     const auto result = simulation.solve_depth_averaged_flow(
-        spec, {}, {.mean_inlet_speed = 5.0F, .axis = cm::FlowAxis::y});
-    assert(simulation.supports(cm::BackendFeature::depth_averaged_flow));
+        spec, {}, {.mean_inlet_speed = 5.0F, .axis = microsimulator::FlowAxis::y});
+    assert(simulation.supports(microsimulator::BackendFeature::depth_averaged_flow));
     assert(result.report.iterations > 0);
     assert(result.report.relative_residual <= 1.0e-6F);
     assert(std::ranges::all_of(result.field.y_faces,
@@ -92,8 +93,8 @@ int main() {
         mobility[(static_cast<std::size_t>(x) * spec.shape.y) + y] = x == 0 ? 1.0F : 3.0F;
       }
     }
-    const auto result = cm::solve_depth_averaged_flow_cpu(
-        spec, mobility, {.mean_inlet_speed = 4.0F, .axis = cm::FlowAxis::y});
+    const auto result = microsimulator::solve_depth_averaged_flow_cpu(
+        spec, mobility, {.mean_inlet_speed = 4.0F, .axis = microsimulator::FlowAxis::y});
     const auto slow = result.field.y_faces[y_face(spec, 0, 3, 0)];
     const auto fast = result.field.y_faces[y_face(spec, 1, 3, 0)];
     assert(std::abs((fast / slow) - 3.0F) <= 2.0e-5F);
@@ -102,10 +103,10 @@ int main() {
   {
     constexpr std::uint32_t nx = 8;
     const auto spec = duct(nx, 6, 1, {1.0F / static_cast<float>(nx), 0.25F, 1.0F});
-    cm::Simulation simulation;
+    microsimulator::Simulation simulation;
     const auto result = simulation.solve_resolved_flow(
-        spec, {}, {.mean_inlet_speed = 1.0F, .axis = cm::FlowAxis::y});
-    assert(simulation.supports(cm::BackendFeature::resolved_flow));
+        spec, {}, {.mean_inlet_speed = 1.0F, .axis = microsimulator::FlowAxis::y});
+    assert(simulation.supports(microsimulator::BackendFeature::resolved_flow));
     float max_error = 0.0F;
     for (std::uint32_t x = 0; x < nx; ++x) {
       const auto position = (static_cast<float>(x) + 0.5F) / static_cast<float>(nx);
@@ -127,8 +128,8 @@ int main() {
       spec.obstacles[(static_cast<std::size_t>(x) * spec.shape.y) + 2] = 1;
     }
     assert_throws<std::runtime_error>(
-        [&] { static_cast<void>(cm::solve_depth_averaged_flow_cpu(spec, {})); });
+        [&] { static_cast<void>(microsimulator::solve_depth_averaged_flow_cpu(spec, {})); });
     assert_throws<std::runtime_error>(
-        [&] { static_cast<void>(cm::solve_resolved_flow_cpu(spec, {})); });
+        [&] { static_cast<void>(microsimulator::solve_resolved_flow_cpu(spec, {})); });
   }
 }

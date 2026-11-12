@@ -1,4 +1,4 @@
-"""Native ports of the CellModeller grid-signaling tutorials.
+"""Grid-signaling teaching models.
 
 The ``scenario`` parameter selects ``single_gene``, ``communication``, or
 ``mutualism``.

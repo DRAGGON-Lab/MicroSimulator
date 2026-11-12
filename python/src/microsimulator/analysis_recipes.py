@@ -201,7 +201,7 @@ def line_density_xy(
 ) -> pl.LazyFrame:
     """Sum full capsule length in explicit XY bins for each frame.
 
-    The result is the legacy notebook's length-weighted histogram proxy. It is
+    The result is a length-weighted histogram proxy. It is
     not area, volume, biomass, packing fraction, or normalized spatial density.
     """
 

@@ -4,9 +4,9 @@
 #include <stdexcept>
 #include <vector>
 
-#include "cm/mechanics.hpp"
+#include "microsimulator/mechanics.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 struct GeometryUpdate {
@@ -78,15 +78,14 @@ void integrate_mechanics_result(WorldState& state, const MechanicsSolveResult& r
     }
     float applied_length_increment = 0.0F;
     if (!desired_length_increments.empty()) {
-      applied_length_increment =
-          fixed || desired_increment < 0.0F
-              ? desired_increment
-              : std::max(0.0F, desired_increment + correction.length);
+      applied_length_increment = fixed || desired_increment < 0.0F
+                                     ? desired_increment
+                                     : std::max(0.0F, desired_increment + correction.length);
     }
     const auto new_position = fixed ? position : position + correction.translation;
-    const auto new_direction = fixed ? direction
-                                     : rotate_axis_angle(direction, correction.rotation,
-                                                         parameters.max_rotation_radians);
+    const auto new_direction =
+        fixed ? direction
+              : rotate_axis_angle(direction, correction.rotation, parameters.max_rotation_radians);
     const auto new_length = geometry.lengths[index] + applied_length_increment;
     if (!finite(new_position) || !finite(new_direction) || !std::isfinite(new_length) ||
         new_length < 0.0F) {
@@ -100,4 +99,4 @@ void integrate_mechanics_result(WorldState& state, const MechanicsSolveResult& r
   }
 }
 
-}  // namespace cm
+}  // namespace microsimulator

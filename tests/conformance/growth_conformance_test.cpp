@@ -3,10 +3,12 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "backend_devices.hpp"
-#include "cm/simulation.hpp"
+#include "microsimulator/simulation.hpp"
 
 namespace {
 
@@ -20,9 +22,9 @@ bool close(float actual, float expected) {
   return std::abs(actual - expected) <= tolerance;
 }
 
-void run_growth_scenario(cm::BackendKind backend, std::uint32_t device_index) {
-  cm::Simulation simulation(backend, cell_count, 0, device_index);
-  std::vector<cm::CellId> ids;
+void run_growth_scenario(microsimulator::BackendKind backend, std::uint32_t device_index) {
+  microsimulator::Simulation simulation(backend, cell_count, 0, device_index);
+  std::vector<microsimulator::CellId> ids;
   std::vector<float> expected_lengths;
   std::vector<float> growth_rates;
   ids.reserve(cell_count);
@@ -31,7 +33,7 @@ void run_growth_scenario(cm::BackendKind backend, std::uint32_t device_index) {
 
   simulation.step(0.0F);
   for (std::size_t index = 0; index < cell_count; ++index) {
-    cm::CellInit cell;
+    microsimulator::CellInit cell;
     cell.position = {
         static_cast<float>(index) * 0.25F,
         static_cast<float>(index % 5) * -0.125F,
@@ -43,7 +45,7 @@ void run_growth_scenario(cm::BackendKind backend, std::uint32_t device_index) {
     cell.cell_type = static_cast<std::int32_t>(index % 4);
 
     const auto id = simulation.add_cell(cell);
-    assert(id == static_cast<cm::CellId>(index + 1));
+    assert(id == static_cast<microsimulator::CellId>(index + 1));
     ids.push_back(id);
     expected_lengths.push_back(cell.length);
     growth_rates.push_back(cell.growth_rate);
@@ -63,7 +65,7 @@ void run_growth_scenario(cm::BackendKind backend, std::uint32_t device_index) {
   for (std::size_t index = 0; index < cell_count; ++index) {
     const auto cell = simulation.cell(ids[index]);
     assert(cell.id == ids[index]);
-    assert(cell.slot == static_cast<cm::Slot>(index));
+    assert(cell.slot == static_cast<microsimulator::Slot>(index));
     assert(close(cell.length, expected_lengths[index]));
     assert(cell.growth_rate == growth_rates[index]);
     assert(cell.cell_type == static_cast<std::int32_t>(index % 4));
@@ -78,9 +80,38 @@ void run_growth_scenario(cm::BackendKind backend, std::uint32_t device_index) {
   simulation.validate();
 }
 
+void run_invalid_growth_scenario(microsimulator::BackendKind backend, std::uint32_t device_index) {
+  for (const auto [growth_rate, dt] : {std::pair{-2.0F, 1.0F}, std::pair{1.0e30F, 1.0e30F}}) {
+    microsimulator::Simulation simulation(backend, cell_count, 0, device_index);
+    std::vector<microsimulator::CellId> ids;
+    ids.reserve(cell_count);
+    for (std::size_t index = 0; index < cell_count; ++index) {
+      microsimulator::CellInit cell;
+      cell.position = {static_cast<float>(index) * 0.25F, 0.0F, 0.0F};
+      cell.length = 1.0F + static_cast<float>(index % 17) * 0.1F;
+      cell.growth_rate = index == cell_count / 2 ? growth_rate : 0.025F;
+      ids.push_back(simulation.add_cell(cell));
+    }
+
+    bool rejected = false;
+    try {
+      simulation.step(dt);
+    } catch (const std::runtime_error&) {
+      rejected = true;
+    }
+    assert(rejected);
+    assert(simulation.time() == 0.0);
+    for (std::size_t index = 0; index < cell_count; ++index) {
+      assert(simulation.cell(ids[index]).length == 1.0F + static_cast<float>(index % 17) * 0.1F);
+    }
+    simulation.validate();
+  }
+}
+
 }  // namespace
 
 int main() {
-  cm::test::for_each_backend_device(run_growth_scenario);
+  microsimulator::test::for_each_backend_device(run_growth_scenario);
+  microsimulator::test::for_each_backend_device(run_invalid_growth_scenario);
   return 0;
 }

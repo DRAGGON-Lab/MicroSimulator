@@ -12,6 +12,8 @@ length[n + 1] = length[n] + growth_rate * length[n] * dt
 
 Lengths use an absolute tolerance of `1e-6` and a relative tolerance of `1e-6`. Stable identifiers, compact slots, growth rates, cell types, backend identity, and structural validation are exact checks.
 
+A second growth scenario gives one of the 513 cells a growth rate whose step would produce a negative or non-finite length. Every device must reject the step with an error and leave all lengths and the simulation time exactly unchanged.
+
 A backend only earns conformance when this executable passes with that native backend enabled on its real hardware. A CPU-only run validates the scenario and reference implementation, but says nothing about GPU conformance.
 
 ## Backend contract
@@ -20,7 +22,7 @@ The backend contract scenario constructs every enumerated device and requires it
 
 ## Flow
 
-The flow scenario exercises two native domain operations. The depth-averaged case uses a 5-by-8-by-2 anisotropic grid with an internal obstacle and spatially varying mobility. The resolved case uses a 6-by-7-by-2 anisotropic grid with a two-layer Brinkman drag field. Every backend solves through its own matrix-free operator and Krylov kernels, reports convergence, and returns all face components. Velocity fields are compared with the CPU reference using absolute and relative tolerances of `8e-4`; the resolved divergence RMS must remain below `5e-5`, and the minimum transverse gap is exact. CPU-only execution validates the reference fixture, Metal conformance requires execution on an Apple GPU, and CUDA conformance requires execution on an NVIDIA GPU.
+The flow scenario exercises two native domain operations. The depth-averaged case uses a 5-by-8-by-2 anisotropic grid with an internal obstacle and spatially varying mobility. The resolved case uses a 6-by-7-by-2 anisotropic grid with a two-layer Brinkman drag field. Every backend solves through its own matrix-free operator and Krylov kernels, reports convergence, and returns all face components. Velocity fields are compared with the CPU reference using absolute and relative tolerances of `8e-4`; the resolved divergence RMS must remain below `5e-5`, and the minimum transverse gap is exact. A second depth-averaged case solves a 64-by-64 sheet whose mobility spans three decades around square pillars. Single-precision conjugate gradient drifts by more than `1e-4` of the peak speed on that system, so its velocities must match the CPU reference within `1e-6` of the peak speed: every backend runs the depth-averaged solve at double precision, which Metal provides through double-word arithmetic. CPU-only execution validates the reference fixture, Metal conformance requires execution on an Apple GPU, and CUDA conformance requires execution on an NVIDIA GPU.
 
 ## Species
 
@@ -44,11 +46,11 @@ The `occupancy_conformance` scenario explicitly selects every enumerated Metal/C
 
 ## Coupled rates
 
-The coupled scenario uses 513 heterogeneous cells, three intracellular species, and two signals on a 9-by-7-by-5 anisotropic lattice. It combines post-growth dilution, fractional old-field sampling, typed species and signal outputs, transport, and repeated trilinear scatter destinations in one step. Cell state uses an absolute tolerance of `2e-5` and grid state uses `1e-4` to allow backend-specific floating-point accumulation order. An available backend is skipped until it advertises the complete native coupled operation; after advertisement this executable becomes its hardware gate.
+The coupled scenario uses 513 heterogeneous cells, three intracellular species, and two signals on a 9-by-7-by-5 anisotropic lattice. It combines post-growth dilution, fractional old-field sampling, typed species and signal outputs, transport, and repeated trilinear scatter destinations in one step. Cell state uses an absolute tolerance of `2e-5` and grid state uses `1e-4` to allow backend-specific floating-point accumulation order. A crowded scenario places 400 cells on a 6-by-1-by-4 lattice with one obstacle: most share a single voxel, and the rest sit on lattice planes and on the upper domain faces, so many cells scatter into the same few sites and stencils with one site per axis are exercised. An available backend is skipped until it advertises the complete native coupled operation; after advertisement this executable becomes its hardware gate.
 
 ## Checkpoint resume
 
-The checkpoint scenario captures a divided colony with a typed species plan, mixed constraints, inactive ancestry, and nontrivial identity frontiers. Every available backend must restore all persisted host fields exactly, then execute the next growth/species step within `1e-5` of a fresh CPU restore. The Python suite separately verifies the JSON envelope, atomic write behavior, provenance, integrity digest, and malformed-input rejection.
+The checkpoint scenario captures a divided colony with a typed species plan, mixed constraints, inactive ancestry, and nontrivial identity frontiers. Every available backend must restore all persisted host fields exactly, then execute the next growth/species step within `1e-5` of a fresh CPU restore. The `checkpoint_file`, `json`, `sha256`, and `atomic_file` tests in `tests/cpp` verify the JSON envelope, strict parsing, atomic write behavior, integrity digests, and malformed-input rejection natively; the Python suite verifies the same through the bindings, together with controller and provenance data.
 
 ## Cell contacts
 

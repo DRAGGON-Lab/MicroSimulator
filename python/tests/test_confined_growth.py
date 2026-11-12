@@ -1,3 +1,4 @@
+# pyright: reportUnknownMemberType=false
 """Coupled growth must respect a closed, nutrient-rich chamber."""
 
 from __future__ import annotations
@@ -77,8 +78,8 @@ def test_nutrient_rich_chamber_contains_cells_and_stalls_growth(backend: Backend
     if not backend_available(backend):
         pytest.skip(f"{backend} unavailable")
     model = chamber(backend)
-    totals = []
-    counts = []
+    totals: list[float] = []
+    counts: list[int] = []
     for step in range(120):
         previous = model.simulation.cells()
         model.step(0.05)
@@ -252,9 +253,10 @@ def test_square_trap_daughters_slide_until_unsuppressible_jam() -> None:
     model, _ = build_model(
         Path("examples/square_trap.py"), ModelContext(BackendKind.CPU, 0, seed=42)
     )
+    assert isinstance(model, NativeController)
     maximum_count = 0
     maximum_lateral_offset = 0.0
-    totals = []
+    totals: list[float] = []
     jammed = False
     for _ in range(150):
         before = model.controller_state()

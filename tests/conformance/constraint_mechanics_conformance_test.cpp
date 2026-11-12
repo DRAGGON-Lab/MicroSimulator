@@ -5,7 +5,7 @@
 #include <stdexcept>
 
 #include "backend_devices.hpp"
-#include "cm/simulation.hpp"
+#include "microsimulator/simulation.hpp"
 
 namespace {
 
@@ -17,24 +17,24 @@ bool close(float actual, float expected) {
   return std::abs(actual - expected) <= tolerance;
 }
 
-using Fixture = void (*)(cm::Simulation&);
+using Fixture = void (*)(microsimulator::Simulation&);
 
-void populate_plane(cm::Simulation& simulation) {
-  cm::CellInit cell;
+void populate_plane(microsimulator::Simulation& simulation) {
+  microsimulator::CellInit cell;
   cell.position = {0.0F, 0.4F, 0.0F};
   cell.direction = {1.0F, 0.0F, 0.0F};
   cell.length = 2.0F;
   cell.radius = 0.5F;
   simulation.add_cell(cell);
 
-  cm::PlaneConstraintInit plane;
+  microsimulator::PlaneConstraintInit plane;
   plane.inward_normal = {0.0F, 1.0F, 0.0F};
   plane.coefficient = 1.25F;
   simulation.add_plane_constraint(plane);
 }
 
-void populate_fixed_plane(cm::Simulation& simulation) {
-  cm::CellInit cell;
+void populate_fixed_plane(microsimulator::Simulation& simulation) {
+  microsimulator::CellInit cell;
   cell.position = {0.0F, 0.4F, 0.0F};
   cell.direction = {1.0F, 0.0F, 0.0F};
   cell.length = 2.0F;
@@ -42,132 +42,132 @@ void populate_fixed_plane(cm::Simulation& simulation) {
   cell.fixed = true;
   simulation.add_cell(cell);
 
-  cm::PlaneConstraintInit plane;
+  microsimulator::PlaneConstraintInit plane;
   plane.inward_normal = {0.0F, 1.0F, 0.0F};
   plane.coefficient = 1.25F;
   simulation.add_plane_constraint(plane);
 }
 
-void populate_outside_sphere(cm::Simulation& simulation) {
-  cm::CellInit cell;
+void populate_outside_sphere(microsimulator::Simulation& simulation) {
+  microsimulator::CellInit cell;
   cell.position = {1.2F, 0.0F, 0.0F};
   cell.length = 0.0F;
   cell.radius = 0.5F;
   simulation.add_cell(cell);
 
-  cm::SphereConstraintInit sphere;
+  microsimulator::SphereConstraintInit sphere;
   sphere.radius = 1.0F;
   sphere.coefficient = 0.75F;
   simulation.add_sphere_constraint(sphere);
 }
 
-void populate_inside_sphere(cm::Simulation& simulation) {
-  cm::CellInit cell;
+void populate_inside_sphere(microsimulator::Simulation& simulation) {
+  microsimulator::CellInit cell;
   cell.position = {4.8F, 0.0F, 0.0F};
   cell.length = 0.0F;
   cell.radius = 0.5F;
   simulation.add_cell(cell);
 
-  cm::SphereConstraintInit sphere;
+  microsimulator::SphereConstraintInit sphere;
   sphere.radius = 5.0F;
-  sphere.allowed_region = cm::SphereRegion::inside;
+  sphere.allowed_region = microsimulator::SphereRegion::inside;
   simulation.add_sphere_constraint(sphere);
 }
 
-void populate_outside_box(cm::Simulation& simulation) {
-  cm::CellInit cell;
+void populate_outside_box(microsimulator::Simulation& simulation) {
+  microsimulator::CellInit cell;
   cell.position = {1.4F, 0.0F, 0.0F};
   cell.direction = {0.0F, 1.0F, 0.0F};
   cell.length = 2.0F;
   cell.radius = 0.5F;
   simulation.add_cell(cell);
 
-  cm::BoxConstraintInit box;
+  microsimulator::BoxConstraintInit box;
   box.coefficient = 1.25F;
   simulation.add_box_constraint(box);
 }
 
-void populate_inside_box(cm::Simulation& simulation) {
-  cm::CellInit cell;
+void populate_inside_box(microsimulator::Simulation& simulation) {
+  microsimulator::CellInit cell;
   cell.position = {4.8F, 0.0F, 0.0F};
   cell.length = 0.0F;
   cell.radius = 0.5F;
   simulation.add_cell(cell);
 
-  cm::BoxConstraintInit box;
+  microsimulator::BoxConstraintInit box;
   box.half_extents = {5.0F, 5.0F, 5.0F};
-  box.allowed_region = cm::ConstraintRegion::inside;
+  box.allowed_region = microsimulator::ConstraintRegion::inside;
   simulation.add_box_constraint(box);
 }
 
-void populate_outside_cylinder(cm::Simulation& simulation) {
-  cm::CellInit cell;
+void populate_outside_cylinder(microsimulator::Simulation& simulation) {
+  microsimulator::CellInit cell;
   cell.position = {1.4F, 0.0F, 0.0F};
   cell.direction = {0.0F, 0.0F, 1.0F};
   cell.length = 2.0F;
   cell.radius = 0.5F;
   simulation.add_cell(cell);
 
-  cm::CylinderConstraintInit cylinder;
+  microsimulator::CylinderConstraintInit cylinder;
   cylinder.coefficient = 1.25F;
   simulation.add_cylinder_constraint(cylinder);
 }
 
-void populate_inside_cylinder(cm::Simulation& simulation) {
-  cm::CellInit cell;
+void populate_inside_cylinder(microsimulator::Simulation& simulation) {
+  microsimulator::CellInit cell;
   cell.position = {4.8F, 0.0F, 0.0F};
   cell.length = 0.0F;
   cell.radius = 0.5F;
   simulation.add_cell(cell);
 
-  cm::CylinderConstraintInit cylinder;
+  microsimulator::CylinderConstraintInit cylinder;
   cylinder.radius = 5.0F;
   cylinder.half_height = 5.0F;
-  cylinder.allowed_region = cm::ConstraintRegion::inside;
+  cylinder.allowed_region = microsimulator::ConstraintRegion::inside;
   simulation.add_cylinder_constraint(cylinder);
 }
 
-void populate_midspan_sphere(cm::Simulation& simulation) {
-  cm::CellInit cell;
+void populate_midspan_sphere(microsimulator::Simulation& simulation) {
+  microsimulator::CellInit cell;
   cell.position = {0.0F, 0.75F, 0.0F};
   cell.direction = {1.0F, 0.0F, 0.0F};
   cell.length = 3.5F;
   cell.radius = 0.5F;
   simulation.add_cell(cell);
 
-  cm::SphereConstraintInit sphere;
+  microsimulator::SphereConstraintInit sphere;
   simulation.add_sphere_constraint(sphere);
 }
 
-void populate_midspan_box(cm::Simulation& simulation) {
-  cm::CellInit cell;
+void populate_midspan_box(microsimulator::Simulation& simulation) {
+  microsimulator::CellInit cell;
   cell.position = {0.0F, 0.75F, 0.0F};
   cell.direction = {1.0F, 0.0F, 0.0F};
   cell.length = 3.5F;
   cell.radius = 0.5F;
   simulation.add_cell(cell);
 
-  cm::BoxConstraintInit box;
+  microsimulator::BoxConstraintInit box;
   box.half_extents = {1.0F, 1.0F, 5.0F};
   simulation.add_box_constraint(box);
 }
 
-void populate_midspan_cylinder(cm::Simulation& simulation) {
-  cm::CellInit cell;
+void populate_midspan_cylinder(microsimulator::Simulation& simulation) {
+  microsimulator::CellInit cell;
   cell.position = {0.0F, 0.75F, 0.0F};
   cell.direction = {1.0F, 0.0F, 0.0F};
   cell.length = 3.5F;
   cell.radius = 0.5F;
   simulation.add_cell(cell);
 
-  cm::CylinderConstraintInit cylinder;
+  microsimulator::CylinderConstraintInit cylinder;
   cylinder.center = {0.4F, 0.0F, 0.0F};
   cylinder.half_height = 5.0F;
   simulation.add_cylinder_constraint(cylinder);
 }
 
-void compare_results(const cm::MechanicsSolveResult& actual,
-                     const cm::MechanicsSolveResult& expected) {
+void compare_results(const microsimulator::MechanicsSolveResult& actual,
+                     const microsimulator::MechanicsSolveResult& expected) {
   assert(actual.report.status == expected.report.status);
   assert(actual.report.breakdown == expected.report.breakdown);
   assert(close(actual.report.initial_residual_rms, expected.report.initial_residual_rms));
@@ -185,7 +185,8 @@ void compare_results(const cm::MechanicsSolveResult& actual,
   }
 }
 
-void compare_cells(const cm::Simulation& actual, const cm::Simulation& expected) {
+void compare_cells(const microsimulator::Simulation& actual,
+                   const microsimulator::Simulation& expected) {
   const auto actual_cells = actual.cells();
   const auto expected_cells = expected.cells();
   assert(actual_cells.size() == expected_cells.size());
@@ -203,13 +204,13 @@ void compare_cells(const cm::Simulation& actual, const cm::Simulation& expected)
   }
 }
 
-void run_fixture(cm::BackendKind backend, std::uint32_t device_index, Fixture fixture) {
-  cm::Simulation reference(cm::BackendKind::cpu);
-  cm::Simulation candidate(backend, 0, 0, device_index);
+void run_fixture(microsimulator::BackendKind backend, std::uint32_t device_index, Fixture fixture) {
+  microsimulator::Simulation reference(microsimulator::BackendKind::cpu);
+  microsimulator::Simulation candidate(backend, 0, 0, device_index);
   fixture(reference);
   fixture(candidate);
 
-  cm::MechanicsParameters parameters;
+  microsimulator::MechanicsParameters parameters;
   parameters.residual_rms_tolerance = 2.0e-5F;
   const auto expected = reference.relax_cell_mechanics(parameters);
   const auto actual = candidate.relax_cell_mechanics(parameters);
@@ -217,8 +218,8 @@ void run_fixture(cm::BackendKind backend, std::uint32_t device_index, Fixture fi
   compare_cells(candidate, reference);
 }
 
-void reject_unsupported_backend(cm::BackendKind backend, std::uint32_t device_index) {
-  cm::Simulation simulation(backend, 0, 0, device_index);
+void reject_unsupported_backend(microsimulator::BackendKind backend, std::uint32_t device_index) {
+  microsimulator::Simulation simulation(backend, 0, 0, device_index);
   populate_plane(simulation);
   bool rejected = false;
   try {
@@ -232,23 +233,24 @@ void reject_unsupported_backend(cm::BackendKind backend, std::uint32_t device_in
 }  // namespace
 
 int main() {
-  cm::test::for_each_backend_device([](cm::BackendKind backend, std::uint32_t device_index) {
-    cm::Simulation capability_probe(backend, 0, 0, device_index);
-    if (!capability_probe.supports(cm::BackendFeature::external_constraints)) {
-      reject_unsupported_backend(backend, device_index);
-      return;
-    }
-    run_fixture(backend, device_index, populate_plane);
-    run_fixture(backend, device_index, populate_fixed_plane);
-    run_fixture(backend, device_index, populate_outside_sphere);
-    run_fixture(backend, device_index, populate_inside_sphere);
-    run_fixture(backend, device_index, populate_outside_box);
-    run_fixture(backend, device_index, populate_inside_box);
-    run_fixture(backend, device_index, populate_outside_cylinder);
-    run_fixture(backend, device_index, populate_inside_cylinder);
-    run_fixture(backend, device_index, populate_midspan_sphere);
-    run_fixture(backend, device_index, populate_midspan_box);
-    run_fixture(backend, device_index, populate_midspan_cylinder);
-  });
+  microsimulator::test::for_each_backend_device(
+      [](microsimulator::BackendKind backend, std::uint32_t device_index) {
+        microsimulator::Simulation capability_probe(backend, 0, 0, device_index);
+        if (!capability_probe.supports(microsimulator::BackendFeature::external_constraints)) {
+          reject_unsupported_backend(backend, device_index);
+          return;
+        }
+        run_fixture(backend, device_index, populate_plane);
+        run_fixture(backend, device_index, populate_fixed_plane);
+        run_fixture(backend, device_index, populate_outside_sphere);
+        run_fixture(backend, device_index, populate_inside_sphere);
+        run_fixture(backend, device_index, populate_outside_box);
+        run_fixture(backend, device_index, populate_inside_box);
+        run_fixture(backend, device_index, populate_outside_cylinder);
+        run_fixture(backend, device_index, populate_inside_cylinder);
+        run_fixture(backend, device_index, populate_midspan_sphere);
+        run_fixture(backend, device_index, populate_midspan_box);
+        run_fixture(backend, device_index, populate_midspan_cylinder);
+      });
   return 0;
 }

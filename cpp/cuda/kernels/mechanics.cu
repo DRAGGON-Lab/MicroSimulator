@@ -1,6 +1,6 @@
 #include "mechanics.cuh"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 namespace {
 
 constexpr std::uint32_t threads_per_block = 256;
@@ -258,7 +258,9 @@ __global__ void reduce_sum_blocks(const float* input, float* output, std::uint32
   if (local == 0) output[blockIdx.x] = sums[0];
 }
 
-std::uint32_t block_count(std::uint32_t count) { return ((count - 1) / threads_per_block) + 1; }
+std::uint32_t block_count(std::uint32_t count) {
+  return ((count - 1) / threads_per_block) + 1;
+}
 
 }  // namespace
 
@@ -347,4 +349,4 @@ void launch_reduce_sum_blocks(const float* input, float* output, std::uint32_t e
                       stream>>>(input, output, element_count);
 }
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

@@ -1,0 +1,14 @@
+// Numeric constants that the CPU, CUDA, and Metal implementations must agree
+// on: MICROSIMULATOR_SHARED_FLOAT(name, value) and MICROSIMULATOR_SHARED_UINT(name, value).
+//
+// core/shared_constants.hpp expands this list for C++ and CUDA, and the Metal
+// build expands it ahead of every shader source.
+MICROSIMULATOR_SHARED_FLOAT(pi, 3.14159265358979323846)
+MICROSIMULATOR_SHARED_FLOAT(inverse_sqrt_two, 0.7071067811865475)
+MICROSIMULATOR_SHARED_FLOAT(float_epsilon, 1.1920928955078125e-7)
+// Golden-section iterations used to minimize distance along a capsule segment.
+MICROSIMULATOR_SHARED_UINT(segment_minimization_iterations, 40)
+// Unknowns per cell in the mechanics system: translation, rotation, length.
+MICROSIMULATOR_SHARED_UINT(mechanics_degrees_of_freedom, 7)
+// Elements each device thread group reduces to one partial dot product.
+MICROSIMULATOR_SHARED_UINT(flow_reduction_width, 64)

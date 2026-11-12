@@ -1,0 +1,6 @@
+# GitHub language statistics describe the library's own sources. Tutorials
+# and examples are documentation, scripts are one-off tooling, and
+# cpp/third_party holds unmodified upstream releases.
+examples/** linguist-documentation
+scripts/** linguist-detectable=false
+cpp/third_party/** linguist-vendored

@@ -29,7 +29,7 @@ _MODELS: tuple[tuple[str, dict[str, JSONValue], float], ...] = (
     )),
     *(("gene_expression.py", {"scenario": scenario}, 0.001) for scenario in (
         "constitutive",
-        "legacy_constitutive",
+        "unit_rate_constitutive",
         "dilution",
         "derepression",
         "oscillator",
@@ -67,7 +67,7 @@ def test_all_tutorial_scenarios_build_step_and_checkpoint(
         ModelContext(BackendKind.CPU, 0, seed=17, parameters=parameters),
     )
     assert isinstance(model, SimulationController)
-    output = tmp_path / f"{filename}-{next(iter(parameters.values()), 'default')}.cm2.json"
+    output = tmp_path / f"{filename}-{next(iter(parameters.values()), 'default')}.json"
     run_simulation(
         model,
         steps=1,
@@ -190,7 +190,7 @@ def test_plasmid_tutorial_resume_is_exact(tmp_path: Path) -> None:
         ModelContext(BackendKind.CPU, 0, seed=37, parameters=parameters),
     )
     assert isinstance(split, SimulationController)
-    midpoint = tmp_path / "plasmid-midpoint.cm2.json"
+    midpoint = tmp_path / "plasmid-midpoint.json"
     run_simulation(
         split,
         steps=3,
@@ -310,7 +310,7 @@ def test_tutorial_founder_initialization_is_deterministic_and_resume_does_not_ca
     ]
     for cell in first.simulation.cells():
         first.simulation.set_cell_geometry(cell.id, cell.position, cell.direction, 8.0)
-    path = tmp_path / "oversized.cm2.json"
+    path = tmp_path / "oversized.json"
     run_simulation(first, steps=0, dt=dt, output=path, provenance=provenance)
     restored, _ = build_model(
         _TUTORIALS / filename,

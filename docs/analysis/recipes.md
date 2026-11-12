@@ -24,7 +24,7 @@ Table recipes return `polars.LazyFrame`. A caller decides when to collect, filte
 
 `radial_counts(dataset, edges)` returns `cell_count` per frame and radial bin. `radial_species_mean(dataset, channel, edges)` returns `cell_count` and `species_mean`. An empty bin or unavailable channel has a zero count and a null mean, not an invented zero concentration.
 
-`length_histogram(dataset, edges)` bins the exported `capsule_length` by default. Pass `length="cylinder_length"` to select the engine's cylinder length explicitly. This distinction preserves the legacy script's `length + 2 * radius` quantity without renaming the underlying state.
+`length_histogram(dataset, edges)` bins the exported `capsule_length` by default. Pass `length="cylinder_length"` to select the engine's cylinder length explicitly. This distinction keeps the `length + 2 * radius` quantity available without renaming the underlying state.
 
 ```python
 from microsimulator.analysis_recipes import length_histogram, radial_species_mean

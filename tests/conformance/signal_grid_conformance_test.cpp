@@ -6,25 +6,25 @@
 #include <vector>
 
 #include "backend_devices.hpp"
-#include "cm/simulation.hpp"
+#include "microsimulator/simulation.hpp"
 
 namespace {
 
-cm::SignalGridSpec make_spec() {
-  cm::SignalGridSpec spec;
+microsimulator::SignalGridSpec make_spec() {
+  microsimulator::SignalGridSpec spec;
   spec.signal_count = 2;
   spec.shape = {.x = 9, .y = 7, .z = 5};
   spec.origin = {-4.0F, -3.0F, -2.0F};
   spec.spacing = {1.0F, 0.75F, 1.25F};
   spec.diffusion = {0.2F, 0.05F};
   spec.advection = {{0.1F, -0.2F, 0.05F}, {-0.05F, 0.03F, -0.08F}};
-  spec.x_lower.kind = cm::GridBoundaryKind::periodic;
-  spec.x_upper.kind = cm::GridBoundaryKind::periodic;
-  spec.z_lower.kind = cm::GridBoundaryKind::fixed;
+  spec.x_lower.kind = microsimulator::GridBoundaryKind::periodic;
+  spec.x_upper.kind = microsimulator::GridBoundaryKind::periodic;
+  spec.z_lower.kind = microsimulator::GridBoundaryKind::fixed;
   spec.z_lower.values = {0.25F, 0.5F};
-  spec.z_upper.kind = cm::GridBoundaryKind::fixed;
+  spec.z_upper.kind = microsimulator::GridBoundaryKind::fixed;
   spec.z_upper.values = {1.0F, 0.75F};
-  cm::SignalGridAffineReaction reaction;
+  microsimulator::SignalGridAffineReaction reaction;
   reaction.source_rates.resize(spec.level_count());
   reaction.loss_rates.resize(spec.level_count());
   for (std::size_t index = 0; index < spec.level_count(); ++index) {
@@ -35,7 +35,7 @@ cm::SignalGridSpec make_spec() {
   return spec;
 }
 
-cm::SignalGridSpec make_masked_spec() {
+microsimulator::SignalGridSpec make_masked_spec() {
   auto spec = make_spec();
   const auto solid = [&](std::uint32_t x, std::uint32_t y, std::uint32_t z) {
     const auto interior_block = x >= 3 && x <= 5 && y >= 2 && y <= 4 && z == 2;
@@ -64,10 +64,10 @@ cm::SignalGridSpec make_masked_spec() {
   return spec;
 }
 
-cm::SignalGridSpec make_velocity_field_spec() {
+microsimulator::SignalGridSpec make_velocity_field_spec() {
   auto spec = make_spec();
   spec.advection = {{0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}};
-  cm::SignalGridVelocityField field;
+  microsimulator::SignalGridVelocityField field;
   field.x_faces.resize(spec.x_face_count(), 0.0F);
   field.y_faces.resize(spec.y_face_count(), 0.0F);
   field.z_faces.resize(spec.z_face_count(), 0.0F);
@@ -85,7 +85,7 @@ cm::SignalGridSpec make_velocity_field_spec() {
   return spec;
 }
 
-std::vector<float> make_levels(const cm::SignalGridSpec& spec) {
+std::vector<float> make_levels(const microsimulator::SignalGridSpec& spec) {
   std::vector<float> levels(spec.level_count());
   for (std::size_t index = 0; index < levels.size(); ++index) {
     levels[index] = spec.solid_site(index % spec.site_count())
@@ -101,7 +101,8 @@ bool close(float actual, float expected) {
          tolerance + (tolerance * std::max(std::abs(actual), std::abs(expected)));
 }
 
-void assert_matches(const cm::Simulation& actual, const cm::Simulation& expected) {
+void assert_matches(const microsimulator::Simulation& actual,
+                    const microsimulator::Simulation& expected) {
   assert(actual.signal_count() == expected.signal_count());
   assert(actual.signal_levels().size() == expected.signal_levels().size());
   const auto actual_levels = actual.signal_levels();
@@ -118,37 +119,39 @@ void assert_matches(const cm::Simulation& actual, const cm::Simulation& expected
 
 enum class SpecKind { plain, masked, velocity_field };
 
-void run_case(cm::SignalIntegrationKind integration, float dt, SpecKind kind = SpecKind::plain) {
+void run_case(microsimulator::SignalIntegrationKind integration, float dt,
+              SpecKind kind = SpecKind::plain) {
   auto spec = kind == SpecKind::masked         ? make_masked_spec()
               : kind == SpecKind::velocity_field ? make_velocity_field_spec()
                                                  : make_spec();
   spec.integration = integration;
   const auto levels = make_levels(spec);
-  cm::Simulation reference;
+  microsimulator::Simulation reference;
   reference.configure_signal_grid(spec, levels);
   reference.step(dt);
 
-  cm::test::for_each_backend_device([&](cm::BackendKind backend, std::uint32_t device_index) {
-    cm::Simulation candidate(backend, 0, 0, device_index);
-    candidate.configure_signal_grid(spec, levels);
-    if (!candidate.supports(cm::BackendFeature::signals)) {
-      return;
-    }
-    candidate.step(dt);
-    assert_matches(candidate, reference);
-    assert(candidate.last_signal_solve_report().has_value());
-    assert(candidate.last_signal_solve_report()->converged);
-  });
+  microsimulator::test::for_each_backend_device(
+      [&](microsimulator::BackendKind backend, std::uint32_t device_index) {
+        microsimulator::Simulation candidate(backend, 0, 0, device_index);
+        candidate.configure_signal_grid(spec, levels);
+        if (!candidate.supports(microsimulator::BackendFeature::signals)) {
+          return;
+        }
+        candidate.step(dt);
+        assert_matches(candidate, reference);
+        assert(candidate.last_signal_solve_report().has_value());
+        assert(candidate.last_signal_solve_report()->converged);
+      });
 }
 
 }  // namespace
 
 int main() {
-  run_case(cm::SignalIntegrationKind::forward_euler, 0.02F);
-  run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F);
-  run_case(cm::SignalIntegrationKind::backward_euler, 0.5F);
-  run_case(cm::SignalIntegrationKind::forward_euler, 0.02F, SpecKind::masked);
-  run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::masked);
-  run_case(cm::SignalIntegrationKind::forward_euler, 0.02F, SpecKind::velocity_field);
-  run_case(cm::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::velocity_field);
+  run_case(microsimulator::SignalIntegrationKind::forward_euler, 0.02F);
+  run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F);
+  run_case(microsimulator::SignalIntegrationKind::backward_euler, 0.5F);
+  run_case(microsimulator::SignalIntegrationKind::forward_euler, 0.02F, SpecKind::masked);
+  run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::masked);
+  run_case(microsimulator::SignalIntegrationKind::forward_euler, 0.02F, SpecKind::velocity_field);
+  run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::velocity_field);
 }

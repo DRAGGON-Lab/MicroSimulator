@@ -1,4 +1,4 @@
-#include "cm/signals.hpp"
+#include "microsimulator/signals.hpp"
 
 #include <algorithm>
 #include <array>
@@ -8,7 +8,9 @@
 #include <string>
 #include <utility>
 
-namespace cm {
+#include "core/signal_jacobi.hpp"
+
+namespace microsimulator {
 namespace {
 
 std::size_t checked_multiply(std::size_t left, std::size_t right, const char* name) {
@@ -228,17 +230,21 @@ float signal_operator_diagonal(const SignalGridSpec& spec, std::size_t signal, s
   return diagonal;
 }
 
-std::vector<float> signal_grid_operator_rates(const SignalGrid& grid,
-                                              std::span<const float> levels) {
-  auto rates = signal_grid_transport_rates(grid, levels);
+// Transport rates of a grid whose invariants the caller has already validated.
+void transport_rates_into(const SignalGrid& grid, std::span<const float> levels,
+                          std::vector<float>& rates);
+
+// Transport plus affine reaction rates of an already validated grid.
+void operator_rates_into(const SignalGrid& grid, std::span<const float> levels,
+                         std::vector<float>& rates) {
+  transport_rates_into(grid, levels, rates);
   const auto& reaction = grid.spec().reaction;
   if (!reaction.has_value()) {
-    return rates;
+    return;
   }
   for (std::size_t index = 0; index < rates.size(); ++index) {
     rates[index] += reaction->source_rates[index] - (reaction->loss_rates[index] * levels[index]);
   }
-  return rates;
 }
 
 double max_reaction_loss(const SignalGridSpec& spec, std::size_t signal) {
@@ -386,7 +392,9 @@ std::size_t SignalGridSpec::level_count() const {
   return checked_multiply(signal_count, site_count(), "level count");
 }
 
-float SignalGridSpec::voxel_volume() const noexcept { return spacing.x * spacing.y * spacing.z; }
+float SignalGridSpec::voxel_volume() const noexcept {
+  return spacing.x * spacing.y * spacing.z;
+}
 
 std::size_t SignalGridSpec::x_face_count() const {
   return checked_multiply(static_cast<std::size_t>(shape.x) + 1,
@@ -403,7 +411,9 @@ std::size_t SignalGridSpec::z_face_count() const {
                           checked_multiply(shape.x, shape.y, "face plane"), "z face count");
 }
 
-bool SignalGridSpec::has_obstacles() const noexcept { return !obstacles.empty(); }
+bool SignalGridSpec::has_obstacles() const noexcept {
+  return !obstacles.empty();
+}
 
 bool SignalGridSpec::solid_site(std::size_t site) const noexcept {
   return !obstacles.empty() && obstacles[site] != 0;
@@ -598,9 +608,13 @@ SignalGrid::SignalGrid(const SignalGridCheckpoint& checkpoint)
   validate();
 }
 
-const SignalGridSpec& SignalGrid::spec() const noexcept { return spec_; }
+const SignalGridSpec& SignalGrid::spec() const noexcept {
+  return spec_;
+}
 
-std::span<const float> SignalGrid::levels() const& noexcept { return levels_; }
+std::span<const float> SignalGrid::levels() const& noexcept {
+  return levels_;
+}
 
 std::vector<float> SignalGrid::sample(Vec3 position) const {
   const auto stencil = signal_grid_stencil(spec_, position);
@@ -744,7 +758,8 @@ std::vector<float> signal_grid_forward_euler_candidate(const SignalGrid& grid, f
     return std::vector<float>(grid.levels().begin(), grid.levels().end());
   }
   const auto levels = grid.levels();
-  const auto rates = signal_grid_operator_rates(grid, levels);
+  std::vector<float> rates;
+  operator_rates_into(grid, levels, rates);
   std::vector<float> updated(levels.begin(), levels.end());
   for (std::size_t index = 0; index < updated.size(); ++index) {
     const auto candidate = levels[index] + (dt * rates[index]);
@@ -760,6 +775,15 @@ std::vector<float> signal_grid_forward_euler_candidate(const SignalGrid& grid, f
 std::vector<float> signal_grid_transport_rates(const SignalGrid& grid,
                                                std::span<const float> levels) {
   grid.validate();
+  std::vector<float> rates;
+  transport_rates_into(grid, levels, rates);
+  return rates;
+}
+
+namespace {
+
+void transport_rates_into(const SignalGrid& grid, std::span<const float> levels,
+                          std::vector<float>& rates) {
   const auto& spec = grid.spec();
   if (levels.size() != spec.level_count()) {
     throw std::invalid_argument("signal transport level count does not match the grid");
@@ -768,7 +792,7 @@ std::vector<float> signal_grid_transport_rates(const SignalGrid& grid,
     throw std::invalid_argument("signal transport levels must be finite");
   }
   const auto sites = spec.site_count();
-  std::vector<float> rates(levels.size(), 0.0F);
+  rates.assign(levels.size(), 0.0F);
 
   const auto level = [&](std::size_t signal, std::uint32_t x, std::uint32_t y, std::uint32_t z) {
     return levels[(signal * sites) + flat_site(spec.shape, x, y, z)];
@@ -840,8 +864,9 @@ std::vector<float> signal_grid_transport_rates(const SignalGrid& grid,
       }
     }
   }
-  return rates;
 }
+
+}  // namespace
 
 SignalSolveResult signal_grid_crank_nicolson_candidate(const SignalGrid& grid, float dt,
                                                        std::span<const float> source_rates) {
@@ -861,76 +886,54 @@ SignalSolveResult signal_grid_crank_nicolson_candidate(const SignalGrid& grid, f
     return {.levels = std::vector<float>(old.begin(), old.end()), .report = {}};
   }
 
-  const auto old_rates = signal_grid_operator_rates(grid, old);
+  std::vector<float> rates;
+  operator_rates_into(grid, old, rates);
   const bool backward = spec.integration == SignalIntegrationKind::backward_euler;
   const auto half_dt = (backward ? 1.0F : 0.5F) * dt;
   const auto explicit_dt = backward ? 0.0F : half_dt;
   std::vector<float> right_hand_side(old.size());
   for (std::size_t index = 0; index < old.size(); ++index) {
     const auto source = source_rates.empty() ? 0.0F : source_rates[index];
-    right_hand_side[index] = old[index] + (explicit_dt * old_rates[index]) + (dt * source);
+    right_hand_side[index] = old[index] + (explicit_dt * rates[index]) + (dt * source);
   }
-  // The relative term scales the residual the step starts with, not the field
-  // it starts from. A field's own magnitude says nothing about how much of it
-  // this step has to change, so scaling by the field lets a small source fall
-  // under the threshold and be discarded; scaling by the initial residual asks
-  // for a fixed reduction of whatever this step actually has to resolve.
-  //
-  // A residual cannot fall below what float32 can represent for a field of
-  // this magnitude, and the right-hand side carries both the field and the
-  // operator terms of the step, so it sets that floor. An absolute tolerance
-  // asking for less than the floor is raised to it rather than making the
-  // solve unreachable.
-  auto threshold = std::max(spec.solver.absolute_tolerance,
-                            std::numeric_limits<float>::epsilon() * rms(right_hand_side));
   std::vector<float> current(old.begin(), old.end());
+  std::vector<float> next(old.size());
   std::vector<float> residual(old.size());
-  auto residual_rms = std::numeric_limits<float>::infinity();
-  std::uint32_t iterations = 0;
-
-  for (; iterations <= spec.solver.max_iterations; ++iterations) {
-    const auto rates = signal_grid_operator_rates(grid, current);
+  // Leaves the operator rates of the current iterate in `rates`, which the
+  // next sweep reuses.
+  const auto residual_rms = [&] {
+    operator_rates_into(grid, current, rates);
     for (std::size_t index = 0; index < current.size(); ++index) {
       residual[index] = right_hand_side[index] - current[index] + (half_dt * rates[index]);
     }
-    residual_rms = rms(residual);
-    if (!std::isfinite(residual_rms)) {
-      break;
-    }
-    if (iterations == 0) {
-      threshold += spec.solver.relative_tolerance * residual_rms;
-    }
-    if (residual_rms <= threshold) {
-      return {
-          .levels = std::move(current),
-          .report = {.converged = true, .iterations = iterations, .residual_rms = residual_rms},
-      };
-    }
-    if (iterations == spec.solver.max_iterations) {
-      break;
-    }
-
-    const auto sites = spec.site_count();
-    std::vector<float> next(current.size());
-    for (std::size_t signal = 0; signal < spec.signal_count; ++signal) {
-      for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
-        for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
-          for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
-            const auto index = (signal * sites) + flat_site(spec.shape, x, y, z);
-            const auto diagonal = signal_operator_diagonal(spec, signal, x, y, z);
-            const auto remainder = rates[index] - (diagonal * current[index]);
-            next[index] =
-                (right_hand_side[index] + (half_dt * remainder)) / (1.0F - (half_dt * diagonal));
-          }
-        }
-      }
-    }
-    current = std::move(next);
-  }
-  return {
-      .levels = std::move(current),
-      .report = {.converged = false, .iterations = iterations, .residual_rms = residual_rms},
+    return rms(residual);
   };
+  const detail::SignalJacobiOperations operations{
+      .initial_residual_rms = residual_rms,
+      .right_hand_side_rms = [&] { return rms(right_hand_side); },
+      .begin_sweeps = [] {},
+      .sweep =
+          [&] {
+            const auto sites = spec.site_count();
+            for (std::size_t signal = 0; signal < spec.signal_count; ++signal) {
+              for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
+                for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
+                  for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
+                    const auto index = (signal * sites) + flat_site(spec.shape, x, y, z);
+                    const auto diagonal = signal_operator_diagonal(spec, signal, x, y, z);
+                    const auto remainder = rates[index] - (diagonal * current[index]);
+                    next[index] = (right_hand_side[index] + (half_dt * remainder)) /
+                                  (1.0F - (half_dt * diagonal));
+                  }
+                }
+              }
+            }
+            current.swap(next);
+            return detail::SignalSweepResult{.residual_rms = residual_rms()};
+          },
+  };
+  const auto report = detail::solve_signal_jacobi(operations, spec.solver);
+  return {.levels = std::move(current), .report = report};
 }
 
 SignalSolveReport advance_signal_grid_cpu(SignalGrid& grid, float dt) {
@@ -947,4 +950,4 @@ SignalSolveReport advance_signal_grid_cpu(SignalGrid& grid, float dt) {
   return result.report;
 }
 
-}  // namespace cm
+}  // namespace microsimulator

@@ -86,8 +86,8 @@ describe("live viewer protocol", () => {
 
   it("reads checkpoint and error results", async () => {
     await expect(
-      parseLiveMessage('{"type":"checkpoint","path":"/tmp/run.cm2.json"}'),
-    ).resolves.toEqual({ type: "checkpoint", path: "/tmp/run.cm2.json" });
+      parseLiveMessage('{"type":"checkpoint","path":"/tmp/run.json"}'),
+    ).resolves.toEqual({ type: "checkpoint", path: "/tmp/run.json" });
     await expect(
       parseLiveMessage('{"type":"error","message":"not configured"}'),
     ).resolves.toEqual({ type: "error", message: "not configured" });

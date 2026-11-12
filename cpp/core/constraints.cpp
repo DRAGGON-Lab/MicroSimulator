@@ -1,4 +1,4 @@
-#include "cm/constraints.hpp"
+#include "microsimulator/constraints.hpp"
 
 #include <cmath>
 #include <limits>
@@ -7,7 +7,7 @@
 #include <unordered_set>
 #include <utility>
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 bool finite(const Vec3& value) {
@@ -244,11 +244,17 @@ bool ConstraintSet::empty() const noexcept {
   return planes_.empty() && spheres_.empty() && boxes_.empty() && cylinders_.empty();
 }
 
-std::span<const PlaneConstraint> ConstraintSet::planes() const& noexcept { return planes_; }
+std::span<const PlaneConstraint> ConstraintSet::planes() const& noexcept {
+  return planes_;
+}
 
-std::span<const SphereConstraint> ConstraintSet::spheres() const& noexcept { return spheres_; }
+std::span<const SphereConstraint> ConstraintSet::spheres() const& noexcept {
+  return spheres_;
+}
 
-std::span<const BoxConstraint> ConstraintSet::boxes() const& noexcept { return boxes_; }
+std::span<const BoxConstraint> ConstraintSet::boxes() const& noexcept {
+  return boxes_;
+}
 
 std::span<const CylinderConstraint> ConstraintSet::cylinders() const& noexcept {
   return cylinders_;
@@ -300,11 +306,17 @@ ExternalContactGraph::ExternalContactGraph(std::size_t cell_count,
   }
 }
 
-std::size_t ExternalContactGraph::cell_count() const noexcept { return cell_count_; }
+std::size_t ExternalContactGraph::cell_count() const noexcept {
+  return cell_count_;
+}
 
-std::size_t ExternalContactGraph::size() const noexcept { return contacts_.size(); }
+std::size_t ExternalContactGraph::size() const noexcept {
+  return contacts_.size();
+}
 
-bool ExternalContactGraph::empty() const noexcept { return contacts_.empty(); }
+bool ExternalContactGraph::empty() const noexcept {
+  return contacts_.empty();
+}
 
 std::span<const ExternalContact> ExternalContactGraph::contacts() const& noexcept {
   return contacts_;
@@ -320,4 +332,4 @@ std::span<const std::size_t> ExternalContactGraph::incident_contact_indices(Slot
   return std::span<const std::size_t>(incidence_contact_indices_).subspan(begin, end - begin);
 }
 
-}  // namespace cm
+}  // namespace microsimulator

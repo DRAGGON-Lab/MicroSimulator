@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
-from dataclasses import replace
+import pickle
 from pathlib import Path
 from typing import Any, cast
 
@@ -103,8 +104,7 @@ def _simulation(backend: BackendKind = BackendKind.CPU) -> Simulation:
 
 
 def _semantic_frame(frame: SceneFrame) -> SceneFrame:
-    return replace(
-        frame,
+    return frame.replace(
         backend=SceneBackend(
             kind="cpu",
             name="normalized",
@@ -169,10 +169,7 @@ def test_capture_scene_is_backend_neutral_and_complete() -> None:
         assert _semantic_frame(capture_scene(_simulation(backend))) == _semantic_frame(reference)
 
 
-@pytest.mark.parametrize("format_name", [SCENE_FORMAT, "cellmodeller2-scene"])
-def test_scene_round_trip_is_exact_and_uses_decimal_identifiers(
-    tmp_path: Path, format_name: str
-) -> None:
+def test_scene_round_trip_is_exact_and_uses_decimal_identifiers(tmp_path: Path) -> None:
     frame = capture_scene(_simulation())
     encoded = dumps_scene(frame)
     document = cast(dict[str, Any], json.loads(encoded))
@@ -180,13 +177,12 @@ def test_scene_round_trip_is_exact_and_uses_decimal_identifiers(
     assert document["version"] == SCENE_VERSION
     assert [cell["id"] for cell in document["frame"]["cells"]] == ["3", "2", "4"]
     assert document["frame"]["cells"][0]["parent_id"] == "1"
-    document["format"] = format_name
     assert parse_scene(json.dumps(document)) == frame
     document["frame"]["time"] += 1.0
     with pytest.raises(SceneError, match="digest"):
         parse_scene(json.dumps(document))
 
-    path = tmp_path / "colony.cm2.scene.json"
+    path = tmp_path / "colony.scene.json"
     save_scene(frame, path)
     assert load_scene(path) == frame
     assert list(tmp_path.glob(".*.tmp")) == []
@@ -238,15 +234,14 @@ def test_scene_rejects_tampering_unknown_fields_and_duplicate_keys() -> None:
 
 def test_scene_rejects_invalid_geometry_and_grid_shape() -> None:
     frame = capture_scene(_simulation())
-    bad_direction = replace(
-        frame,
-        cells=(replace(frame.cells[0], direction=(2.0, 0.0, 0.0)), *frame.cells[1:]),
+    bad_direction = frame.replace(
+        cells=(frame.cells[0].replace(direction=(2.0, 0.0, 0.0)), *frame.cells[1:]),
     )
     with pytest.raises(SceneError, match="normalized"):
         dumps_scene(bad_direction)
 
     assert frame.signal_grid is not None
-    bad_levels = replace(frame, signal_grid=replace(frame.signal_grid, levels=(1.0,)))
+    bad_levels = frame.replace(signal_grid=frame.signal_grid.replace(levels=(1.0,)))
     with pytest.raises(SceneError, match="expected 8 values"):
         dumps_scene(bad_levels)
 
@@ -255,3 +250,21 @@ def test_scene_rejects_invalid_geometry_and_grid_shape() -> None:
 def test_scene_rejects_malformed_input(source: str | bytes) -> None:
     with pytest.raises(SceneError):
         parse_scene(source)
+
+
+def test_scene_records_copy_and_pickle_by_value() -> None:
+    frame = capture_scene(_simulation())
+    assert copy.copy(frame) == frame
+    assert copy.deepcopy(frame) == frame
+    assert pickle.loads(pickle.dumps(frame)) == frame
+    labels = frame.channel_metadata
+    assert pickle.loads(pickle.dumps(labels)) == labels
+
+
+def test_parse_scene_accepts_bytes_like_and_rejects_unencodable_text() -> None:
+    frame = capture_scene(_simulation())
+    encoded = dumps_scene(frame)
+    assert parse_scene(bytearray(encoded.encode())) == frame
+    assert parse_scene(memoryview(encoded.encode())) == frame
+    with pytest.raises(SceneError, match="not valid JSON"):
+        parse_scene(encoded + "\udc80")

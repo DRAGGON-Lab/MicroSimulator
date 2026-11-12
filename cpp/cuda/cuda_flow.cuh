@@ -4,9 +4,9 @@
 
 #include <span>
 
-#include "cm/flow.hpp"
+#include "microsimulator/flow.hpp"
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 
 [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(
     const SignalGridSpec& spec, std::span<const float> mobility,
@@ -17,4 +17,4 @@ namespace cm::cuda {
                                                      const ResolvedFlowParameters& parameters,
                                                      cudaStream_t stream);
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

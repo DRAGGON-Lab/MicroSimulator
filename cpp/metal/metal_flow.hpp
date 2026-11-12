@@ -4,9 +4,9 @@
 #include <memory>
 #include <span>
 
-#include "cm/flow.hpp"
+#include "microsimulator/flow.hpp"
 
-namespace cm::metal {
+namespace microsimulator::metal {
 
 class FlowSolver {
  public:
@@ -28,4 +28,4 @@ class FlowSolver {
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace cm::metal
+}  // namespace microsimulator::metal

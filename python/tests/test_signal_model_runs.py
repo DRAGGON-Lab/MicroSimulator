@@ -28,9 +28,6 @@ _ROOT = Path(__file__).resolve().parents[2]
 _IMPLICIT_MODELS: tuple[tuple[str, dict[str, JSONValue], float], ...] = (
     ("examples/tutorials/signaling.py", {"scenario": "communication"}, 0.02),
     ("examples/tutorials/simbol_circuits.py", {"circuit": "bba_0003"}, 0.02),
-    ("examples/legacy/ex4_simpleCellCellSignaling.py", {}, 0.02),
-    ("examples/legacy/Tutorial_3/Tutorial_3.py", {}, 0.02),
-    ("examples/legacy/ACS2012/EdgeDetectorChamber.py", {}, 0.02),
     ("examples/microfluidic_trap.py", {}, 0.02),
     ("examples/tutorials/danino_clock.py", {}, 0.005),
     ("examples/tutorials/pillar_channel.py", {}, 0.01),

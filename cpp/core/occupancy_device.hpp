@@ -6,7 +6,7 @@
 #include <memory>
 #include <vector>
 
-namespace cm::detail {
+namespace microsimulator::detail {
 
 // Host orchestration and graph packing are shared; each backend implements all
 // numerical kernels with device-resident buffers. No CPU numerical fallback.
@@ -69,4 +69,4 @@ class OccupancyDevice {
 std::unique_ptr<OccupancyDevice> make_metal_occupancy_device(std::uint32_t device_index);
 std::unique_ptr<OccupancyDevice> make_cuda_occupancy_device(std::uint32_t device_index);
 
-}  // namespace cm::detail
+}  // namespace microsimulator::detail

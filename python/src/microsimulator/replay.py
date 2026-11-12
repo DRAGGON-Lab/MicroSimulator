@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import cast
 
@@ -15,7 +15,7 @@ import rfc8785
 
 from ._core import BackendKind  # pyright: ignore[reportMissingModuleSource]
 from .checkpoint import MAX_CHECKPOINT_BYTES, CheckpointError, JSONValue, load_checkpoint_bundle
-from .scene import MAX_SCENE_BYTES, SceneBackend, SceneBackendKind, capture_scene, dumps_scene
+from .scene import MAX_SCENE_BYTES, SceneBackend, capture_scene, dumps_scene
 
 REPLAY_FORMAT = "microsimulator-replay"
 REPLAY_VERSION = 1
@@ -87,14 +87,19 @@ def export_replay(
                         )
                     previous_time = captured.time
                     if export_backend is None:
-                        export_backend = cast(JSONValue, asdict(captured.backend))
+                        export_backend = {
+                            "kind": captured.backend.kind,
+                            "name": captured.backend.name,
+                            "device": captured.backend.device,
+                            "device_index": captured.backend.device_index,
+                            "native": captured.backend.native,
+                        }
                     source_backend = bundle.source_backend
                     # The displayed scene describes its source run, not the CPU
                     # used solely to deserialize portable state during export.
-                    frame = replace(
-                        captured,
+                    frame = captured.replace(
                         backend=SceneBackend(
-                            kind=cast(SceneBackendKind, source_backend.kind),
+                            kind=source_backend.kind,
                             name=source_backend.name,
                             device=source_backend.device,
                             device_index=source_backend.device_index,

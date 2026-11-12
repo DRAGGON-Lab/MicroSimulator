@@ -52,7 +52,7 @@ simulation.set_species_rate_plan(
 
 Choose `Species` coloring and channel 0 in the viewer. Production competes with growth dilution. Cells whose effective volume grows more slowly dilute less, which can create colony-scale concentration structure without a position term in the equation.
 
-The `legacy_constitutive` scenario provides an alternative parameterization with production rate one, growth rate two, and a shorter 2.5–3.0 division-target range.
+The `unit_rate_constitutive` scenario provides an alternative parameterization with production rate one, growth rate two, and a shorter 2.5–3.0 division-target range.
 
 ## 2. Dilution without production
 

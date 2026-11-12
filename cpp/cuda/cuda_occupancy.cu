@@ -7,7 +7,7 @@
 #include "core/occupancy_device.hpp"
 #include "kernels/occupancy.cuh"
 
-namespace cm::detail {
+namespace microsimulator::detail {
 namespace {
 void check(cudaError_t status, const char* operation) {
   if (status != cudaSuccess)
@@ -19,7 +19,9 @@ class DeviceScope {
     check(cudaGetDevice(&previous_), "get CUDA occupancy device");
     check(cudaSetDevice(index), "select CUDA occupancy device");
   }
-  ~DeviceScope() { cudaSetDevice(previous_); }
+  ~DeviceScope() {
+    cudaSetDevice(previous_);
+  }
 
  private:
   int previous_;
@@ -27,7 +29,8 @@ class DeviceScope {
 struct CudaOccupancyBuffer final : OccupancyBuffer {
   void* value{nullptr};
   int index;
-  explicit CudaOccupancyBuffer(int device) : index(device) {}
+  explicit CudaOccupancyBuffer(int device) : index(device) {
+  }
   ~CudaOccupancyBuffer() override {
     int previous = 0;
     if (cudaGetDevice(&previous) == cudaSuccess) {
@@ -94,4 +97,4 @@ class CudaOccupancyDevice final : public OccupancyDevice {
 std::unique_ptr<OccupancyDevice> make_cuda_occupancy_device(std::uint32_t index) {
   return std::make_unique<CudaOccupancyDevice>(index);
 }
-}  // namespace cm::detail
+}  // namespace microsimulator::detail

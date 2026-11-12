@@ -152,7 +152,7 @@ def test_batch_library_is_deterministic_and_preflights_outputs(tmp_path: Path) -
         ModelContext(BackendKind.CPU, 0, 1234, {"length": 4.0, "cell_type": 7}),
     )
     assert isinstance(second, Simulation)
-    second_output = tmp_path / "second.cm2.json"
+    second_output = tmp_path / "second.json"
     run_simulation(
         second,
         steps=3,
@@ -163,7 +163,7 @@ def test_batch_library_is_deterministic_and_preflights_outputs(tmp_path: Path) -
     assert _document(second_output)["simulation"] == document["simulation"]
 
 
-def test_periodic_checkpoint_preserves_legacy_suffix(tmp_path: Path) -> None:
+def test_periodic_checkpoint_inserts_the_step_before_the_suffix(tmp_path: Path) -> None:
     model = tmp_path / "model.py"
     _write_model(model)
     simulation, provenance = build_model(model, ModelContext(BackendKind.CPU, 0, seed=7))
@@ -173,12 +173,12 @@ def test_periodic_checkpoint_preserves_legacy_suffix(tmp_path: Path) -> None:
         simulation,
         steps=1,
         dt=0.1,
-        output=tmp_path / "legacy.cm2.json",
+        output=tmp_path / "colony.json",
         checkpoint_every=1,
         provenance=provenance,
     )
 
-    assert summary.periodic_checkpoints == (tmp_path / "legacy.step-00000001.cm2.json",)
+    assert summary.periodic_checkpoints == (tmp_path / "colony.step-00000001.json",)
 
 
 def test_native_controller_resumes_exact_runtime_state(tmp_path: Path) -> None:
@@ -188,7 +188,7 @@ def test_native_controller_resumes_exact_runtime_state(tmp_path: Path) -> None:
     controller, provenance = build_model(model, context)
     assert isinstance(controller, SimulationController)
 
-    uninterrupted = tmp_path / "uninterrupted.cm2.json"
+    uninterrupted = tmp_path / "uninterrupted.json"
     run_simulation(
         controller,
         steps=6,
@@ -197,13 +197,13 @@ def test_native_controller_resumes_exact_runtime_state(tmp_path: Path) -> None:
         provenance=provenance,
     )
 
-    first = tmp_path / "first.cm2.json"
+    first = tmp_path / "first.json"
     controller, provenance = build_model(
         model,
         ModelContext(BackendKind.CPU, 0, seed=8128),
     )
     run_simulation(controller, steps=3, dt=0.125, output=first, provenance=provenance)
-    resumed = tmp_path / "resumed.cm2.json"
+    resumed = tmp_path / "resumed.json"
     assert (
         main(
             [
@@ -237,7 +237,7 @@ def test_native_controller_resume_checks_source_before_execution(
     model = tmp_path / "controller_model.py"
     _write_controller_model(model)
     controller, provenance = build_model(model, ModelContext(BackendKind.CPU, 0, seed=3))
-    checkpoint = tmp_path / "controller.cm2.json"
+    checkpoint = tmp_path / "controller.json"
     run_simulation(controller, steps=1, dt=0.1, output=checkpoint, provenance=provenance)
 
     marker = tmp_path / "executed.txt"
@@ -245,7 +245,7 @@ def test_native_controller_resume_checks_source_before_execution(
         f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n",
         encoding="utf-8",
     )
-    output = tmp_path / "must-not-exist.cm2.json"
+    output = tmp_path / "must-not-exist.json"
     assert (
         main(
             [
@@ -286,7 +286,7 @@ def test_controller_cannot_silently_checkpoint_null_state(tmp_path: Path) -> Non
             InvalidController(),
             steps=0,
             dt=0.1,
-            output=tmp_path / "invalid.cm2.json",
+            output=tmp_path / "invalid.json",
         )
 
 
@@ -299,7 +299,7 @@ def test_cell_count_threshold_can_finish_before_the_first_step(
         model,
         ModelContext(BackendKind.CPU, 0, seed=5),
     )
-    output = tmp_path / "already-large-enough.cm2.json"
+    output = tmp_path / "already-large-enough.json"
     progress: list[int] = []
 
     summary = run_simulation(
@@ -328,7 +328,7 @@ def test_cell_count_threshold_can_finish_before_the_first_step(
         "stopping": {"cell_count": 1, "maximum_steps": 100},
     }
 
-    cli_output = tmp_path / "cli-threshold.cm2.json"
+    cli_output = tmp_path / "cli-threshold.json"
     assert (
         main(
             [
@@ -359,7 +359,7 @@ def test_cell_count_threshold_must_be_positive_uint64(tmp_path: Path, threshold:
             simulation,
             steps=1,
             dt=0.1,
-            output=tmp_path / "invalid.cm2.json",
+            output=tmp_path / "invalid.json",
             stop_cell_count=threshold,
         )
 
@@ -369,7 +369,7 @@ def test_cli_runs_models_resumes_and_lists_devices(
 ) -> None:
     model = tmp_path / "model.py"
     _write_model(model)
-    first = tmp_path / "first.cm2.json"
+    first = tmp_path / "first.json"
     status = main(
         [
             "run",
@@ -396,7 +396,7 @@ def test_cli_runs_models_resumes_and_lists_devices(
     assert first.exists()
     assert "wrote" in capsys.readouterr().out
 
-    resumed = tmp_path / "resumed.cm2.json"
+    resumed = tmp_path / "resumed.json"
     status = main(
         [
             "run",
@@ -435,7 +435,7 @@ def test_cli_rejects_bad_parameters_without_creating_output(
 ) -> None:
     model = tmp_path / "model.py"
     _write_model(model)
-    output = tmp_path / "run.cm2.json"
+    output = tmp_path / "run.json"
     status = main(
         [
             "run",

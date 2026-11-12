@@ -1,4 +1,4 @@
-#include "cm/simulation.hpp"
+#include "microsimulator/simulation.hpp"
 
 #include <algorithm>
 #include <array>
@@ -7,7 +7,7 @@
 #include <tuple>
 #include <utility>
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 constexpr float projection_tolerance = 8.0e-5F;
@@ -130,8 +130,7 @@ ProjectionResult project_capsules(WorldState& state, const ConstraintSet& constr
       blocked[pair.second_slot] = true;
     }
   }
-  return {std::ranges::none_of(blocked, [](bool value) { return value; }),
-          std::move(blocked)};
+  return {std::ranges::none_of(blocked, [](bool value) { return value; }), std::move(blocked)};
 }
 
 std::unique_ptr<ComputeBackend> make_backend(BackendKind kind, std::uint32_t device_index) {
@@ -139,13 +138,13 @@ std::unique_ptr<ComputeBackend> make_backend(BackendKind kind, std::uint32_t dev
     case BackendKind::cpu:
       return make_cpu_backend(device_index);
     case BackendKind::metal:
-#if CM_HAS_METAL
+#if MICROSIMULATOR_HAS_METAL
       return make_metal_backend(device_index);
 #else
       throw std::runtime_error("Metal backend is not implemented in this build");
 #endif
     case BackendKind::cuda:
-#if CM_HAS_CUDA
+#if MICROSIMULATOR_HAS_CUDA
       return make_cuda_backend(device_index);
 #else
       throw std::runtime_error("CUDA backend is not implemented in this build");
@@ -165,12 +164,12 @@ std::size_t backend_device_count(BackendKind kind) noexcept {
   if (kind == BackendKind::cpu) {
     return 1;
   }
-#if CM_HAS_METAL
+#if MICROSIMULATOR_HAS_METAL
   if (kind == BackendKind::metal) {
     return metal_backend_device_count();
   }
 #endif
-#if CM_HAS_CUDA
+#if MICROSIMULATOR_HAS_CUDA
   if (kind == BackendKind::cuda) {
     return cuda_backend_device_count();
   }
@@ -186,7 +185,8 @@ Simulation::Simulation(BackendKind backend, std::size_t reserved_capacity,
                        std::size_t species_count, std::uint32_t device_index)
     : state_(reserved_capacity, species_count),
       backend_(make_backend(backend, device_index)),
-      species_rate_plan_(SpeciesRatePlan::zero(species_count)) {}
+      species_rate_plan_(SpeciesRatePlan::zero(species_count)) {
+}
 
 Simulation::Simulation(BackendKind backend, const SimulationCheckpoint& checkpoint,
                        std::uint32_t device_index)
@@ -202,33 +202,49 @@ Simulation::Simulation(BackendKind backend, const SimulationCheckpoint& checkpoi
   validate();
 }
 
-BackendInfo Simulation::backend_info() const { return backend_->info(); }
+BackendInfo Simulation::backend_info() const {
+  return backend_->info();
+}
 
 bool Simulation::supports(BackendFeature feature) const noexcept {
   return backend_->supports(feature);
 }
 
-double Simulation::time() const noexcept { return time_; }
+double Simulation::time() const noexcept {
+  return time_;
+}
 
-std::size_t Simulation::cell_count() const noexcept { return state_.size(); }
+std::size_t Simulation::cell_count() const noexcept {
+  return state_.size();
+}
 
-std::size_t Simulation::species_count() const noexcept { return state_.species_count(); }
+std::size_t Simulation::species_count() const noexcept {
+  return state_.species_count();
+}
 
 std::size_t Simulation::signal_count() const noexcept {
   return signal_grid_.has_value() ? signal_grid_->spec().signal_count : 0;
 }
 
-bool Simulation::has_signal_grid() const noexcept { return signal_grid_.has_value(); }
+bool Simulation::has_signal_grid() const noexcept {
+  return signal_grid_.has_value();
+}
 
 std::optional<SignalSolveReport> Simulation::last_signal_solve_report() const noexcept {
   return last_signal_solve_report_;
 }
 
-bool Simulation::has_coupled_rate_plan() const noexcept { return coupled_rate_plan_.has_value(); }
+bool Simulation::has_coupled_rate_plan() const noexcept {
+  return coupled_rate_plan_.has_value();
+}
 
-CellId Simulation::add_cell(const CellInit& cell) { return state_.add_cell(cell); }
+CellId Simulation::add_cell(const CellInit& cell) {
+  return state_.add_cell(cell);
+}
 
-void Simulation::remove_cell(CellId id) { state_.remove_cell(id); }
+void Simulation::remove_cell(CellId id) {
+  state_.remove_cell(id);
+}
 
 void Simulation::apply_flow_drift(float dt, const MechanicsIntegrationParameters& parameters) {
   if (!std::isfinite(dt) || dt < 0.0F) {
@@ -348,7 +364,9 @@ void Simulation::set_cell_attributes(CellId id, float growth_rate, std::int32_t 
   state_.set_cell_attributes(id, growth_rate, cell_type);
 }
 
-void Simulation::set_cell_fixed(CellId id, bool fixed) { state_.set_cell_fixed(id, fixed); }
+void Simulation::set_cell_fixed(CellId id, bool fixed) {
+  state_.set_cell_fixed(id, fixed);
+}
 
 void Simulation::set_species(CellId id, std::span<const float> levels) {
   state_.set_species(id, levels);
@@ -374,7 +392,9 @@ void Simulation::set_coupled_rate_plan(const CoupledRatePlan& plan) {
   coupled_rate_plan_ = plan;
 }
 
-void Simulation::clear_coupled_rate_plan() noexcept { coupled_rate_plan_.reset(); }
+void Simulation::clear_coupled_rate_plan() noexcept {
+  coupled_rate_plan_.reset();
+}
 
 void Simulation::configure_signal_grid(const SignalGridSpec& spec, std::vector<float> levels) {
   if (!state_.empty()) {
@@ -437,11 +457,19 @@ void Simulation::step(float dt) {
     }
     signal_grid_->validate_step(dt);
   }
-  auto saved_state = state_;
+  // Growth, species, and coupled updates write only cell lengths and species
+  // levels, so those two arrays are the whole cell-state rollback record.
+  const auto species_levels = state_.species_state().levels;
+  const std::vector<float> saved_species(species_levels.begin(), species_levels.end());
   const auto saved_levels = signal_grid_.has_value() ? signal_levels() : std::vector<float>{};
   const auto saved_report = last_signal_solve_report_;
   try {
     backend_->advance_growth(state_, dt);
+    if (!std::ranges::all_of(state_.geometry_state().lengths, [](float length) {
+          return std::isfinite(length) && length >= 0.0F;
+        })) {
+      throw std::runtime_error("growth produced a non-finite or negative cell length");
+    }
     last_signal_solve_report_.reset();
     if (coupled_rate_plan_.has_value()) {
       last_signal_solve_report_ = backend_->advance_coupled(
@@ -455,7 +483,8 @@ void Simulation::step(float dt) {
       }
     }
   } catch (...) {
-    state_ = std::move(saved_state);
+    std::ranges::copy(previous_lengths, state_.growth_state().lengths.begin());
+    std::ranges::copy(saved_species, state_.species_state().levels.begin());
     if (signal_grid_.has_value()) signal_grid_->set_levels(saved_levels);
     last_signal_solve_report_ = saved_report;
     throw;
@@ -537,8 +566,8 @@ std::vector<MechanicsSolveResult> Simulation::step_with_mechanics(
         }
       }
       for (std::uint32_t pass = 0; pass < passes; ++pass) {
-        auto result = solve_cell_mechanics(mechanics_parameters, contact_parameters,
-                                           constraint_parameters);
+        auto result =
+            solve_cell_mechanics(mechanics_parameters, contact_parameters, constraint_parameters);
         if (pass == 0) state_ = feasible_start;
         integrate_mechanics_result(
             state_, result, integration_parameters,
@@ -598,14 +627,16 @@ std::vector<MechanicsSolveResult> Simulation::step_with_mechanics(
         for (std::size_t i = 0; i < start_cells.size(); ++i) {
           if (increments[i] != 0.0F && !suppressed[i]) {
             state_.set_cell_geometry(start_cells[i].slot, start_cells[i].position,
-                                     start_cells[i].direction, start_cells[i].length + increments[i]);
+                                     start_cells[i].direction,
+                                     start_cells[i].length + increments[i]);
           }
         }
         const auto projection =
             project_capsules(state_, constraints_, contact_parameters, constraint_parameters);
         if (projection.feasible) break;
         if (!suppress_blocked_growth(projection)) {
-          throw std::runtime_error("mechanics projection is infeasible without suppressible growth");
+          throw std::runtime_error(
+              "mechanics projection is infeasible without suppressible growth");
         }
       }
     }
@@ -710,9 +741,13 @@ ResolvedFlowResult Simulation::solve_resolved_flow(const SignalGridSpec& spec,
   return backend_->solve_resolved_flow(spec, drag, parameters);
 }
 
-CellSnapshot Simulation::cell(CellId id) const { return state_.cell(id); }
+CellSnapshot Simulation::cell(CellId id) const {
+  return state_.cell(id);
+}
 
-std::vector<CellSnapshot> Simulation::cells() const { return state_.cells(); }
+std::vector<CellSnapshot> Simulation::cells() const {
+  return state_.cells();
+}
 
 std::optional<CellId> Simulation::lineage_parent(CellId id) const noexcept {
   return state_.lineage_parent(id);
@@ -772,4 +807,4 @@ void Simulation::validate() const {
   }
 }
 
-}  // namespace cm
+}  // namespace microsimulator

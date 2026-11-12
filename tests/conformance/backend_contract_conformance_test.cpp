@@ -3,24 +3,24 @@
 #include <cstdint>
 
 #include "backend_devices.hpp"
-#include "cm/simulation.hpp"
+#include "microsimulator/simulation.hpp"
 
 namespace {
 
 constexpr std::array required_features{
-    cm::BackendFeature::growth,
-    cm::BackendFeature::species,
-    cm::BackendFeature::cell_contacts,
-    cm::BackendFeature::cell_mechanics,
-    cm::BackendFeature::external_constraints,
-    cm::BackendFeature::signals,
-    cm::BackendFeature::coupled_rates,
-    cm::BackendFeature::depth_averaged_flow,
-    cm::BackendFeature::resolved_flow,
+    microsimulator::BackendFeature::growth,
+    microsimulator::BackendFeature::species,
+    microsimulator::BackendFeature::cell_contacts,
+    microsimulator::BackendFeature::cell_mechanics,
+    microsimulator::BackendFeature::external_constraints,
+    microsimulator::BackendFeature::signals,
+    microsimulator::BackendFeature::coupled_rates,
+    microsimulator::BackendFeature::depth_averaged_flow,
+    microsimulator::BackendFeature::resolved_flow,
 };
 
-void require_complete_backend(cm::BackendKind backend, std::uint32_t device_index) {
-  cm::Simulation simulation(backend, 0, 0, device_index);
+void require_complete_backend(microsimulator::BackendKind backend, std::uint32_t device_index) {
+  microsimulator::Simulation simulation(backend, 0, 0, device_index);
   for (const auto feature : required_features) {
     assert(simulation.supports(feature));
   }
@@ -29,6 +29,6 @@ void require_complete_backend(cm::BackendKind backend, std::uint32_t device_inde
 }  // namespace
 
 int main() {
-  cm::test::for_each_backend_device(require_complete_backend);
+  microsimulator::test::for_each_backend_device(require_complete_backend);
   return 0;
 }

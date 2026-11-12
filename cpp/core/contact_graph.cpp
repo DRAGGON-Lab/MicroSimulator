@@ -1,4 +1,4 @@
-#include "cm/contact_graph.hpp"
+#include "microsimulator/contact_graph.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -7,7 +7,7 @@
 #include <tuple>
 #include <utility>
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 struct CapsuleBounds {
@@ -174,13 +174,21 @@ ContactGraph::ContactGraph(std::size_t cell_count, std::vector<CellContact> cont
   }
 }
 
-std::size_t ContactGraph::cell_count() const noexcept { return cell_count_; }
+std::size_t ContactGraph::cell_count() const noexcept {
+  return cell_count_;
+}
 
-std::size_t ContactGraph::size() const noexcept { return contacts_.size(); }
+std::size_t ContactGraph::size() const noexcept {
+  return contacts_.size();
+}
 
-bool ContactGraph::empty() const noexcept { return contacts_.empty(); }
+bool ContactGraph::empty() const noexcept {
+  return contacts_.empty();
+}
 
-std::span<const CellContact> ContactGraph::contacts() const& noexcept { return contacts_; }
+std::span<const CellContact> ContactGraph::contacts() const& noexcept {
+  return contacts_;
+}
 
 std::span<const std::size_t> ContactGraph::incident_contact_indices(Slot slot) const& {
   const auto index = static_cast<std::size_t>(slot);
@@ -202,4 +210,4 @@ std::span<const CellId> ContactGraph::neighbor_ids(Slot slot) const& {
   return std::span<const CellId>(neighbor_ids_).subspan(begin, end - begin);
 }
 
-}  // namespace cm
+}  // namespace microsimulator

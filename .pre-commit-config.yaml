@@ -15,10 +15,12 @@ repos:
         # large and are tracked deliberately.
         args: [--maxkb=1024]
         exclude: ^docs/tutorials/devices/
+      # Vendored sources under cpp/third_party stay byte-identical to their
+      # upstream releases, so no hook rewrites them.
       - id: end-of-file-fixer
-        exclude: ^docs/tutorials/devices/
+        exclude: ^(docs/tutorials/devices|cpp/third_party)/
       - id: trailing-whitespace
-        exclude: ^docs/tutorials/devices/
+        exclude: ^(docs/tutorials/devices|cpp/third_party)/
 
   # Pinned to the version the project depends on, so a hook run and a local
   # `ruff check` enforce the same rule set. Formatting is deliberately absent:
@@ -35,6 +37,7 @@ repos:
       - id: clang-format
         types_or: [c++, c, cuda, objective-c++, metal]
         files: ^cpp/
+        exclude: ^cpp/third_party/
 
   - repo: local
     hooks:

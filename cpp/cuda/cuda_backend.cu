@@ -15,7 +15,8 @@
 #include <utility>
 #include <vector>
 
-#include "cm/backend.hpp"
+#include "core/mechanics_solver.hpp"
+#include "core/signal_jacobi.hpp"
 #include "cuda_flow.cuh"
 #include "kernels/contacts.cuh"
 #include "kernels/coupled_rates.cuh"
@@ -23,8 +24,9 @@
 #include "kernels/mechanics.cuh"
 #include "kernels/signals.cuh"
 #include "kernels/species.cuh"
+#include "microsimulator/backend.hpp"
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 void check_cuda(cudaError_t result, const char* operation) {
@@ -72,8 +74,12 @@ class CudaBuffer {
     capacity_ = new_capacity;
   }
 
-  [[nodiscard]] T* data() noexcept { return data_; }
-  [[nodiscard]] const T* data() const noexcept { return data_; }
+  [[nodiscard]] T* data() noexcept {
+    return data_;
+  }
+  [[nodiscard]] const T* data() const noexcept {
+    return data_;
+  }
 
  private:
   T* data_{nullptr};
@@ -128,6 +134,9 @@ class CudaBackend final : public ComputeBackend {
 
   void advance_growth(WorldState& state, float dt) override {
     activate_device();
+    if (!std::isfinite(dt) || dt < 0.0F) {
+      throw std::invalid_argument("time step must be finite and non-negative");
+    }
     auto view = state.growth_state();
     if (view.lengths.empty()) {
       return;
@@ -426,9 +435,11 @@ class CudaBackend final : public ComputeBackend {
         checked_product(cell_count_size, signal_count_size, "cell signal");
     const auto grid_level_count = grid.levels().size();
     const auto& spec = grid.spec();
-    for (const auto count :
-         {cell_count_size, species_count_size, signal_count_size, instruction_count_size,
-          species_level_count, workspace_count, cell_signal_count, grid_level_count}) {
+    const auto scatter_entry_count =
+        checked_product(cell_count_size, cuda::scatter_stencil_sites, "scatter entry");
+    for (const auto count : {cell_count_size, species_count_size, signal_count_size,
+                             instruction_count_size, species_level_count, workspace_count,
+                             cell_signal_count, grid_level_count, scatter_entry_count}) {
       if (count > std::numeric_limits<std::uint32_t>::max()) {
         throw std::overflow_error("CUDA coupled launch exceeds the uint32 index space");
       }
@@ -578,6 +589,24 @@ class CudaBackend final : public ComputeBackend {
         .sites = static_cast<std::uint32_t>(spec.site_count()),
     };
     const auto crank_nicolson = static_cast<std::uint32_t>(spec.integration);
+    const auto origin = make_float4(spec.origin.x, spec.origin.y, spec.origin.z, 0.0F);
+    const auto spacing = make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F);
+    const std::uint32_t* scatter_ends = nullptr;
+    if (cell_count_size != 0) {
+      coupled_scatter_stencils_.reserve(cell_count_size, "coupled scatter stencils");
+      coupled_scatter_cells_.reserve(scatter_entry_count, "coupled scatter cell lists");
+      coupled_scatter_counts_.reserve(spec.site_count(), "coupled scatter counts");
+      coupled_scatter_cursors_.reserve(spec.site_count(), "coupled scatter cursors");
+      coupled_scatter_scan_a_.reserve(spec.site_count(), "coupled scatter scan A");
+      coupled_scatter_scan_b_.reserve(spec.site_count(), "coupled scatter scan B");
+      check_cuda(cuda::launch_coupled_scatter_lists(
+                     coupled_centers_.data(), coupled_scatter_stencils_.data(),
+                     coupled_scatter_counts_.data(), coupled_scatter_cursors_.data(),
+                     coupled_scatter_scan_a_.data(), coupled_scatter_scan_b_.data(),
+                     coupled_scatter_cells_.data(), shape, origin, spacing,
+                     static_cast<std::uint32_t>(cell_count_size), stream_, &scatter_ends),
+                 "failed to launch the CUDA coupled scatter-list kernels");
+    }
     check_cuda(
         cuda::launch_advance_coupled(
             coupled_species_levels_.data(), coupled_previous_lengths_.data(),
@@ -589,14 +618,13 @@ class CudaBackend final : public ComputeBackend {
             coupled_reaction_source_.data(), coupled_reaction_loss_.data(),
             coupled_obstacles_.data(), coupled_x_faces_.data(), coupled_y_faces_.data(),
             coupled_z_faces_.data(), has_velocity_field, coupled_cell_signal_rates_.data(),
-            coupled_error_.data(), boundaries, shape,
-            make_float4(spec.origin.x, spec.origin.y, spec.origin.z, 0.0F),
-            make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F), dt,
+            coupled_error_.data(), boundaries, shape, origin, spacing, dt,
             static_cast<std::uint32_t>(species_count_size),
             static_cast<std::uint32_t>(signal_count_size),
             static_cast<std::uint32_t>(instruction_count_size),
             static_cast<std::uint32_t>(cell_count_size),
-            static_cast<std::uint32_t>(grid_level_count), crank_nicolson, stream_),
+            static_cast<std::uint32_t>(grid_level_count), crank_nicolson, scatter_ends,
+            coupled_scatter_cells_.data(), stream_),
         "failed to launch the CUDA coupled kernels");
 
     std::uint32_t error = 0;
@@ -623,9 +651,8 @@ class CudaBackend final : public ComputeBackend {
       result_device = solve.first;
       report = solve.second;
       if (!report.converged) {
-        throw std::runtime_error(
-            "CUDA Implicit coupled signal solve did not converge after " +
-            std::to_string(report.iterations) + " iterations");
+        throw std::runtime_error("CUDA Implicit coupled signal solve did not converge after " +
+                                 std::to_string(report.iterations) + " iterations");
       }
     }
 
@@ -761,72 +788,16 @@ class CudaBackend final : public ComputeBackend {
 
     const auto cell_count = static_cast<std::uint32_t>(geometry.size());
     const auto contact_count = static_cast<std::uint32_t>(row_count);
-    auto residual_squared = initialize_mechanics(cell_count, contact_count);
-    result.report.initial_residual_rms =
-        std::sqrt(residual_squared / static_cast<float>(cell_count));
-    result.report.final_residual_rms = result.report.initial_residual_rms;
-    if (!std::isfinite(result.report.initial_residual_rms)) {
-      result.report.status = SolverStatus::breakdown;
-      result.report.breakdown = SolverBreakdown::non_finite_residual;
-      return result;
-    }
-    if (result.report.initial_residual_rms <= parameters.residual_rms_tolerance) {
-      return result;
-    }
-
-    result.report.status = SolverStatus::iteration_limit;
-    const auto maximum_iterations = mechanics_iteration_limit(parameters, geometry.size());
-    for (std::uint32_t iteration = 0; iteration < maximum_iterations; ++iteration) {
-      const auto curvature = apply_search_direction(cell_count, contact_count, parameters);
-      if (!std::isfinite(curvature)) {
-        result.report.status = SolverStatus::breakdown;
-        result.report.breakdown = SolverBreakdown::non_finite_curvature;
-        break;
-      }
-      if (curvature <= 0.0F) {
-        result.report.status = SolverStatus::breakdown;
-        result.report.breakdown = SolverBreakdown::non_positive_curvature;
-        break;
-      }
-
-      const auto alpha = residual_squared / curvature;
-      const auto next_residual_squared = update_solution_residual(cell_count, alpha);
-      result.report.iterations = iteration + 1;
-      const auto recurrence_rms = std::sqrt(next_residual_squared / static_cast<float>(cell_count));
-      if (!std::isfinite(recurrence_rms)) {
-        result.report.status = SolverStatus::breakdown;
-        result.report.breakdown = SolverBreakdown::non_finite_residual;
-        break;
-      }
-
-      if (recurrence_rms <= parameters.residual_rms_tolerance) {
-        residual_squared = recompute_residual(cell_count, contact_count, parameters);
-        const auto recomputed_rms = std::sqrt(residual_squared / static_cast<float>(cell_count));
-        if (!std::isfinite(recomputed_rms)) {
-          result.report.status = SolverStatus::breakdown;
-          result.report.breakdown = SolverBreakdown::non_finite_residual;
-          break;
-        }
-        if (recomputed_rms <= parameters.residual_rms_tolerance) {
-          result.report.status = SolverStatus::converged;
-          break;
-        }
-        update_search_direction(cell_count, 0.0F);
-        continue;
-      }
-
-      const auto beta = next_residual_squared / residual_squared;
-      update_search_direction(cell_count, beta);
-      residual_squared = next_residual_squared;
-    }
-
-    residual_squared = recompute_residual(cell_count, contact_count, parameters);
-    result.report.final_residual_rms = std::sqrt(residual_squared / static_cast<float>(cell_count));
-    if (!std::isfinite(result.report.final_residual_rms) &&
-        result.report.status != SolverStatus::breakdown) {
-      result.report.status = SolverStatus::breakdown;
-      result.report.breakdown = SolverBreakdown::non_finite_residual;
-    }
+    const detail::MechanicsSolverOperations operations{
+        .initialize = [&] { return initialize_mechanics(cell_count, contact_count); },
+        .apply_direction =
+            [&] { return apply_search_direction(cell_count, contact_count, parameters); },
+        .update = [&](float alpha) { return update_solution_residual(cell_count, alpha); },
+        .recompute_residual =
+            [&] { return recompute_residual(cell_count, contact_count, parameters); },
+        .update_direction = [&](float beta) { update_search_direction(cell_count, beta); },
+    };
+    result.report = detail::solve_mechanics_system(operations, geometry.size(), parameters);
     result.corrections = download_mechanics_solution(geometry.size());
     return result;
   }
@@ -913,14 +884,14 @@ class CudaBackend final : public ComputeBackend {
     check_cuda(cudaMemcpyAsync(contact_ids_.data(), geometry.ids.data(), geometry.ids.size_bytes(),
                                cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact cell IDs");
-    check_cuda(cudaMemcpyAsync(contact_centers_.data(), centers.data(), centers.size() * sizeof(float4),
-                               cudaMemcpyHostToDevice, stream_),
+    check_cuda(cudaMemcpyAsync(contact_centers_.data(), centers.data(),
+                               centers.size() * sizeof(float4), cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact cell centers");
     check_cuda(cudaMemcpyAsync(contact_axes_.data(), axes.data(), axes.size() * sizeof(float4),
                                cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact cell axes");
-    check_cuda(cudaMemcpyAsync(contact_geometry_.data(), shapes.data(), shapes.size() * sizeof(float4),
-                               cudaMemcpyHostToDevice, stream_),
+    check_cuda(cudaMemcpyAsync(contact_geometry_.data(), shapes.data(),
+                               shapes.size() * sizeof(float4), cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact cell geometry");
     check_cuda(cudaStreamSynchronize(stream_), "CUDA contact cell upload failed");
   }
@@ -931,8 +902,8 @@ class CudaBackend final : public ComputeBackend {
     for (const auto& candidate : candidates) {
       values.push_back(make_uint2(candidate.first_slot, candidate.second_slot));
     }
-    check_cuda(cudaMemcpyAsync(contact_candidates_.data(), values.data(), values.size() * sizeof(uint2),
-                               cudaMemcpyHostToDevice, stream_),
+    check_cuda(cudaMemcpyAsync(contact_candidates_.data(), values.data(),
+                               values.size() * sizeof(uint2), cudaMemcpyHostToDevice, stream_),
                "failed to upload CUDA contact candidates");
     check_cuda(cudaStreamSynchronize(stream_), "CUDA contact candidate upload failed");
   }
@@ -1196,18 +1167,6 @@ class CudaBackend final : public ComputeBackend {
     }
   }
 
-  static std::uint32_t mechanics_iteration_limit(const MechanicsParameters& parameters,
-                                                 std::size_t cell_count) {
-    if (parameters.max_iterations != 0) {
-      return parameters.max_iterations;
-    }
-    constexpr std::size_t degrees_of_freedom = 7;
-    if (cell_count > std::numeric_limits<std::uint32_t>::max() / degrees_of_freedom) {
-      throw std::overflow_error("default mechanics iteration limit exceeds uint32");
-    }
-    return static_cast<std::uint32_t>(cell_count * degrees_of_freedom);
-  }
-
   void ensure_mechanics_capacity(std::size_t cell_count, std::size_t contact_count) {
     mechanics_incidence_offsets_.reserve(cell_count + 1, "mechanics incidence offsets");
     mechanics_fixed_.reserve(cell_count, "mechanics fixed flags");
@@ -1329,8 +1288,8 @@ class CudaBackend final : public ComputeBackend {
   }
 
   [[nodiscard]] float reduce_signal_terms(std::uint32_t level_count, const char* operation,
-                                         const std::uint32_t* error = nullptr,
-                                         std::uint32_t* error_value = nullptr) {
+                                          const std::uint32_t* error = nullptr,
+                                          std::uint32_t* error_value = nullptr) {
     const float* input = signal_cn_terms_.data();
     float* output = signal_cn_reduce_a_.data();
     auto element_count = level_count;
@@ -1346,8 +1305,8 @@ class CudaBackend final : public ComputeBackend {
     check_cuda(cudaMemcpyAsync(&result, input, sizeof(result), cudaMemcpyDeviceToHost, stream_),
                "failed to download a CUDA signal reduction");
     if (error != nullptr) {
-      check_cuda(cudaMemcpyAsync(error_value, error, sizeof(*error_value),
-                                 cudaMemcpyDeviceToHost, stream_),
+      check_cuda(cudaMemcpyAsync(error_value, error, sizeof(*error_value), cudaMemcpyDeviceToHost,
+                                 stream_),
                  "failed to download the CUDA signal solver error flag");
     }
     check_cuda(cudaStreamSynchronize(stream_), operation);
@@ -1367,9 +1326,9 @@ class CudaBackend final : public ComputeBackend {
         reaction_source, reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field,
         boundaries, shape, spacing, half_dt, signal_count, level_count, stream_);
     check_cuda(cudaGetLastError(), "failed to launch the CUDA signal-residual kernel");
-    return std::sqrt(reduce_signal_terms(level_count, "CUDA signal residual failed", error,
-                                         error_value) /
-                     static_cast<float>(level_count));
+    return std::sqrt(
+        reduce_signal_terms(level_count, "CUDA signal residual failed", error, error_value) /
+        static_cast<float>(level_count));
   }
 
   [[nodiscard]] float signal_rhs_rms(const float* right_hand_side, std::uint32_t level_count) {
@@ -1390,59 +1349,48 @@ class CudaBackend final : public ComputeBackend {
       std::uint32_t level_count, const SignalSolveParameters& parameters) {
     ensure_signal_solve_capacity(level_count);
     const auto half_dt = dt;
-    SignalSolveReport report;
-    report.residual_rms = signal_residual_rms(
-        initial, right_hand_side, diffusion, advection, fixed_values, reaction_source,
-        reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundaries, shape,
-        spacing, half_dt, signal_count, level_count);
-    // The relative term scales the residual the step starts with, matching the
-    // CPU reference: the field's own magnitude says nothing about how much of
-    // it this step has to change.
-    // A residual cannot fall below what float32 can represent for a field of
-    // this magnitude, and the right-hand side carries both the field and the
-    // operator terms of the step, so it sets that floor. An absolute tolerance
-    // asking for less than the floor is raised to it rather than making the
-    // solve unreachable.
-    const auto floor =
-        std::numeric_limits<float>::epsilon() * signal_rhs_rms(right_hand_side, level_count);
-    const auto threshold = std::max(parameters.absolute_tolerance, floor) +
-                           (parameters.relative_tolerance * report.residual_rms);
-    if (std::isfinite(report.residual_rms) && report.residual_rms <= threshold) {
-      return {initial, report};
-    }
-    if (!std::isfinite(report.residual_rms) || !std::isfinite(threshold)) {
-      report.converged = false;
-      return {initial, report};
-    }
-
-    check_cuda(cudaMemsetAsync(error, 0, sizeof(std::uint32_t), stream_),
-               "failed to clear the CUDA signal solver error flag");
     const float* current = initial;
-    for (std::uint32_t iteration = 1; iteration <= parameters.max_iterations; ++iteration) {
-      float* output = current == signal_cn_a_.data() ? signal_cn_b_.data() : signal_cn_a_.data();
-      cuda::launch_signal_crank_nicolson_jacobi(
-          current, output, right_hand_side, diffusion, advection, fixed_values, reaction_source,
-          reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, error,
-          boundaries, shape, spacing, half_dt, signal_count, level_count, stream_);
-      check_cuda(cudaGetLastError(), "failed to launch the CUDA signal Jacobi kernel");
-      std::uint32_t error_value = 0;
-      report.residual_rms = signal_residual_rms(
-          output, right_hand_side, diffusion, advection, fixed_values, reaction_source,
-          reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundaries,
-          shape, spacing, half_dt, signal_count, level_count, error, &error_value);
-      report.iterations = iteration;
-      current = output;
+    const detail::SignalJacobiOperations operations{
+        .initial_residual_rms =
+            [&] {
+              return signal_residual_rms(initial, right_hand_side, diffusion, advection,
+                                         fixed_values, reaction_source, reaction_loss, obstacles,
+                                         x_faces, y_faces, z_faces, has_velocity_field, boundaries,
+                                         shape, spacing, half_dt, signal_count, level_count);
+            },
+        .right_hand_side_rms = [&] { return signal_rhs_rms(right_hand_side, level_count); },
+        .begin_sweeps =
+            [&] {
+              check_cuda(cudaMemsetAsync(error, 0, sizeof(std::uint32_t), stream_),
+                         "failed to clear the CUDA signal solver error flag");
+            },
+        .sweep =
+            [&] {
+              float* output =
+                  current == signal_cn_a_.data() ? signal_cn_b_.data() : signal_cn_a_.data();
+              cuda::launch_signal_crank_nicolson_jacobi(
+                  current, output, right_hand_side, diffusion, advection, fixed_values,
+                  reaction_source, reaction_loss, obstacles, x_faces, y_faces, z_faces,
+                  has_velocity_field, error, boundaries, shape, spacing, half_dt, signal_count,
+                  level_count, stream_);
+              check_cuda(cudaGetLastError(), "failed to launch the CUDA signal Jacobi kernel");
+              detail::SignalSweepResult result;
+              result.residual_rms = signal_residual_rms(
+                  output, right_hand_side, diffusion, advection, fixed_values, reaction_source,
+                  reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field,
+                  boundaries, shape, spacing, half_dt, signal_count, level_count);
+              current = output;
 
-      if (error_value != 0 || !std::isfinite(report.residual_rms)) {
-        report.converged = false;
-        return {current, report};
-      }
-      if (report.residual_rms <= threshold) {
-        report.converged = true;
-        return {current, report};
-      }
-    }
-    report.converged = false;
+              std::uint32_t error_value = 0;
+              check_cuda(cudaMemcpyAsync(&error_value, error, sizeof(error_value),
+                                         cudaMemcpyDeviceToHost, stream_),
+                         "failed to download the CUDA signal solver error flag");
+              check_cuda(cudaStreamSynchronize(stream_), "CUDA signal solver error check failed");
+              result.valid = error_value == 0;
+              return result;
+            },
+    };
+    const auto report = detail::solve_signal_jacobi(operations, parameters);
     return {current, report};
   }
 
@@ -1606,6 +1554,12 @@ class CudaBackend final : public ComputeBackend {
   CudaBuffer<std::uint32_t> coupled_signal_outputs_;
   CudaBuffer<float> coupled_workspace_;
   CudaBuffer<float> coupled_cell_signal_rates_;
+  CudaBuffer<uint2> coupled_scatter_stencils_;
+  CudaBuffer<std::uint32_t> coupled_scatter_cells_;
+  CudaBuffer<std::uint32_t> coupled_scatter_counts_;
+  CudaBuffer<std::uint32_t> coupled_scatter_cursors_;
+  CudaBuffer<std::uint32_t> coupled_scatter_scan_a_;
+  CudaBuffer<std::uint32_t> coupled_scatter_scan_b_;
   CudaBuffer<float> coupled_grid_levels_;
   CudaBuffer<float> coupled_grid_output_;
   CudaBuffer<float> coupled_diffusion_;
@@ -1674,4 +1628,4 @@ std::size_t cuda_backend_device_count() noexcept {
   return device_count > 0 ? static_cast<std::size_t>(device_count) : 0;
 }
 
-}  // namespace cm
+}  // namespace microsimulator

@@ -48,8 +48,8 @@ code that authors a field with local divergence gets the corresponding local sou
 sinks, and remains subject to the finite, non-negative level invariant. The
 `microsimulator.microfluidics` authoring helpers construct divergence-free channel profiles.
 
-Velocity fields are exact checkpoint state in the version 8 signal grid specification as a
-`velocity_field` object or `null`; versions 1 through 7 migrate to no field. CPU, Metal, and
+Velocity fields are exact checkpoint state in the signal grid specification as a
+`velocity_field` object or `null`. CPU, Metal, and
 CUDA implement the same face-flux operator natively over the three face buffers.
 
 ## Validation sequence

@@ -116,25 +116,21 @@ def _invalid_id(job: dict[str, Any]) -> None:
     job["id"] = "spaces are not allowed"
 
 
-@pytest.mark.parametrize("format_name", [RUN_MANIFEST_FORMAT, "cellmodeller2-run-manifest"])
 def test_manifest_parsing_is_data_only_and_cli_executes_one_named_job(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], format_name: str
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     model = tmp_path / "model.py"
     marker = tmp_path / "executed.txt"
     model_digest = _write_model(model, side_effect=marker)
-    manifest_path = tmp_path / "experiment.cm2.runs.json"
+    manifest_path = tmp_path / "experiment.runs.json"
     _write_manifest(
         manifest_path,
         [
-            _job(job_id="replicate-001", model_sha256=model_digest, output="runs/001.cm2.json"),
-            _job(job_id="replicate-002", model_sha256=model_digest, output="runs/002.cm2.json"),
+            _job(job_id="replicate-001", model_sha256=model_digest, output="runs/001.json"),
+            _job(job_id="replicate-002", model_sha256=model_digest, output="runs/002.json"),
         ],
     )
 
-    document = json.loads(manifest_path.read_text())
-    document["format"] = format_name
-    manifest_path.write_text(json.dumps(document))
     manifest = load_run_manifest(manifest_path)
 
     assert not marker.exists()
@@ -143,7 +139,7 @@ def test_manifest_parsing_is_data_only_and_cli_executes_one_named_job(
     assert [job.id for job in manifest.jobs] == ["replicate-001", "replicate-002"]
     first = manifest.job("replicate-001")
     assert first.model == model.resolve()
-    assert first.output == (tmp_path / "runs/001.cm2.json").resolve()
+    assert first.output == (tmp_path / "runs/001.json").resolve()
     assert first.maximum_steps == 100
     assert first.stop_cell_count == 1
 
@@ -159,8 +155,8 @@ def test_manifest_parsing_is_data_only_and_cli_executes_one_named_job(
 
     assert status == 0
     assert marker.read_text() == "executed"
-    assert not (tmp_path / "runs/002.cm2.json").exists()
-    output = tmp_path / "runs/001.cm2.json"
+    assert not (tmp_path / "runs/002.json").exists()
+    output = tmp_path / "runs/001.json"
     bundle = load_checkpoint_bundle(output)
     experiment = cast(dict[str, Any], bundle.provenance["experiment"])
     assert experiment == {
@@ -185,7 +181,7 @@ def test_model_digest_is_checked_before_execution(
     manifest_path = tmp_path / "bad-digest.json"
     _write_manifest(
         manifest_path,
-        [_job(job_id="bad-digest", model_sha256="0" * 64, output="output.cm2.json")],
+        [_job(job_id="bad-digest", model_sha256="0" * 64, output="output.json")],
     )
 
     assert (
@@ -202,13 +198,13 @@ def test_model_digest_is_checked_before_execution(
     )
     assert "digest does not match manifest" in capsys.readouterr().err
     assert not marker.exists()
-    assert not (tmp_path / "output.cm2.json").exists()
+    assert not (tmp_path / "output.json").exists()
 
 
 def test_manifest_job_accepts_a_native_controller(tmp_path: Path) -> None:
     model = tmp_path / "controller.py"
     digest = _write_controller_model(model)
-    job = _job(job_id="controller", model_sha256=digest, output="controller.cm2.json")
+    job = _job(job_id="controller", model_sha256=digest, output="controller.json")
     cast(dict[str, Any], job["model"])["path"] = "controller.py"
     cast(dict[str, Any], job["stopping"])["maximum_steps"] = 2
     cast(dict[str, Any], job["stopping"])["cell_count"] = None
@@ -227,7 +223,7 @@ def test_manifest_job_accepts_a_native_controller(tmp_path: Path) -> None:
         )
         == 0
     )
-    bundle = load_checkpoint_bundle(tmp_path / "controller.cm2.json")
+    bundle = load_checkpoint_bundle(tmp_path / "controller.json")
     assert bundle.controller == {
         "kind": "manifest-test-controller",
         "version": 1,
@@ -265,8 +261,8 @@ def test_manifest_rejects_duplicate_ids_and_output_collisions(tmp_path: Path) ->
     with pytest.raises(RunManifestError, match="colliding final/periodic outputs"):
         load_run_manifest(manifest_path)
 
-    first["output"] = "runs/legacy.cm2.json"
-    second["output"] = "runs/legacy.step-00000002.cm2.json"
+    first["output"] = "runs/colony.json"
+    second["output"] = "runs/colony.step-00000002.json"
     _write_manifest(manifest_path, [first, second])
     with pytest.raises(RunManifestError, match="colliding final/periodic outputs"):
         load_run_manifest(manifest_path)
@@ -287,7 +283,7 @@ def test_manifest_rejects_invalid_job_fields(
     message: str,
 ) -> None:
     digest = _write_model(tmp_path / "model.py")
-    job = _job(job_id="valid", model_sha256=digest, output="output.cm2.json")
+    job = _job(job_id="valid", model_sha256=digest, output="output.json")
     mutation(job)
     path = tmp_path / "invalid.json"
     _write_manifest(path, [job])
@@ -303,7 +299,7 @@ def test_manifest_rejects_duplicate_keys_and_nonfinite_parameters(tmp_path: Path
         load_run_manifest(path)
 
     digest = _write_model(tmp_path / "model.py")
-    job = _job(job_id="nonfinite", model_sha256=digest, output="output.cm2.json")
+    job = _job(job_id="nonfinite", model_sha256=digest, output="output.json")
     job["parameters"] = {"rate": float("inf")}
     _write_manifest(path, [job])
     with pytest.raises(RunManifestError, match="non-finite"):

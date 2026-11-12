@@ -318,9 +318,7 @@ def load_run_manifest(path: str | os.PathLike[str]) -> RunManifest:
 
     root = _object(cast(object, decoded), "$")
     _keys(root, "$", {"format", "version", "jobs"})
-    if _string(root["format"], "$.format") not in (
-        RUN_MANIFEST_FORMAT, "cellmodeller2-run-manifest"
-    ):
+    if _string(root["format"], "$.format") != RUN_MANIFEST_FORMAT:
         _fail("$.format", "not a MicroSimulator run manifest")
     version = _integer(root["version"], "$.version", 0, _UINT32_MAX)
     if version != RUN_MANIFEST_VERSION:

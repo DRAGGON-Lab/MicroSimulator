@@ -5,7 +5,7 @@
 
 ## Context
 
-Rod contact and mechanical relaxation are the first CellModeller feature that requires irregular GPU work, dynamic topology, reductions, and iterative solves. The legacy fixed-stride contact table is unsafe at high density and mixes cell pairs, planes, and spheres through integer conventions. A generic portable GPU abstraction would also prevent Metal and CUDA from using their native scan, sort, reduction, and synchronization facilities.
+Rod contact and mechanical relaxation require irregular GPU work, dynamic topology, reductions, and iterative solves. A fixed-stride contact table is unsafe at high density and mixes cell pairs, planes, and spheres through integer conventions. A generic portable GPU abstraction would also prevent Metal and CUDA from using their native scan, sort, reduction, and synchronization facilities.
 
 ## Decision
 
@@ -25,15 +25,15 @@ Metal and CUDA consume that candidate list through a native two-pass dynamic pip
 
 There is no scientific contact cap. Allocation failure is explicit. In deterministic mode, contacts are ordered by stable endpoint IDs and contact ordinal. Fast mode may use backend-native ordering, but consumers must not infer identity from contact-array position.
 
-The narrow phase preserves the legacy one-row/two-row distinction and the `1/sqrt(2)` two-row weighting. Degenerate normals are resolved deterministically by projecting center displacement perpendicular to the rod axis; if that also vanishes, the least-aligned Cartesian basis axis defines a perpendicular. Every emitted normal must be finite and unit length.
+The narrow phase distinguishes one-row from two-row contacts and weights each row of a two-row contact by `1/sqrt(2)`. Degenerate normals are resolved deterministically by projecting center displacement perpendicular to the rod axis; if that also vanishes, the least-aligned Cartesian basis axis defines a perpendicular. Every emitted normal must be finite and unit length.
 
-The solver exposes a matrix-free operator rather than a materialized sparse matrix. The compatibility operator is the regularized seven-DOF system described in the CellModeller mechanics comparison. The public result includes convergence status, iteration count, initial and final residuals, and a breakdown reason. A backend may use native reductions and preconditioning, but it must apply the same declared operator and convergence criterion.
+The solver exposes a matrix-free operator rather than a materialized sparse matrix. The operator is a regularized seven-DOF system. The public result includes convergence status, iteration count, initial and final residuals, and a breakdown reason. A backend may use native reductions and preconditioning, but it must apply the same declared operator and convergence criterion.
 
-For a cell with full capsule length `L = l + 2r`, the reference regularizer uses mass `m = mu_a L`, axial inertia `m r^2 / 2`, transverse inertia `m (L^2 + 3r^2) / 12`, and length weight `gamma`. The operator adds `gamma^-1 M`. This finite-radius tensor intentionally replaces the legacy slender-rod tensor's zero-energy axial rotation, making the declared seven-DOF operator positive definite for valid cells. Legacy trajectory comparisons must identify this as an intentional numerical-model difference.
+For a cell with full capsule length `L = l + 2r`, the reference regularizer uses mass `m = mu_a L`, axial inertia `m r^2 / 2`, transverse inertia `m (L^2 + 3r^2) / 12`, and length weight `gamma`. The operator adds `gamma^-1 M`. A slender-rod tensor gives axial rotation zero energy; this finite-radius tensor does not, which makes the declared seven-DOF operator positive definite for valid cells.
 
-The reference solver starts from zero and uses unpreconditioned conjugate gradient. Residual RMS is `sqrt(dot(r, r) / cell_count)`, preserving the legacy normalization, and the default iteration limit is `7 * cell_count`. Apparent convergence is checked by recomputing `B^T b - A delta_q`; non-finite residuals, non-finite curvature, and non-positive curvature are reported as typed breakdowns rather than allowed to contaminate the simulation.
+The reference solver starts from zero and uses unpreconditioned conjugate gradient. Residual RMS is `sqrt(dot(r, r) / cell_count)`, and the default iteration limit is `7 * cell_count`. Apparent convergence is checked by recomputing `B^T b - A delta_q`; non-finite residuals, non-finite curvature, and non-positive curvature are reported as typed breakdowns rather than allowed to contaminate the simulation.
 
-Integration is a separate backend-neutral operation over a solver result. It requires convergence by default, applies translation directly, interprets the rotation vector as axis-angle and caps it at five degrees, and computes the length increment as `max(0, desired_increment + delta_l)`. This preserves the legacy rule that mechanics may suppress requested elongation but may not directly shorten a cell. All updates are validated before any world-state array is mutated. `Simulation.step` remains the growth-only primitive; `relax_cell_mechanics` is the explicit contact-relaxation operation.
+Integration is a separate backend-neutral operation over a solver result. It requires convergence by default, applies translation directly, interprets the rotation vector as axis-angle and caps it at five degrees, and computes the length increment as `max(0, desired_increment + delta_l)`. Mechanics may suppress requested elongation but may not directly shorten a cell. All updates are validated before any world-state array is mutated. `Simulation.step` remains the growth-only primitive; `relax_cell_mechanics` is the explicit contact-relaxation operation.
 
 Planes, spheres, boxes, and cylinders are stored in a simulation-owned constraint set with stable IDs shared across constraint kinds. A plane declares a point and a normalized inward normal; its permitted half-space lies in the inward direction. Each finite constraint explicitly declares whether cells are permitted inside or outside. Negative separation means penetration in every case.
 
@@ -45,11 +45,11 @@ The public location type is `RodContactLocation`, and `ExternalContact.location`
 
 The Metal and CUDA implementations upload stable-ID-sorted tagged constraints and run native count/scan/fill pipelines over cell-constraint pairs. Each pair emits zero, one, or two location-tagged rows into dynamic storage. Pair and external rows are then combined in the native solver buffers; a reserved invalid second slot marks the one-sided row inside each private operator without reintroducing a sentinel into the public contact model.
 
-CPU, Metal, and CUDA own separate implementations. They share contact fixtures, operator probes, tolerances, and exact location-tag invariants. Metal uses Metal compute pipelines and MSL; CUDA uses CUDA C++ and the CUDA Runtime API.
+CPU, Metal, and CUDA own separate implementations of the contact geometry and the system operator. They share the conjugate-gradient iteration in `cpp/core/mechanics_solver.hpp`, contact fixtures, operator probes, tolerances, and exact location-tag invariants. Metal uses Metal compute pipelines and MSL; CUDA uses CUDA C++ and the CUDA Runtime API.
 
 ### Neighbor reporting
 
-`ContactGraph::neighbor_ids(slot)` derives the legacy neighbor view from the current graph. It returns ascending, unique stable cell IDs. Multiple geometric rows for the same capsule pair therefore contribute one neighbor, and external constraint contacts never appear. The view has the same lifetime as the graph: after growth, division, or mechanical integration, callers compute a new graph rather than treating neighbors as persistent cell state.
+`ContactGraph::neighbor_ids(slot)` derives a neighbor view from the current graph. It returns ascending, unique stable cell IDs. Multiple geometric rows for the same capsule pair therefore contribute one neighbor, and external constraint contacts never appear. The view has the same lifetime as the graph: after growth, division, or mechanical integration, callers compute a new graph rather than treating neighbors as persistent cell state.
 
 ## Validation sequence
 
@@ -73,4 +73,3 @@ This sequence isolates geometry disagreements before solver behavior can hide th
 - Stable cell identity survives compaction while kernels continue to use dense slots.
 - GPU implementations duplicate orchestration where native primitives differ.
 - Deterministic mode may require an ordering pass that fast mode can skip.
-- Legacy trajectories with undefined normals or overflowed contact rows are not reproducibility targets.

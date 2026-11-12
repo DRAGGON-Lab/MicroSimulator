@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-namespace cm::cuda {
+namespace microsimulator::cuda {
 
 struct SignalGridShapeGpu {
   std::uint32_t x;
@@ -133,4 +133,4 @@ void launch_signal_crank_nicolson_residual_terms(
     SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape, float4 spacing, float half_dt,
     std::uint32_t signal_count, std::uint32_t level_count, cudaStream_t stream);
 
-}  // namespace cm::cuda
+}  // namespace microsimulator::cuda

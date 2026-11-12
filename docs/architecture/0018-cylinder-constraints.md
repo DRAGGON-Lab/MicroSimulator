@@ -22,7 +22,7 @@ For an outside cylinder, the implementation minimizes this convex signed-distanc
 
 For an inside cylinder, both endpoints remain sufficient because the cylinder is convex. An outside cylinder has contact normal opposite the outward direction; an inside cylinder has contact normal along the outward direction. The normal points from the permitted region toward the constraint boundary, negative separation means penetration, and `point_on_cell` is reached from the selected centerline position along the normal.
 
-Cylinder rows use the existing one-sided seven-DOF external Jacobian. The GPU payload packs the center into the geometry vector with the radius in its fourth component, and the half-height plus coefficient into the parameter vector. Cylinders share the constraint set's stable identifier space, ride the `external_constraints` backend feature, and are recorded in the checkpoint's version 8 constraint envelope as a `cylinders` array; versions 1 through 7 migrate to an empty list. Scene format v2 carries cylinders alongside the other constraint kinds for device rendering.
+Cylinder rows use the existing one-sided seven-DOF external Jacobian. The GPU payload packs the center into the geometry vector with the radius in its fourth component, and the half-height plus coefficient into the parameter vector. Cylinders share the constraint set's stable identifier space, ride the `external_constraints` backend feature, and are recorded in the checkpoint's constraint envelope as a `cylinders` array. The scene format carries cylinders alongside the other constraint kinds for device rendering.
 
 ## Validation sequence
 

@@ -1,4 +1,4 @@
-#include "cm/species.hpp"
+#include "microsimulator/species.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -7,7 +7,9 @@
 #include <string>
 #include <utility>
 
-namespace cm {
+#include "core/shared_constants.hpp"
+
+namespace microsimulator {
 namespace {
 
 std::uint32_t checked_index(std::size_t index) {
@@ -44,13 +46,17 @@ SpeciesRatePlan SpeciesRatePlan::zero(std::size_t species_count) {
                          std::vector<std::uint32_t>(species_count, 0));
 }
 
-std::size_t SpeciesRatePlan::species_count() const noexcept { return species_count_; }
+std::size_t SpeciesRatePlan::species_count() const noexcept {
+  return species_count_;
+}
 
 std::span<const RateInstruction> SpeciesRatePlan::instructions() const& noexcept {
   return instructions_;
 }
 
-std::span<const std::uint32_t> SpeciesRatePlan::outputs() const& noexcept { return outputs_; }
+std::span<const std::uint32_t> SpeciesRatePlan::outputs() const& noexcept {
+  return outputs_;
+}
 
 void SpeciesRatePlan::validate() const {
   checked_index(species_count_);
@@ -128,13 +134,11 @@ void SpeciesRatePlan::validate() const {
 float effective_cell_volume(float length, float radius) noexcept {
   // Conserved biomass volume for the endpoint-preserving division rule.
   // This is a biochemical measure, not the geometric capsule volume.
-  constexpr float pi = 3.14159265358979323846F;
-  return pi * radius * radius * (length + 2.0F * radius);
+  return shared::pi * radius * radius * (length + 2.0F * radius);
 }
 
 float effective_cell_surface_area(float length, float radius) noexcept {
-  constexpr float pi = 3.14159265358979323846F;
-  return 2.0F * pi * radius * (length + 2.0F * radius);
+  return 2.0F * shared::pi * radius * (length + 2.0F * radius);
 }
 
-}  // namespace cm
+}  // namespace microsimulator

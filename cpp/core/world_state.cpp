@@ -1,4 +1,4 @@
-#include "cm/world_state.hpp"
+#include "microsimulator/world_state.hpp"
 
 #include <algorithm>
 #include <array>
@@ -8,7 +8,7 @@
 #include <string>
 #include <unordered_set>
 
-namespace cm {
+namespace microsimulator {
 namespace {
 
 void validate_cell(const CellInit& cell, std::size_t species_count) {
@@ -143,13 +143,21 @@ WorldState::WorldState(const WorldStateCheckpoint& checkpoint)
   validate();
 }
 
-std::size_t WorldState::size() const noexcept { return ids_.size(); }
+std::size_t WorldState::size() const noexcept {
+  return ids_.size();
+}
 
-bool WorldState::empty() const noexcept { return ids_.empty(); }
+bool WorldState::empty() const noexcept {
+  return ids_.empty();
+}
 
-bool WorldState::contains(CellId id) const noexcept { return id_to_slot_.contains(id); }
+bool WorldState::contains(CellId id) const noexcept {
+  return id_to_slot_.contains(id);
+}
 
-std::size_t WorldState::species_count() const noexcept { return species_count_; }
+std::size_t WorldState::species_count() const noexcept {
+  return species_count_;
+}
 
 CellId WorldState::allocate_id() {
   if (next_id_ == invalid_cell_id || next_id_ == std::numeric_limits<CellId>::max()) {
@@ -312,8 +320,17 @@ void WorldState::advance_growth(float dt) {
   if (!std::isfinite(dt) || dt < 0.0F) {
     throw std::invalid_argument("time step must be finite and non-negative");
   }
+  const auto grown = [&](std::size_t index) {
+    return length_[index] + (growth_rate_[index] * length_[index] * dt);
+  };
   for (std::size_t index = 0; index < size(); ++index) {
-    length_[index] += growth_rate_[index] * length_[index] * dt;
+    const auto candidate = grown(index);
+    if (!std::isfinite(candidate) || candidate < 0.0F) {
+      throw std::runtime_error("growth produced a non-finite or negative cell length");
+    }
+  }
+  for (std::size_t index = 0; index < size(); ++index) {
+    length_[index] = grown(index);
   }
 }
 
@@ -533,4 +550,4 @@ void WorldState::validate() const {
   }
 }
 
-}  // namespace cm
+}  // namespace microsimulator
