@@ -44,9 +44,13 @@ namespace {
   return _read(descriptor, data, static_cast<unsigned>(size < chunk ? size : chunk));
 }
 
-[[nodiscard]] bool flush_to_storage(int descriptor) noexcept { return _commit(descriptor) == 0; }
+[[nodiscard]] bool flush_to_storage(int descriptor) noexcept {
+  return _commit(descriptor) == 0;
+}
 
-void close_descriptor(int descriptor) noexcept { _close(descriptor); }
+void close_descriptor(int descriptor) noexcept {
+  _close(descriptor);
+}
 
 [[nodiscard]] bool replace_file(const std::filesystem::path& source,
                                 const std::filesystem::path& destination) noexcept {
@@ -70,9 +74,13 @@ void close_descriptor(int descriptor) noexcept { _close(descriptor); }
   return ::read(descriptor, data, size);
 }
 
-[[nodiscard]] bool flush_to_storage(int descriptor) noexcept { return ::fsync(descriptor) == 0; }
+[[nodiscard]] bool flush_to_storage(int descriptor) noexcept {
+  return ::fsync(descriptor) == 0;
+}
 
-void close_descriptor(int descriptor) noexcept { ::close(descriptor); }
+void close_descriptor(int descriptor) noexcept {
+  ::close(descriptor);
+}
 
 [[nodiscard]] bool replace_file(const std::filesystem::path& source,
                                 const std::filesystem::path& destination) noexcept {
@@ -82,13 +90,20 @@ void close_descriptor(int descriptor) noexcept { ::close(descriptor); }
 
 class Descriptor {
  public:
-  explicit Descriptor(int value) noexcept : value_(value) {}
+  explicit Descriptor(int value) noexcept : value_(value) {
+  }
   Descriptor(const Descriptor&) = delete;
   Descriptor& operator=(const Descriptor&) = delete;
-  ~Descriptor() { close(); }
+  ~Descriptor() {
+    close();
+  }
 
-  [[nodiscard]] int get() const noexcept { return value_; }
-  [[nodiscard]] bool valid() const noexcept { return value_ >= 0; }
+  [[nodiscard]] int get() const noexcept {
+    return value_;
+  }
+  [[nodiscard]] bool valid() const noexcept {
+    return value_ >= 0;
+  }
   void close() noexcept {
     if (value_ >= 0) {
       close_descriptor(value_);

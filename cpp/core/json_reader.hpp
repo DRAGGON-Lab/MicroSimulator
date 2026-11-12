@@ -50,7 +50,8 @@ class JsonPath {
 
  private:
   JsonPath(const JsonPath* parent, std::string_view key, std::size_t index, bool indexed) noexcept
-      : parent_(parent), key_(key), index_(index), indexed_(indexed) {}
+      : parent_(parent), key_(key), index_(index), indexed_(indexed) {
+  }
 
   const JsonPath* parent_{nullptr};
   std::string_view key_;

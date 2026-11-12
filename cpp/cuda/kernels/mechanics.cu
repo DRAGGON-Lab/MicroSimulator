@@ -248,7 +248,9 @@ __global__ void reduce_sum_pairs(const float* input, float* output, std::uint32_
   output[index] = value;
 }
 
-std::uint32_t block_count(std::uint32_t count) { return ((count - 1) / threads_per_block) + 1; }
+std::uint32_t block_count(std::uint32_t count) {
+  return ((count - 1) / threads_per_block) + 1;
+}
 
 }  // namespace
 

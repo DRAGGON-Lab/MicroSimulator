@@ -66,7 +66,9 @@ struct CellGeometryView {
   std::span<const float> lengths;
   std::span<const float> radii;
 
-  [[nodiscard]] std::size_t size() const noexcept { return ids.size(); }
+  [[nodiscard]] std::size_t size() const noexcept {
+    return ids.size();
+  }
 };
 
 struct CellAttributeView {

@@ -143,13 +143,21 @@ WorldState::WorldState(const WorldStateCheckpoint& checkpoint)
   validate();
 }
 
-std::size_t WorldState::size() const noexcept { return ids_.size(); }
+std::size_t WorldState::size() const noexcept {
+  return ids_.size();
+}
 
-bool WorldState::empty() const noexcept { return ids_.empty(); }
+bool WorldState::empty() const noexcept {
+  return ids_.empty();
+}
 
-bool WorldState::contains(CellId id) const noexcept { return id_to_slot_.contains(id); }
+bool WorldState::contains(CellId id) const noexcept {
+  return id_to_slot_.contains(id);
+}
 
-std::size_t WorldState::species_count() const noexcept { return species_count_; }
+std::size_t WorldState::species_count() const noexcept {
+  return species_count_;
+}
 
 CellId WorldState::allocate_id() {
   if (next_id_ == invalid_cell_id || next_id_ == std::numeric_limits<CellId>::max()) {

@@ -46,13 +46,17 @@ SpeciesRatePlan SpeciesRatePlan::zero(std::size_t species_count) {
                          std::vector<std::uint32_t>(species_count, 0));
 }
 
-std::size_t SpeciesRatePlan::species_count() const noexcept { return species_count_; }
+std::size_t SpeciesRatePlan::species_count() const noexcept {
+  return species_count_;
+}
 
 std::span<const RateInstruction> SpeciesRatePlan::instructions() const& noexcept {
   return instructions_;
 }
 
-std::span<const std::uint32_t> SpeciesRatePlan::outputs() const& noexcept { return outputs_; }
+std::span<const std::uint32_t> SpeciesRatePlan::outputs() const& noexcept {
+  return outputs_;
+}
 
 void SpeciesRatePlan::validate() const {
   checked_index(species_count_);

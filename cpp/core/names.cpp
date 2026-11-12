@@ -62,7 +62,9 @@ template <typename Table>
 
 }  // namespace
 
-std::string_view backend_kind_name(BackendKind kind) { return name_of(backend_kinds, kind); }
+std::string_view backend_kind_name(BackendKind kind) {
+  return name_of(backend_kinds, kind);
+}
 std::optional<BackendKind> parse_backend_kind(std::string_view name) noexcept {
   return parse(backend_kinds, name);
 }
@@ -88,7 +90,9 @@ std::optional<SignalIntegrationKind> parse_signal_integration_kind(std::string_v
   return parse(signal_integration_kinds, name);
 }
 
-std::string_view rate_op_name(RateOp operation) { return name_of(rate_ops, operation); }
+std::string_view rate_op_name(RateOp operation) {
+  return name_of(rate_ops, operation);
+}
 std::optional<RateOp> parse_rate_op(std::string_view name) noexcept {
   return parse(rate_ops, name);
 }

@@ -33,7 +33,9 @@ inline float2 pair_add(float2 a, float2 b) {
   return quick_two_sum(sum.x, sum.y);
 }
 
-inline float2 pair_subtract(float2 a, float2 b) { return pair_add(a, -b); }
+inline float2 pair_subtract(float2 a, float2 b) {
+  return pair_add(a, -b);
+}
 
 inline float2 pair_multiply(float2 a, float2 b) {
   float2 product = two_product(a.x, b.x);

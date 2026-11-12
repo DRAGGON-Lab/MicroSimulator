@@ -112,7 +112,9 @@ void check_boundary(const SceneGridBoundary& boundary, std::uint32_t signal_coun
   return {.kind = boundary.kind, .values = boundary.values};
 }
 
-[[nodiscard]] JsonValue id_json(std::uint64_t id) { return JsonValue::string(std::to_string(id)); }
+[[nodiscard]] JsonValue id_json(std::uint64_t id) {
+  return JsonValue::string(std::to_string(id));
+}
 
 [[nodiscard]] JsonValue vector_json(const SceneVector& value) {
   return JsonValue::array(

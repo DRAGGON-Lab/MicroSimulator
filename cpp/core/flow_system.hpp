@@ -34,9 +34,13 @@ class FlowGridLayout {
     return dimensions_;
   }
 
-  [[nodiscard]] const std::array<float, 3>& spacing() const noexcept { return spacing_; }
+  [[nodiscard]] const std::array<float, 3>& spacing() const noexcept {
+    return spacing_;
+  }
 
-  [[nodiscard]] std::size_t flow_axis() const noexcept { return flow_axis_; }
+  [[nodiscard]] std::size_t flow_axis() const noexcept {
+    return flow_axis_;
+  }
 
   [[nodiscard]] std::size_t site_count() const noexcept {
     return static_cast<std::size_t>(dimensions_[0]) * dimensions_[1] * dimensions_[2];
@@ -54,7 +58,9 @@ class FlowGridLayout {
     return face_offsets_;
   }
 
-  [[nodiscard]] std::size_t total_face_count() const noexcept { return total_face_count_; }
+  [[nodiscard]] std::size_t total_face_count() const noexcept {
+    return total_face_count_;
+  }
 
   [[nodiscard]] std::size_t site_index(std::uint32_t x, std::uint32_t y,
                                        std::uint32_t z) const noexcept {
@@ -244,9 +250,15 @@ class ShallowFlowReduction {
     validate_flow_grid(grid_, axis);
   }
 
-  const SignalGridSpec& grid() const { return grid_; }
-  const FlowGridLayout& original_layout() const { return original_layout_; }
-  const std::vector<float>& conductance() const { return conductance_; }
+  const SignalGridSpec& grid() const {
+    return grid_;
+  }
+  const FlowGridLayout& original_layout() const {
+    return original_layout_;
+  }
+  const std::vector<float>& conductance() const {
+    return conductance_;
+  }
 
   std::vector<float> lift(std::span<const float> flux) const {
     const auto axis = static_cast<FlowAxis>(original_layout_.flow_axis());
@@ -379,9 +391,15 @@ class DepthAveragedFlowSystem {
     }
   }
 
-  [[nodiscard]] const FlowGridLayout& layout() const noexcept { return layout_; }
-  [[nodiscard]] const std::vector<float>& mobility() const noexcept { return mobility_; }
-  [[nodiscard]] const std::vector<float>& diagonal() const noexcept { return diagonal_; }
+  [[nodiscard]] const FlowGridLayout& layout() const noexcept {
+    return layout_;
+  }
+  [[nodiscard]] const std::vector<float>& mobility() const noexcept {
+    return mobility_;
+  }
+  [[nodiscard]] const std::vector<float>& diagonal() const noexcept {
+    return diagonal_;
+  }
   [[nodiscard]] const std::vector<float>& right_hand_side() const noexcept {
     return right_hand_side_;
   }
@@ -552,13 +570,27 @@ class ResolvedFlowSystem {
     }
   }
 
-  [[nodiscard]] const FlowGridLayout& layout() const noexcept { return layout_; }
-  [[nodiscard]] const std::vector<std::uint8_t>& fluid() const noexcept { return fluid_; }
-  [[nodiscard]] const std::vector<std::uint8_t>& active() const noexcept { return active_; }
-  [[nodiscard]] const std::vector<std::uint8_t>& exists() const noexcept { return exists_; }
-  [[nodiscard]] const std::vector<float>& face_drag() const noexcept { return face_drag_; }
-  [[nodiscard]] const std::vector<float>& diagonal() const noexcept { return diagonal_; }
-  [[nodiscard]] const std::vector<float>& force() const noexcept { return force_; }
+  [[nodiscard]] const FlowGridLayout& layout() const noexcept {
+    return layout_;
+  }
+  [[nodiscard]] const std::vector<std::uint8_t>& fluid() const noexcept {
+    return fluid_;
+  }
+  [[nodiscard]] const std::vector<std::uint8_t>& active() const noexcept {
+    return active_;
+  }
+  [[nodiscard]] const std::vector<std::uint8_t>& exists() const noexcept {
+    return exists_;
+  }
+  [[nodiscard]] const std::vector<float>& face_drag() const noexcept {
+    return face_drag_;
+  }
+  [[nodiscard]] const std::vector<float>& diagonal() const noexcept {
+    return diagonal_;
+  }
+  [[nodiscard]] const std::vector<float>& force() const noexcept {
+    return force_;
+  }
 
   void apply_momentum(std::span<const double> input, std::vector<double>& output) const {
     if (input.size() != layout_.total_face_count()) {

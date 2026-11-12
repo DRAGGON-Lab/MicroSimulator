@@ -23,7 +23,9 @@ std::uint32_t count32(std::size_t count) {
 void require(bool condition, const char* message) {
   if (!condition) throw std::invalid_argument(message);
 }
-void finite(float value, const char* name) { require(std::isfinite(value), name); }
+void finite(float value, const char* name) {
+  require(std::isfinite(value), name);
+}
 void vector_valid(const std::vector<float>& values, bool nonnegative = true) {
   count32(values.size());
   for (float value : values)

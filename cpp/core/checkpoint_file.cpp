@@ -37,7 +37,9 @@ using detail::vec3_to_json;
 
 constexpr std::uint64_t uint64_max = std::numeric_limits<std::uint64_t>::max();
 
-[[nodiscard]] JsonValue unsigned_json(std::uint64_t value) { return JsonValue::integer(value); }
+[[nodiscard]] JsonValue unsigned_json(std::uint64_t value) {
+  return JsonValue::integer(value);
+}
 
 [[nodiscard]] JsonValue cell_json(const CellSnapshot& cell) {
   return JsonValue::object({

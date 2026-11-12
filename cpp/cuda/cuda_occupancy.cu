@@ -19,7 +19,9 @@ class DeviceScope {
     check(cudaGetDevice(&previous_), "get CUDA occupancy device");
     check(cudaSetDevice(index), "select CUDA occupancy device");
   }
-  ~DeviceScope() { cudaSetDevice(previous_); }
+  ~DeviceScope() {
+    cudaSetDevice(previous_);
+  }
 
  private:
   int previous_;
@@ -27,7 +29,8 @@ class DeviceScope {
 struct CudaOccupancyBuffer final : OccupancyBuffer {
   void* value{nullptr};
   int index;
-  explicit CudaOccupancyBuffer(int device) : index(device) {}
+  explicit CudaOccupancyBuffer(int device) : index(device) {
+  }
   ~CudaOccupancyBuffer() override {
     int previous = 0;
     if (cudaGetDevice(&previous) == cudaSuccess) {

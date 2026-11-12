@@ -60,7 +60,9 @@ namespace {
 // The library's string serializer writes the RFC 8785 form: two-character
 // escapes where JSON defines them, lowercase \u00xx for other control
 // characters, and every other character as UTF-8.
-void append_string(std::string& out, std::string_view text) { out += nlohmann::json(text).dump(); }
+void append_string(std::string& out, std::string_view text) {
+  out += nlohmann::json(text).dump();
+}
 
 // Writes the ECMAScript Number::toString form of a finite value, the number
 // format RFC 8785 requires. Both zeros are written as "0".
@@ -201,9 +203,12 @@ void write_canonical(std::string& out, const JsonValue& value) {
 
 }  // namespace
 
-JsonValue::JsonValue(Storage storage) : storage_(std::move(storage)) {}
+JsonValue::JsonValue(Storage storage) : storage_(std::move(storage)) {
+}
 
-JsonValue JsonValue::boolean(bool value) { return JsonValue(Storage(value)); }
+JsonValue JsonValue::boolean(bool value) {
+  return JsonValue(Storage(value));
+}
 
 JsonValue JsonValue::integer(std::int64_t value) {
   return JsonValue(Storage(Integer{std::to_string(value)}));
@@ -250,7 +255,9 @@ JsonValue JsonValue::string(std::string value) {
   return JsonValue(Storage(std::move(value)));
 }
 
-JsonValue JsonValue::array(Array values) { return JsonValue(Storage(std::move(values))); }
+JsonValue JsonValue::array(Array values) {
+  return JsonValue(Storage(std::move(values)));
+}
 
 JsonValue JsonValue::object(Object members) {
   for (const auto& member : members) {
@@ -279,12 +286,24 @@ JsonValue JsonValue::trusted_object(Object members) {
 bool JsonValue::is_null() const noexcept {
   return std::holds_alternative<std::monostate>(storage_);
 }
-bool JsonValue::is_boolean() const noexcept { return std::holds_alternative<bool>(storage_); }
-bool JsonValue::is_integer() const noexcept { return std::holds_alternative<Integer>(storage_); }
-bool JsonValue::is_number() const noexcept { return std::holds_alternative<double>(storage_); }
-bool JsonValue::is_string() const noexcept { return std::holds_alternative<std::string>(storage_); }
-bool JsonValue::is_array() const noexcept { return std::holds_alternative<Array>(storage_); }
-bool JsonValue::is_object() const noexcept { return std::holds_alternative<Object>(storage_); }
+bool JsonValue::is_boolean() const noexcept {
+  return std::holds_alternative<bool>(storage_);
+}
+bool JsonValue::is_integer() const noexcept {
+  return std::holds_alternative<Integer>(storage_);
+}
+bool JsonValue::is_number() const noexcept {
+  return std::holds_alternative<double>(storage_);
+}
+bool JsonValue::is_string() const noexcept {
+  return std::holds_alternative<std::string>(storage_);
+}
+bool JsonValue::is_array() const noexcept {
+  return std::holds_alternative<Array>(storage_);
+}
+bool JsonValue::is_object() const noexcept {
+  return std::holds_alternative<Object>(storage_);
+}
 
 bool JsonValue::as_boolean() const {
   if (const auto* value = std::get_if<bool>(&storage_)) {
@@ -337,7 +356,9 @@ const JsonValue* JsonValue::find(std::string_view key) const {
   return &found->value;
 }
 
-bool JsonValue::operator==(const JsonValue& other) const { return storage_ == other.storage_; }
+bool JsonValue::operator==(const JsonValue& other) const {
+  return storage_ == other.storage_;
+}
 
 namespace detail {
 
@@ -353,12 +374,19 @@ class JsonBuilder {
   using string_t = nlohmann::json::string_t;
   using binary_t = nlohmann::json::binary_t;
 
-  explicit JsonBuilder(const JsonParseLimits& limits) : limits_(limits) {}
+  explicit JsonBuilder(const JsonParseLimits& limits) : limits_(limits) {
+  }
 
-  [[nodiscard]] JsonValue take() { return std::move(root_); }
+  [[nodiscard]] JsonValue take() {
+    return std::move(root_);
+  }
 
-  bool null() { return add(JsonValue{}); }
-  bool boolean(bool value) { return add(JsonValue::boolean(value)); }
+  bool null() {
+    return add(JsonValue{});
+  }
+  bool boolean(bool value) {
+    return add(JsonValue::boolean(value));
+  }
   bool number_integer(number_integer_t value) {
     return add(JsonValue::integer(std::int64_t{value}));
   }
@@ -373,10 +401,16 @@ class JsonBuilder {
     }
     return add(JsonValue::number(value));
   }
-  bool string(string_t& value) { return add(JsonValue::trusted_string(std::move(value))); }
-  bool binary(binary_t& /*value*/) { throw JsonError("invalid JSON: unexpected binary value"); }
+  bool string(string_t& value) {
+    return add(JsonValue::trusted_string(std::move(value)));
+  }
+  bool binary(binary_t& /*value*/) {
+    throw JsonError("invalid JSON: unexpected binary value");
+  }
 
-  bool start_object(std::size_t /*size*/) { return open(true); }
+  bool start_object(std::size_t /*size*/) {
+    return open(true);
+  }
   bool key(string_t& value) {
     frames_.back().key = std::move(value);
     return true;
@@ -387,7 +421,9 @@ class JsonBuilder {
     return add(JsonValue::trusted_object(std::move(members)));
   }
 
-  bool start_array(std::size_t /*size*/) { return open(false); }
+  bool start_array(std::size_t /*size*/) {
+    return open(false);
+  }
   bool end_array() {
     auto items = std::move(frames_.back().items);
     frames_.pop_back();
@@ -452,6 +488,8 @@ std::string canonical_json(const JsonValue& value) {
   return out;
 }
 
-std::string pretty_json(const JsonValue& value) { return to_library(value, 0).dump(2) + '\n'; }
+std::string pretty_json(const JsonValue& value) {
+  return to_library(value, 0).dump(2) + '\n';
+}
 
 }  // namespace microsimulator

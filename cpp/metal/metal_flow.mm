@@ -584,7 +584,8 @@ struct FlowSolver::Impl {
   static constexpr std::uint32_t reduction_width = shared::flow_reduction_width;
 };
 
-FlowSolver::FlowSolver(std::uint32_t device_index) : impl_(std::make_unique<Impl>(device_index)) {}
+FlowSolver::FlowSolver(std::uint32_t device_index) : impl_(std::make_unique<Impl>(device_index)) {
+}
 
 FlowSolver::~FlowSolver() = default;
 
