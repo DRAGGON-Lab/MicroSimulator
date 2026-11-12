@@ -4,7 +4,7 @@ The MicroSimulator viewer displays cells, device walls, and signal fields so you
 
 See [tutorial commands by backend and shell](../docs/tutorials/commands.md#live-view-stop-and-restart) for copyable CPU/Metal/CUDA selection, PowerShell quoting, paths with spaces, checkpoint resume, and Stop/restart. Multiline commands below use POSIX shell backslashes.
 
-The viewer is a TypeScript and Three.js client for `microsimulator-scene` documents. Standalone mode reads scene files; live mode sends typed controls to a Python-owned engine session and verifies every returned scene document. Python owns the model, simulation clock, backend, and checkpoint writer.
+The viewer is a TypeScript and Three.js client for `microsimulator-scene` documents. Standalone mode reads scene files; live mode sends typed controls to a Python-owned engine session and verifies every returned scene document. Python owns the model, simulation clock, and backend; the native core writes scenes and checkpoints.
 
 ## Run locally
 
@@ -60,7 +60,7 @@ The `Windows CLI and live-session checks` GitHub Actions job builds the CPU exte
 
 ## Capabilities
 
-- SHA-256 verification over the Python writer's RFC 8785 canonical frame;
+- SHA-256 verification over the writer's RFC 8785 canonical frame;
 - strict scene v2 structural and numerical validation;
 - instanced open cylinders and matching hemispheres for continuous capsule surfaces;
 - device walls rendered from plane, sphere, box, and cylinder constraints;

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import signal
 import socket
 import subprocess
@@ -18,7 +17,15 @@ from urllib.parse import urlsplit
 import pytest
 from aiohttp import ClientSession, ClientWebSocketResponse, WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
-from microsimulator import BackendKind, CellInit, Simulation, Vec3, load_checkpoint
+from microsimulator import (
+    BackendKind,
+    CellInit,
+    Simulation,
+    Vec3,
+    load_checkpoint,
+    save_checkpoint,
+    viewer_server,
+)
 from microsimulator.checkpoint import JSONValue
 from microsimulator.viewer_server import (
     _CONTROLLER_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -110,7 +117,7 @@ def test_stop_preempts_same_socket_batch_and_rejects_new_commands(
     asyncio.run(exercise())
 
 
-def test_stop_waits_for_atomic_checkpoint_replace(
+def test_stop_waits_for_checkpoint_save(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -121,14 +128,13 @@ def test_stop_waits_for_atomic_checkpoint_replace(
         original = output.read_bytes()
         session.step()
         entered, release = Event(), Event()
-        replace = os.replace
 
-        def blocked_replace(source: str | Path, destination: str | Path) -> None:
+        def blocked_save(*arguments: Any, **options: Any) -> None:
             entered.set()
-            assert release.wait(10), "test did not release checkpoint replace"
-            replace(source, destination)
+            assert release.wait(10), "test did not release checkpoint save"
+            save_checkpoint(*arguments, **options)
 
-        monkeypatch.setattr(os, "replace", blocked_replace)
+        monkeypatch.setattr(viewer_server, "save_checkpoint", blocked_save)
         controller = LiveController(session)
         save = asyncio.create_task(controller.command(LiveCommand("checkpoint")))
         try:

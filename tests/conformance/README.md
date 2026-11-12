@@ -50,7 +50,7 @@ The coupled scenario uses 513 heterogeneous cells, three intracellular species, 
 
 ## Checkpoint resume
 
-The checkpoint scenario captures a divided colony with a typed species plan, mixed constraints, inactive ancestry, and nontrivial identity frontiers. Every available backend must restore all persisted host fields exactly, then execute the next growth/species step within `1e-5` of a fresh CPU restore. The Python suite separately verifies the JSON envelope, atomic write behavior, provenance, integrity digest, and malformed-input rejection.
+The checkpoint scenario captures a divided colony with a typed species plan, mixed constraints, inactive ancestry, and nontrivial identity frontiers. Every available backend must restore all persisted host fields exactly, then execute the next growth/species step within `1e-5` of a fresh CPU restore. The `checkpoint_file`, `json`, `sha256`, and `atomic_file` tests in `tests/cpp` verify the JSON envelope, strict parsing, atomic write behavior, integrity digests, and malformed-input rejection natively; the Python suite verifies the same through the bindings, together with controller and provenance data.
 
 ## Cell contacts
 

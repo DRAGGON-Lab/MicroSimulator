@@ -36,8 +36,7 @@ adjoint and every scattered amount lands in fluid volume. A cell whose entire st
 is a model error detected before mutation, like an out-of-domain cell. This admits the common
 case of a cell pressed against a wall, whose interpolation cube straddles the wall surface.
 
-Obstacle masks are exact checkpoint state in schema version 8; versions 1 through 7 migrate to
-no obstacles. CPU, Metal, and CUDA implement the same closed-face operator natively; a backend
+Obstacle masks are exact checkpoint state. CPU, Metal, and CUDA implement the same closed-face operator natively; a backend
 without obstacle support must reject a masked grid explicitly rather than transport through
 walls.
 

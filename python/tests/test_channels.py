@@ -117,9 +117,7 @@ def test_missing_duplicate_unicode_empty_and_markup_labels_roundtrip(tmp_path: P
         ChannelMetadata.from_json({"species": [7], "signals": []}, 1, 0)
 
 
-def test_metadata_tampering_rejected_and_v8_migrates_only_after_verification(
-    tmp_path: Path,
-) -> None:
+def test_metadata_and_state_tampering_rejected(tmp_path: Path) -> None:
     model, _ = _build()
     path = tmp_path / "labels.json"
     save_checkpoint(model.simulation, path, channel_metadata=LABELS)
@@ -128,67 +126,40 @@ def test_metadata_tampering_rejected_and_v8_migrates_only_after_verification(
     path.write_text(json.dumps(document))
     with pytest.raises(CheckpointError, match="channel metadata digest does not match"):
         load_checkpoint_bundle(path)
-    document["version"] = 8
-    del document["channel_metadata"]
-    del document["integrity"]["channel_metadata"]
-    path.write_text(json.dumps(document))
-    bundle = load_checkpoint_bundle(path)
-    assert bundle.channel_metadata == ChannelMetadata()
-    assert capture_scene(
-        bundle.simulation, channel_metadata=bundle.channel_metadata
-    ).channel_metadata == ChannelMetadata().resolved(2, 2)
+    save_checkpoint(model.simulation, path, channel_metadata=LABELS)
+    document = json.loads(path.read_text())
     document["simulation"]["time"] = 999
     path.write_text(json.dumps(document))
     with pytest.raises(CheckpointError, match="state digest does not match"):
         load_checkpoint_bundle(path)
 
 
-def test_legacy_checkpoint_keeps_unspecified_labels_compact_before_native_restore(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Native state is allowed more channels than a presentation scene. No cells
-    # or label arrays are necessary to represent the legacy checkpoint.
+def test_checkpoint_holds_more_channels_than_a_scene_presents(tmp_path: Path) -> None:
+    # Native state is allowed more channels than a presentation scene.
     simulation = Simulation(BackendKind.CPU, species_count=MAX_SCENE_CHANNELS + 1)
-    path = tmp_path / "legacy.json"
+    path = tmp_path / "wide.json"
     save_checkpoint(simulation, path)
-    document = json.loads(path.read_text())
-    document["version"] = 8
-    del document["channel_metadata"]
-    del document["integrity"]["channel_metadata"]
-    path.write_text(json.dumps(document))
-
-    def forbid_expansion(
-        self: ChannelMetadata, species_count: int, signal_count: int
-    ) -> ChannelMetadata:
-        raise AssertionError("legacy restore must not expand absent presentation labels")
-
-    monkeypatch.setattr(ChannelMetadata, "resolved", forbid_expansion)
     bundle = load_checkpoint_bundle(path)
     assert bundle.simulation.species_count == MAX_SCENE_CHANNELS + 1
-    assert bundle.channel_metadata.species is None
-    assert bundle.channel_metadata.signals is None
+    assert bundle.channel_metadata == ChannelMetadata().resolved(MAX_SCENE_CHANNELS + 1, 0)
     assert load_checkpoint(path).species_count == MAX_SCENE_CHANNELS + 1
     with pytest.raises(SceneError, match="scene presentation channel budget of 4096"):
         capture_scene(bundle.simulation, channel_metadata=bundle.channel_metadata)
 
-    # Untrusted input must still pass its original integrity validation first.
+    # Untrusted input must pass its integrity validation before it is decoded.
+    document = json.loads(path.read_text())
     document["simulation"]["world"]["species_count"] = (1 << 32) - 1
     path.write_text(json.dumps(document))
     with pytest.raises(CheckpointError, match="state digest does not match"):
         load_checkpoint_bundle(path)
 
 
-def test_scene_v2_verifies_original_payload_and_v3_rejects_invalid_labels() -> None:
+def test_scene_rejects_tampered_payload_and_invalid_labels() -> None:
     model, _ = _build()
     document = json.loads(dumps_scene(capture_scene(model.simulation, channel_metadata=LABELS)))
-    document["version"] = 2
-    del document["frame"]["channel_metadata"]
-    document["integrity"]["frame"] = hashlib.sha256(rfc8785.dumps(document["frame"])).hexdigest()
-    assert parse_scene(json.dumps(document)).channel_metadata == ChannelMetadata().resolved(2, 2)
     document["frame"]["time"] = 999
     with pytest.raises(SceneError, match="frame digest does not match"):
         parse_scene(json.dumps(document))
-    document["version"] = 3
     document["frame"]["channel_metadata"] = {"species": [], "signals": [None, None]}
     document["integrity"]["frame"] = hashlib.sha256(rfc8785.dumps(document["frame"])).hexdigest()
     with pytest.raises(SceneError, match="species: expected 2 labels"):

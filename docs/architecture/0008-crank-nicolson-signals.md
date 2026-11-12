@@ -47,7 +47,7 @@ CPU is the numerical reference. Metal and CUDA use native Jacobi stencil kernels
 ## Consequences
 
 - Forward Euler remains the default and retains its explicit stability check.
-- Checkpoint version 5 records the integration and solver configuration; versions 1 through 4 migrate signal grids to Forward Euler defaults.
+- Checkpoints record the integration and solver configuration.
 - Coupled rates use the same semi-implicit transport solve with explicit cell sources, preserving old-field sampling and simultaneous commit semantics.
 
 ## Positivity-preserving baseline
