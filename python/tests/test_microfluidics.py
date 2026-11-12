@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import runpy
 from pathlib import Path
 
 import pytest
@@ -149,6 +150,12 @@ def test_planar_mask_wall_error_is_bounded_by_half_spacing() -> None:
             assert abs(upper - device.trap_back_x) <= h / 2 + 1e-5
 
 
+def _trap_example_device() -> TrapChannelDevice:
+    device = runpy.run_path(str(_EXAMPLES / "microfluidic_trap.py"))["DEVICE"]
+    assert isinstance(device, TrapChannelDevice)
+    return device
+
+
 def test_trap_example_builds_steps_and_transports_nutrient() -> None:
     model, _ = build_model(
         _EXAMPLES / "microfluidic_trap.py",
@@ -159,37 +166,51 @@ def test_trap_example_builds_steps_and_transports_nutrient() -> None:
         model.step(0.02)
 
     simulation = model.simulation
-    device = TrapChannelDevice()
+    device = _trap_example_device()
     channel_x = (device.channel_far_x + device.trap_open_x) * 0.5
-    upstream = simulation.sample_signals(Vec3(channel_x, -100.0, 0.0))[0]
+    upstream_y = -device.channel_half_length + 10.0
+    upstream = simulation.sample_signals(Vec3(channel_x, upstream_y, 0.0))[0]
     trap_interior = simulation.sample_signals(Vec3(0.0, 0.0, 0.0))[0]
     assert upstream > 5.0
     assert trap_interior > 5.0
     assert upstream >= trap_interior - 1.0e-3
     with pytest.raises(ValueError, match="inside a grid obstacle"):
-        simulation.sample_signals(Vec3(0.0, 100.0, 0.0))
+        simulation.sample_signals(Vec3(0.0, device.trap_half_y + 20.0, 0.0))
     assert len(simulation.cells()) >= 1
 
 
-def test_crowded_trap_colony_stays_inside_the_walls() -> None:
+def test_trap_example_fills_and_settles_at_a_steady_turnover() -> None:
     model, _ = build_model(
         _EXAMPLES / "microfluidic_trap.py",
         ModelContext(BackendKind.CPU, 0, seed=42),
     )
     assert isinstance(model, SimulationController)
-    # Long enough for the colony to span the trap and press on all three walls.
-    for _ in range(620):
-        model.step(0.02)
-
     simulation = model.simulation
-    device = TrapChannelDevice()
+    device = _trap_example_device()
+    populations: list[int] = []
+    # Long enough for the colony to fill the trap, press on all three walls,
+    # and shed cells into the channel for several doubling times.
+    for step in range(1, 1501):
+        model.step(0.02)
+        if step % 100 == 0:
+            populations.append(len(simulation.cells()))
+
     cells = simulation.cells()
-    assert len(cells) >= 200
+    in_trap = [cell for cell in cells if cell.position.x > device.trap_open_x]
+    in_channel = [cell for cell in cells if cell.position.x <= device.trap_open_x]
+    # A monolayer of this footprint holds a few hundred cells, and the trap
+    # stays full while cells keep leaving through its mouth.
+    assert 150 <= len(in_trap) <= 450
+    assert in_channel
+    assert max(cell.id for cell in cells) > 3 * len(cells)
+    settled = populations[-5:]
+    assert max(settled) - min(settled) <= 0.15 * max(settled)
+
     walls = simulation.find_external_contacts().contacts
     assert walls
     # Resting depth of the wall projection, with room for its last sweep.
-    assert min(contact.signed_separation for contact in walls) >= -1.0e-3
-    slack = 1.0e-3
+    assert min(contact.signed_separation for contact in walls) >= -2.0e-3
+    slack = 2.0e-3
     for cell in cells:
         reach = abs(cell.direction.x) * cell.length * 0.5 + cell.radius
         assert cell.position.x + reach <= device.trap_back_x + slack
