@@ -36,10 +36,6 @@ uv run microsimulator view \
 
 This opens a cell trap supplied with nutrient through a flowing channel in the live viewer. Press **Play** to watch the colony grow, choose `Growth rate` coloring to see how nutrient supply shapes the population, and click a cell to inspect it. **Stop session** or Ctrl+C in the terminal ends the run.
 
-<p align="center">
-  <img src="docs/assets/viewer-trap.png" alt="The microfluidic trap model running in the MicroSimulator live viewer" width="860">
-</p>
-
 The same model runs headlessly with `microsimulator run`, which saves a restartable checkpoint:
 
 ```console
