@@ -67,8 +67,7 @@ def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
     # Two z layers span the trap's six-micrometer depth exactly, so its fluid
     # volume is the device's rather than the half voxel of slack a coarser
     # lattice would leave on each side, and the lattice still reaches a voxel
-    # past the walls: contact relaxation can press a crowded cell into a wall
-    # and briefly out through it, and sampling outside the lattice is an error.
+    # past the walls, because sampling outside the lattice is an error.
     grid.origin = Vec3(-140.0, -144.0, -7.5)
     grid.spacing = Vec3(4.0, 4.0, 3.0)
     grid.diffusion = [40.0]

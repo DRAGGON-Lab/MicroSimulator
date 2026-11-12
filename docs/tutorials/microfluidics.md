@@ -2,7 +2,7 @@
 
 This tutorial connects device geometry, flowing media, and cell biology in runnable MicroSimulator models. The [modeling guide](../microfluidics.md) introduces the workflow and the choice of flow solver. Four examples cover the range:
 
-These models use XY-only division jitter and finite-height 3D confinement. A thin cavity can encourage a monolayer, but it does not force a common center Z or eliminate tilt; walls are soft constraints whose residual depends on relaxation tolerance and passes. The [dimensionality audit](planarity.md) lists each device and reproduces these distinctions.
+These models use XY-only division jitter and finite-height 3D confinement. A thin cavity can encourage a monolayer, but it does not force a common center Z or eliminate tilt; walls are impenetrable, so every relaxation pass leaves each cell resting on or clear of them, while overlap between cells remains a soft residual that depends on relaxation tolerance and passes. The [dimensionality audit](planarity.md) lists each device and reproduces these distinctions.
 
 For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
 
@@ -170,12 +170,11 @@ The model also does not reproduce an experimentally established separation betwe
   that reduction of the residual the step starts with, so a model gets what it asked for
   regardless of its concentration scale. These models keep the engine defaults.
 - Let the lattice of site centers cover every position a cell can reach, with about a voxel
-  of margin past each wall: contact relaxation lets a crowded cell press slightly into a
-  wall, and sampling outside the lattice is an error.
-- Keep the mechanics walls enclosing the solid mask. The device helpers voxelize
-  conservatively — a site is solid only when its whole voxel lies inside a wall — so the
-  voxel holding any reachable position stays fluid and a cell against a wall always has a
-  fluid site to sample. A hand-built mask needs the same rule; the
+  of margin past each wall: sampling outside the lattice is an error.
+- Keep the mechanics walls enclosing the solid mask. The device helpers mark a site solid
+  when its center lies inside a wall, and relaxation keeps every cell center at least a
+  cell radius clear of each wall, so a cell against a wall always has a fluid site to
+  sample. A hand-built mask needs the same rule; the
   [pillar channel](flow-solvers.md) shows it for curved walls.
 - A sampling position whose whole stencil is solid raises an error rather than returning
   zero.

@@ -15,6 +15,16 @@ namespace {
 using shared::inverse_sqrt_two;
 constexpr std::size_t segment_minimization_iterations = shared::segment_minimization_iterations;
 
+// Penetration beyond which a cell is projected, and the depth it is left at.
+// A cell resting on a surface stays just inside it, so the contact remains
+// active for the next solve and visible to contact analysis; the gap between
+// the two depths keeps single-precision rounding from projecting it again.
+constexpr float projection_tolerance = 1.0e-4F;
+constexpr float resting_penetration = 0.5F * projection_tolerance;
+// Sweeps of one move per cell. A cell in a corner needs one per wall meeting
+// there.
+constexpr std::size_t projection_sweeps = 8;
+
 struct EndpointGeometry {
   RodContactLocation location;
   Vec3 centerline_point;
@@ -122,13 +132,19 @@ void append_outside_minimum_contacts(std::vector<ExternalContact>& contacts,
     Vec3 centerline_point;
     SurfacePoint surface;
   };
+  // A minimum attained at an endpoint leaves the other endpoint free to be
+  // inside the surface too. Every active endpoint then needs its own row: a
+  // single row lets the solve answer with a rotation about the rod's center
+  // that drives the unconstrained end deeper.
+  const auto nearest_endpoint_distance =
+      std::min(endpoint_surfaces[0].signed_distance, endpoint_surfaces[1].signed_distance);
+  const auto minimum_at_endpoint =
+      nearest_endpoint_distance - minimum.surface.signed_distance <= parameters.degeneracy_epsilon;
   std::array<Candidate, 2> candidates{};
   std::size_t count = 0;
-  for (std::size_t index = 0; index < cell_endpoints.size(); ++index) {
+  for (std::size_t index = 0; minimum_at_endpoint && index < cell_endpoints.size(); ++index) {
     const auto endpoint_separation = endpoint_surfaces[index].signed_distance - radius;
-    if (endpoint_separation < parameters.activation_margin &&
-        std::abs(endpoint_surfaces[index].signed_distance - minimum.surface.signed_distance) <=
-            parameters.degeneracy_epsilon) {
+    if (endpoint_separation < parameters.activation_margin) {
       candidates[count++] = {
           cell_endpoints[index].location,
           cell_endpoints[index].centerline_point,
@@ -501,6 +517,71 @@ ExternalContactGraph find_external_contacts_cpu(const WorldState& state,
     return std::tuple{contact.cell_id, contact.constraint_id, contact.location};
   });
   return ExternalContactGraph(geometry.size(), std::move(contacts));
+}
+
+void project_cells_out_of_constraints(WorldState& state, const ConstraintSet& constraints,
+                                      const ConstraintContactParameters& parameters) {
+  if (constraints.empty() || state.empty()) {
+    return;
+  }
+  struct Move {
+    Slot slot;
+    Vec3 position;
+    Vec3 direction;
+    float length;
+  };
+  // Displacement of each centerline endpoint, negative end first.
+  std::vector<std::array<Vec3, 2>> displacements(state.size());
+  std::vector<bool> penetrating(state.size());
+  std::vector<Move> moves;
+  for (std::size_t sweep = 0; sweep < projection_sweeps; ++sweep) {
+    const auto graph = find_external_contacts_cpu(state, constraints, parameters);
+    std::ranges::fill(displacements, std::array<Vec3, 2>{});
+    std::ranges::fill(penetrating, false);
+    for (const auto& contact : graph.contacts()) {
+      if (contact.signed_separation >= -projection_tolerance) {
+        continue;
+      }
+      const auto slot = static_cast<std::size_t>(contact.cell_slot);
+      const auto displacement = contact.normal * (contact.signed_separation + resting_penetration);
+      penetrating[slot] = true;
+      if (contact.location != RodContactLocation::positive) {
+        displacements[slot][0] = displacements[slot][0] + displacement;
+      }
+      if (contact.location != RodContactLocation::negative) {
+        displacements[slot][1] = displacements[slot][1] + displacement;
+      }
+    }
+
+    const auto geometry = state.geometry_state();
+    const auto fixed = state.cell_attributes().fixed;
+    moves.clear();
+    for (std::size_t slot = 0; slot < penetrating.size(); ++slot) {
+      if (!penetrating[slot] || fixed[slot] != 0) {
+        continue;
+      }
+      const auto cell_endpoints = endpoints(geometry, slot);
+      const auto negative = cell_endpoints[0].centerline_point + displacements[slot][0];
+      const auto positive = cell_endpoints[1].centerline_point + displacements[slot][1];
+      const auto span = positive - negative;
+      const auto span_length = norm(span);
+      moves.push_back({
+          static_cast<Slot>(slot),
+          (negative + positive) * 0.5F,
+          span_length > parameters.degeneracy_epsilon
+              ? span * (1.0F / span_length)
+              : Vec3{geometry.direction_x[slot], geometry.direction_y[slot],
+                     geometry.direction_z[slot]},
+          geometry.lengths[slot],
+      });
+    }
+    if (moves.empty()) {
+      return;
+    }
+    for (const auto& move : moves) {
+      state.set_cell_geometry(move.slot, move.position, move.direction, move.length);
+    }
+  }
 }
 
 }  // namespace microsimulator

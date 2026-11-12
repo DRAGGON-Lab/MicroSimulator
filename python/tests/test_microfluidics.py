@@ -171,6 +171,33 @@ def test_trap_example_builds_steps_and_transports_nutrient() -> None:
     assert len(simulation.cells()) >= 1
 
 
+def test_crowded_trap_colony_stays_inside_the_walls() -> None:
+    model, _ = build_model(
+        _EXAMPLES / "microfluidic_trap.py",
+        ModelContext(BackendKind.CPU, 0, seed=42),
+    )
+    assert isinstance(model, SimulationController)
+    # Long enough for the colony to span the trap and press on all three walls.
+    for _ in range(620):
+        model.step(0.02)
+
+    simulation = model.simulation
+    device = TrapChannelDevice()
+    cells = simulation.cells()
+    assert len(cells) >= 200
+    walls = simulation.find_external_contacts().contacts
+    assert walls
+    # Resting depth of the wall projection, with room for its last sweep.
+    assert min(contact.signed_separation for contact in walls) >= -1.0e-3
+    slack = 1.0e-3
+    for cell in cells:
+        reach = abs(cell.direction.x) * cell.length * 0.5 + cell.radius
+        assert cell.position.x + reach <= device.trap_back_x + slack
+        assert abs(cell.position.z) + cell.radius <= device.trap_half_z + slack
+        # Every cell still has fluid to exchange nutrient with.
+        assert simulation.sample_signals(cell.position)[0] >= 0.0
+
+
 @pytest.mark.parametrize("backend", [BackendKind.METAL, BackendKind.CUDA])
 def test_trap_example_builds_its_initial_flow_on_the_selected_backend(
     backend: BackendKind,

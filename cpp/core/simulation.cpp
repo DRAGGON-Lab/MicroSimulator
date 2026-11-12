@@ -405,7 +405,49 @@ MechanicsSolveResult Simulation::relax_cell_mechanics(
     const ConstraintContactParameters& constraint_parameters) {
   auto result =
       solve_cell_mechanics(mechanics_parameters, contact_parameters, constraint_parameters);
-  integrate_mechanics_result(state_, result, integration_parameters);
+  if (constraints_.empty()) {
+    integrate_mechanics_result(state_, result, integration_parameters);
+    return result;
+  }
+
+  // Projection resolves a cell toward the nearest face of the wall it is in,
+  // which is the face it entered through only while it is less than halfway
+  // across. The corrections are therefore applied in equal parts that each
+  // move a cell at most its own radius, projecting after every part, so a
+  // large correction from a crowded colony cannot carry a cell through a wall.
+  constexpr std::uint32_t maximum_parts = 16;
+  std::uint32_t parts = 1;
+  const auto geometry = state_.geometry_state();
+  const auto fixed = state_.cell_attributes().fixed;
+  for (std::size_t slot = 0; slot < result.corrections.size() && slot < geometry.size(); ++slot) {
+    const auto travel = norm(result.corrections[slot].translation);
+    if (fixed[slot] != 0 || !std::isfinite(travel) || geometry.radii[slot] <= 0.0F) {
+      continue;
+    }
+    const auto needed = std::ceil(travel / geometry.radii[slot]);
+    parts = std::max(
+        parts, static_cast<std::uint32_t>(std::min(needed, static_cast<float>(maximum_parts))));
+  }
+  if (parts == 1) {
+    integrate_mechanics_result(state_, result, integration_parameters);
+    project_cells_out_of_constraints(state_, constraints_, constraint_parameters);
+    return result;
+  }
+
+  auto part = result;
+  for (auto& correction : part.corrections) {
+    correction.translation = correction.translation * (1.0F / static_cast<float>(parts));
+    correction.rotation = {};
+  }
+  for (std::uint32_t index = 0; index < parts; ++index) {
+    if (index + 1 == parts) {
+      for (std::size_t slot = 0; slot < part.corrections.size(); ++slot) {
+        part.corrections[slot].rotation = result.corrections[slot].rotation;
+      }
+    }
+    integrate_mechanics_result(state_, part, integration_parameters);
+    project_cells_out_of_constraints(state_, constraints_, constraint_parameters);
+  }
   return result;
 }
 

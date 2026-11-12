@@ -121,6 +121,22 @@ void populate_midspan_box(microsimulator::Simulation& simulation) {
   simulation.add_box_constraint(box);
 }
 
+void populate_tilted_face_contacts(microsimulator::Simulation& simulation) {
+  // Both ends inside a box face at different depths, one end clear of it, and
+  // the same two poses against a pillar's barrel.
+  add_cell(simulation, {1.3F, 0.0F, 0.0F}, {0.1F, 1.0F, 0.0F}, 1.0F);
+  add_cell(simulation, {1.4F, 0.0F, 2.0F}, {0.6F, 0.8F, 0.0F}, 1.0F);
+  add_cell(simulation, {11.3F, 0.0F, 0.0F}, {0.1F, 0.0F, 1.0F}, 1.0F);
+  add_cell(simulation, {11.4F, 0.0F, 0.0F}, {0.6F, 0.0F, 0.8F}, 1.0F);
+  microsimulator::BoxConstraintInit box;
+  box.half_extents = {1.0F, 2.0F, 3.0F};
+  simulation.add_box_constraint(box);
+  microsimulator::CylinderConstraintInit pillar;
+  pillar.center = {10.0F, 0.0F, 0.0F};
+  pillar.half_height = 3.0F;
+  simulation.add_cylinder_constraint(pillar);
+}
+
 void populate_centered_wall_crossing(microsimulator::Simulation& simulation) {
   add_cell(simulation, {}, {1.0F, 0.0F, 0.0F}, 3.5F);
   microsimulator::BoxConstraintInit wall;
@@ -210,6 +226,7 @@ int main() {
         run_fixture(backend, device_index, populate_degenerate_box);
         run_fixture(backend, device_index, populate_midspan_sphere);
         run_fixture(backend, device_index, populate_midspan_box);
+        run_fixture(backend, device_index, populate_tilted_face_contacts);
         run_fixture(backend, device_index, populate_centered_wall_crossing);
         run_fixture(backend, device_index, populate_midspan_cylinder);
       });

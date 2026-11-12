@@ -58,7 +58,7 @@ The contact scenario compares each contact-capable backend with the CPU geometry
 
 ## External constraints
 
-The external-constraint scenario compares every typed field and per-cell incidence index with the CPU oracle for mixed planes, spheres, boxes, and cylinders; inside and outside regions; empty inputs; stable IDs across constraint kinds; deterministic degeneracies; and finite obstacles intersected only by a capsule mid-span. Geometry fields use absolute and relative tolerances of `2e-5`; identities, kinds, centerline-location tags, graph sizes, and incidence are exact.
+The external-constraint scenario compares every typed field and per-cell incidence index with the CPU oracle for mixed planes, spheres, boxes, and cylinders; inside and outside regions; empty inputs; stable IDs across constraint kinds; deterministic degeneracies; rods tilted against a box face and a pillar barrel with both ends or one end inside the surface; and finite obstacles intersected only by a capsule mid-span. Geometry fields use absolute and relative tolerances of `2e-5`; identities, kinds, centerline-location tags, graph sizes, and incidence are exact.
 
 ## Mechanics
 
