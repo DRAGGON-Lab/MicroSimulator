@@ -69,7 +69,9 @@ __device__ float3 cross_product(float3 left, float3 right) {
                      left.x * right.y - left.y * right.x);
 }
 
-__device__ float magnitude(float3 value) { return sqrtf(dot_product(value, value)); }
+__device__ float magnitude(float3 value) {
+  return sqrtf(dot_product(value, value));
+}
 
 __device__ float3 normalized_vector(float3 value) {
   return multiply(value, 1.0F / magnitude(value));

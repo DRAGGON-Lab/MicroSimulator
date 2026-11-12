@@ -392,7 +392,9 @@ std::size_t SignalGridSpec::level_count() const {
   return checked_multiply(signal_count, site_count(), "level count");
 }
 
-float SignalGridSpec::voxel_volume() const noexcept { return spacing.x * spacing.y * spacing.z; }
+float SignalGridSpec::voxel_volume() const noexcept {
+  return spacing.x * spacing.y * spacing.z;
+}
 
 std::size_t SignalGridSpec::x_face_count() const {
   return checked_multiply(static_cast<std::size_t>(shape.x) + 1,
@@ -409,7 +411,9 @@ std::size_t SignalGridSpec::z_face_count() const {
                           checked_multiply(shape.x, shape.y, "face plane"), "z face count");
 }
 
-bool SignalGridSpec::has_obstacles() const noexcept { return !obstacles.empty(); }
+bool SignalGridSpec::has_obstacles() const noexcept {
+  return !obstacles.empty();
+}
 
 bool SignalGridSpec::solid_site(std::size_t site) const noexcept {
   return !obstacles.empty() && obstacles[site] != 0;
@@ -604,9 +608,13 @@ SignalGrid::SignalGrid(const SignalGridCheckpoint& checkpoint)
   validate();
 }
 
-const SignalGridSpec& SignalGrid::spec() const noexcept { return spec_; }
+const SignalGridSpec& SignalGrid::spec() const noexcept {
+  return spec_;
+}
 
-std::span<const float> SignalGrid::levels() const& noexcept { return levels_; }
+std::span<const float> SignalGrid::levels() const& noexcept {
+  return levels_;
+}
 
 std::vector<float> SignalGrid::sample(Vec3 position) const {
   const auto stencil = signal_grid_stencil(spec_, position);

@@ -8,22 +8,41 @@ using uint = unsigned int;
 using detail::OccupancyParameters;
 struct Vector3 {
   float x, y, z;
-  __device__ Vector3(float a, float b, float c) : x(a), y(b), z(c) {}
-  __device__ Vector3 operator+(Vector3 v) const { return {x + v.x, y + v.y, z + v.z}; }
-  __device__ Vector3 operator+(float v) const { return {x + v, y + v, z + v}; }
-  __device__ Vector3 operator-(Vector3 v) const { return {x - v.x, y - v.y, z - v.z}; }
-  __device__ Vector3 operator*(Vector3 v) const { return {x * v.x, y * v.y, z * v.z}; }
-  __device__ Vector3 operator*(float v) const { return {x * v, y * v, z * v}; }
-  __device__ Vector3 operator/(float v) const { return {x / v, y / v, z / v}; }
+  __device__ Vector3(float a, float b, float c) : x(a), y(b), z(c) {
+  }
+  __device__ Vector3 operator+(Vector3 v) const {
+    return {x + v.x, y + v.y, z + v.z};
+  }
+  __device__ Vector3 operator+(float v) const {
+    return {x + v, y + v, z + v};
+  }
+  __device__ Vector3 operator-(Vector3 v) const {
+    return {x - v.x, y - v.y, z - v.z};
+  }
+  __device__ Vector3 operator*(Vector3 v) const {
+    return {x * v.x, y * v.y, z * v.z};
+  }
+  __device__ Vector3 operator*(float v) const {
+    return {x * v, y * v, z * v};
+  }
+  __device__ Vector3 operator/(float v) const {
+    return {x / v, y / v, z / v};
+  }
   __device__ void operator/=(float v) {
     x /= v;
     y /= v;
     z /= v;
   }
 };
-__device__ Vector3 operator*(float a, Vector3 b) { return b * a; }
-__device__ float dot(Vector3 a, Vector3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-__device__ float clamp(float x, float lo, float hi) { return fminf(hi, fmaxf(lo, x)); }
+__device__ Vector3 operator*(float a, Vector3 b) {
+  return b * a;
+}
+__device__ float dot(Vector3 a, Vector3 b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+__device__ float clamp(float x, float lo, float hi) {
+  return fminf(hi, fmaxf(lo, x));
+}
 // Compensated, ordered sums avoid nondeterministic floating-point atomics.
 __device__ void occupancy_add(float value, float& total, float& correction) {
   float adjusted = value - correction;

@@ -27,7 +27,9 @@ class CpuBackend final : public ComputeBackend {
            feature == BackendFeature::resolved_flow;
   }
 
-  void advance_growth(WorldState& state, float dt) override { state.advance_growth(dt); }
+  void advance_growth(WorldState& state, float dt) override {
+    state.advance_growth(dt);
+  }
 
   void advance_species(WorldState& state, const SpeciesRatePlan& plan,
                        std::span<const float> previous_lengths, float dt) override {

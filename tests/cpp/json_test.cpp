@@ -95,29 +95,27 @@ void test_canonical_document() {
 }
 
 void test_number_kinds() {
-  const auto document = microsimulator::parse_json(R"([18446744073709551615, -0, 2.0, 1e2, 0.1,
-        123456789012345678901234567890, -7])");
+  const auto document =
+      microsimulator::parse_json("[18446744073709551615, -0, 2.0, 1e2, 0.1, -9223372036854775808]");
   const auto& items = document.as_array();
   assert(items[0].is_integer() && items[0].as_integer_token() == "18446744073709551615");
   assert(items[1].is_integer() && items[1].as_integer_token() == "0");
   assert(items[2].is_number() && items[2].as_number() == 2.0);
   assert(items[3].is_number() && items[3].as_number() == 100.0);
   assert(items[4].is_number() && items[4].as_number() == 0.1);
-  assert(items[5].as_integer_token() == "123456789012345678901234567890");
-  assert(items[6].as_integer_token() == "-7");
+  assert(items[5].as_integer_token() == "-9223372036854775808");
 
-  // The readable form keeps each number's kind and exact value.
+  // File text keeps each number's kind and exact value.
   const auto text = microsimulator::pretty_json(document);
   assert(text ==
-         "[18446744073709551615, 0, 2.0, 100.0, 0.1, 123456789012345678901234567890, "
-         "-7]\n");
+         "[\n  18446744073709551615,\n  0,\n  2.0,\n  100.0,\n  0.1,\n  -9223372036854775808\n]\n");
   assert(microsimulator::parse_json(text) == document);
   assert(microsimulator::canonical_json(document) ==
-         "[18446744073709551615,0,2,100,0.1,123456789012345678901234567890,-7]");
+         "[18446744073709551615,0,2,100,0.1,-9223372036854775808]");
 
-  // Negative zero keeps its sign in readable text and has one canonical form.
+  // Negative zero keeps its sign in file text and has one canonical form.
   const auto zeros = microsimulator::parse_json("[-0.0, 0.0]");
-  assert(microsimulator::pretty_json(zeros) == "[-0.0, 0.0]\n");
+  assert(microsimulator::pretty_json(zeros) == "[\n  -0.0,\n  0.0\n]\n");
   assert(std::signbit(
       microsimulator::parse_json(microsimulator::pretty_json(zeros)).as_array()[0].as_number()));
   assert(microsimulator::canonical_json(zeros) == "[0,0]");
@@ -128,14 +126,15 @@ void test_number_kinds() {
   assert_rejected([] { static_cast<void>(JsonValue::integer_token("1.0")); });
   assert_rejected([] { static_cast<void>(JsonValue::integer_token("")); });
 
-  // An integer beyond the float64 range can be neither built nor parsed, so
-  // every integer that is written reads back.
-  const std::string huge = "1" + std::string(400, '0');
-  assert_rejected([&] { static_cast<void>(JsonValue::integer_token(huge)); },
-                  "finite float64 range");
-  assert_parse_rejected(huge, "number overflow");
-  const std::string wide = "-1" + std::string(300, '0');
-  assert(microsimulator::parse_json(wide).as_integer_token() == wide);
+  // An integer outside the 64-bit ranges can be neither built nor parsed, so
+  // it is never rounded and every integer that is written reads back.
+  for (const std::string_view digits :
+       {"18446744073709551616", "-9223372036854775809", "123456789012345678901234567890"}) {
+    assert_rejected([&] { static_cast<void>(JsonValue::integer_token(std::string(digits))); },
+                    "64-bit range");
+    assert_parse_rejected(digits, "64-bit range");
+  }
+  assert_parse_rejected("1" + std::string(400, '0'), "number overflow");
 }
 
 void test_pretty_round_trip() {
@@ -144,7 +143,12 @@ void test_pretty_round_trip() {
   const auto text = microsimulator::pretty_json(document);
   assert(text ==
          "{\n"
-         "  \"a\": [1.5, \"two\", null, true],\n"
+         "  \"a\": [\n"
+         "    1.5,\n"
+         "    \"two\",\n"
+         "    null,\n"
+         "    true\n"
+         "  ],\n"
          "  \"b\": {\n"
          "    \"empty\": {},\n"
          "    \"nested\": [\n"
@@ -157,6 +161,12 @@ void test_pretty_round_trip() {
          "  \"text\": \"line\\nbreak\"\n"
          "}\n");
   assert(microsimulator::parse_json(text) == document);
+
+  // Strings are escaped as RFC 8785 requires in both encodings.
+  const auto escapes = microsimulator::parse_json(R"(["\u0001\u001f\b\f\n\r\t\"\\/\u007f\u20ac"])");
+  assert(microsimulator::canonical_json(escapes) ==
+         "[\"\\u0001\\u001f\\b\\f\\n\\r\\t\\\"\\\\/\x7F\xE2\x82\xAC\"]");
+  assert(microsimulator::parse_json(microsimulator::pretty_json(escapes)) == escapes);
 }
 
 void test_rejections() {

@@ -37,9 +37,13 @@ CoupledRatePlan::CoupledRatePlan(std::size_t species_count, std::size_t signal_c
   validate();
 }
 
-std::size_t CoupledRatePlan::species_count() const noexcept { return species_count_; }
+std::size_t CoupledRatePlan::species_count() const noexcept {
+  return species_count_;
+}
 
-std::size_t CoupledRatePlan::signal_count() const noexcept { return signal_count_; }
+std::size_t CoupledRatePlan::signal_count() const noexcept {
+  return signal_count_;
+}
 
 std::span<const RateInstruction> CoupledRatePlan::instructions() const& noexcept {
   return instructions_;

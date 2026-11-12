@@ -184,7 +184,9 @@ ScatterStencil scatter_stencil(float4 center, GridShape shape, float4 origin, fl
   return {site_index(shape, lower_x, lower_y, lower_z), span_x | span_y | span_z};
 }
 
-bool stencil_covers(uint2 stencil, uint corner) { return (corner & ~stencil.y) == 0u; }
+bool stencil_covers(uint2 stencil, uint corner) {
+  return (corner & ~stencil.y) == 0u;
+}
 
 uint stencil_site(uint2 stencil, GridShape shape, uint corner) {
   return stencil.x + (corner >> 2) * shape.y * shape.z + ((corner >> 1) & 1u) * shape.z +

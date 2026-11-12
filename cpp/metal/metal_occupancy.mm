@@ -18,7 +18,8 @@ namespace {
 }
 struct MetalOccupancyBuffer final : OccupancyBuffer {
   id<MTLBuffer> value;
-  explicit MetalOccupancyBuffer(id<MTLBuffer> buffer) : value(buffer) {}
+  explicit MetalOccupancyBuffer(id<MTLBuffer> buffer) : value(buffer) {
+  }
 };
 class MetalOccupancyDevice final : public OccupancyDevice {
  public:

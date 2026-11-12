@@ -60,14 +60,19 @@ class BusyObjects {
 // Marks an object busy, then releases the GIL, for the lifetime of the scope.
 class ReleasedCall {
  public:
-  explicit ReleasedCall(const void* object) : busy_(object) {}
+  explicit ReleasedCall(const void* object) : busy_(object) {
+  }
   ReleasedCall(const ReleasedCall&) = delete;
   ReleasedCall& operator=(const ReleasedCall&) = delete;
 
  private:
   struct Busy {
-    explicit Busy(const void* object) : object(object) { BusyObjects::enter(object); }
-    ~Busy() { BusyObjects::leave(object); }
+    explicit Busy(const void* object) : object(object) {
+      BusyObjects::enter(object);
+    }
+    ~Busy() {
+      BusyObjects::leave(object);
+    }
     Busy(const Busy&) = delete;
     Busy& operator=(const Busy&) = delete;
     const void* object;

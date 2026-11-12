@@ -27,7 +27,9 @@ void check_cuda(cudaError_t result, const char* operation) {
   }
 }
 
-void check_launch(const char* operation) { check_cuda(cudaGetLastError(), operation); }
+void check_launch(const char* operation) {
+  check_cuda(cudaGetLastError(), operation);
+}
 
 std::uint32_t checked_count(std::size_t count, const char* description) {
   if (count == 0 || count > std::numeric_limits<std::uint32_t>::max()) {
@@ -84,9 +86,15 @@ class DeviceBuffer {
     }
   }
 
-  [[nodiscard]] T* data() noexcept { return data_; }
-  [[nodiscard]] const T* data() const noexcept { return data_; }
-  [[nodiscard]] std::size_t count() const noexcept { return count_; }
+  [[nodiscard]] T* data() noexcept {
+    return data_;
+  }
+  [[nodiscard]] const T* data() const noexcept {
+    return data_;
+  }
+  [[nodiscard]] std::size_t count() const noexcept {
+    return count_;
+  }
 
  private:
   T* data_{nullptr};
@@ -122,7 +130,8 @@ struct PcgWorkspace {
         transformed(count, "failed to allocate CUDA flow transformed vector"),
         partials((count + flow_reduction_width - 1) / flow_reduction_width,
                  "failed to allocate CUDA flow reduction partials"),
-        host_partials(partials.count()) {}
+        host_partials(partials.count()) {
+  }
 
   DeviceBuffer<float> residual;
   DeviceBuffer<float> preconditioned;
@@ -217,7 +226,8 @@ struct DepthPcgWorkspace {
         transformed(count, "CUDA depth transformed vector"),
         partials((count + flow_reduction_width - 1) / flow_reduction_width,
                  "CUDA depth reduction partials"),
-        host_partials(partials.count()) {}
+        host_partials(partials.count()) {
+  }
 
   DeviceBuffer<double> residual, preconditioned, direction, transformed, partials;
   std::vector<double> host_partials;
@@ -376,7 +386,8 @@ ResolvedFlowResult solve_resolved_flow(const SignalGridSpec& spec, std::span<con
   struct Block {
     DeviceBuffer<float> u, p;
     Block(std::size_t nu, std::size_t np)
-        : u(nu, "CUDA Krylov velocity"), p(np, "CUDA Krylov pressure") {}
+        : u(nu, "CUDA Krylov velocity"), p(np, "CUDA Krylov pressure") {
+    }
   };
   using Vector = std::shared_ptr<Block>;
   const double continuity_scale =

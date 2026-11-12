@@ -181,7 +181,9 @@ class CpuMechanicsSystem {
     }
   }
 
-  [[nodiscard]] std::size_t cell_count() const noexcept { return geometry_.size(); }
+  [[nodiscard]] std::size_t cell_count() const noexcept {
+    return geometry_.size();
+  }
 
   void apply(const DofVector& input, DofVector& output) const {
     auto projected = input;

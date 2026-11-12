@@ -61,7 +61,8 @@ Simulation::Simulation(BackendKind backend, std::size_t reserved_capacity,
                        std::size_t species_count, std::uint32_t device_index)
     : state_(reserved_capacity, species_count),
       backend_(make_backend(backend, device_index)),
-      species_rate_plan_(SpeciesRatePlan::zero(species_count)) {}
+      species_rate_plan_(SpeciesRatePlan::zero(species_count)) {
+}
 
 Simulation::Simulation(BackendKind backend, const SimulationCheckpoint& checkpoint,
                        std::uint32_t device_index)
@@ -77,33 +78,49 @@ Simulation::Simulation(BackendKind backend, const SimulationCheckpoint& checkpoi
   validate();
 }
 
-BackendInfo Simulation::backend_info() const { return backend_->info(); }
+BackendInfo Simulation::backend_info() const {
+  return backend_->info();
+}
 
 bool Simulation::supports(BackendFeature feature) const noexcept {
   return backend_->supports(feature);
 }
 
-double Simulation::time() const noexcept { return time_; }
+double Simulation::time() const noexcept {
+  return time_;
+}
 
-std::size_t Simulation::cell_count() const noexcept { return state_.size(); }
+std::size_t Simulation::cell_count() const noexcept {
+  return state_.size();
+}
 
-std::size_t Simulation::species_count() const noexcept { return state_.species_count(); }
+std::size_t Simulation::species_count() const noexcept {
+  return state_.species_count();
+}
 
 std::size_t Simulation::signal_count() const noexcept {
   return signal_grid_.has_value() ? signal_grid_->spec().signal_count : 0;
 }
 
-bool Simulation::has_signal_grid() const noexcept { return signal_grid_.has_value(); }
+bool Simulation::has_signal_grid() const noexcept {
+  return signal_grid_.has_value();
+}
 
 std::optional<SignalSolveReport> Simulation::last_signal_solve_report() const noexcept {
   return last_signal_solve_report_;
 }
 
-bool Simulation::has_coupled_rate_plan() const noexcept { return coupled_rate_plan_.has_value(); }
+bool Simulation::has_coupled_rate_plan() const noexcept {
+  return coupled_rate_plan_.has_value();
+}
 
-CellId Simulation::add_cell(const CellInit& cell) { return state_.add_cell(cell); }
+CellId Simulation::add_cell(const CellInit& cell) {
+  return state_.add_cell(cell);
+}
 
-void Simulation::remove_cell(CellId id) { state_.remove_cell(id); }
+void Simulation::remove_cell(CellId id) {
+  state_.remove_cell(id);
+}
 
 void Simulation::apply_flow_drift(float dt, const MechanicsIntegrationParameters& parameters) {
   if (!std::isfinite(dt) || dt < 0.0F) {
@@ -223,7 +240,9 @@ void Simulation::set_cell_attributes(CellId id, float growth_rate, std::int32_t 
   state_.set_cell_attributes(id, growth_rate, cell_type);
 }
 
-void Simulation::set_cell_fixed(CellId id, bool fixed) { state_.set_cell_fixed(id, fixed); }
+void Simulation::set_cell_fixed(CellId id, bool fixed) {
+  state_.set_cell_fixed(id, fixed);
+}
 
 void Simulation::set_species(CellId id, std::span<const float> levels) {
   state_.set_species(id, levels);
@@ -249,7 +268,9 @@ void Simulation::set_coupled_rate_plan(const CoupledRatePlan& plan) {
   coupled_rate_plan_ = plan;
 }
 
-void Simulation::clear_coupled_rate_plan() noexcept { coupled_rate_plan_.reset(); }
+void Simulation::clear_coupled_rate_plan() noexcept {
+  coupled_rate_plan_.reset();
+}
 
 void Simulation::configure_signal_grid(const SignalGridSpec& spec, std::vector<float> levels) {
   if (!state_.empty()) {
@@ -406,9 +427,13 @@ ResolvedFlowResult Simulation::solve_resolved_flow(const SignalGridSpec& spec,
   return backend_->solve_resolved_flow(spec, drag, parameters);
 }
 
-CellSnapshot Simulation::cell(CellId id) const { return state_.cell(id); }
+CellSnapshot Simulation::cell(CellId id) const {
+  return state_.cell(id);
+}
 
-std::vector<CellSnapshot> Simulation::cells() const { return state_.cells(); }
+std::vector<CellSnapshot> Simulation::cells() const {
+  return state_.cells();
+}
 
 std::optional<CellId> Simulation::lineage_parent(CellId id) const noexcept {
   return state_.lineage_parent(id);

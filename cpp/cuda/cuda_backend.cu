@@ -74,8 +74,12 @@ class CudaBuffer {
     capacity_ = new_capacity;
   }
 
-  [[nodiscard]] T* data() noexcept { return data_; }
-  [[nodiscard]] const T* data() const noexcept { return data_; }
+  [[nodiscard]] T* data() noexcept {
+    return data_;
+  }
+  [[nodiscard]] const T* data() const noexcept {
+    return data_;
+  }
 
  private:
   T* data_{nullptr};

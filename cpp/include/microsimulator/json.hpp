@@ -24,9 +24,9 @@ class JsonBuilder;
 
 // An immutable-by-convention JSON document tree.
 //
-// Integers and other numbers are distinct kinds. An integer keeps its exact
-// decimal digits at any magnitude within the finite float64 range, so 64-bit
-// identifiers and larger integers in opaque payloads survive a round trip. Object members are
+// Integers and other numbers are distinct kinds. An integer is any value in
+// the signed or unsigned 64-bit range and is stored exactly, so 64-bit
+// identifiers survive a round trip. Object members are
 // unique and ordered by key in UTF-16 code-unit order, the RFC 8785 member order.
 class JsonValue {
  public:
@@ -40,7 +40,7 @@ class JsonValue {
   [[nodiscard]] static JsonValue integer(std::uint64_t value);
   // Accepts an optional minus sign followed by decimal digits without a
   // leading zero. Negative zero is stored as zero. Throws JsonError for a
-  // magnitude beyond the finite float64 range.
+  // value outside the signed and unsigned 64-bit ranges.
   [[nodiscard]] static JsonValue integer_token(std::string digits);
   // Throws JsonError for a non-finite value.
   [[nodiscard]] static JsonValue number(double value);
@@ -102,22 +102,24 @@ struct JsonParseLimits {
 
 // Parses one strict JSON document. Rejects duplicate object keys, the
 // non-finite literals NaN and Infinity, numbers outside the finite float64
-// range, malformed UTF-8, unpaired surrogate escapes, nesting beyond the
-// limit, and anything but whitespace after the document. A leading UTF-8
-// byte order mark is skipped.
+// range, integers outside the 64-bit ranges, malformed UTF-8, unpaired surrogate escapes, nesting
+// beyond the limit, and anything but whitespace after the document. A leading UTF-8 byte order mark
+// is skipped.
 [[nodiscard]] JsonValue parse_json(std::string_view text, const JsonParseLimits& limits = {});
 
 // The canonical encoding that integrity digests cover: RFC 8785 member order,
 // string escaping, and ECMAScript number formatting, with no insignificant
 // whitespace. An integer is written as its exact decimal digits, which equals
 // the RFC 8785 form whenever the integer is exactly representable as float64.
+// The JSON library does not produce this form, so the core writes it.
 [[nodiscard]] std::string canonical_json(const JsonValue& value);
 
-// A human-readable encoding with two-space indentation and a trailing newline.
-// A number that is not an integer always carries a fraction or an exponent,
-// and a negative zero keeps its sign, so parsing the text restores each value
-// exactly. Throws JsonError for nesting beyond the default parse limit, so
-// every document this writes can be read back.
+// The text written to files: the JSON library's indented form, two spaces per
+// level with one array element or object member per line, and a trailing
+// newline. A number that is not an integer always carries a fraction or an
+// exponent, and a negative zero keeps its sign, so parsing the text restores
+// each value exactly. Throws JsonError for nesting beyond the default parse
+// limit, so every document this writes can be read back.
 [[nodiscard]] std::string pretty_json(const JsonValue& value);
 
 }  // namespace microsimulator
