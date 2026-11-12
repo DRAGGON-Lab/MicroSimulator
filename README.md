@@ -18,13 +18,31 @@ The [microfluidics modeling guide](docs/microfluidics.md) explains how these pie
 
 ## Quick start
 
-MicroSimulator requires Python 3.12, CMake 3.25 or newer, Ninja, a C++23 compiler, and [uv](https://docs.astral.sh/uv/).
+MicroSimulator requires Python 3.12, CMake 3.25 or newer, Ninja, a C++23 compiler, and [uv](https://docs.astral.sh/uv/). The browser viewer also requires Node.js and [pnpm](https://pnpm.io/).
 
 ```console
 git clone git@github.com:DRAGGON-Lab/MicroSimulator.git
 cd MicroSimulator
 uv sync --group dev
-uv run microsimulator devices
+pnpm --dir viewer install
+pnpm --dir viewer build
+uv run microsimulator view \
+  --model examples/microfluidic_trap.py \
+  --backend cpu \
+  --seed 42 \
+  --dt 0.02 \
+  --open
+```
+
+This opens a cell trap supplied with nutrient through a flowing channel in the live viewer. Press **Play** to watch the colony grow, choose `Growth rate` coloring to see how nutrient supply shapes the population, and click a cell to inspect it. **Stop session** or Ctrl+C in the terminal ends the run.
+
+<p align="center">
+  <img src="docs/assets/viewer-trap.png" alt="The microfluidic trap model running in the MicroSimulator live viewer" width="860">
+</p>
+
+The same model runs headlessly with `microsimulator run`, which saves a restartable checkpoint:
+
+```console
 uv run microsimulator run \
   --model examples/microfluidic_trap.py \
   --backend cpu \
@@ -34,7 +52,7 @@ uv run microsimulator run \
   --output results/trap.json
 ```
 
-This runs a cell trap supplied with nutrient through a flowing channel and saves a restartable checkpoint. Follow [getting started](docs/tutorials/getting-started.md) to set up the viewer, or continue with [microfluidic devices](docs/tutorials/microfluidics.md) to explore walls, transport, growth, and washout.
+Follow [getting started](docs/tutorials/getting-started.md) to checkpoint and resume runs, or continue with [microfluidic devices](docs/tutorials/microfluidics.md) to explore walls, transport, growth, and washout.
 
 ## Examples
 
