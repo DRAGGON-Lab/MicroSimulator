@@ -57,53 +57,16 @@ namespace {
   return std::ranges::all_of(digits, [](char digit) { return digit >= '0' && digit <= '9'; });
 }
 
-void append_string(std::string& out, std::string_view text) {
-  static constexpr std::string_view hex = "0123456789abcdef";
-  out += '"';
-  for (const char character : text) {
-    const auto byte = static_cast<unsigned char>(character);
-    switch (character) {
-      case '"':
-        out += "\\\"";
-        break;
-      case '\\':
-        out += "\\\\";
-        break;
-      case '\b':
-        out += "\\b";
-        break;
-      case '\f':
-        out += "\\f";
-        break;
-      case '\n':
-        out += "\\n";
-        break;
-      case '\r':
-        out += "\\r";
-        break;
-      case '\t':
-        out += "\\t";
-        break;
-      default:
-        if (byte < 0x20U) {
-          out += "\\u00";
-          out += hex[byte >> 4U];
-          out += hex[byte & 0x0FU];
-        } else {
-          out += character;
-        }
-    }
-  }
-  out += '"';
-}
+// The library's string serializer writes the RFC 8785 form: two-character
+// escapes where JSON defines them, lowercase \u00xx for other control
+// characters, and every other character as UTF-8.
+void append_string(std::string& out, std::string_view text) { out += nlohmann::json(text).dump(); }
 
-// Writes the ECMAScript Number::toString form of a finite value. With
-// keep_kind, an integral value gains a ".0" suffix so it reads back as a
-// number rather than an integer.
-void append_number(std::string& out, double value, bool keep_kind) {
+// Writes the ECMAScript Number::toString form of a finite value, the number
+// format RFC 8785 requires. Both zeros are written as "0".
+void append_number(std::string& out, double value) {
   if (value == 0.0) {
-    // The canonical form has one zero; the readable form keeps the sign.
-    out += !keep_kind ? "0" : std::signbit(value) ? "-0.0" : "0.0";
+    out += '0';
     return;
   }
   std::array<char, 40> buffer{};
@@ -136,9 +99,6 @@ void append_number(std::string& out, double value, bool keep_kind) {
   if (digit_count <= point && point <= 21) {
     out += digits;
     out.append(static_cast<std::size_t>(point - digit_count), '0');
-    if (keep_kind) {
-      out += ".0";
-    }
   } else if (0 < point && point <= 21) {
     out.append(digits, 0, static_cast<std::size_t>(point));
     out += '.';
@@ -156,24 +116,6 @@ void append_number(std::string& out, double value, bool keep_kind) {
     out += 'e';
     out += exponent < 0 ? '-' : '+';
     out += std::to_string(exponent < 0 ? -exponent : exponent);
-  }
-}
-
-[[nodiscard]] bool scalar(const JsonValue& value) noexcept {
-  return !value.is_array() && !value.is_object();
-}
-
-void write_scalar(std::string& out, const JsonValue& value, bool keep_kind) {
-  if (value.is_null()) {
-    out += "null";
-  } else if (value.is_boolean()) {
-    out += value.as_boolean() ? "true" : "false";
-  } else if (value.is_integer()) {
-    out += value.as_integer_token();
-  } else if (value.is_number()) {
-    append_number(out, value.as_number(), keep_kind);
-  } else {
-    append_string(out, value.as_string());
   }
 }
 
@@ -202,67 +144,59 @@ void write_canonical(std::string& out, const JsonValue& value) {
       write_canonical(out, member.value);
     }
     out += '}';
+  } else if (value.is_null()) {
+    out += "null";
+  } else if (value.is_boolean()) {
+    out += value.as_boolean() ? "true" : "false";
+  } else if (value.is_integer()) {
+    out += value.as_integer_token();
+  } else if (value.is_number()) {
+    append_number(out, value.as_number());
   } else {
-    write_scalar(out, value, false);
+    append_string(out, value.as_string());
   }
 }
 
-void write_pretty(std::string& out, const JsonValue& value, std::size_t indent) {
-  if (!scalar(value) && indent / 2 >= JsonParseLimits{}.max_depth) {
+// Copies a value into the library's document type, which writes file text.
+[[nodiscard]] nlohmann::json to_library(const JsonValue& value, std::size_t depth) {
+  if (value.is_null()) {
+    return nullptr;
+  }
+  if (value.is_boolean()) {
+    return value.as_boolean();
+  }
+  if (value.is_integer()) {
+    const auto& digits = value.as_integer_token();
+    if (digits.front() == '-') {
+      std::int64_t number = 0;
+      std::from_chars(digits.data(), digits.data() + digits.size(), number);
+      return number;
+    }
+    std::uint64_t number = 0;
+    std::from_chars(digits.data(), digits.data() + digits.size(), number);
+    return number;
+  }
+  if (value.is_number()) {
+    return value.as_number();
+  }
+  if (value.is_string()) {
+    return value.as_string();
+  }
+  if (depth >= JsonParseLimits{}.max_depth) {
     throw JsonError("nesting is too deep");
   }
   if (value.is_array()) {
-    const auto& items = value.as_array();
-    if (std::ranges::all_of(items, scalar)) {
-      out += '[';
-      bool first = true;
-      for (const auto& item : items) {
-        if (!first) {
-          out += ", ";
-        }
-        first = false;
-        write_scalar(out, item, true);
-      }
-      out += ']';
-      return;
+    auto items = nlohmann::json::array();
+    for (const auto& item : value.as_array()) {
+      items.push_back(to_library(item, depth + 1));
     }
-    out += "[\n";
-    bool first = true;
-    for (const auto& item : items) {
-      if (!first) {
-        out += ",\n";
-      }
-      first = false;
-      out.append(indent + 2, ' ');
-      write_pretty(out, item, indent + 2);
-    }
-    out += '\n';
-    out.append(indent, ' ');
-    out += ']';
-  } else if (value.is_object()) {
-    const auto& members = value.as_object();
-    if (members.empty()) {
-      out += "{}";
-      return;
-    }
-    out += "{\n";
-    bool first = true;
-    for (const auto& member : members) {
-      if (!first) {
-        out += ",\n";
-      }
-      first = false;
-      out.append(indent + 2, ' ');
-      append_string(out, member.key);
-      out += ": ";
-      write_pretty(out, member.value, indent + 2);
-    }
-    out += '\n';
-    out.append(indent, ' ');
-    out += '}';
-  } else {
-    write_scalar(out, value, true);
+    return items;
   }
+  auto members = nlohmann::json::object();
+  for (const auto& member : value.as_object()) {
+    members[member.key] = to_library(member.value, depth + 1);
+  }
+  return members;
 }
 
 }  // namespace
@@ -286,16 +220,18 @@ JsonValue JsonValue::integer_token(std::string digits) {
   if (digits == "-0") {
     digits = "0";
   }
-  // The parser reads an integer too long for 64 bits through float64, so a
-  // magnitude beyond that range could be written but never read back.
-  double magnitude = 0.0;
-  for (const char digit : digits) {
-    if (digit != '-') {
-      magnitude = (magnitude * 10.0) + static_cast<double>(digit - '0');
-    }
+  // from_chars reports a value that does not fit its 64-bit target.
+  const char* const end = digits.data() + digits.size();
+  std::errc status{};
+  if (digits.front() == '-') {
+    std::int64_t number = 0;
+    status = std::from_chars(digits.data(), end, number).ec;
+  } else {
+    std::uint64_t number = 0;
+    status = std::from_chars(digits.data(), end, number).ec;
   }
-  if (!std::isfinite(magnitude)) {
-    throw JsonError("integer is outside the finite float64 range");
+  if (status != std::errc{}) {
+    throw JsonError("integer is outside the 64-bit range");
   }
   return JsonValue(Storage(Integer{std::move(digits)}));
 }
@@ -430,7 +366,7 @@ class JsonBuilder {
     return add(JsonValue::integer(std::uint64_t{value}));
   }
   // The library reports an integer too long for 64 bits as a float together
-  // with its source text, which is kept so the value stays exact.
+  // with its source text. Such an integer is rejected rather than rounded.
   bool number_float(number_float_t value, const string_t& text) {
     if (text.find_first_not_of("-0123456789") == string_t::npos) {
       return add(JsonValue::integer_token(text));
@@ -516,11 +452,6 @@ std::string canonical_json(const JsonValue& value) {
   return out;
 }
 
-std::string pretty_json(const JsonValue& value) {
-  std::string out;
-  write_pretty(out, value, 0);
-  out += '\n';
-  return out;
-}
+std::string pretty_json(const JsonValue& value) { return to_library(value, 0).dump(2) + '\n'; }
 
 }  // namespace microsimulator

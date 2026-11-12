@@ -139,7 +139,7 @@ constexpr std::size_t max_json_depth = 256;
     return json_from_python(value);
   } catch (const JsonError& error) {
     throw CheckpointError("checkpoint " + std::string(role) +
-                          " is not finite JSON data: " + error.what());
+                          " cannot be stored as JSON: " + error.what());
   }
 }
 

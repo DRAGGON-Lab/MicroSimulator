@@ -154,8 +154,8 @@ int main() {
   document.simulation = original.checkpoint();
   document.source_backend = original.backend_info();
   document.controller = microsimulator::parse_json(
-      R"({"completed_steps":18446744073709551615,"big":123456789012345678901234567890,
-          "ratio":2.0,"nested":{"labels":["a",null,true],"x":-0.1}})");
+      R"({"completed_steps":18446744073709551615,"ratio":2.0,
+          "nested":{"labels":["a",null,true],"x":-0.1}})");
   document.provenance = microsimulator::parse_json(R"({"model":{"seed":7,"name":"é🧪"}})");
   document.channel_metadata.species =
       microsimulator::ChannelMetadata::Labels{std::string("<b>α 🧪</b>"), std::nullopt};

@@ -204,8 +204,8 @@ inline const JsonValue& expect_object(const JsonValue& value, const JsonPath& pa
   if (!value.is_integer()) {
     fail(path, "expected a number");
   }
-  // An integer of any length converts by accumulation, which is exact below
-  // 2^53 and rounds above it.
+  // A 64-bit integer converts by accumulation, which is exact below 2^53 and
+  // rounds above it.
   std::string_view digits = value.as_integer_token();
   const bool negative = digits.front() == '-';
   if (negative) {
@@ -214,9 +214,6 @@ inline const JsonValue& expect_object(const JsonValue& value, const JsonPath& pa
   double result = 0.0;
   for (const char digit : digits) {
     result = (result * 10.0) + static_cast<double>(digit - '0');
-  }
-  if (!std::isfinite(result)) {
-    fail(path, "number is outside the finite float64 range");
   }
   return negative ? -result : result;
 }
