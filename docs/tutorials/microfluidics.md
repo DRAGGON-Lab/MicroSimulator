@@ -11,7 +11,7 @@ The microfluidic-trap, Danino, biopixel, and pillar tutorial founders request ce
 | Model | Device | Demonstrates |
 | --- | --- | --- |
 | [`examples/culture_dish.py`](../../examples/culture_dish.py) | round dish | one inside-cylinder constraint as a dish |
-| [`examples/microfluidic_trap.py`](../../examples/microfluidic_trap.py) | trap + channel | flow, obstacles, drift, washout |
+| [`examples/microfluidic_trap.py`](../../examples/microfluidic_trap.py) | monolayer trap + channel | flow, obstacles, drift, crowding-limited growth, washout |
 | [`examples/tutorials/danino_clock.py`](../../examples/tutorials/danino_clock.py) | trap + channel | the full quorum clock in a device |
 | [`examples/tutorials/biopixel_trap.py`](../../examples/tutorials/biopixel_trap.py) | biopixel array trap | reported cavity, CAD layout, monolayer model |
 
@@ -20,6 +20,8 @@ Run any of them live:
 ```console
 uv run microsimulator view --model examples/microfluidic_trap.py --seed 42 --dt 0.02 --backend cpu --open
 ```
+
+The trap example is sized to one population: a 40 by 20 micrometer trap, 1.5 micrometers deep, beside a 20 micrometer channel. A few hundred cells fill it as a monolayer. Its growth rule multiplies the Monod rate by a compression factor that falls linearly to zero as a cell's deepest overlap with a neighbor reaches a fifth of its diameter, so the packed interior stops elongating while cells at the mouth keep growing, spill into the channel, and wash out. The population settles near 320 cells with continuous turnover. The compression limit is a model choice, not a measured mechanical response.
 
 ## Walls that cells and chemistry both respect
 
@@ -59,7 +61,7 @@ DEVICE.apply_to_grid(
 )
 ```
 
-`apply_to_grid` materializes the solid mask, fixed inlet and outlet boundaries on the y axis, and the numerically solved steady device flow on the grid's face-staggered velocity field (see the next section). Passing the model's `Simulation` makes the solve execute through the backend selected by the runner. Flow runs through the channel, circulates weakly at the open trap face, and the dead-end trap exchanges with the channel chiefly by diffusion in this model.
+The constructor's keyword arguments set the trap, channel, and wall dimensions; the trap example passes its own, and the Danino clock uses the defaults. `apply_to_grid` materializes the solid mask, fixed inlet and outlet boundaries on the y axis, and the numerically solved steady device flow on the grid's face-staggered velocity field (see the next section). Passing the model's `Simulation` makes the solve execute through the backend selected by the runner. Flow runs through the channel, circulates weakly at the open trap face, and the dead-end trap exchanges with the channel chiefly by diffusion in this model.
 
 ## Flow on signals and on cells
 

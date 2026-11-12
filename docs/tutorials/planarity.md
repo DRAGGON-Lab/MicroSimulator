@@ -19,7 +19,8 @@ The following contracts describe the checked-in models after the founder-initial
 | `simbol_circuits.py`: all six circuits | Centers Z=0, directions in XY; XY-only jitter | No mechanical walls; unrestricted 3D. |
 | `plasmid_segregation.py`, `conjugation.py` | Centers Z=0, directions in XY; no orientation jitter | Division inherits the parent axis; contact mechanics remains unrestricted 3D. |
 | `pillar_channel.py` | Centers Z=0, directions in XY; XY-only jitter | Box walls at Z=±3 and cylindrical pillars. Attached cells are fixed; released daughters move in a finite-height 3D chamber. |
-| `danino_clock.py`, `examples/microfluidic_trap.py` | Centers Z=0, directions in XY; XY-only jitter | Trap walls at Z=±3. These permit nonzero Z and tilt within a finite-height 3D device. |
+| `danino_clock.py` | Centers Z=0, directions in XY; XY-only jitter | Trap walls at Z=±3. These permit nonzero Z and tilt within a finite-height 3D device. |
+| `examples/microfluidic_trap.py` | Centers Z=0, directions in XY; XY-only jitter | Device walls at Z=±0.75, half again a cell's diameter apart. The thin device holds a monolayer but does not force identical center Z or zero tilt. |
 | `biopixel_trap.py` | Centers Z=0.825, directions in XY; XY-only jitter | Trap floor Z=0 and roof Z=1.65; the channel is taller. The thin trap encourages a monolayer but does not force identical center Z or zero tilt. |
 | `examples/culture_dish.py` | Centers Z=0, directions in XY; XY-only jitter | Inside cylinder with caps at Z=±1. Finite-height confinement permits nonzero Z and tilt. |
 

@@ -123,6 +123,12 @@ enum class GridSampleBound : std::uint8_t { inside, clamped };
 [[nodiscard]] SignalGridStencil signal_grid_stencil(
     const SignalGridSpec& spec, Vec3 position, GridSampleBound bound = GridSampleBound::inside);
 
+// Largest diagonal entry of the operator an implicit step of `implicit_dt`
+// solves, I - implicit_dt * L, where L is the grid's transport and loss
+// operator. It is at least one, and grows with diffusion over the squared
+// spacing, outflow, and loss.
+[[nodiscard]] float signal_implicit_operator_scale(const SignalGridSpec& spec, float implicit_dt);
+
 class SignalGrid {
  public:
   explicit SignalGrid(const SignalGridSpec& spec, std::vector<float> levels = {});

@@ -505,7 +505,8 @@ class MetalBackend final : public ComputeBackend {
           signal_fixed_values_, signal_reaction_source_, signal_reaction_loss_, signal_obstacles_,
           signal_x_faces_, signal_y_faces_, signal_z_faces_, has_velocity_field, signal_error_,
           boundary_kinds, shape, spacing, (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count,
-          level_count, spec.solver);
+          level_count, spec.solver,
+          signal_implicit_operator_scale(spec, crank_nicolson == 2 ? dt : 0.5F * dt));
       result_buffer = solve.first;
       report = solve.second;
       if (!report.converged) {
@@ -727,7 +728,8 @@ class MetalBackend final : public ComputeBackend {
           coupled_fixed_values_, coupled_reaction_source_, coupled_reaction_loss_,
           coupled_obstacles_, coupled_x_faces_, coupled_y_faces_, coupled_z_faces_,
           has_velocity_field, coupled_error_, boundary_kinds, shape, spacing,
-          (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count, level_count, spec.solver);
+          (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count, level_count, spec.solver,
+          signal_implicit_operator_scale(spec, crank_nicolson == 2 ? dt : 0.5F * dt));
       result_buffer = solve.first;
       report = solve.second;
       if (!report.converged) {
@@ -1136,7 +1138,7 @@ class MetalBackend final : public ComputeBackend {
       id<MTLBuffer> y_faces, id<MTLBuffer> z_faces, std::uint32_t has_velocity_field,
       id<MTLBuffer> error, const std::array<std::uint32_t, 6>& boundary_kinds,
       const MetalGridShape& shape, const MetalFloat4& spacing, float dt, std::uint32_t signal_count,
-      std::uint32_t level_count, const SignalSolveParameters& parameters) {
+      std::uint32_t level_count, const SignalSolveParameters& parameters, float operator_scale) {
     ensure_signal_solve_capacity(level_count);
     const auto half_dt = dt;
     id<MTLBuffer> current = initial;
@@ -1149,6 +1151,7 @@ class MetalBackend final : public ComputeBackend {
                   boundary_kinds, shape, spacing, half_dt, signal_count, level_count);
             },
         .right_hand_side_rms = [&] { return signal_rhs_rms(right_hand_side, level_count); },
+        .operator_scale = operator_scale,
         .begin_sweeps = [&] { *static_cast<std::uint32_t*>(error.contents) = 0; },
         .sweep =
             [&] {

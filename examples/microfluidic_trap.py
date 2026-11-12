@@ -8,6 +8,11 @@ growth follows Monod kinetics on the local nutrient level and consumes
 nutrient at a fixed yield, so the colony's growth pattern reflects the balance
 between flow supply, diffusion into the trap, and consumption by the cells
 already there.
+
+The trap is a monolayer that a few hundred cells fill. A cell pressed into its
+neighbors stops elongating, so the packed colony holds its density while the
+cells at the trap mouth, which have room, keep growing, spill into the channel,
+and are carried to the outlet. The population settles at a steady turnover.
 """
 
 from __future__ import annotations
@@ -37,12 +42,24 @@ from microsimulator.flow import colony_mobility, gap_mobility, solve_flow_field
 from microsimulator.microfluidics import TrapChannelDevice
 
 MODEL_ID = "examples.microfluidic-trap"
-MODEL_VERSION = 4
+MODEL_VERSION = 5
 DIVISION = UniformLengthDivision(3.2, 3.8, jitter_z=False)
 
 FLOW_SPEED = 20.0
-DEVICE = TrapChannelDevice(mean_flow_speed=FLOW_SPEED)
 CELL_RADIUS = 0.5
+# Lengths are micrometers. The device is 1.5 deep, half again a cell's
+# diameter, so the colony is a monolayer, and the trap is 40 long by 20 wide,
+# which a few hundred cells fill. From then on growth pushes cells out of the
+# trap mouth into the 20-wide channel, where the flow carries them away.
+DEVICE = TrapChannelDevice(
+    trap_open_x=-20.0,
+    trap_back_x=20.0,
+    trap_half_y=10.0,
+    trap_half_z=0.75,
+    channel_far_x=-40.0,
+    channel_half_length=60.0,
+    mean_flow_speed=FLOW_SPEED,
+)
 NUTRIENT_INLET = 10.0
 BASE_GROWTH_RATE = 1.0
 NUTRIENT_K = 5.0
@@ -50,6 +67,12 @@ NUTRIENT_K = 5.0
 # the actual increase of B = pi*r^2*(length + 2*r), divided by this yield.
 # The value is illustrative; penetration and growth require refinement checks.
 NUTRIENT_YIELD = 0.5
+# Growth stops under compression: a cell whose deepest overlap with a neighbor
+# reaches this depth does not elongate, and growth falls off linearly up to
+# it. Contact relaxation spreads overlap over several steps, so growth that
+# ignored it would keep packing cells into a full trap. The value is a model
+# choice, a fifth of a cell's diameter, not a measured mechanical response.
+COMPRESSION_LIMIT = 0.2
 WASHOUT_Y = DEVICE.channel_half_length - 10.0
 
 # Resistance feedback uses only fixed (attached) cells, with a physical
@@ -60,16 +83,16 @@ DRAG_COEFFICIENT = 100.0
 
 def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
     shape = GridShape()
-    shape.x, shape.y, shape.z = 64, 72, 6
+    shape.x, shape.y, shape.z = 39, 66, 6
     grid = SignalGridSpec()
     grid.signal_count = 1
     grid.shape = shape
-    # Two z layers span the trap's six-micrometer depth exactly, so its fluid
-    # volume is the device's rather than the half voxel of slack a coarser
-    # lattice would leave on each side, and the lattice still reaches a voxel
-    # past the walls, because sampling outside the lattice is an error.
-    grid.origin = Vec3(-140.0, -144.0, -7.5)
-    grid.spacing = Vec3(4.0, 4.0, 3.0)
+    # Every wall lies midway between two planes of site centers, so the fluid
+    # sites span exactly the device: ten across the channel, twenty along the
+    # trap, and two through the depth. The lattice still reaches past the
+    # walls, because sampling outside the lattice is an error.
+    grid.origin = Vec3(-47.0, -65.0, -1.875)
+    grid.spacing = Vec3(2.0, 2.0, 0.75)
     grid.diffusion = [40.0]
     grid.advection = [Vec3()]
     grid.integration = SignalIntegrationKind.BACKWARD_EULER
@@ -106,6 +129,18 @@ def _nutrient_growth(simulation: Simulation, position: Vec3) -> float:
     return BASE_GROWTH_RATE * nutrient / (NUTRIENT_K + nutrient)
 
 
+def _compression(simulation: Simulation) -> dict[int, float]:
+    """Each cell's deepest overlap with a neighbor, for the cells that have one."""
+
+    deepest: dict[int, float] = {}
+    for contact in simulation.find_cell_contacts().contacts:
+        overlap = -contact.signed_separation
+        if overlap > 0.0:
+            for cell_id in (contact.first_id, contact.second_id):
+                deepest[cell_id] = max(deepest.get(cell_id, 0.0), overlap)
+    return deepest
+
+
 def _regulate(step: ControllerStep) -> StepPlan:
     if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
         mobility = colony_mobility(
@@ -124,9 +159,14 @@ def _regulate(step: ControllerStep) -> StepPlan:
     if washed:
         DIVISION.forget(step, washed)
         divisions = tuple(request for request in divisions if request.parent_id not in washed)
+    compression = _compression(step.simulation)
     return StepPlan(
         updates=tuple(
-            CellUpdate(cell.id, growth_rate=_nutrient_growth(step.simulation, cell.position))
+            CellUpdate(
+                cell.id,
+                growth_rate=_nutrient_growth(step.simulation, cell.position)
+                * max(0.0, 1.0 - compression.get(cell.id, 0.0) / COMPRESSION_LIMIT),
+            )
             for cell in step.cells
             if cell.id not in washed
         ),
@@ -140,7 +180,7 @@ def _divided(step: ControllerStep, event: DivisionEvent) -> None:
 
 
 def build(context: ModelContext) -> NativeController:
-    simulation = context.simulation(reserved_capacity=10_000)
+    simulation = context.simulation(reserved_capacity=2_000)
     grid = _grid(simulation)
     simulation.configure_signal_grid(grid, _primed_levels(grid))
     simulation.set_coupled_rate_plan(_rate_plan())
