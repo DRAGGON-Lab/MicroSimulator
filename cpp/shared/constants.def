@@ -10,5 +10,9 @@ MICROSIMULATOR_SHARED_FLOAT(float_epsilon, 1.1920928955078125e-7)
 MICROSIMULATOR_SHARED_UINT(segment_minimization_iterations, 40)
 // Unknowns per cell in the mechanics system: translation, rotation, length.
 MICROSIMULATOR_SHARED_UINT(mechanics_degrees_of_freedom, 7)
+// Growth load laws of the contact dynamics solve, in the order of GrowthLoadLaw.
+MICROSIMULATOR_SHARED_UINT(growth_load_law_none, 0)
+MICROSIMULATOR_SHARED_UINT(growth_load_law_exponential, 1)
+MICROSIMULATOR_SHARED_UINT(growth_load_law_linear, 2)
 // Elements each device thread group reduces to one partial dot product.
 MICROSIMULATOR_SHARED_UINT(flow_reduction_width, 64)

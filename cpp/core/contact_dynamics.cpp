@@ -13,10 +13,17 @@
 #include <vector>
 
 #include "core/contact_stepper.hpp"
+#include "core/shared_constants.hpp"
 #include "microsimulator/mechanics.hpp"
 
 namespace microsimulator {
 namespace {
+
+// The device kernels select the growth load law by these codes.
+static_assert(static_cast<std::uint32_t>(GrowthLoadLaw::none) == shared::growth_load_law_none);
+static_assert(static_cast<std::uint32_t>(GrowthLoadLaw::exponential) ==
+              shared::growth_load_law_exponential);
+static_assert(static_cast<std::uint32_t>(GrowthLoadLaw::linear) == shared::growth_load_law_linear);
 
 // Cylinder lengths below this have no axis to elongate along.
 constexpr float minimum_lever_length = 1.0e-6F;
@@ -143,18 +150,16 @@ using TouchKey = std::tuple<Slot, bool, std::uint64_t>;
   row.first_slot = touch.first_slot;
   row.second_slot = touch.second_slot;
   row.offset = std::max(touch.separation, -recovery);
-  row.compliance = touch.separation < -recovery ? compliance * recovery / -touch.separation
-                                                : compliance;
+  row.compliance =
+      touch.separation < -recovery ? compliance * recovery / -touch.separation : compliance;
   const auto& normal = touch.normal;
   const auto first_arm = cross(touch.point - geometry.positions[touch.first_slot], normal);
-  row.first_jacobian = {-normal.x,     -normal.y,     -normal.z,
-                        -first_arm.x,  -first_arm.y,  -first_arm.z};
+  row.first_jacobian = {-normal.x, -normal.y, -normal.z, -first_arm.x, -first_arm.y, -first_arm.z};
   const auto first_centerline = touch.point - normal * radii[touch.first_slot];
   row.first_length_lever = length_lever(geometry, touch.first_slot, first_centerline, normal);
   if (touch.second_slot != invalid_slot) {
     const auto second_arm = cross(touch.point - geometry.positions[touch.second_slot], normal);
-    row.second_jacobian = {normal.x,     normal.y,     normal.z,
-                           second_arm.x, second_arm.y, second_arm.z};
+    row.second_jacobian = {normal.x, normal.y, normal.z, second_arm.x, second_arm.y, second_arm.z};
     const auto second_centerline =
         touch.point + normal * (touch.separation + radii[touch.second_slot]);
     row.second_length_lever =
@@ -266,8 +271,7 @@ struct Substep {
 [[nodiscard]] std::optional<Substep> advance_substep(
     WorldState& state, const Geometry& base, std::span<const float> rate_lengths,
     const ConstraintSet& constraints, ComputeBackend& backend, float dt,
-    const ContactDynamicsParameters& parameters,
-    const ContactParameters& contact_parameters,
+    const ContactDynamicsParameters& parameters, const ContactParameters& contact_parameters,
     const ConstraintContactParameters& constraint_parameters, std::uint64_t& iterations) {
   const auto radii = state.geometry_state().radii;
   const auto bodies = make_bodies(state, rate_lengths, parameters.drag);
@@ -286,8 +290,7 @@ struct Substep {
   }
   // Overlap deeper than one substep recovers is accepted for now.
   const auto tolerance = effective_overlap_tolerance(parameters);
-  const auto slack =
-      tolerance + std::max(0.0F, starting_overlap - parameters.max_overlap_recovery);
+  const auto slack = tolerance + std::max(0.0F, starting_overlap - parameters.max_overlap_recovery);
   const ContactSolveParameters solve_parameters{
       .tolerance = solve_tolerance_fraction * tolerance,
       .max_iterations = parameters.max_iterations,
@@ -472,8 +475,8 @@ ContactDynamicsResult advance_contact_dynamics(
     const auto rates = state.cell_attributes().growth_rates;
     auto growth = 0.0F;
     for (std::size_t slot = 0; slot < view.size(); ++slot) {
-      growth = std::max(
-          growth, std::abs(rates[slot]) * view.lengths[slot] * 0.5F * dt / view.radii[slot]);
+      growth = std::max(growth,
+                        std::abs(rates[slot]) * view.lengths[slot] * 0.5F * dt / view.radii[slot]);
     }
     const auto pieces = std::max(1.0F, std::ceil(growth / parameters.max_growth_fraction));
     if (!std::isfinite(pieces)) {

@@ -500,6 +500,15 @@ MechanicsSolveResult Simulation::relax_cell_mechanics(
   return result;
 }
 
+ContactSolveResult Simulation::solve_contact_system(const ContactSystem& system,
+                                                    std::span<const float> initial_multipliers,
+                                                    const ContactSolveParameters& parameters) {
+  if (!backend_->supports(BackendFeature::contact_dynamics)) {
+    throw std::runtime_error("selected backend does not implement contact dynamics");
+  }
+  return backend_->solve_contact_forces(system, initial_multipliers, parameters);
+}
+
 DepthAveragedFlowResult Simulation::solve_depth_averaged_flow(
     const SignalGridSpec& spec, std::span<const float> mobility,
     const DepthAveragedFlowParameters& parameters) {

@@ -16,11 +16,13 @@
 #include <utility>
 #include <vector>
 
+#include "core/contact_solver.hpp"
 #include "core/device_types.hpp"
 #include "core/mechanics_solver.hpp"
 #include "core/signal_jacobi.hpp"
 #include "metal_flow.hpp"
 #include "microsimulator/backend.hpp"
+#include "microsimulator/metal/contact_dynamics_source.hpp"
 #include "microsimulator/metal/contacts_source.hpp"
 #include "microsimulator/metal/coupled_rates_source.hpp"
 #include "microsimulator/metal/growth_source.hpp"
@@ -36,6 +38,10 @@ using MetalUInt2 = device::uint2;
 using MetalFloat4 = device::float4;
 using MetalUInt4 = device::uint4;
 using MetalDofs = device::MechanicsDofs;
+using MetalContactRow = device::ContactRowData;
+using MetalContactBody = device::ContactBodyData;
+using MetalContactSolve = device::ContactSolveData;
+using MetalContactState = device::ContactSolveState;
 using MetalExternalConstraint = device::ExternalConstraint;
 using MetalRateInstruction = device::RateInstruction;
 using MetalGridShape = device::GridShape;
@@ -219,6 +225,22 @@ class MetalBackend final : public ComputeBackend {
       mechanics_reduce_pipeline_ =
           compile_pipeline(device_, mechanics_library, @"reduce_sum_pairs",
                            "failed to create the Metal mechanics-reduction pipeline");
+      const auto contact_dynamics_library = compile_library(
+          device_, metal::contact_dynamics_source, "failed to compile Metal contact dynamics");
+      contact_project_pipeline_ =
+          compile_pipeline(device_, contact_dynamics_library, @"contact_project",
+                           "failed to create the Metal contact-project pipeline");
+      contact_respond_pipeline_ =
+          compile_pipeline(device_, contact_dynamics_library, @"contact_respond",
+                           "failed to create the Metal contact-respond pipeline");
+      contact_gaps_pipeline_ = compile_pipeline(device_, contact_dynamics_library, @"contact_gaps",
+                                                "failed to create the Metal contact-gaps pipeline");
+      contact_reduce_pipeline_ =
+          compile_pipeline(device_, contact_dynamics_library, @"contact_reduce",
+                           "failed to create the Metal contact-reduce pipeline");
+      contact_advance_pipeline_ =
+          compile_pipeline(device_, contact_dynamics_library, @"contact_advance",
+                           "failed to create the Metal contact-advance pipeline");
       flow_solver_ = std::make_unique<metal::FlowSolver>(device_index_);
     }
   }
@@ -242,7 +264,7 @@ class MetalBackend final : public ComputeBackend {
            feature == BackendFeature::external_constraints || feature == BackendFeature::signals ||
            feature == BackendFeature::coupled_rates ||
            feature == BackendFeature::depth_averaged_flow ||
-           feature == BackendFeature::resolved_flow;
+           feature == BackendFeature::resolved_flow || feature == BackendFeature::contact_dynamics;
   }
 
   void advance_growth(WorldState& state, float dt) override {
@@ -872,6 +894,74 @@ class MetalBackend final : public ComputeBackend {
     };
     result.report = detail::solve_mechanics_system(operations, geometry.size(), parameters);
     result.corrections = download_mechanics_solution(geometry.size());
+    return result;
+  }
+
+  [[nodiscard]] ContactSolveResult solve_contact_forces(
+      const ContactSystem& system, std::span<const float> initial_multipliers,
+      const ContactSolveParameters& parameters) override {
+    validate_contact_system(system);
+    if (initial_multipliers.size() != system.rows.size()) {
+      throw std::invalid_argument("contact multiplier count does not match the contact rows");
+    }
+    for (const auto multiplier : initial_multipliers) {
+      if (!std::isfinite(multiplier) || multiplier < 0.0F) {
+        throw std::invalid_argument("contact multipliers must be finite and non-negative");
+      }
+    }
+    if (!std::isfinite(parameters.tolerance) || parameters.tolerance <= 0.0F) {
+      throw std::invalid_argument("contact solve tolerance must be finite and positive");
+    }
+
+    ContactSolveResult result;
+    result.multipliers.assign(initial_multipliers.begin(), initial_multipliers.end());
+    if (system.rows.empty()) {
+      return result;
+    }
+    const auto bound = contact_system_diagonal_bound(system);
+    if (!std::isfinite(bound) || bound <= 0.0F) {
+      throw std::invalid_argument("contact system has no positive diagonal");
+    }
+    // An incidence entry packs a row index with one bit for the row's side.
+    if (system.bodies.size() >= std::numeric_limits<std::uint32_t>::max() ||
+        system.rows.size() > std::numeric_limits<std::uint32_t>::max() / 2) {
+      throw std::overflow_error("Metal contact dynamics exceeds the uint32 index space");
+    }
+
+    const auto row_count = static_cast<std::uint32_t>(system.rows.size());
+    const auto body_count = static_cast<std::uint32_t>(system.bodies.size());
+    ensure_contact_dynamics_capacity(body_count, row_count);
+    upload_contact_system(system, initial_multipliers);
+    const MetalContactSolve solve{
+        .dt = system.dt,
+        .tolerance = parameters.tolerance,
+        .law = static_cast<std::uint32_t>(system.growth.law),
+        .sensitivity = system.growth.sensitivity,
+        .free_load = system.growth.free_load,
+        .stall_load = system.growth.stall_load,
+        .row_count = row_count,
+        .body_count = body_count,
+    };
+
+    // The multipliers and their gaps live in the buffer pair `current` names;
+    // each step writes the other pair.
+    std::size_t current = 0;
+    const detail::ContactSolverOperations operations{
+        .initialize =
+            [&](float first_step_length) {
+              return initialize_contact_solve(solve, first_step_length);
+            },
+        .iterate =
+            [&](std::uint32_t count) {
+              const auto progress = iterate_contact_solve(solve, current, count);
+              current = (current + progress.iterations) % 2;
+              return progress;
+            },
+        .batch = contact_solve_batch,
+    };
+    result.report = detail::solve_contact_system(operations, 1.0F / bound, parameters);
+    const auto* multipliers = static_cast<const float*>(contact_multipliers_[current].contents);
+    result.multipliers.assign(multipliers, multipliers + row_count);
     return result;
   }
 
@@ -2102,6 +2192,210 @@ class MetalBackend final : public ComputeBackend {
     }
   }
 
+  // Projected-gradient steps encoded in one command buffer. The device stops
+  // itself at convergence, so the steps left in a batch do nothing.
+  static constexpr std::uint32_t contact_solve_batch = 32;
+
+  void ensure_contact_dynamics_capacity(std::size_t body_count, std::size_t row_count) {
+    if (body_count > contact_body_capacity_) {
+      const auto capacity = std::bit_ceil(body_count);
+      contact_bodies_ =
+          allocate_shared_buffer(device_, capacity * sizeof(MetalContactBody), "contact bodies");
+      contact_response_ =
+          allocate_shared_buffer(device_, capacity * sizeof(MetalDofs), "contact response");
+      contact_incidence_offsets_ = allocate_shared_buffer(
+          device_, (capacity + 1) * sizeof(std::uint32_t), "contact incidence offsets");
+      contact_body_capacity_ = capacity;
+    }
+    if (row_count > contact_row_capacity_) {
+      const auto capacity = std::bit_ceil(row_count);
+      contact_rows_ =
+          allocate_shared_buffer(device_, capacity * sizeof(MetalContactRow), "contact rows");
+      contact_incidence_entries_ = allocate_shared_buffer(
+          device_, capacity * 2 * sizeof(std::uint32_t), "contact incidence entries");
+      for (std::size_t index = 0; index < 2; ++index) {
+        contact_multipliers_[index] =
+            allocate_shared_buffer(device_, capacity * sizeof(float), "contact multipliers");
+        contact_gaps_[index] =
+            allocate_shared_buffer(device_, capacity * sizeof(float), "contact gaps");
+        contact_reduce_[index] =
+            allocate_shared_buffer(device_, capacity * sizeof(MetalFloat4), "contact reduction");
+      }
+      contact_terms_ =
+          allocate_shared_buffer(device_, capacity * sizeof(MetalFloat4), "contact step terms");
+      contact_row_capacity_ = capacity;
+    }
+    if (contact_state_ == nil) {
+      contact_state_ =
+          allocate_shared_buffer(device_, sizeof(MetalContactState), "contact solve state");
+    }
+  }
+
+  void upload_contact_system(const ContactSystem& system,
+                             std::span<const float> initial_multipliers) {
+    auto* rows = static_cast<MetalContactRow*>(contact_rows_.contents);
+    auto* offsets = static_cast<std::uint32_t*>(contact_incidence_offsets_.contents);
+    auto* entries = static_cast<std::uint32_t*>(contact_incidence_entries_.contents);
+    const auto body_count = system.bodies.size();
+    std::fill_n(offsets, body_count + 1, 0U);
+    for (std::size_t index = 0; index < system.rows.size(); ++index) {
+      const auto& row = system.rows[index];
+      const auto& first = row.first_jacobian;
+      const auto& second = row.second_jacobian;
+      rows[index] = {
+          .first_linear = {first[0], first[1], first[2], row.first_length_lever},
+          .first_angular = {first[3], first[4], first[5], row.offset},
+          .second_linear = {second[0], second[1], second[2], row.second_length_lever},
+          .second_angular = {second[3], second[4], second[5], row.compliance},
+          .first_slot = row.first_slot,
+          .second_slot = row.second_slot,
+          .padding0 = 0,
+          .padding1 = 0,
+      };
+      ++offsets[row.first_slot + 1];
+      if (row.second_slot != invalid_slot) {
+        ++offsets[row.second_slot + 1];
+      }
+    }
+    for (std::size_t body = 0; body < body_count; ++body) {
+      offsets[body + 1] += offsets[body];
+    }
+    std::vector<std::uint32_t> cursors(offsets, offsets + body_count);
+    for (std::size_t index = 0; index < system.rows.size(); ++index) {
+      const auto& row = system.rows[index];
+      const auto entry = static_cast<std::uint32_t>(index) << 1U;
+      entries[cursors[row.first_slot]++] = entry;
+      if (row.second_slot != invalid_slot) {
+        entries[cursors[row.second_slot]++] = entry | 1U;
+      }
+    }
+
+    auto* bodies = static_cast<MetalContactBody*>(contact_bodies_.contents);
+    for (std::size_t body = 0; body < body_count; ++body) {
+      const auto& source = system.bodies[body];
+      bodies[body] = {
+          .axis_mobility = {source.axis.x, source.axis.y, source.axis.z,
+                            source.translational_mobility},
+          .rates = {source.transverse_mobility, source.axial_mobility, source.length_rate, 0.0F},
+      };
+    }
+    std::memcpy(contact_multipliers_[0].contents, initial_multipliers.data(),
+                initial_multipliers.size() * sizeof(float));
+  }
+
+  // Encodes the response to the multipliers in pair `target`, then their gaps
+  // and step terms against pair `previous`, and reduces the terms. Returns the
+  // buffer whose first element holds the reduced terms.
+  id<MTLBuffer> encode_contact_evaluation(id<MTLComputeCommandEncoder> encoder,
+                                          const MetalContactSolve& solve, std::size_t target,
+                                          std::size_t previous, std::uint32_t initial) {
+    [encoder setComputePipelineState:contact_respond_pipeline_];
+    [encoder setBuffer:contact_rows_ offset:0 atIndex:0];
+    [encoder setBuffer:contact_bodies_ offset:0 atIndex:1];
+    [encoder setBuffer:contact_multipliers_[target] offset:0 atIndex:2];
+    [encoder setBuffer:contact_incidence_offsets_ offset:0 atIndex:3];
+    [encoder setBuffer:contact_incidence_entries_ offset:0 atIndex:4];
+    [encoder setBuffer:contact_response_ offset:0 atIndex:5];
+    [encoder setBuffer:contact_state_ offset:0 atIndex:6];
+    [encoder setBytes:&solve length:sizeof(solve) atIndex:7];
+    [encoder setBytes:&initial length:sizeof(initial) atIndex:8];
+    dispatch_1d(encoder, contact_respond_pipeline_, solve.body_count);
+    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+
+    [encoder setComputePipelineState:contact_gaps_pipeline_];
+    [encoder setBuffer:contact_rows_ offset:0 atIndex:0];
+    [encoder setBuffer:contact_response_ offset:0 atIndex:1];
+    [encoder setBuffer:contact_multipliers_[target] offset:0 atIndex:2];
+    [encoder setBuffer:contact_gaps_[target] offset:0 atIndex:3];
+    [encoder setBuffer:contact_multipliers_[previous] offset:0 atIndex:4];
+    [encoder setBuffer:contact_gaps_[previous] offset:0 atIndex:5];
+    [encoder setBuffer:contact_terms_ offset:0 atIndex:6];
+    [encoder setBuffer:contact_state_ offset:0 atIndex:7];
+    [encoder setBytes:&solve length:sizeof(solve) atIndex:8];
+    [encoder setBytes:&initial length:sizeof(initial) atIndex:9];
+    dispatch_1d(encoder, contact_gaps_pipeline_, solve.row_count);
+    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+
+    id<MTLBuffer> input = contact_terms_;
+    std::size_t output = 0;
+    auto element_count = solve.row_count;
+    while (element_count > 1) {
+      const auto output_count = (element_count + 1) / 2;
+      [encoder setComputePipelineState:contact_reduce_pipeline_];
+      [encoder setBuffer:input offset:0 atIndex:0];
+      [encoder setBuffer:contact_reduce_[output] offset:0 atIndex:1];
+      [encoder setBytes:&element_count length:sizeof(element_count) atIndex:2];
+      dispatch_1d(encoder, contact_reduce_pipeline_, output_count);
+      [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+      input = contact_reduce_[output];
+      output = 1 - output;
+      element_count = output_count;
+    }
+    return input;
+  }
+
+  void encode_contact_advance(id<MTLComputeCommandEncoder> encoder, id<MTLBuffer> reduced,
+                              const MetalContactSolve& solve, std::uint32_t initial,
+                              float first_step_length) {
+    [encoder setComputePipelineState:contact_advance_pipeline_];
+    [encoder setBuffer:reduced offset:0 atIndex:0];
+    [encoder setBuffer:contact_state_ offset:0 atIndex:1];
+    [encoder setBytes:&solve length:sizeof(solve) atIndex:2];
+    [encoder setBytes:&initial length:sizeof(initial) atIndex:3];
+    [encoder setBytes:&first_step_length length:sizeof(first_step_length) atIndex:4];
+    dispatch_1d(encoder, contact_advance_pipeline_, 1);
+    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+  }
+
+  [[nodiscard]] float initialize_contact_solve(const MetalContactSolve& solve,
+                                               float first_step_length) {
+    @autoreleasepool {
+      id<MTLCommandBuffer> command_buffer = [queue_ commandBuffer];
+      id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+      if (command_buffer == nil || encoder == nil) {
+        throw std::runtime_error("failed to create a Metal contact initialization command");
+      }
+      const auto reduced = encode_contact_evaluation(encoder, solve, 0, 0, 1);
+      encode_contact_advance(encoder, reduced, solve, 1, first_step_length);
+      [encoder endEncoding];
+      wait_for_command(command_buffer, "Metal contact solve initialization failed");
+      return static_cast<const MetalContactState*>(contact_state_.contents)->residual;
+    }
+  }
+
+  [[nodiscard]] detail::ContactSolverProgress iterate_contact_solve(const MetalContactSolve& solve,
+                                                                    std::size_t current,
+                                                                    std::uint32_t count) {
+    @autoreleasepool {
+      const auto before =
+          static_cast<const MetalContactState*>(contact_state_.contents)->iterations;
+      id<MTLCommandBuffer> command_buffer = [queue_ commandBuffer];
+      id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+      if (command_buffer == nil || encoder == nil) {
+        throw std::runtime_error("failed to create a Metal contact iteration command");
+      }
+      for (std::uint32_t index = 0; index < count; ++index) {
+        const auto next = 1 - current;
+        [encoder setComputePipelineState:contact_project_pipeline_];
+        [encoder setBuffer:contact_multipliers_[current] offset:0 atIndex:0];
+        [encoder setBuffer:contact_gaps_[current] offset:0 atIndex:1];
+        [encoder setBuffer:contact_multipliers_[next] offset:0 atIndex:2];
+        [encoder setBuffer:contact_state_ offset:0 atIndex:3];
+        [encoder setBytes:&solve length:sizeof(solve) atIndex:4];
+        dispatch_1d(encoder, contact_project_pipeline_, solve.row_count);
+        [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+
+        const auto reduced = encode_contact_evaluation(encoder, solve, next, current, 0);
+        encode_contact_advance(encoder, reduced, solve, 0, 0.0F);
+        current = next;
+      }
+      [encoder endEncoding];
+      wait_for_command(command_buffer, "Metal contact solve iteration failed");
+      const auto* state = static_cast<const MetalContactState*>(contact_state_.contents);
+      return {.iterations = state->iterations - before, .residual = state->residual};
+    }
+  }
+
   [[nodiscard]] std::vector<CellCorrection> download_mechanics_solution(
       std::size_t cell_count) const {
     const auto* values = static_cast<const MetalDofs*>(mechanics_solution_.contents);
@@ -2150,6 +2444,11 @@ class MetalBackend final : public ComputeBackend {
   id<MTLComputePipelineState> mechanics_subtract_pipeline_{nil};
   id<MTLComputePipelineState> mechanics_dot_pipeline_{nil};
   id<MTLComputePipelineState> mechanics_reduce_pipeline_{nil};
+  id<MTLComputePipelineState> contact_project_pipeline_{nil};
+  id<MTLComputePipelineState> contact_respond_pipeline_{nil};
+  id<MTLComputePipelineState> contact_gaps_pipeline_{nil};
+  id<MTLComputePipelineState> contact_reduce_pipeline_{nil};
+  id<MTLComputePipelineState> contact_advance_pipeline_{nil};
   std::unique_ptr<metal::FlowSolver> flow_solver_;
 
   id<MTLBuffer> lengths_{nil};
@@ -2283,6 +2582,18 @@ class MetalBackend final : public ComputeBackend {
   id<MTLBuffer> mechanics_reduce_b_{nil};
   std::size_t mechanics_cell_capacity_{0};
   std::size_t mechanics_contact_capacity_{0};
+  id<MTLBuffer> contact_rows_{nil};
+  id<MTLBuffer> contact_bodies_{nil};
+  id<MTLBuffer> contact_response_{nil};
+  id<MTLBuffer> contact_incidence_offsets_{nil};
+  id<MTLBuffer> contact_incidence_entries_{nil};
+  std::array<id<MTLBuffer>, 2> contact_multipliers_{};
+  std::array<id<MTLBuffer>, 2> contact_gaps_{};
+  std::array<id<MTLBuffer>, 2> contact_reduce_{};
+  id<MTLBuffer> contact_terms_{nil};
+  id<MTLBuffer> contact_state_{nil};
+  std::size_t contact_body_capacity_{0};
+  std::size_t contact_row_capacity_{0};
 };
 
 }  // namespace

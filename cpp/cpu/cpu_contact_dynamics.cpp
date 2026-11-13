@@ -2,6 +2,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -187,32 +188,37 @@ ContactSolveResult solve_contact_system_cpu(const ContactSystem& system,
     }
     return residual;
   };
+  auto step_length = 0.0F;
+  std::uint32_t iteration = 0;
+  const auto step = [&](float length) {
+    for (std::size_t index = 0; index < next_multipliers.size(); ++index) {
+      next_multipliers[index] = std::max(0.0F, result.multipliers[index] - length * gaps[index]);
+    }
+    evaluate_gaps(system, next_multipliers, evaluation, next_gaps);
+    detail::ContactSolverSums sums;
+    for (std::size_t index = 0; index < next_multipliers.size(); ++index) {
+      const auto moved = static_cast<double>(next_multipliers[index]) - result.multipliers[index];
+      const auto change = static_cast<double>(next_gaps[index]) - gaps[index];
+      sums.step_dot_step += moved * moved;
+      sums.step_dot_change += moved * change;
+      sums.change_dot_change += change * change;
+    }
+    sums.residual = residual_of(next_multipliers, next_gaps);
+    result.multipliers.swap(next_multipliers);
+    gaps.swap(next_gaps);
+    return sums;
+  };
   const detail::ContactSolverOperations operations{
       .initialize =
-          [&] {
+          [&](float first_step_length) {
+            step_length = first_step_length;
             evaluate_gaps(system, result.multipliers, evaluation, gaps);
             return residual_of(result.multipliers, gaps);
           },
-      .step =
-          [&](float step_length) {
-            for (std::size_t index = 0; index < next_multipliers.size(); ++index) {
-              next_multipliers[index] =
-                  std::max(0.0F, result.multipliers[index] - step_length * gaps[index]);
-            }
-            evaluate_gaps(system, next_multipliers, evaluation, next_gaps);
-            detail::ContactSolverSums sums;
-            for (std::size_t index = 0; index < next_multipliers.size(); ++index) {
-              const auto step =
-                  static_cast<double>(next_multipliers[index]) - result.multipliers[index];
-              const auto change = static_cast<double>(next_gaps[index]) - gaps[index];
-              sums.step_dot_step += step * step;
-              sums.step_dot_change += step * change;
-              sums.change_dot_change += change * change;
-            }
-            sums.residual = residual_of(next_multipliers, next_gaps);
-            result.multipliers.swap(next_multipliers);
-            gaps.swap(next_gaps);
-            return sums;
+      .iterate =
+          [&](std::uint32_t count) {
+            return detail::iterate_contact_steps(count, parameters.tolerance, step_length,
+                                                 iteration, step);
           },
   };
   result.report = detail::solve_contact_system(operations, 1.0F / bound, parameters);

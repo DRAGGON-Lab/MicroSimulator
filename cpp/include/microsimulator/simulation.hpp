@@ -74,6 +74,11 @@ class Simulation {
       const MechanicsIntegrationParameters& integration_parameters =
           MechanicsIntegrationParameters{},
       const ConstraintContactParameters& constraint_parameters = ConstraintContactParameters{});
+  // Solves a contact system on the selected backend. The system stands on
+  // its own; it need not describe this simulation's cells.
+  [[nodiscard]] ContactSolveResult solve_contact_system(
+      const ContactSystem& system, std::span<const float> initial_multipliers,
+      const ContactSolveParameters& parameters = ContactSolveParameters{});
   [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(
       const SignalGridSpec& spec, std::span<const float> mobility = {},
       const DepthAveragedFlowParameters& parameters = DepthAveragedFlowParameters{});

@@ -239,7 +239,8 @@ def test_cell_between_walls_stalls_and_stops_consuming(backend: BackendKind) -> 
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_closed_chamber_fills_and_holds(backend: BackendKind) -> None:
-    controller = _chamber(backend, ContactDynamicsConfig(growth_law="linear", growth_stall_load=2.0))
+    config = ContactDynamicsConfig(growth_law="linear", growth_stall_load=2.0)
+    controller = _chamber(backend, config)
     for _ in range(300):
         controller.step(0.05)
     simulation = controller.simulation

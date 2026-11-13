@@ -106,6 +106,7 @@ if(MICROSIMULATOR_ENABLE_METAL)
   microsimulator_embed_metal_source(species cpp/metal/kernels/species.metal)
   microsimulator_embed_metal_source(contacts cpp/metal/kernels/contacts.metal)
   microsimulator_embed_metal_source(mechanics cpp/metal/kernels/mechanics.metal)
+  microsimulator_embed_metal_source(contact_dynamics cpp/metal/kernels/contact_dynamics.metal)
   microsimulator_embed_metal_source(signals
     cpp/metal/kernels/grid_transport.metal cpp/metal/kernels/signals.metal)
   microsimulator_embed_metal_source(coupled_rates
@@ -155,6 +156,7 @@ if(MICROSIMULATOR_ENABLE_CUDA)
     cpp/cuda/cuda_flow.cu
     cpp/cuda/cuda_occupancy.cu
     cpp/cuda/kernels/occupancy.cu
+    cpp/cuda/kernels/contact_dynamics.cu
     cpp/cuda/kernels/contacts.cu
     cpp/cuda/kernels/coupled_rates.cu
     cpp/cuda/kernels/growth.cu
@@ -350,6 +352,13 @@ if(MICROSIMULATOR_BUILD_TESTS)
   target_link_libraries(microsimulator_mechanics_conformance_test PRIVATE microsimulator::core)
   add_test(NAME mechanics_conformance COMMAND microsimulator_mechanics_conformance_test)
   set_tests_properties(mechanics_conformance PROPERTIES LABELS conformance)
+
+  add_executable(microsimulator_contact_dynamics_conformance_test
+    tests/conformance/contact_dynamics_conformance_test.cpp
+  )
+  target_link_libraries(microsimulator_contact_dynamics_conformance_test PRIVATE microsimulator::core)
+  add_test(NAME contact_dynamics_conformance COMMAND microsimulator_contact_dynamics_conformance_test)
+  set_tests_properties(contact_dynamics_conformance PROPERTIES LABELS conformance)
 
   add_executable(microsimulator_constraint_mechanics_conformance_test
     tests/conformance/constraint_mechanics_conformance_test.cpp

@@ -19,6 +19,50 @@ struct MechanicsDofs {
   float4 rotation;
 };
 
+// One row of the contact dynamics solve. The w components carry the row's
+// scalars.
+struct ContactRowData {
+  // Force on the first cell per unit multiplier; w is its length lever.
+  float4 first_linear;
+  // Torque on the first cell per unit multiplier; w is the row offset.
+  float4 first_angular;
+  // Force on the second cell per unit multiplier; w is its length lever.
+  float4 second_linear;
+  // Torque on the second cell per unit multiplier; w is the row compliance.
+  float4 second_angular;
+  uint first_slot;
+  uint second_slot;
+  uint padding0;
+  uint padding1;
+};
+
+struct ContactBodyData {
+  // Cell axis; w is the translational mobility.
+  float4 axis_mobility;
+  // Transverse mobility, axial mobility, and nominal elongation rate.
+  float4 rates;
+};
+
+struct ContactSolveData {
+  float dt;
+  float tolerance;
+  uint law;
+  float sensitivity;
+  float free_load;
+  float stall_load;
+  uint row_count;
+  uint body_count;
+};
+
+// Progress of the projected-gradient iteration, kept on the device so that a
+// batch of steps runs without returning to the host.
+struct ContactSolveState {
+  float step_length;
+  float residual;
+  uint iterations;
+  uint done;
+};
+
 struct ExternalConstraint {
   ulong id;
   uint kind;

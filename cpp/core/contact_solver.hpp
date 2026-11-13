@@ -18,17 +18,27 @@ struct ContactSolverSums {
   float residual{0.0F};
 };
 
-// The vector operations of the projected-gradient solve of a contact system.
-// A backend supplies them over its own storage for the multipliers and their
-// gaps; the iteration, its step lengths, and its convergence test are the
-// same for every backend.
+// Where a run of iterations ended.
+struct ContactSolverProgress {
+  // Iterations taken in this run.
+  std::uint32_t iterations{0};
+  float residual{0.0F};
+};
+
+// The projected-gradient solve of a contact system over a backend's own
+// storage for the multipliers and their gaps.
 struct ContactSolverOperations {
-  // Loads the initial multipliers and evaluates their gaps. Returns the
-  // residual.
-  std::function<float()> initialize;
-  // multipliers = max(multipliers - step_length * gaps, 0), then evaluates
-  // the gaps of the new multipliers.
-  std::function<ContactSolverSums(float)> step;
+  // Loads the initial multipliers, evaluates their gaps, and sets the first
+  // step length. Returns the residual.
+  std::function<float(float)> initialize;
+  // Takes up to the given number of steps, stopping after the first whose
+  // residual is within the tolerance or not finite. Each step is
+  // multipliers = max(multipliers - step_length * gaps, 0) followed by
+  // `next_contact_step_length`.
+  std::function<ContactSolverProgress(std::uint32_t)> iterate;
+  // Steps requested per call of `iterate`. A device backend runs a batch
+  // without returning to the host.
+  std::uint32_t batch{1};
 };
 
 // The residual contribution of one row: a positive multiplier needs a zero
@@ -37,14 +47,47 @@ struct ContactSolverOperations {
   return multiplier > 0.0F ? std::abs(gap) : std::max(0.0F, -gap);
 }
 
+// The Barzilai-Borwein step length after the step numbered `iteration`,
+// counting from one. The two lengths alternate. The contact energy is convex,
+// so step . change is non-negative; a vanishing product keeps the current
+// length.
+[[nodiscard]] inline float next_contact_step_length(float current, const ContactSolverSums& sums,
+                                                    std::uint32_t iteration) {
+  if (!(sums.step_dot_change > 0.0) || !(sums.change_dot_change > 0.0)) {
+    return current;
+  }
+  const auto next = (iteration % 2U) == 1U ? sums.step_dot_step / sums.step_dot_change
+                                           : sums.step_dot_change / sums.change_dot_change;
+  return std::isfinite(next) && next > 0.0 ? static_cast<float>(next) : current;
+}
+
+// Runs `iterate`'s contract over a host-driven step: `step(step_length)`
+// takes one projected step and returns its sums.
+template <typename Step>
+[[nodiscard]] ContactSolverProgress iterate_contact_steps(std::uint32_t count, float tolerance,
+                                                          float& step_length,
+                                                          std::uint32_t& iteration, Step&& step) {
+  ContactSolverProgress progress;
+  for (std::uint32_t index = 0; index < count; ++index) {
+    const ContactSolverSums sums = step(step_length);
+    ++iteration;
+    ++progress.iterations;
+    progress.residual = sums.residual;
+    if (!(sums.residual > tolerance) || !std::isfinite(sums.residual)) {
+      break;
+    }
+    step_length = next_contact_step_length(step_length, sums, iteration);
+  }
+  return progress;
+}
+
 // Barzilai-Borwein projected gradient descent on the convex contact energy,
-// whose gradient is the gap. The two Barzilai-Borwein step lengths alternate.
-// `first_step_length` must be positive.
+// whose gradient is the gap. `first_step_length` must be positive.
 [[nodiscard]] inline ContactSolveReport solve_contact_system(
     const ContactSolverOperations& operations, float first_step_length,
     const ContactSolveParameters& parameters) {
   ContactSolveReport report;
-  report.residual = operations.initialize();
+  report.residual = operations.initialize(first_step_length);
   if (!std::isfinite(report.residual)) {
     report.status = ContactSolveStatus::breakdown;
     return report;
@@ -54,27 +97,23 @@ struct ContactSolverOperations {
   }
 
   report.status = ContactSolveStatus::iteration_limit;
-  auto step_length = first_step_length;
-  for (std::uint32_t iteration = 1; iteration <= parameters.max_iterations; ++iteration) {
-    const auto sums = operations.step(step_length);
-    report.iterations = iteration;
-    report.residual = sums.residual;
-    if (!std::isfinite(sums.residual) || !std::isfinite(sums.step_dot_change)) {
+  const auto batch = std::max<std::uint32_t>(1, operations.batch);
+  while (report.iterations < parameters.max_iterations) {
+    const auto requested = std::min(batch, parameters.max_iterations - report.iterations);
+    const auto progress = operations.iterate(requested);
+    report.iterations += progress.iterations;
+    report.residual = progress.residual;
+    if (!std::isfinite(progress.residual)) {
       report.status = ContactSolveStatus::breakdown;
       return report;
     }
-    if (sums.residual <= parameters.tolerance) {
+    if (progress.residual <= parameters.tolerance) {
       report.status = ContactSolveStatus::converged;
       return report;
     }
-    // The energy is convex, so step . change is non-negative; a vanishing
-    // product keeps the previous step length.
-    if (sums.step_dot_change > 0.0 && sums.change_dot_change > 0.0) {
-      const auto next = (iteration % 2U) == 1U ? sums.step_dot_step / sums.step_dot_change
-                                               : sums.step_dot_change / sums.change_dot_change;
-      if (std::isfinite(next) && next > 0.0) {
-        step_length = static_cast<float>(next);
-      }
+    if (progress.iterations == 0) {
+      report.status = ContactSolveStatus::breakdown;
+      return report;
     }
   }
   return report;

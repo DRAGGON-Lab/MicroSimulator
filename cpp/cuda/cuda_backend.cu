@@ -15,9 +15,11 @@
 #include <utility>
 #include <vector>
 
+#include "core/contact_solver.hpp"
 #include "core/mechanics_solver.hpp"
 #include "core/signal_jacobi.hpp"
 #include "cuda_flow.cuh"
+#include "kernels/contact_dynamics.cuh"
 #include "kernels/contacts.cuh"
 #include "kernels/coupled_rates.cuh"
 #include "kernels/growth.cuh"
@@ -129,7 +131,7 @@ class CudaBackend final : public ComputeBackend {
            feature == BackendFeature::cell_mechanics || feature == BackendFeature::signals ||
            feature == BackendFeature::coupled_rates ||
            feature == BackendFeature::depth_averaged_flow ||
-           feature == BackendFeature::resolved_flow;
+           feature == BackendFeature::resolved_flow || feature == BackendFeature::contact_dynamics;
   }
 
   void advance_growth(WorldState& state, float dt) override {
@@ -804,6 +806,84 @@ class CudaBackend final : public ComputeBackend {
     return result;
   }
 
+  [[nodiscard]] ContactSolveResult solve_contact_forces(
+      const ContactSystem& system, std::span<const float> initial_multipliers,
+      const ContactSolveParameters& parameters) override {
+    activate_device();
+    validate_contact_system(system);
+    if (initial_multipliers.size() != system.rows.size()) {
+      throw std::invalid_argument("contact multiplier count does not match the contact rows");
+    }
+    for (const auto multiplier : initial_multipliers) {
+      if (!std::isfinite(multiplier) || multiplier < 0.0F) {
+        throw std::invalid_argument("contact multipliers must be finite and non-negative");
+      }
+    }
+    if (!std::isfinite(parameters.tolerance) || parameters.tolerance <= 0.0F) {
+      throw std::invalid_argument("contact solve tolerance must be finite and positive");
+    }
+
+    ContactSolveResult result;
+    result.multipliers.assign(initial_multipliers.begin(), initial_multipliers.end());
+    if (system.rows.empty()) {
+      return result;
+    }
+    const auto bound = contact_system_diagonal_bound(system);
+    if (!std::isfinite(bound) || bound <= 0.0F) {
+      throw std::invalid_argument("contact system has no positive diagonal");
+    }
+    // An incidence entry packs a row index with one bit for the row's side.
+    if (system.bodies.size() >= std::numeric_limits<std::uint32_t>::max() ||
+        system.rows.size() > std::numeric_limits<std::uint32_t>::max() / 2) {
+      throw std::overflow_error("CUDA contact dynamics exceeds the uint32 index space");
+    }
+
+    const cuda::ContactSolveGpu solve{
+        .dt = system.dt,
+        .law = static_cast<std::uint32_t>(system.growth.law),
+        .sensitivity = system.growth.sensitivity,
+        .free_load = system.growth.free_load,
+        .stall_load = system.growth.stall_load,
+        .row_count = static_cast<std::uint32_t>(system.rows.size()),
+        .body_count = static_cast<std::uint32_t>(system.bodies.size()),
+    };
+    ensure_contact_dynamics_capacity(solve.body_count, solve.row_count);
+    upload_contact_system(system, result.multipliers);
+
+    // The multipliers and their gaps live in the buffer pair `current` names;
+    // each step writes the other pair.
+    std::size_t current = 0;
+    auto step_length = 0.0F;
+    std::uint32_t iteration = 0;
+    const auto step = [&](float length) {
+      const auto next = 1 - current;
+      cuda::launch_contact_project(contact_multipliers_[current].data(),
+                                   contact_gaps_[current].data(), contact_multipliers_[next].data(),
+                                   length, solve.row_count, stream_);
+      check_cuda(cudaGetLastError(), "failed to launch the CUDA contact-project kernel");
+      const auto sums = evaluate_contact_step(solve, next, current, false);
+      current = next;
+      return sums;
+    };
+    const detail::ContactSolverOperations operations{
+        .initialize =
+            [&](float first_step_length) {
+              step_length = first_step_length;
+              return evaluate_contact_step(solve, 0, 0, true).residual;
+            },
+        .iterate =
+            [&](std::uint32_t count) {
+              return detail::iterate_contact_steps(count, parameters.tolerance, step_length,
+                                                   iteration, step);
+            },
+    };
+    result.report = detail::solve_contact_system(operations, 1.0F / bound, parameters);
+    copy_to_host(result.multipliers, contact_multipliers_[current],
+                 "failed to download CUDA contact multipliers");
+    check_cuda(cudaStreamSynchronize(stream_), "CUDA contact multiplier download failed");
+    return result;
+  }
+
   [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(
       const SignalGridSpec& spec, std::span<const float> mobility,
       const DepthAveragedFlowParameters& parameters) override {
@@ -1467,6 +1547,116 @@ class CudaBackend final : public ComputeBackend {
                                 "CUDA mechanics residual recomputation failed");
   }
 
+  void ensure_contact_dynamics_capacity(std::size_t body_count, std::size_t row_count) {
+    contact_bodies_.reserve(body_count, "contact bodies");
+    contact_response_.reserve(body_count, "contact response");
+    contact_incidence_offsets_.reserve(body_count + 1, "contact incidence offsets");
+    contact_rows_.reserve(row_count, "contact rows");
+    contact_incidence_entries_.reserve(row_count * 2, "contact incidence entries");
+    contact_terms_.reserve(row_count, "contact step terms");
+    for (std::size_t index = 0; index < 2; ++index) {
+      contact_multipliers_[index].reserve(row_count, "contact multipliers");
+      contact_gaps_[index].reserve(row_count, "contact gaps");
+      contact_reduce_[index].reserve(row_count, "contact reduction");
+    }
+  }
+
+  void upload_contact_system(const ContactSystem& system,
+                             const std::vector<float>& initial_multipliers) {
+    const auto body_count = system.bodies.size();
+    std::vector<cuda::ContactRowGpu> rows(system.rows.size());
+    std::vector<std::uint32_t> offsets(body_count + 1, 0U);
+    for (std::size_t index = 0; index < system.rows.size(); ++index) {
+      const auto& row = system.rows[index];
+      const auto& first = row.first_jacobian;
+      const auto& second = row.second_jacobian;
+      rows[index] = {
+          .first_linear = make_float4(first[0], first[1], first[2], row.first_length_lever),
+          .first_angular = make_float4(first[3], first[4], first[5], row.offset),
+          .second_linear = make_float4(second[0], second[1], second[2], row.second_length_lever),
+          .second_angular = make_float4(second[3], second[4], second[5], row.compliance),
+          .first_slot = row.first_slot,
+          .second_slot = row.second_slot,
+          .padding0 = 0,
+          .padding1 = 0,
+      };
+      ++offsets[row.first_slot + 1];
+      if (row.second_slot != invalid_slot) {
+        ++offsets[row.second_slot + 1];
+      }
+    }
+    for (std::size_t body = 0; body < body_count; ++body) {
+      offsets[body + 1] += offsets[body];
+    }
+    std::vector<std::uint32_t> entries(offsets[body_count]);
+    std::vector<std::uint32_t> cursors(offsets.begin(), offsets.end() - 1);
+    for (std::size_t index = 0; index < system.rows.size(); ++index) {
+      const auto& row = system.rows[index];
+      const auto entry = static_cast<std::uint32_t>(index) << 1U;
+      entries[cursors[row.first_slot]++] = entry;
+      if (row.second_slot != invalid_slot) {
+        entries[cursors[row.second_slot]++] = entry | 1U;
+      }
+    }
+    std::vector<cuda::ContactBodyGpu> bodies(body_count);
+    for (std::size_t body = 0; body < body_count; ++body) {
+      const auto& source = system.bodies[body];
+      bodies[body] = {
+          .axis_mobility = make_float4(source.axis.x, source.axis.y, source.axis.z,
+                                       source.translational_mobility),
+          .rates = make_float4(source.transverse_mobility, source.axial_mobility,
+                               source.length_rate, 0.0F),
+      };
+    }
+    copy_to_device(contact_rows_, rows, "failed to upload CUDA contact rows");
+    copy_to_device(contact_bodies_, bodies, "failed to upload CUDA contact bodies");
+    copy_to_device(contact_incidence_offsets_, offsets,
+                   "failed to upload CUDA contact incidence offsets");
+    copy_to_device(contact_incidence_entries_, entries,
+                   "failed to upload CUDA contact incidence entries");
+    copy_to_device(contact_multipliers_[0], initial_multipliers,
+                   "failed to upload CUDA contact multipliers");
+    check_cuda(cudaStreamSynchronize(stream_), "CUDA contact system upload failed");
+  }
+
+  // Evaluates the response to the multipliers in pair `target`, then their
+  // gaps and step terms against pair `previous`, and reduces the terms.
+  [[nodiscard]] detail::ContactSolverSums evaluate_contact_step(const cuda::ContactSolveGpu& solve,
+                                                                std::size_t target,
+                                                                std::size_t previous,
+                                                                bool initial) {
+    cuda::launch_contact_respond(
+        contact_rows_.data(), contact_bodies_.data(), contact_multipliers_[target].data(),
+        contact_incidence_offsets_.data(), contact_incidence_entries_.data(),
+        contact_response_.data(), solve, stream_);
+    check_cuda(cudaGetLastError(), "failed to launch the CUDA contact-respond kernel");
+    cuda::launch_contact_gaps(contact_rows_.data(), contact_response_.data(),
+                              contact_multipliers_[target].data(), contact_gaps_[target].data(),
+                              contact_multipliers_[previous].data(), contact_gaps_[previous].data(),
+                              contact_terms_.data(), solve, initial, stream_);
+    check_cuda(cudaGetLastError(), "failed to launch the CUDA contact-gaps kernel");
+    const float4* input = contact_terms_.data();
+    std::size_t output = 0;
+    auto element_count = solve.row_count;
+    while (element_count > 1) {
+      cuda::launch_contact_reduce(input, contact_reduce_[output].data(), element_count, stream_);
+      check_cuda(cudaGetLastError(), "failed to launch the CUDA contact-reduce kernel");
+      input = contact_reduce_[output].data();
+      output = 1 - output;
+      element_count = (element_count + 1) / 2;
+    }
+    float4 reduced{};
+    check_cuda(cudaMemcpyAsync(&reduced, input, sizeof(reduced), cudaMemcpyDeviceToHost, stream_),
+               "failed to download a CUDA contact reduction");
+    check_cuda(cudaStreamSynchronize(stream_), "CUDA contact step failed");
+    return {
+        .step_dot_step = reduced.x,
+        .step_dot_change = reduced.y,
+        .change_dot_change = reduced.z,
+        .residual = reduced.w,
+    };
+  }
+
   [[nodiscard]] std::vector<CellCorrection> download_mechanics_solution(std::size_t cell_count) {
     std::vector<cuda::MechanicsDofsGpu> values(cell_count);
     copy_to_host(values, mechanics_solution_, "failed to download CUDA mechanics solution");
@@ -1603,6 +1793,15 @@ class CudaBackend final : public ComputeBackend {
   CudaBuffer<float> mechanics_dot_terms_;
   CudaBuffer<float> mechanics_reduce_a_;
   CudaBuffer<float> mechanics_reduce_b_;
+  CudaBuffer<cuda::ContactRowGpu> contact_rows_;
+  CudaBuffer<cuda::ContactBodyGpu> contact_bodies_;
+  CudaBuffer<cuda::MechanicsDofsGpu> contact_response_;
+  CudaBuffer<std::uint32_t> contact_incidence_offsets_;
+  CudaBuffer<std::uint32_t> contact_incidence_entries_;
+  CudaBuffer<float4> contact_terms_;
+  std::array<CudaBuffer<float>, 2> contact_multipliers_;
+  std::array<CudaBuffer<float>, 2> contact_gaps_;
+  std::array<CudaBuffer<float4>, 2> contact_reduce_;
 };
 
 }  // namespace
