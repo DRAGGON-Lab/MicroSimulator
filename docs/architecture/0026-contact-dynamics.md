@@ -25,7 +25,7 @@ gap(g) = phi + h J^T M^-1 J g - h L^T (r * f(L g)) + c g
 - `M` is the drag of each cell on its surroundings: `drag * L` in translation for a capsule of full length `L`, with the finite-radius rod inertias of ADR 0002 in rotation. A fixed cell has no mobility.
 - `L g` is the axial load on each cell. A row contributes its multiplier times the cell's length lever, the fraction of the cell's elongation that closes that contact: the cylinder stretches uniformly about its center and the caps ride on its ends, so the lever is one half for a contact on a cap along the axis and zero for a contact on the side.
 - `r` is the nominal elongation rate `growth_rate * length`, taken from the lengths at the start of the step, and `f` is the growth load response. `L^T` maps elongation to the gap it closes.
-- `c` is the compliance `1 / contact_stiffness`.
+- `c` is the compliance of the row: `1 / contact_stiffness` between cells and `1 / wall_stiffness` against a constraint.
 
 The solution satisfies `g >= 0`, `gap >= 0`, and `g * gap = 0` row by row. Those are the optimality conditions of a convex energy whose gradient is `gap`, because `f` is non-increasing. In a full space the multipliers rise until the loads stop growth.
 
@@ -39,7 +39,7 @@ Shrinkage is never scaled. Loads are forces in units of drag times length square
 
 ### Compliance
 
-A contact is a unilateral linear spring solved implicitly: a resting contact under force `g` overlaps by `g / contact_stiffness`, and the solve is stable at any stiffness. Compliance keeps the problem well posed when a space holds more than it can: the forces of an over-full region are finite, where rigid constraints have no solution. It also means an overlap `e` that a jammed pair cannot recover persists as a force `e * contact_stiffness`. Where growth responds to load, the accepted overlap is therefore held to the overlap that a tenth of the load scale of the response presses into a contact. The forces of a rigid jam above the stall load depend on the history of those small overlaps and are not otherwise determined.
+A contact is a unilateral linear spring solved implicitly: a resting contact under force `g` overlaps by `g / contact_stiffness`, and the solve is stable at any stiffness. Walls are rigid next to cells, so a contact with a constraint uses the larger `wall_stiffness`, by default a hundred times the cell value; cells then rest on a wall within a small fraction of the overlap they have with each other, at little cost to the solve. Compliance keeps the problem well posed when a space holds more than it can: the forces of an over-full region are finite, where rigid constraints have no solution. It also means an overlap `e` that a jammed pair cannot recover persists as a force `e * contact_stiffness`. Where growth responds to load, the accepted overlap is therefore held to the overlap that a tenth of the load scale of the response presses into a contact. The forces of a rigid jam above the stall load depend on the history of those small overlaps and are not otherwise determined.
 
 A contact already deeper than `max_overlap_recovery` asks for only that much separation in one substep and is stiffened in proportion, so a pair free to move separates at a bounded rate while a pair that cannot move still meets the full spring force of its overlap.
 
@@ -66,7 +66,11 @@ Constraints are rows in the same solve. A box or cylinder that cells live inside
 
 ### Order within a step
 
-Growth and contact run first, then species, coupled, and signal updates, which see the elongation that happened; uptake tied to volume change is charged for it. With flow drift enabled the controller moves the cells with the flow before the step, so the step ends with every contact resolved.
+Growth and contact run first, then species, coupled, and signal updates, which see the elongation that happened; uptake tied to volume change is charged for it.
+
+### Flow
+
+With `flow_drift` set, the velocity and Jeffery rotation that the signal grid's velocity field gives each cell ([ADR 0021](0021-flow-drift.md)) enter the solve as a known velocity `u`: the predicted gap gains `h J^T u` and each cell moves at `u` plus what its contact forces add. Contacts therefore resist the flow pressing cells together or into a wall, rather than correcting the overlap after a separate drift move. The rates are evaluated at the midpoint of each cell's free motion over the substep, fixed cells do not drift, and a substep carries no cell further than a quarter of the smallest grid spacing.
 
 ## Validation
 
@@ -78,6 +82,8 @@ Growth and contact run first, then species, coupled, and signal updates, which s
 ## Limits
 
 - Contacts are frictionless and cells are rigid apart from the contact compliance.
+- Contact stiffness trades overlap against cost: in an unconfined colony of 2,000 cells without load response, ten times the stiffness leaves a fifth of the overlap and takes about eight times the iterations. Loads grow with the size of a colony whose growth ignores them, so the stiffness that keeps overlaps small grows with it.
+- A cell squeezed directly between two walls, with no softer contact to yield, has its load resolved only to the accepted overlap times the wall stiffness.
 - The cost of a step is the number of projected-gradient iterations, which grows with the number of cells that push on each other through the colony; published solvers of this kind report on the order of a thousand iterations per step in dense colonies.
 - A perfectly collinear line of cells between two walls is an equilibrium and does not buckle. Division plans perturb daughter directions to break that symmetry.
 - The exponential response never stops growth, so a closed space keeps filling slowly as its contact overlaps deepen.

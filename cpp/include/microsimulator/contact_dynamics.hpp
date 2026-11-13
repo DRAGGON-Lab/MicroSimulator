@@ -41,6 +41,9 @@ struct ContactDynamicsParameters {
   // Contact force per unit overlap. Contacts are unilateral springs solved
   // implicitly, so a resting contact under force f overlaps by f / stiffness.
   float contact_stiffness{1.0e4F};
+  // Force per unit overlap of a contact with a constraint. Walls are rigid
+  // next to cells, so this is the stiffer of the two.
+  float wall_stiffness{1.0e6F};
   // Overlap, beyond what the contact force accounts for, accepted at the end
   // of a substep.
   float overlap_tolerance{1.0e-3F};
@@ -55,6 +58,9 @@ struct ContactDynamicsParameters {
   std::uint32_t max_iterations{20000};
   std::uint32_t max_refinements{10};
   std::uint32_t max_step_halvings{12};
+  // Carries the cells with the signal grid's velocity field inside the solve,
+  // so that contacts resist the flow pressing cells together.
+  bool flow_drift{false};
   GrowthLoadResponse growth;
 };
 
@@ -76,19 +82,21 @@ struct ContactRow {
   float compliance{0.0F};
 };
 
-// Mobility and nominal elongation of one cell. A fixed cell has zero
-// mobility.
+// Mobility, nominal elongation, and imposed motion of one cell. A fixed cell
+// has zero mobility. `drift` is the velocity then angular velocity the cell
+// has without contact, which contact forces add to.
 struct ContactBody {
   Vec3 axis{1.0F, 0.0F, 0.0F};
   float translational_mobility{0.0F};
   float transverse_mobility{0.0F};
   float axial_mobility{0.0F};
   float length_rate{0.0F};
+  std::array<float, 6> drift{};
 };
 
 // The convex problem of one substep. With multipliers g >= 0, the predicted
 // gap of every row is
-//   offset + dt * J^T M^-1 J g - dt * L^T (length_rate * factor(L g)) + compliance * g
+//   offset + dt * J^T (drift + M^-1 J g) - dt * L^T (length_rate * factor(L g)) + compliance * g
 // and the solution has gap >= 0 with gap_i * g_i = 0.
 struct ContactSystem {
   std::span<const ContactRow> rows;

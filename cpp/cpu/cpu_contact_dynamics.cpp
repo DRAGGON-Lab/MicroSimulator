@@ -82,6 +82,9 @@ void evaluate(const ContactSystem& system, std::span<const float> multipliers,
   evaluation.length_rates.resize(body_count);
   for (std::size_t index = 0; index < body_count; ++index) {
     evaluation.velocities[index] = apply_mobility(system.bodies[index], evaluation.wrenches[index]);
+    for (std::size_t component = 0; component < 6; ++component) {
+      evaluation.velocities[index][component] += system.bodies[index].drift[component];
+    }
     evaluation.length_rates[index] =
         length_rate(system.bodies[index], system.growth, evaluation.loads[index]);
   }

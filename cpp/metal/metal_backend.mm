@@ -2277,6 +2277,8 @@ class MetalBackend final : public ComputeBackend {
           .axis_mobility = {source.axis.x, source.axis.y, source.axis.z,
                             source.translational_mobility},
           .rates = {source.transverse_mobility, source.axial_mobility, source.length_rate, 0.0F},
+          .drift_linear = {source.drift[0], source.drift[1], source.drift[2], 0.0F},
+          .drift_angular = {source.drift[3], source.drift[4], source.drift[5], 0.0F},
       };
     }
     std::memcpy(contact_multipliers_[0].contents, initial_multipliers.data(),

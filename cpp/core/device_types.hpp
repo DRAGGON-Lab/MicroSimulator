@@ -44,7 +44,7 @@ static_assert(sizeof(uint4) == 16 && alignof(uint4) == 16);
 static_assert(sizeof(RateInstruction) == 20);
 static_assert(sizeof(MechanicsDofs) == 32);
 static_assert(sizeof(ContactRowData) == 80 && offsetof(ContactRowData, first_slot) == 64);
-static_assert(sizeof(ContactBodyData) == 32);
+static_assert(sizeof(ContactBodyData) == 64);
 static_assert(sizeof(ContactSolveData) == 32);
 static_assert(sizeof(ContactSolveState) == 16);
 static_assert(sizeof(ExternalConstraint) == 48 && offsetof(ExternalConstraint, geometry) == 16);

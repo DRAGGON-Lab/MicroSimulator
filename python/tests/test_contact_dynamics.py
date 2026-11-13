@@ -18,6 +18,7 @@ from microsimulator import (
     ControllerStep,
     DivisionEvent,
     DivisionRequest,
+    GridBoundaryKind,
     GridShape,
     GrowthLoadLaw,
     GrowthLoadResponse,
@@ -26,6 +27,7 @@ from microsimulator import (
     PlaneConstraintInit,
     RatePlanBuilder,
     SignalGridSpec,
+    SignalGridVelocityField,
     Simulation,
     StepPlan,
     Vec3,
@@ -57,6 +59,9 @@ def _between_walls(simulation: Simulation, half_width: float) -> None:
 
 def _stalling(stall_load: float) -> ContactDynamicsParameters:
     parameters = ContactDynamicsParameters()
+    # Nothing softer than the walls holds a cell squeezed between two of them,
+    # so the wall stiffness sets how finely its load is resolved.
+    parameters.wall_stiffness = parameters.contact_stiffness
     growth = parameters.growth
     growth.law = GrowthLoadLaw.LINEAR
     growth.stall_load = stall_load
@@ -146,7 +151,11 @@ def test_growth_load_response_factor() -> None:
 
 def test_contact_dynamics_config_round_trips_and_validates() -> None:
     config = ContactDynamicsConfig(
-        growth_law="linear", growth_free_load=1.0, growth_stall_load=8.0, contact_stiffness=2000.0
+        growth_law="linear",
+        growth_free_load=1.0,
+        growth_stall_load=8.0,
+        contact_stiffness=2000.0,
+        wall_stiffness=5.0e4,
     )
     mechanics = MechanicsConfig(flow_drift=True, contact_dynamics=config)
     assert MechanicsConfig.from_json(mechanics.to_json()) == mechanics
@@ -155,6 +164,7 @@ def test_contact_dynamics_config_round_trips_and_validates() -> None:
     assert parameters.growth.law == GrowthLoadLaw.LINEAR
     assert parameters.growth.stall_load == 8.0
     assert parameters.contact_stiffness == 2000.0
+    assert parameters.wall_stiffness == 5.0e4
 
     # A payload written without the entry selects relaxation passes.
     legacy = MechanicsConfig(passes=2).to_json()
@@ -406,6 +416,71 @@ def test_free_colony_matches_the_continuum_pressure_profile(backend: BackendKind
     # The few cells of the innermost bin are noisy; the fall toward the edge is not.
     assert means[1:] == sorted(means[1:], reverse=True)
     assert means[0] > 3.0 * means[-1]
+
+
+def _uniform_flow(backend: BackendKind, speed: float) -> Simulation:
+    simulation = _simulation(backend)
+    sites = 9
+    shape = GridShape()
+    shape.x, shape.y, shape.z = sites, 1, 1
+    grid = SignalGridSpec()
+    grid.signal_count = 1
+    grid.shape = shape
+    grid.spacing = Vec3(1.0, 1.0, 1.0)
+    grid.diffusion = [0.0]
+    grid.advection = [Vec3()]
+    grid.x_lower.kind = GridBoundaryKind.FIXED
+    grid.x_lower.values = [0.0]
+    grid.x_upper.kind = GridBoundaryKind.FIXED
+    grid.x_upper.values = [0.0]
+    velocity = SignalGridVelocityField()
+    velocity.x_faces = [speed] * (sites + 1)
+    velocity.y_faces = [0.0] * (2 * sites)
+    velocity.z_faces = [0.0] * (2 * sites)
+    grid.velocity_field = velocity
+    simulation.configure_signal_grid(grid)
+    return simulation
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_flow_carries_cells_inside_the_solve(backend: BackendKind) -> None:
+    simulation = _uniform_flow(backend, 0.5)
+    cell = CellInit()
+    cell.position = Vec3(2.0, 0.0, 0.0)
+    cell.length, cell.radius, cell.growth_rate = 1.0, 0.25, 0.0
+    free = simulation.add_cell(cell)
+    # A fixed cell downstream, 0.1 clear of the free cell's leading cap.
+    cell.position = Vec3(3.6, 0.0, 0.0)
+    cell.fixed = True
+    simulation.add_cell(cell)
+
+    parameters = ContactDynamicsParameters()
+    parameters.flow_drift = True
+    result = simulation.step(0.1, parameters)
+    # The flow carries the free cell at its own speed while nothing is in the way.
+    assert math.isclose(simulation.cell(free).position.x, 2.05, abs_tol=1e-5)
+    for _ in range(9):
+        result = simulation.step(0.1, parameters)
+    # The fixed cell stops it at contact, where the flow alone would have
+    # carried it 0.4 further.
+    stopped = simulation.cell(free).position.x
+    assert 2.1 - 2e-3 <= stopped <= 2.1 + 2e-3
+    assert result.report.max_overlap < 2e-3
+    assert math.isclose(simulation.cell(2).position.x, 3.6, abs_tol=1e-6)
+
+    still = ContactDynamicsParameters()
+    simulation.step(0.1, still)
+    assert math.isclose(simulation.cell(free).position.x, stopped, abs_tol=2e-3)
+
+
+def test_flow_drift_requires_a_velocity_field() -> None:
+    simulation = Simulation()
+    simulation.add_cell(CellInit())
+    parameters = ContactDynamicsParameters()
+    parameters.flow_drift = True
+    with pytest.raises(RuntimeError, match="velocity field"):
+        simulation.step(0.1, parameters)
+    assert simulation.time == 0.0
 
 
 def test_backend_without_the_feature_rejects_the_step() -> None:

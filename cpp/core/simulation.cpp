@@ -124,6 +124,60 @@ void Simulation::remove_cell(CellId id) {
   state_.remove_cell(id);
 }
 
+std::pair<Vec3, Vec3> Simulation::flow_derivative(Vec3 point, Vec3 axis, float lambda,
+                                                  bool rotates) const {
+  const auto spacing = signal_grid_->spec().spacing;
+  const std::array<float, 3> h{spacing.x, spacing.y, spacing.z};
+  const std::array<std::uint32_t, 3> dims{
+      signal_grid_->spec().shape.x, signal_grid_->spec().shape.y, signal_grid_->spec().shape.z};
+  const auto sample = [&](Vec3 position) {
+    return signal_grid_->sample_velocity(position, GridSampleBound::clamped);
+  };
+  // Central differences of the interpolated fluid velocity. This is an
+  // equivalent-spheroid Jeffery closure, not cell-resolved hydrodynamics.
+  std::array<Vec3, 3> gradient{};
+  for (std::size_t k = 0; k < 3; ++k) {
+    if (dims[k] == 1) continue;
+    Vec3 offset{};
+    if (k == 0) offset.x = h[k] * 0.5F;
+    if (k == 1) offset.y = h[k] * 0.5F;
+    if (k == 2) offset.z = h[k] * 0.5F;
+    gradient[k] = (sample(point + offset) - sample(point - offset)) * (1 / h[k]);
+  }
+  const Vec3 ap = gradient[0] * axis.x + gradient[1] * axis.y + gradient[2] * axis.z;
+  const Vec3 atp{dot(gradient[0], axis), dot(gradient[1], axis), dot(gradient[2], axis)};
+  const Vec3 strain = (ap + atp) * 0.5F;
+  const Vec3 spin = (ap - atp) * 0.5F;
+  const auto orientation = rotates ? spin + (strain - axis * dot(axis, strain)) * lambda : Vec3{};
+  return {sample(point), orientation};
+}
+
+std::vector<std::array<float, 6>> Simulation::flow_drift_rates(float dt) const {
+  const auto geometry = state_.geometry_state();
+  const auto attributes = state_.cell_attributes();
+  std::vector<std::array<float, 6>> rates(geometry.size());
+  for (std::size_t slot = 0; slot < geometry.size(); ++slot) {
+    if (attributes.fixed[slot] != 0) continue;
+    const Vec3 position{geometry.position_x[slot], geometry.position_y[slot],
+                        geometry.position_z[slot]};
+    const Vec3 direction{geometry.direction_x[slot], geometry.direction_y[slot],
+                         geometry.direction_z[slot]};
+    const float aspect =
+        (geometry.lengths[slot] + 2 * geometry.radii[slot]) / (2 * geometry.radii[slot]);
+    const float lambda = (aspect * aspect - 1) / (aspect * aspect + 1);
+    // The rates at the midpoint of the free motion over `dt`.
+    const auto [velocity, orientation] = flow_derivative(position, direction, lambda, true);
+    const auto midpoint = position + velocity * (dt * 0.5F);
+    const auto mid_direction = normalized(direction + orientation * (dt * 0.5F));
+    const auto [mid_velocity, mid_orientation] =
+        flow_derivative(midpoint, mid_direction, lambda, true);
+    // A direction turning at rate d is a rotation at angular velocity p x d.
+    const auto angular = cross(direction, mid_orientation);
+    rates[slot] = {mid_velocity.x, mid_velocity.y, mid_velocity.z, angular.x, angular.y, angular.z};
+  }
+  return rates;
+}
+
 void Simulation::apply_flow_drift(float dt, const MechanicsIntegrationParameters& parameters) {
   if (!std::isfinite(dt) || dt < 0.0F) {
     throw std::invalid_argument("time step must be finite and non-negative");
@@ -158,29 +212,8 @@ void Simulation::apply_flow_drift(float dt, const MechanicsIntegrationParameters
     const float aspect =
         (geometry.lengths[slot] + 2 * geometry.radii[slot]) / (2 * geometry.radii[slot]);
     const float lambda = (aspect * aspect - 1) / (aspect * aspect + 1);
-    const auto sample = [&](Vec3 point) {
-      return signal_grid_->sample_velocity(point, GridSampleBound::clamped);
-    };
     const auto derivative = [&](Vec3 point, Vec3 axis) {
-      // Central differences of the interpolated fluid velocity. This is an
-      // equivalent-spheroid Jeffery closure, not cell-resolved hydrodynamics.
-      std::array<Vec3, 3> gradient{};
-      for (std::size_t k = 0; k < 3; ++k) {
-        if (dims[k] == 1) continue;
-        Vec3 offset{};
-        if (k == 0) offset.x = h[k] * 0.5F;
-        if (k == 1) offset.y = h[k] * 0.5F;
-        if (k == 2) offset.z = h[k] * 0.5F;
-        gradient[k] = (sample(point + offset) - sample(point - offset)) * (1 / h[k]);
-      }
-      const Vec3 ap = gradient[0] * axis.x + gradient[1] * axis.y + gradient[2] * axis.z;
-      const Vec3 atp{dot(gradient[0], axis), dot(gradient[1], axis), dot(gradient[2], axis)};
-      const Vec3 strain = (ap + atp) * 0.5F;
-      const Vec3 spin = (ap - atp) * 0.5F;
-      const auto orientation = parameters.max_rotation_radians == 0
-                                   ? Vec3{}
-                                   : spin + (strain - axis * dot(axis, strain)) * lambda;
-      return std::pair{sample(point), orientation};
+      return flow_derivative(point, axis, lambda, parameters.max_rotation_radians != 0);
     };
     double remaining = dt;
     std::uint32_t steps = 0;
@@ -379,9 +412,18 @@ ContactDynamicsResult Simulation::advance(float dt, const ContactDynamicsRequest
   ContactDynamicsResult result;
   try {
     if (dynamics != nullptr) {
+      detail::ContactDrift drift;
+      if (dynamics->dynamics.flow_drift) {
+        if (!signal_grid_.has_value() || !signal_grid_->spec().velocity_field.has_value()) {
+          throw std::logic_error("flow drift requires a signal grid with a velocity field");
+        }
+        const auto spacing = signal_grid_->spec().spacing;
+        drift.rates = [this](float length) { return flow_drift_rates(length); };
+        drift.travel_limit = 0.25F * std::min({spacing.x, spacing.y, spacing.z});
+      }
       result =
           detail::advance_contact_dynamics(state_, constraints_, *backend_, dt, dynamics->dynamics,
-                                           dynamics->contacts, dynamics->constraints);
+                                           dynamics->contacts, dynamics->constraints, drift);
     } else {
       backend_->advance_growth(state_, dt);
     }

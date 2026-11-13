@@ -190,11 +190,13 @@ class ContactDynamicsConfig:
     load, ``"exponential"`` scales elongation by ``exp(-growth_sensitivity *
     load)``, and ``"linear"`` leaves it unscaled up to ``growth_free_load`` and
     stops it at ``growth_stall_load``. Loads are forces in units of ``drag`` times
-    length squared per time.
+    length squared per time. A contact under force ``f`` overlaps by ``f /
+    contact_stiffness`` between cells and ``f / wall_stiffness`` against a wall.
     """
 
     drag: float = 1.0
     contact_stiffness: float = 1.0e4
+    wall_stiffness: float = 1.0e6
     overlap_tolerance: float = 1.0e-3
     candidate_margin: float = 0.1
     max_overlap_recovery: float = 0.05
@@ -208,7 +210,7 @@ class ContactDynamicsConfig:
     growth_stall_load: float = 1.0
 
     def __post_init__(self) -> None:
-        for name in ("drag", "contact_stiffness", "overlap_tolerance"):
+        for name in ("drag", "contact_stiffness", "wall_stiffness", "overlap_tolerance"):
             if _finite_number(getattr(self, name), f"contact_dynamics.{name}") <= 0.0:
                 raise ControllerStateError(f"contact_dynamics.{name} must be positive")
         for name in ("max_overlap_recovery", "max_growth_fraction"):
@@ -238,6 +240,7 @@ class ContactDynamicsConfig:
         parameters = ContactDynamicsParameters()
         parameters.drag = self.drag
         parameters.contact_stiffness = self.contact_stiffness
+        parameters.wall_stiffness = self.wall_stiffness
         parameters.overlap_tolerance = self.overlap_tolerance
         parameters.candidate_margin = self.candidate_margin
         parameters.max_overlap_recovery = self.max_overlap_recovery
@@ -277,6 +280,7 @@ class ContactDynamicsConfig:
         return cls(
             drag=number("drag"),
             contact_stiffness=number("contact_stiffness"),
+            wall_stiffness=number("wall_stiffness"),
             overlap_tolerance=number("overlap_tolerance"),
             candidate_margin=number("candidate_margin"),
             max_overlap_recovery=number("max_overlap_recovery"),
@@ -632,14 +636,12 @@ class NativeController:
             mechanics is not None and mechanics.flow_drift and self.simulation.cell_count != 0
         )
         if mechanics is not None and mechanics.contact_dynamics is not None:
-            # The flow moves the cells first, so the step ends with every
-            # contact resolved.
-            _, contacts, integration, constraints = mechanics.native_parameters()
-            if drifts:
-                self.simulation.apply_flow_drift(dt, integration)
-            self._last_contact_dynamics = self.simulation.step(
-                dt, mechanics.contact_dynamics.native_parameters(), contacts, constraints
-            )
+            # The flow carries the cells inside the solve, so contacts resist
+            # it pressing cells together.
+            _, contacts, _, constraints = mechanics.native_parameters()
+            dynamics = mechanics.contact_dynamics.native_parameters()
+            dynamics.flow_drift = mechanics.flow_drift
+            self._last_contact_dynamics = self.simulation.step(dt, dynamics, contacts, constraints)
         else:
             self._last_contact_dynamics = None
             self.simulation.step(dt)

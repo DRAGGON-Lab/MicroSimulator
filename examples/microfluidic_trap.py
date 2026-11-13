@@ -9,10 +9,13 @@ nutrient at a fixed yield, so the colony's growth pattern reflects the balance
 between flow supply, diffusion into the trap, and consumption by the cells
 already there.
 
-The trap is a monolayer that a few hundred cells fill. A cell pressed into its
-neighbors stops elongating, so the packed colony holds its density while the
-cells at the trap mouth, which have room, keep growing, spill into the channel,
-and are carried to the outlet. The population settles at a steady turnover.
+The trap is a monolayer that a few hundred cells fill. Growth and contact are
+solved together: cells push each other toward the trap mouth with contact
+forces, and a cell elongates more slowly the larger the axial load those forces
+put on it. The cells deep in the trap carry the load of everything between them
+and the mouth, so they slow and stall, while the cells at the mouth keep
+growing, spill into the channel, and are carried to the outlet. The population
+settles at a steady turnover.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from dataclasses import replace
 from microsimulator import (
     CellInit,
     CellUpdate,
+    ContactDynamicsConfig,
     ControllerStep,
     CoupledRatePlan,
     DivisionEvent,
@@ -42,7 +46,7 @@ from microsimulator.flow import colony_mobility, gap_mobility, solve_flow_field
 from microsimulator.microfluidics import TrapChannelDevice
 
 MODEL_ID = "examples.microfluidic-trap"
-MODEL_VERSION = 5
+MODEL_VERSION = 6
 DIVISION = UniformLengthDivision(3.2, 3.8, jitter_z=False)
 
 FLOW_SPEED = 20.0
@@ -67,12 +71,11 @@ NUTRIENT_K = 5.0
 # the actual increase of B = pi*r^2*(length + 2*r), divided by this yield.
 # The value is illustrative; penetration and growth require refinement checks.
 NUTRIENT_YIELD = 0.5
-# Growth stops under compression: a cell whose deepest overlap with a neighbor
-# reaches this depth does not elongate, and growth falls off linearly up to
-# it. Contact relaxation spreads overlap over several steps, so growth that
-# ignored it would keep packing cells into a full trap. The value is a model
-# choice, a fifth of a cell's diameter, not a measured mechanical response.
-COMPRESSION_LIMIT = 0.2
+# Growth slows under load: elongation falls linearly with the axial load on a
+# cell and stops at this load. Loads are forces in units of drag times length
+# squared per time, and the load on a cell at the back of the full trap is a
+# few hundred. The value is a model choice, not a measured mechanical response.
+GROWTH_STALL_LOAD = 200.0
 WASHOUT_Y = DEVICE.channel_half_length - 10.0
 
 # Resistance feedback uses only fixed (attached) cells, with a physical
@@ -129,18 +132,6 @@ def _nutrient_growth(simulation: Simulation, position: Vec3) -> float:
     return BASE_GROWTH_RATE * nutrient / (NUTRIENT_K + nutrient)
 
 
-def _compression(simulation: Simulation) -> dict[int, float]:
-    """Each cell's deepest overlap with a neighbor, for the cells that have one."""
-
-    deepest: dict[int, float] = {}
-    for contact in simulation.find_cell_contacts().contacts:
-        overlap = -contact.signed_separation
-        if overlap > 0.0:
-            for cell_id in (contact.first_id, contact.second_id):
-                deepest[cell_id] = max(deepest.get(cell_id, 0.0), overlap)
-    return deepest
-
-
 def _regulate(step: ControllerStep) -> StepPlan:
     if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
         mobility = colony_mobility(
@@ -159,14 +150,9 @@ def _regulate(step: ControllerStep) -> StepPlan:
     if washed:
         DIVISION.forget(step, washed)
         divisions = tuple(request for request in divisions if request.parent_id not in washed)
-    compression = _compression(step.simulation)
     return StepPlan(
         updates=tuple(
-            CellUpdate(
-                cell.id,
-                growth_rate=_nutrient_growth(step.simulation, cell.position)
-                * max(0.0, 1.0 - compression.get(cell.id, 0.0) / COMPRESSION_LIMIT),
-            )
+            CellUpdate(cell.id, growth_rate=_nutrient_growth(step.simulation, cell.position))
             for cell in step.cells
             if cell.id not in washed
         ),
@@ -200,7 +186,12 @@ def build(context: ModelContext) -> NativeController:
         rng=context.rng,
         regulate=_regulate,
         on_division=_divided,
-        mechanics=MechanicsConfig(flow_drift=True),
+        mechanics=MechanicsConfig(
+            flow_drift=True,
+            contact_dynamics=ContactDynamicsConfig(
+                growth_law="linear", growth_stall_load=GROWTH_STALL_LOAD
+            ),
+        ),
         state=state,
     )
 

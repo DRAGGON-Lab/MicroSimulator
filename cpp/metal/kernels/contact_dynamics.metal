@@ -58,8 +58,9 @@ kernel void contact_respond(device const ContactRowData* rows [[buffer(0)]],
   float transverse = bodies[body].rates.x;
   float axial = bodies[body].rates.y;
   float nominal = bodies[body].rates.z;
-  float3 velocity = force * bodies[body].axis_mobility.w;
-  float3 angular_velocity = torque * transverse + axis * ((axial - transverse) * dot(axis, torque));
+  float3 velocity = bodies[body].drift_linear.xyz + force * bodies[body].axis_mobility.w;
+  float3 angular_velocity = bodies[body].drift_angular.xyz + torque * transverse +
+                            axis * ((axial - transverse) * dot(axis, torque));
   float rate = nominal > 0.0f ? nominal * contact_growth_factor(solve, load) : nominal;
   response[body].linear_length = float4(velocity, rate);
   response[body].rotation = float4(angular_velocity, load);

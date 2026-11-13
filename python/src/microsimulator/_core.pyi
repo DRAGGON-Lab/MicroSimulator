@@ -630,6 +630,7 @@ class GrowthLoadResponse:
 class ContactDynamicsParameters:
     drag: float
     contact_stiffness: float
+    wall_stiffness: float
     overlap_tolerance: float
     candidate_margin: float
     max_overlap_recovery: float
@@ -637,6 +638,7 @@ class ContactDynamicsParameters:
     max_iterations: int
     max_refinements: int
     max_step_halvings: int
+    flow_drift: bool
     growth: GrowthLoadResponse
 
     def __init__(self) -> None: ...

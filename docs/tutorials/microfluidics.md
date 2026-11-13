@@ -21,7 +21,7 @@ Run any of them live:
 uv run microsimulator view --model examples/microfluidic_trap.py --seed 42 --dt 0.02 --backend cpu --open
 ```
 
-The trap example is sized to one population: a 40 by 20 micrometer trap, 1.5 micrometers deep, beside a 20 micrometer channel. A few hundred cells fill it as a monolayer. Its growth rule multiplies the Monod rate by a compression factor that falls linearly to zero as a cell's deepest overlap with a neighbor reaches a fifth of its diameter, so the packed interior stops elongating while cells at the mouth keep growing, spill into the channel, and wash out. The population settles near 320 cells with continuous turnover. The compression limit is a model choice, not a measured mechanical response.
+The trap example is sized to one population: a 40 by 20 micrometer trap, 1.5 micrometers deep, beside a 20 micrometer channel. A few hundred cells fill it as a monolayer. It solves growth and contact together with [contact dynamics](../architecture/0026-contact-dynamics.md): cells push each other toward the mouth with contact forces, and a cell's elongation falls linearly with the axial load on it, stopping at a stall load. The cells at the back carry the load of everything between them and the mouth, so they slow and stall, while cells at the mouth keep growing, spill into the channel, and wash out. The trap holds about 260 cells with continuous turnover. The stall load is a model choice, not a measured mechanical response.
 
 ## Walls that cells and chemistry both respect
 
@@ -65,7 +65,7 @@ The constructor's keyword arguments set the trap, channel, and wall dimensions; 
 
 ## Flow on signals and on cells
 
-The velocity field advects every signal with conservative upwind face fluxes under all three signal integrators. With `MechanicsConfig(flow_drift=True)`, the controller translates each non-fixed cell using the velocity sampled at its center and rotates it with a finite-aspect Jeffery approximation, so escaped cells travel down the channel and rods rotate in shear. Contact relaxation then resolves overlaps with walls or neighbors. The [flow-drift design](../architecture/0021-flow-drift.md) describes this kinematic approximation and its integration limits.
+The velocity field advects every signal with conservative upwind face fluxes under all three signal integrators. With `MechanicsConfig(flow_drift=True)`, the controller translates each non-fixed cell using the velocity sampled at its center and rotates it with a finite-aspect Jeffery approximation, so escaped cells travel down the channel and rods rotate in shear. Contact relaxation then resolves overlaps with walls or neighbors; with contact dynamics the flow velocity is part of the contact solve instead, so cells the flow presses together do not overlap. The [flow-drift design](../architecture/0021-flow-drift.md) describes this kinematic approximation and its integration limits.
 
 ## Washout
 

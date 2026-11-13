@@ -22,11 +22,14 @@ struct alignas(16) ContactRowGpu {
   std::uint32_t padding1;
 };
 
-// Cell axis with the translational mobility in w, then the transverse
-// mobility, axial mobility, and nominal elongation rate.
+// Cell axis with the translational mobility in w; the transverse mobility,
+// axial mobility, and nominal elongation rate; then the velocity and angular
+// velocity the cell has without contact.
 struct alignas(16) ContactBodyGpu {
   float4 axis_mobility;
   float4 rates;
+  float4 drift_linear;
+  float4 drift_angular;
 };
 
 struct ContactSolveGpu {
@@ -40,7 +43,7 @@ struct ContactSolveGpu {
 };
 
 static_assert(sizeof(ContactRowGpu) == 80);
-static_assert(sizeof(ContactBodyGpu) == 32);
+static_assert(sizeof(ContactBodyGpu) == 64);
 
 // next = max(multipliers - step_length * gaps, 0).
 void launch_contact_project(const float* multipliers, const float* gaps, float* next,

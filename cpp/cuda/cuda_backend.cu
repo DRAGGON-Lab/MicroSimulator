@@ -1606,6 +1606,8 @@ class CudaBackend final : public ComputeBackend {
                                        source.translational_mobility),
           .rates = make_float4(source.transverse_mobility, source.axial_mobility,
                                source.length_rate, 0.0F),
+          .drift_linear = make_float4(source.drift[0], source.drift[1], source.drift[2], 0.0F),
+          .drift_angular = make_float4(source.drift[3], source.drift[4], source.drift[5], 0.0F),
       };
     }
     copy_to_device(contact_rows_, rows, "failed to upload CUDA contact rows");

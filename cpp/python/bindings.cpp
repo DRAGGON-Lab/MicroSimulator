@@ -533,6 +533,7 @@ NB_MODULE(_core, module) {
       .def(nb::init<>())
       .def_rw("drag", &microsimulator::ContactDynamicsParameters::drag)
       .def_rw("contact_stiffness", &microsimulator::ContactDynamicsParameters::contact_stiffness)
+      .def_rw("wall_stiffness", &microsimulator::ContactDynamicsParameters::wall_stiffness)
       .def_rw("overlap_tolerance", &microsimulator::ContactDynamicsParameters::overlap_tolerance)
       .def_rw("candidate_margin", &microsimulator::ContactDynamicsParameters::candidate_margin)
       .def_rw("max_overlap_recovery",
@@ -542,6 +543,7 @@ NB_MODULE(_core, module) {
       .def_rw("max_iterations", &microsimulator::ContactDynamicsParameters::max_iterations)
       .def_rw("max_refinements", &microsimulator::ContactDynamicsParameters::max_refinements)
       .def_rw("max_step_halvings", &microsimulator::ContactDynamicsParameters::max_step_halvings)
+      .def_rw("flow_drift", &microsimulator::ContactDynamicsParameters::flow_drift)
       .def_rw("growth", &microsimulator::ContactDynamicsParameters::growth);
 
   nb::class_<microsimulator::ContactDynamicsReport>(module, "ContactDynamicsReport")

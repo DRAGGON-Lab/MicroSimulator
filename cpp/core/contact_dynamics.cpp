@@ -281,10 +281,16 @@ struct Substep {
     WorldState& state, const Geometry& base, std::span<const float> rate_lengths,
     const ConstraintSet& constraints, ComputeBackend& backend, float dt,
     const ContactDynamicsParameters& parameters, const ContactParameters& contact_parameters,
-    const ConstraintContactParameters& constraint_parameters, const ForceMemory& remembered,
-    std::uint64_t& iterations) {
+    const ConstraintContactParameters& constraint_parameters, const detail::ContactDrift& drift,
+    const ForceMemory& remembered, std::uint64_t& iterations) {
   const auto radii = state.geometry_state().radii;
-  const auto bodies = make_bodies(state, rate_lengths, parameters.drag);
+  auto bodies = make_bodies(state, rate_lengths, parameters.drag);
+  if (drift.rates) {
+    const auto rates = drift.rates(dt);
+    for (std::size_t slot = 0; slot < bodies.size(); ++slot) {
+      bodies[slot].drift = rates[slot];
+    }
+  }
   const auto candidates = find_touches(state, constraints, backend, contact_parameters,
                                        constraint_parameters, parameters.candidate_margin);
   std::vector<ContactRow> rows;
@@ -292,10 +298,15 @@ struct Substep {
   rows.reserve(candidates.size());
   keys.reserve(candidates.size());
   auto starting_overlap = 0.0F;
-  const auto compliance = 1.0F / parameters.contact_stiffness;
+  // A wall is rigid next to a cell, so a wall contact yields less.
+  const auto compliance_of = [&parameters](const Touch& touch) {
+    return 1.0F / (touch.second_slot == invalid_slot ? parameters.wall_stiffness
+                                                     : parameters.contact_stiffness);
+  };
   for (const auto& touch : candidates) {
     starting_overlap = std::max(starting_overlap, -touch.separation);
-    rows.push_back(make_row(base, radii, touch, compliance, parameters.max_overlap_recovery));
+    rows.push_back(
+        make_row(base, radii, touch, compliance_of(touch), parameters.max_overlap_recovery));
     keys.push_back(key_of(touch));
   }
   // Overlap deeper than one substep recovers is accepted for now.
@@ -349,7 +360,8 @@ struct Substep {
     for (const auto& touch : found) {
       max_overlap = std::max(max_overlap, -touch.separation);
       const auto force = forces.find(key_of(touch));
-      const auto allowed = slack + (force == forces.end() ? 0.0F : force->second * compliance);
+      const auto allowed =
+          slack + (force == forces.end() ? 0.0F : force->second * compliance_of(touch));
       if (touch.separation < -allowed) {
         overlapping.push_back(touch);
       }
@@ -373,7 +385,8 @@ struct Substep {
     // that the multipliers that produced the move predict the gap that the
     // move actually left.
     for (const auto& touch : overlapping) {
-      auto row = make_row(*trial, radii, touch, compliance, parameters.max_overlap_recovery);
+      auto row =
+          make_row(*trial, radii, touch, compliance_of(touch), parameters.max_overlap_recovery);
       row.offset -= dt * predicted_rate(row, response);
       rows.push_back(row);
       keys.push_back(key_of(touch));
@@ -419,8 +432,8 @@ void validate_contact_dynamics_parameters(const ContactDynamicsParameters& param
   if (!positive(parameters.drag)) {
     throw std::invalid_argument("contact dynamics drag must be finite and positive");
   }
-  if (!positive(parameters.contact_stiffness)) {
-    throw std::invalid_argument("contact stiffness must be finite and positive");
+  if (!positive(parameters.contact_stiffness) || !positive(parameters.wall_stiffness)) {
+    throw std::invalid_argument("contact and wall stiffness must be finite and positive");
   }
   if (!positive(parameters.overlap_tolerance)) {
     throw std::invalid_argument("contact overlap tolerance must be finite and positive");
@@ -448,8 +461,10 @@ void validate_contact_system(const ContactSystem& system) {
   for (const auto& body : system.bodies) {
     if (!finite(body.axis) || !std::isfinite(body.translational_mobility) ||
         !std::isfinite(body.transverse_mobility) || !std::isfinite(body.axial_mobility) ||
-        !std::isfinite(body.length_rate) || body.translational_mobility < 0.0F ||
-        body.transverse_mobility < 0.0F || body.axial_mobility < 0.0F) {
+        !std::isfinite(body.length_rate) ||
+        !std::ranges::all_of(body.drift, [](float value) { return std::isfinite(value); }) ||
+        body.translational_mobility < 0.0F || body.transverse_mobility < 0.0F ||
+        body.axial_mobility < 0.0F) {
       throw std::invalid_argument("contact body is invalid");
     }
   }
@@ -477,7 +492,7 @@ namespace detail {
 ContactDynamicsResult advance_contact_dynamics(
     WorldState& state, const ConstraintSet& constraints, ComputeBackend& backend, float dt,
     const ContactDynamicsParameters& parameters, const ContactParameters& contact_parameters,
-    const ConstraintContactParameters& constraint_parameters) {
+    const ConstraintContactParameters& constraint_parameters, const ContactDrift& drift) {
   if (!std::isfinite(dt) || dt < 0.0F) {
     throw std::invalid_argument("time step must be finite and non-negative");
   }
@@ -504,7 +519,14 @@ ContactDynamicsResult advance_contact_dynamics(
       growth = std::max(growth,
                         std::abs(rates[slot]) * view.lengths[slot] * 0.5F * dt / view.radii[slot]);
     }
-    const auto pieces = std::max(1.0F, std::ceil(growth / parameters.max_growth_fraction));
+    auto pieces = std::max(1.0F, std::ceil(growth / parameters.max_growth_fraction));
+    if (drift.rates && drift.travel_limit > 0.0F) {
+      auto speed = 0.0F;
+      for (const auto& rate : drift.rates(0.0F)) {
+        speed = std::max(speed, norm(Vec3{rate[0], rate[1], rate[2]}));
+      }
+      pieces = std::max(pieces, std::ceil(speed * dt / drift.travel_limit));
+    }
     if (!std::isfinite(pieces)) {
       throw std::runtime_error("contact dynamics growth per step is not finite");
     }
@@ -520,8 +542,8 @@ ContactDynamicsResult advance_contact_dynamics(
         length = static_cast<float>(remaining);
       }
       auto substep = advance_substep(state, base, initial.lengths, constraints, backend, length,
-                                     parameters, contact_parameters, constraint_parameters, forces,
-                                     result.report.iterations);
+                                     parameters, contact_parameters, constraint_parameters, drift,
+                                     forces, result.report.iterations);
       if (!substep.has_value()) {
         length *= 0.5F;
         ++result.report.halvings;

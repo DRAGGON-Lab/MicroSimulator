@@ -223,6 +223,9 @@ void test_cell_between_walls_stalls_at_the_stall_load() {
   ContactDynamicsParameters parameters;
   parameters.growth.law = GrowthLoadLaw::linear;
   parameters.growth.stall_load = 4.0F;
+  // Nothing softer than the walls holds this cell, so the wall stiffness sets
+  // how finely its load is resolved.
+  parameters.wall_stiffness = parameters.contact_stiffness;
   microsimulator::ContactDynamicsResult result;
   for (int step = 0; step < 200; ++step) {
     result = simulation.step(0.05F, parameters);
@@ -230,7 +233,7 @@ void test_cell_between_walls_stalls_at_the_stall_load() {
   // The walls leave room for a cylinder of length 3. The cell fills it, to
   // within the overlap its stall load presses into the two walls, and stops.
   const auto filled = simulation.cell(id);
-  const auto wall_overlap = parameters.growth.stall_load / parameters.contact_stiffness;
+  const auto wall_overlap = parameters.growth.stall_load / parameters.wall_stiffness;
   assert(filled.length >= 3.0F - 2.0F * parameters.overlap_tolerance);
   assert(filled.length <= 3.0F + 2.0F * (wall_overlap + parameters.overlap_tolerance));
   assert(close(filled.position.x, 0.0F, 1.0e-3F));

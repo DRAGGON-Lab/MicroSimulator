@@ -208,7 +208,7 @@ def test_trap_example_fills_and_settles_at_a_steady_turnover() -> None:
 
     walls = simulation.find_external_contacts().contacts
     assert walls
-    # Resting depth of the wall projection, with room for its last sweep.
+    # What the contact forces press into the walls, which are stiff.
     assert min(contact.signed_separation for contact in walls) >= -2.0e-3
     slack = 2.0e-3
     for cell in cells:

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <array>
+#include <functional>
+#include <vector>
+
 #include "microsimulator/backend.hpp"
 #include "microsimulator/constraints.hpp"
 #include "microsimulator/contact_dynamics.hpp"
@@ -7,6 +11,15 @@
 #include "microsimulator/world_state.hpp"
 
 namespace microsimulator::detail {
+
+// Motion that cells have without contact. `rates` returns the velocity then
+// angular velocity of each cell, by slot, for a move of the given length from
+// the geometry the state holds. A substep moves no cell further than
+// `travel_limit` by drift.
+struct ContactDrift {
+  std::function<std::vector<std::array<float, 6>>(float)> rates;
+  float travel_limit{0.0F};
+};
 
 // Advances cell positions, orientations, and lengths over `dt` with growth and
 // contact solved together. Each substep finds the cells and walls within the
@@ -19,6 +32,6 @@ namespace microsimulator::detail {
 [[nodiscard]] ContactDynamicsResult advance_contact_dynamics(
     WorldState& state, const ConstraintSet& constraints, ComputeBackend& backend, float dt,
     const ContactDynamicsParameters& parameters, const ContactParameters& contact_parameters,
-    const ConstraintContactParameters& constraint_parameters);
+    const ConstraintContactParameters& constraint_parameters, const ContactDrift& drift = {});
 
 }  // namespace microsimulator::detail

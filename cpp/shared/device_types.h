@@ -41,6 +41,9 @@ struct ContactBodyData {
   float4 axis_mobility;
   // Transverse mobility, axial mobility, and nominal elongation rate.
   float4 rates;
+  // Velocity and angular velocity the cell has without contact.
+  float4 drift_linear;
+  float4 drift_angular;
 };
 
 struct ContactSolveData {

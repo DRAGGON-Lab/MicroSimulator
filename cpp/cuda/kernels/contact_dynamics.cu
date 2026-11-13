@@ -75,11 +75,15 @@ __global__ void contact_respond(const ContactRowGpu* rows, const ContactBodyGpu*
   const float along =
       (axial - transverse) * (axis.x * torque_x + axis.y * torque_y + axis.z * torque_z);
   const float rate = nominal > 0.0F ? nominal * contact_growth_factor(solve, load) : nominal;
-  response[body].linear_length =
-      make_float4(force_x * translational, force_y * translational, force_z * translational, rate);
+  const float4 drift_linear = bodies[body].drift_linear;
+  const float4 drift_angular = bodies[body].drift_angular;
+  response[body].linear_length = make_float4(drift_linear.x + force_x * translational,
+                                             drift_linear.y + force_y * translational,
+                                             drift_linear.z + force_z * translational, rate);
   response[body].rotation =
-      make_float4(torque_x * transverse + axis.x * along, torque_y * transverse + axis.y * along,
-                  torque_z * transverse + axis.z * along, load);
+      make_float4(drift_angular.x + torque_x * transverse + axis.x * along,
+                  drift_angular.y + torque_y * transverse + axis.y * along,
+                  drift_angular.z + torque_z * transverse + axis.z * along, load);
 }
 
 __global__ void contact_gaps(const ContactRowGpu* rows, const MechanicsDofsGpu* response,
