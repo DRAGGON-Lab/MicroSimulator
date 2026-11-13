@@ -11,6 +11,7 @@ from microsimulator import (
     BackendKind,
     GridShape,
     ModelContext,
+    NativeController,
     SignalGridSpec,
     SimulationController,
     Vec3,
@@ -184,16 +185,28 @@ def test_trap_example_fills_and_settles_at_a_steady_turnover() -> None:
         _EXAMPLES / "microfluidic_trap.py",
         ModelContext(BackendKind.CPU, 0, seed=42),
     )
-    assert isinstance(model, SimulationController)
+    assert isinstance(model, NativeController)
     simulation = model.simulation
     device = _trap_example_device()
     populations: list[int] = []
+    # Axial loads of the settled colony, by depth into the trap from its mouth.
+    depth_bins = 8
+    bin_width = (device.trap_back_x - device.trap_open_x) / depth_bins
+    loads_by_depth: list[list[float]] = [[] for _ in range(depth_bins)]
     # Long enough for the colony to fill the trap, press on all three walls,
     # and shed cells into the channel for several doubling times.
     for step in range(1, 1501):
         model.step(0.02)
         if step % 100 == 0:
             populations.append(len(simulation.cells()))
+        if step > 1100 and step % 20 == 0:
+            result = model.last_contact_dynamics
+            assert result is not None
+            for cell in simulation.cells():
+                depth = cell.position.x - device.trap_open_x
+                if depth > 0.0:
+                    index = min(depth_bins - 1, int(depth / bin_width))
+                    loads_by_depth[index].append(result.axial_loads[cell.slot])
 
     cells = simulation.cells()
     in_trap = [cell for cell in cells if cell.position.x > device.trap_open_x]
@@ -205,6 +218,16 @@ def test_trap_example_fills_and_settles_at_a_steady_turnover() -> None:
     assert max(cell.id for cell in cells) > 3 * len(cells)
     settled = populations[-5:]
     assert max(settled) - min(settled) <= 0.15 * max(settled)
+
+    # Cells deeper in the trap carry the drag of everything between them and
+    # the mouth. The load climbs steeply from the mouth, levels off where it
+    # slows growth, and peaks against the back wall, where cells lie along the
+    # wall with no open boundary ahead of them.
+    profile = [sum(loads) / len(loads) for loads in loads_by_depth]
+    assert profile[:-1] == sorted(profile[:-1])
+    assert profile[3] - profile[0] > 2.0 * (profile[6] - profile[3])
+    assert profile[-1] > 1.3 * profile[-2]
+    assert profile[0] < 0.5 * profile[-2]
 
     walls = simulation.find_external_contacts().contacts
     assert walls
