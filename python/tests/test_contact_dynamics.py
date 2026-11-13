@@ -549,6 +549,7 @@ def test_collinear_cells_spanning_a_chamber_buckle(backend: BackendKind) -> None
     # Growth that ignores load has to go somewhere: the pair turns out of line.
     simulation = _spanning_pair(backend, 0.01)
     parameters = ContactDynamicsParameters()
+    result = simulation.step(0.0, parameters)
     for _ in range(12):
         result = simulation.step(0.05, parameters)
     cells = simulation.cells()
