@@ -10,12 +10,12 @@ from microsimulator import (
     CellInit,
     ConstraintContactParameters,
     ConstraintRegion,
+    ContactDynamicsParameters,
     ContactParameters,
     ExternalConstraintKind,
+    FlowDriftParameters,
     GridBoundaryKind,
     GridShape,
-    MechanicsIntegrationParameters,
-    MechanicsParameters,
     PlaneConstraintInit,
     RateInstruction,
     RateOp,
@@ -24,8 +24,6 @@ from microsimulator import (
     SignalGridSpec,
     SignalGridVelocityField,
     Simulation,
-    SolverBreakdown,
-    SolverStatus,
     SpeciesRatePlan,
     Vec3,
     backend_available,
@@ -273,27 +271,32 @@ def test_contact_graph_is_available_through_the_public_api(backend: BackendKind)
     )
 
 
-def test_cpu_mechanics_reports_convergence() -> None:
+def test_contact_step_pushes_overlapping_cells_apart() -> None:
     simulation = Simulation()
     first = CellInit()
     first.length = 4.0
+    first.growth_rate = 0.0
     second = CellInit()
     second.position = Vec3(0.0, 0.8, 0.0)
     second.length = 4.0
-    simulation.add_cell(first)
-    simulation.add_cell(second)
+    second.growth_rate = 0.0
+    first_id = simulation.add_cell(first)
+    second_id = simulation.add_cell(second)
 
-    parameters = MechanicsParameters()
-    parameters.residual_rms_tolerance = 1.0e-6
-    result = simulation.solve_cell_mechanics(parameters)
+    parameters = ContactDynamicsParameters()
+    result = simulation.step(0.05, parameters)
 
-    assert simulation.supports(BackendFeature.CELL_MECHANICS)
-    assert result.report.status == SolverStatus.CONVERGED
-    assert result.report.breakdown == SolverBreakdown.NONE
-    assert result.report.final_residual_rms <= parameters.residual_rms_tolerance
-    assert len(result.corrections) == 2
-    assert result.corrections[0].translation.y < 0.0
-    assert result.corrections[1].translation.y > 0.0
+    assert simulation.supports(BackendFeature.CONTACT_DYNAMICS)
+    # One step recovers the overlap limit, shared equally by cells of equal drag.
+    assert result.report.max_rows >= 1
+    below, above = simulation.cell(first_id), simulation.cell(second_id)
+    assert math.isclose(below.position.y, -0.025, abs_tol=2.0e-3)
+    assert math.isclose(above.position.y, 0.825, abs_tol=2.0e-3)
+    assert math.isclose(below.length, 4.0)
+    for _ in range(8):
+        result = simulation.step(0.05, parameters)
+    assert result.report.max_overlap <= 2.0e-3
+    assert simulation.cell(second_id).position.y - simulation.cell(first_id).position.y >= 0.998
 
 
 def test_cell_attributes_can_be_updated_by_stable_id() -> None:
@@ -361,7 +364,7 @@ def test_plane_constraint_graph_is_typed_and_incident(backend: BackendKind) -> N
 
 
 @pytest.mark.parametrize("backend", list(BackendKind))
-def test_constraints_participate_in_mechanical_relaxation(backend: BackendKind) -> None:
+def test_constraints_participate_in_the_contact_solve(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
     simulation = Simulation(backend)
@@ -377,15 +380,13 @@ def test_constraints_participate_in_mechanical_relaxation(backend: BackendKind) 
     plane.inward_normal = Vec3(0.0, 1.0, 0.0)
     simulation.add_plane_constraint(plane)
 
-    result = simulation.relax_cell_mechanics()
+    simulation.step(0.05, ContactDynamicsParameters())
 
-    assert result.report.status == SolverStatus.CONVERGED
-    assert result.corrections[0].translation.y > 0.0
     assert simulation.cell(cell_id).position.y > 0.4
 
 
 @pytest.mark.parametrize("backend", list(BackendKind))
-def test_box_constraints_participate_in_mechanical_relaxation(backend: BackendKind) -> None:
+def test_box_constraints_participate_in_the_contact_solve(backend: BackendKind) -> None:
     if not backend_available(backend):
         pytest.skip("native backend is not built")
     simulation = Simulation(backend)
@@ -412,10 +413,8 @@ def test_box_constraints_participate_in_mechanical_relaxation(backend: BackendKi
         for contact in graph.contacts
     )
 
-    result = simulation.relax_cell_mechanics()
+    simulation.step(0.05, ContactDynamicsParameters())
 
-    assert result.report.status == SolverStatus.CONVERGED
-    assert result.corrections[0].translation.x > 0.0
     assert simulation.cell(cell_id).position.x > 1.4
 
 
@@ -448,29 +447,8 @@ def test_finite_wall_detects_midspan_capsule_contact(backend: BackendKind) -> No
     assert math.isclose(contact.normal.y, -1.0, abs_tol=2.0e-5)
     assert math.isclose(contact.signed_separation, -0.75, abs_tol=2.0e-5)
 
-    result = simulation.relax_cell_mechanics()
-    assert result.report.status == SolverStatus.CONVERGED
-    assert result.corrections[0].translation.y > 0.0
+    simulation.step(0.05, ContactDynamicsParameters())
     assert simulation.cell(cell_id).position.y > 0.75
-
-
-def test_cpu_mechanics_relaxation_updates_geometry() -> None:
-    simulation = Simulation()
-    first = CellInit()
-    first.length = 4.0
-    second = CellInit()
-    second.position = Vec3(0.0, 0.8, 0.0)
-    second.length = 4.0
-    first_id = simulation.add_cell(first)
-    second_id = simulation.add_cell(second)
-
-    integration = MechanicsIntegrationParameters()
-    result = simulation.relax_cell_mechanics(integration_parameters=integration)
-
-    assert result.report.status == SolverStatus.CONVERGED
-    assert simulation.cell(first_id).position.y < 0.0
-    assert simulation.cell(second_id).position.y > 0.8
-    assert math.isclose(simulation.cell(first_id).length, 4.0)
 
 
 @pytest.mark.parametrize("backend", [BackendKind.METAL, BackendKind.CUDA])
@@ -575,13 +553,13 @@ def test_flow_drift_substeps_instead_of_clipping_the_total_rotation() -> None:
     capped.configure_signal_grid(grid)
     capped_id = capped.add_cell(cell)
     capped.apply_flow_drift(1.0)
-    limit = MechanicsIntegrationParameters().max_rotation_radians
+    limit = FlowDriftParameters().max_rotation_radians
     assert capped.cell(capped_id).direction.x > 3 * math.sin(limit)
 
     frozen = Simulation()
     frozen.configure_signal_grid(grid)
     frozen_id = frozen.add_cell(cell)
-    integration = MechanicsIntegrationParameters()
+    integration = FlowDriftParameters()
     integration.max_rotation_radians = 0.0
     frozen.apply_flow_drift(1.0, integration)
     assert math.isclose(frozen.cell(frozen_id).direction.x, 0.0, abs_tol=1.0e-6)

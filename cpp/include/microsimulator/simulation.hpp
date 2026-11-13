@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -31,8 +32,7 @@ class Simulation {
 
   CellId add_cell(const CellInit& cell);
   void remove_cell(CellId id);
-  void apply_flow_drift(float dt, const MechanicsIntegrationParameters& parameters =
-                                      MechanicsIntegrationParameters{});
+  void apply_flow_drift(float dt, const FlowDriftParameters& parameters = FlowDriftParameters{});
   ConstraintId add_plane_constraint(const PlaneConstraintInit& plane);
   ConstraintId add_sphere_constraint(const SphereConstraintInit& sphere);
   ConstraintId add_box_constraint(const BoxConstraintInit& box);
@@ -52,20 +52,24 @@ class Simulation {
   std::pair<CellId, CellId> divide(CellId parent_id, float first_fraction);
   std::pair<CellId, CellId> divide_equal(CellId parent_id);
   void step(float dt);
+  // Advances growth and contact together: cells elongate, push each other
+  // and the constraints apart, and slow under the load that puts on them.
+  // Species, coupled, and signal updates then see the elongation that
+  // happened. The activation margins of the contact parameters are replaced
+  // by the candidate margin of the dynamics parameters.
+  ContactDynamicsResult step(
+      float dt, const ContactDynamicsParameters& dynamics_parameters,
+      const ContactParameters& contact_parameters = ContactParameters{},
+      const ConstraintContactParameters& constraint_parameters = ConstraintContactParameters{});
   [[nodiscard]] ContactGraph find_cell_contacts(
       const ContactParameters& parameters = ContactParameters{});
   [[nodiscard]] ExternalContactGraph find_external_contacts(
       const ConstraintContactParameters& parameters = ConstraintContactParameters{});
-  [[nodiscard]] MechanicsSolveResult solve_cell_mechanics(
-      const MechanicsParameters& mechanics_parameters = MechanicsParameters{},
-      const ContactParameters& contact_parameters = ContactParameters{},
-      const ConstraintContactParameters& constraint_parameters = ConstraintContactParameters{});
-  [[nodiscard]] MechanicsSolveResult relax_cell_mechanics(
-      const MechanicsParameters& mechanics_parameters = MechanicsParameters{},
-      const ContactParameters& contact_parameters = ContactParameters{},
-      const MechanicsIntegrationParameters& integration_parameters =
-          MechanicsIntegrationParameters{},
-      const ConstraintContactParameters& constraint_parameters = ConstraintContactParameters{});
+  // Solves a contact system on the selected backend. The system stands on
+  // its own; it need not describe this simulation's cells.
+  [[nodiscard]] ContactSolveResult solve_contact_system(
+      const ContactSystem& system, std::span<const float> initial_multipliers,
+      const ContactSolveParameters& parameters = ContactSolveParameters{});
   [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(
       const SignalGridSpec& spec, std::span<const float> mobility = {},
       const DepthAveragedFlowParameters& parameters = DepthAveragedFlowParameters{});
@@ -82,6 +86,16 @@ class Simulation {
   void validate() const;
 
  private:
+  struct ContactDynamicsRequest;
+  ContactDynamicsResult advance(float dt, const ContactDynamicsRequest* dynamics);
+  // The fluid velocity at a point and the rate at which it turns a rod of
+  // the given axis and Jeffery shape factor.
+  [[nodiscard]] std::pair<Vec3, Vec3> flow_derivative(Vec3 point, Vec3 axis, float lambda,
+                                                      bool rotates) const;
+  // The velocity then angular velocity the flow gives each cell over a move
+  // of length `dt`, by slot. Fixed cells do not drift.
+  [[nodiscard]] std::vector<std::array<float, 6>> flow_drift_rates(float dt) const;
+
   WorldState state_;
   ConstraintSet constraints_;
   std::unique_ptr<ComputeBackend> backend_;

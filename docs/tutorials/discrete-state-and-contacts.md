@@ -2,7 +2,7 @@
 
 This tutorial uses plasmid segregation and conjugation to show how discrete biological state, stochastic events, and contact-dependent behavior fit into a MicroSimulator model.
 
-Both models start with centers at Z=0 and axes in XY, and division adds no orientation jitter. Neither has mechanical Z confinement: daughters inherit the parent axis and contact relaxation remains three-dimensional. See [division jitter and out-of-plane motion](planarity.md).
+Both models start with centers at Z=0 and axes in XY, and division adds no orientation jitter. Neither has mechanical Z confinement: daughters inherit the parent axis and the contact solve remains three-dimensional. See [division jitter and out-of-plane motion](planarity.md).
 
 For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
 
@@ -65,7 +65,7 @@ for cell in simulation.cells():
     neighbors = graph.neighbor_ids(cell.slot)
 ```
 
-Stable IDs identify cells across compaction and checkpoints. Slots are dense, temporary indices used to query one graph. Recompute the graph after growth, division, or mechanical relaxation; neighbor lists are not persistent cell state.
+Stable IDs identify cells across compaction and checkpoints. Slots are dense, temporary indices used to query one graph. Recompute the graph after a step or a division; neighbor lists are not persistent cell state.
 
 Parallel rods can produce two geometric contact rows. `neighbor_ids(slot)` returns ascending unique stable IDs, so a pair is one biological neighbor even when the mechanics operator needs two rows. Constraint contacts are a separate typed graph and never appear as cell neighbors.
 

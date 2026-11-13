@@ -11,7 +11,7 @@ constexpr std::array required_features{
     microsimulator::BackendFeature::growth,
     microsimulator::BackendFeature::species,
     microsimulator::BackendFeature::cell_contacts,
-    microsimulator::BackendFeature::cell_mechanics,
+    microsimulator::BackendFeature::contact_dynamics,
     microsimulator::BackendFeature::external_constraints,
     microsimulator::BackendFeature::signals,
     microsimulator::BackendFeature::coupled_rates,

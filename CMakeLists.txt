@@ -22,6 +22,7 @@ add_library(microsimulator_core STATIC
   cpp/core/channels.cpp
   cpp/core/checkpoint.cpp
   cpp/core/checkpoint_file.cpp
+  cpp/core/contact_dynamics.cpp
   cpp/core/contact_graph.cpp
   cpp/core/constraints.cpp
   cpp/core/coupled_rates.cpp
@@ -38,9 +39,9 @@ add_library(microsimulator_core STATIC
   cpp/cpu/cpu_backend.cpp
   cpp/cpu/cpu_contacts.cpp
   cpp/cpu/cpu_constraints.cpp
+  cpp/cpu/cpu_contact_dynamics.cpp
   cpp/cpu/cpu_coupled.cpp
   cpp/cpu/cpu_flow.cpp
-  cpp/cpu/cpu_mechanics.cpp
   cpp/cpu/cpu_species.cpp
 )
 add_library(microsimulator::core ALIAS microsimulator_core)
@@ -103,7 +104,7 @@ if(MICROSIMULATOR_ENABLE_METAL)
   microsimulator_embed_metal_source(growth cpp/metal/kernels/growth.metal)
   microsimulator_embed_metal_source(species cpp/metal/kernels/species.metal)
   microsimulator_embed_metal_source(contacts cpp/metal/kernels/contacts.metal)
-  microsimulator_embed_metal_source(mechanics cpp/metal/kernels/mechanics.metal)
+  microsimulator_embed_metal_source(contact_dynamics cpp/metal/kernels/contact_dynamics.metal)
   microsimulator_embed_metal_source(signals
     cpp/metal/kernels/grid_transport.metal cpp/metal/kernels/signals.metal)
   microsimulator_embed_metal_source(coupled_rates
@@ -153,11 +154,11 @@ if(MICROSIMULATOR_ENABLE_CUDA)
     cpp/cuda/cuda_flow.cu
     cpp/cuda/cuda_occupancy.cu
     cpp/cuda/kernels/occupancy.cu
+    cpp/cuda/kernels/contact_dynamics.cu
     cpp/cuda/kernels/contacts.cu
     cpp/cuda/kernels/coupled_rates.cu
     cpp/cuda/kernels/growth.cu
     cpp/cuda/kernels/flow.cu
-    cpp/cuda/kernels/mechanics.cu
     cpp/cuda/kernels/signals.cu
     cpp/cuda/kernels/species.cu
   )
@@ -213,13 +214,9 @@ if(MICROSIMULATOR_BUILD_TESTS)
   target_link_libraries(microsimulator_constraint_geometry_test PRIVATE microsimulator::core)
   add_test(NAME constraint_geometry COMMAND microsimulator_constraint_geometry_test)
 
-  add_executable(microsimulator_mechanics_operator_test tests/cpp/mechanics_operator_test.cpp)
-  target_link_libraries(microsimulator_mechanics_operator_test PRIVATE microsimulator::core)
-  add_test(NAME mechanics_operator COMMAND microsimulator_mechanics_operator_test)
-
-  add_executable(microsimulator_mechanics_integration_test tests/cpp/mechanics_integration_test.cpp)
-  target_link_libraries(microsimulator_mechanics_integration_test PRIVATE microsimulator::core)
-  add_test(NAME mechanics_integration COMMAND microsimulator_mechanics_integration_test)
+  add_executable(microsimulator_contact_dynamics_test tests/cpp/contact_dynamics_test.cpp)
+  target_link_libraries(microsimulator_contact_dynamics_test PRIVATE microsimulator::core)
+  add_test(NAME contact_dynamics COMMAND microsimulator_contact_dynamics_test)
 
   add_executable(microsimulator_species_test tests/cpp/species_test.cpp)
   target_link_libraries(microsimulator_species_test PRIVATE microsimulator::core)
@@ -338,19 +335,12 @@ if(MICROSIMULATOR_BUILD_TESTS)
   add_test(NAME constraint_conformance COMMAND microsimulator_constraint_conformance_test)
   set_tests_properties(constraint_conformance PROPERTIES LABELS conformance)
 
-  add_executable(microsimulator_mechanics_conformance_test
-    tests/conformance/mechanics_conformance_test.cpp
+  add_executable(microsimulator_contact_dynamics_conformance_test
+    tests/conformance/contact_dynamics_conformance_test.cpp
   )
-  target_link_libraries(microsimulator_mechanics_conformance_test PRIVATE microsimulator::core)
-  add_test(NAME mechanics_conformance COMMAND microsimulator_mechanics_conformance_test)
-  set_tests_properties(mechanics_conformance PROPERTIES LABELS conformance)
-
-  add_executable(microsimulator_constraint_mechanics_conformance_test
-    tests/conformance/constraint_mechanics_conformance_test.cpp
-  )
-  target_link_libraries(microsimulator_constraint_mechanics_conformance_test PRIVATE microsimulator::core)
-  add_test(NAME constraint_mechanics_conformance COMMAND microsimulator_constraint_mechanics_conformance_test)
-  set_tests_properties(constraint_mechanics_conformance PROPERTIES LABELS conformance)
+  target_link_libraries(microsimulator_contact_dynamics_conformance_test PRIVATE microsimulator::core)
+  add_test(NAME contact_dynamics_conformance COMMAND microsimulator_contact_dynamics_conformance_test)
+  set_tests_properties(contact_dynamics_conformance PROPERTIES LABELS conformance)
 
   if(MICROSIMULATOR_ENABLE_CUDA)
     add_executable(microsimulator_cuda_runtime_gate_test

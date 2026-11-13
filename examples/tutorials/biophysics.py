@@ -163,7 +163,7 @@ def build(context: ModelContext) -> NativeController:
         targets[str(founder_id)] = target
 
     regulate, divided = _callbacks(scenario)
-    mechanics = MechanicsConfig(gamma=20.0 if scenario == "box" else 10.0)
+    mechanics = MechanicsConfig()
     return NativeController(
         simulation,
         model_id=MODEL_ID,

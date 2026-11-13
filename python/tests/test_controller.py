@@ -130,7 +130,7 @@ def test_random_stream_rejects_malformed_state() -> None:
 
 
 def test_mechanics_config_round_trip_preserves_flow_drift() -> None:
-    configuration = MechanicsConfig(passes=2, flow_drift=True)
+    configuration = MechanicsConfig(max_refinements=4, flow_drift=True)
 
     assert MechanicsConfig.from_json(configuration.to_json()) == configuration
 
@@ -219,7 +219,7 @@ def test_native_controller_composes_regulation_division_and_mechanics(
         rng=random.Random(17),
         regulate=regulate,
         on_division=divided,
-        mechanics=MechanicsConfig(passes=2),
+        mechanics=MechanicsConfig(),
     )
     assert isinstance(controller, SimulationController)
 
@@ -229,7 +229,7 @@ def test_native_controller_composes_regulation_division_and_mechanics(
     assert controller.state["regulated"] is True
     daughter_ids = cast(list[JSONValue], controller.state["daughter_ids"])
     assert len(daughter_ids) == 2
-    assert len(controller.last_mechanics_reports) == 2
+    assert controller.last_contact_dynamics is not None
     for daughter_id in daughter_ids:
         assert isinstance(daughter_id, int)
         daughter = simulation.cell(daughter_id)
@@ -261,7 +261,7 @@ def test_native_controller_resumes_model_state_rng_and_mechanics(tmp_path: Path)
             model_version=3,
             rng=random.Random(99),
             regulate=regulate,
-            mechanics=MechanicsConfig(passes=1),
+            mechanics=MechanicsConfig(),
             state={"draws": 0},
         )
 

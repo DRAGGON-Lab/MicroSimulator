@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <tuple>
 
+#include "core/contact_stepper.hpp"
+
 namespace microsimulator {
 namespace {
 
@@ -122,11 +124,65 @@ void Simulation::remove_cell(CellId id) {
   state_.remove_cell(id);
 }
 
-void Simulation::apply_flow_drift(float dt, const MechanicsIntegrationParameters& parameters) {
+std::pair<Vec3, Vec3> Simulation::flow_derivative(Vec3 point, Vec3 axis, float lambda,
+                                                  bool rotates) const {
+  const auto spacing = signal_grid_->spec().spacing;
+  const std::array<float, 3> h{spacing.x, spacing.y, spacing.z};
+  const std::array<std::uint32_t, 3> dims{
+      signal_grid_->spec().shape.x, signal_grid_->spec().shape.y, signal_grid_->spec().shape.z};
+  const auto sample = [&](Vec3 position) {
+    return signal_grid_->sample_velocity(position, GridSampleBound::clamped);
+  };
+  // Central differences of the interpolated fluid velocity. This is an
+  // equivalent-spheroid Jeffery closure, not cell-resolved hydrodynamics.
+  std::array<Vec3, 3> gradient{};
+  for (std::size_t k = 0; k < 3; ++k) {
+    if (dims[k] == 1) continue;
+    Vec3 offset{};
+    if (k == 0) offset.x = h[k] * 0.5F;
+    if (k == 1) offset.y = h[k] * 0.5F;
+    if (k == 2) offset.z = h[k] * 0.5F;
+    gradient[k] = (sample(point + offset) - sample(point - offset)) * (1 / h[k]);
+  }
+  const Vec3 ap = gradient[0] * axis.x + gradient[1] * axis.y + gradient[2] * axis.z;
+  const Vec3 atp{dot(gradient[0], axis), dot(gradient[1], axis), dot(gradient[2], axis)};
+  const Vec3 strain = (ap + atp) * 0.5F;
+  const Vec3 spin = (ap - atp) * 0.5F;
+  const auto orientation = rotates ? spin + (strain - axis * dot(axis, strain)) * lambda : Vec3{};
+  return {sample(point), orientation};
+}
+
+std::vector<std::array<float, 6>> Simulation::flow_drift_rates(float dt) const {
+  const auto geometry = state_.geometry_state();
+  const auto attributes = state_.cell_attributes();
+  std::vector<std::array<float, 6>> rates(geometry.size());
+  for (std::size_t slot = 0; slot < geometry.size(); ++slot) {
+    if (attributes.fixed[slot] != 0) continue;
+    const Vec3 position{geometry.position_x[slot], geometry.position_y[slot],
+                        geometry.position_z[slot]};
+    const Vec3 direction{geometry.direction_x[slot], geometry.direction_y[slot],
+                         geometry.direction_z[slot]};
+    const float aspect =
+        (geometry.lengths[slot] + 2 * geometry.radii[slot]) / (2 * geometry.radii[slot]);
+    const float lambda = (aspect * aspect - 1) / (aspect * aspect + 1);
+    // The rates at the midpoint of the free motion over `dt`.
+    const auto [velocity, orientation] = flow_derivative(position, direction, lambda, true);
+    const auto midpoint = position + velocity * (dt * 0.5F);
+    const auto mid_direction = normalized(direction + orientation * (dt * 0.5F));
+    const auto [mid_velocity, mid_orientation] =
+        flow_derivative(midpoint, mid_direction, lambda, true);
+    // A direction turning at rate d is a rotation at angular velocity p x d.
+    const auto angular = cross(direction, mid_orientation);
+    rates[slot] = {mid_velocity.x, mid_velocity.y, mid_velocity.z, angular.x, angular.y, angular.z};
+  }
+  return rates;
+}
+
+void Simulation::apply_flow_drift(float dt, const FlowDriftParameters& parameters) {
   if (!std::isfinite(dt) || dt < 0.0F) {
     throw std::invalid_argument("time step must be finite and non-negative");
   }
-  validate_mechanics_integration_parameters(parameters);
+  validate_flow_drift_parameters(parameters);
   if (!signal_grid_.has_value() || !signal_grid_->spec().velocity_field.has_value()) {
     throw std::logic_error("flow drift requires a signal grid with a velocity field");
   }
@@ -156,29 +212,8 @@ void Simulation::apply_flow_drift(float dt, const MechanicsIntegrationParameters
     const float aspect =
         (geometry.lengths[slot] + 2 * geometry.radii[slot]) / (2 * geometry.radii[slot]);
     const float lambda = (aspect * aspect - 1) / (aspect * aspect + 1);
-    const auto sample = [&](Vec3 point) {
-      return signal_grid_->sample_velocity(point, GridSampleBound::clamped);
-    };
     const auto derivative = [&](Vec3 point, Vec3 axis) {
-      // Central differences of the interpolated fluid velocity. This is an
-      // equivalent-spheroid Jeffery closure, not cell-resolved hydrodynamics.
-      std::array<Vec3, 3> gradient{};
-      for (std::size_t k = 0; k < 3; ++k) {
-        if (dims[k] == 1) continue;
-        Vec3 offset{};
-        if (k == 0) offset.x = h[k] * 0.5F;
-        if (k == 1) offset.y = h[k] * 0.5F;
-        if (k == 2) offset.z = h[k] * 0.5F;
-        gradient[k] = (sample(point + offset) - sample(point - offset)) * (1 / h[k]);
-      }
-      const Vec3 ap = gradient[0] * axis.x + gradient[1] * axis.y + gradient[2] * axis.z;
-      const Vec3 atp{dot(gradient[0], axis), dot(gradient[1], axis), dot(gradient[2], axis)};
-      const Vec3 strain = (ap + atp) * 0.5F;
-      const Vec3 spin = (ap - atp) * 0.5F;
-      const auto orientation = parameters.max_rotation_radians == 0
-                                   ? Vec3{}
-                                   : spin + (strain - axis * dot(axis, strain)) * lambda;
-      return std::pair{sample(point), orientation};
+      return flow_derivative(point, axis, lambda, parameters.max_rotation_radians != 0);
     };
     double remaining = dt;
     std::uint32_t steps = 0;
@@ -318,7 +353,29 @@ std::pair<CellId, CellId> Simulation::divide_equal(CellId parent_id) {
   return state_.divide_equal(parent_id);
 }
 
+struct Simulation::ContactDynamicsRequest {
+  const ContactDynamicsParameters& dynamics;
+  const ContactParameters& contacts;
+  const ConstraintContactParameters& constraints;
+};
+
 void Simulation::step(float dt) {
+  std::ignore = advance(dt, nullptr);
+}
+
+ContactDynamicsResult Simulation::step(float dt,
+                                       const ContactDynamicsParameters& dynamics_parameters,
+                                       const ContactParameters& contact_parameters,
+                                       const ConstraintContactParameters& constraint_parameters) {
+  if (!backend_->supports(BackendFeature::contact_dynamics)) {
+    throw std::runtime_error("selected backend does not implement contact dynamics");
+  }
+  const ContactDynamicsRequest request{dynamics_parameters, contact_parameters,
+                                       constraint_parameters};
+  return advance(dt, &request);
+}
+
+ContactDynamicsResult Simulation::advance(float dt, const ContactDynamicsRequest* dynamics) {
   if (!std::isfinite(dt) || dt < 0.0F) {
     throw std::invalid_argument("time step must be finite and non-negative");
   }
@@ -341,13 +398,42 @@ void Simulation::step(float dt) {
     signal_grid_->validate_step(dt);
   }
   // Growth, species, and coupled updates write only cell lengths and species
-  // levels, so those two arrays are the whole cell-state rollback record.
+  // levels. Contact dynamics also moves and turns the cells, so its rollback
+  // record holds their positions and directions too.
   const auto species_levels = state_.species_state().levels;
   const std::vector<float> saved_species(species_levels.begin(), species_levels.end());
   const auto saved_levels = signal_grid_.has_value() ? signal_levels() : std::vector<float>{};
   const auto saved_report = last_signal_solve_report_;
+  std::vector<Vec3> saved_positions;
+  std::vector<Vec3> saved_directions;
+  if (dynamics != nullptr) {
+    saved_positions.reserve(geometry.size());
+    saved_directions.reserve(geometry.size());
+    for (std::size_t slot = 0; slot < geometry.size(); ++slot) {
+      saved_positions.push_back(
+          {geometry.position_x[slot], geometry.position_y[slot], geometry.position_z[slot]});
+      saved_directions.push_back(
+          {geometry.direction_x[slot], geometry.direction_y[slot], geometry.direction_z[slot]});
+    }
+  }
+  ContactDynamicsResult result;
   try {
-    backend_->advance_growth(state_, dt);
+    if (dynamics != nullptr) {
+      detail::ContactDrift drift;
+      if (dynamics->dynamics.flow_drift) {
+        if (!signal_grid_.has_value() || !signal_grid_->spec().velocity_field.has_value()) {
+          throw std::logic_error("flow drift requires a signal grid with a velocity field");
+        }
+        const auto spacing = signal_grid_->spec().spacing;
+        drift.rates = [this](float length) { return flow_drift_rates(length); };
+        drift.travel_limit = 0.25F * std::min({spacing.x, spacing.y, spacing.z});
+      }
+      result =
+          detail::advance_contact_dynamics(state_, constraints_, *backend_, dt, dynamics->dynamics,
+                                           dynamics->contacts, dynamics->constraints, drift);
+    } else {
+      backend_->advance_growth(state_, dt);
+    }
     if (!std::ranges::all_of(state_.geometry_state().lengths, [](float length) {
           return std::isfinite(length) && length >= 0.0F;
         })) {
@@ -367,12 +453,17 @@ void Simulation::step(float dt) {
     }
   } catch (...) {
     std::ranges::copy(previous_lengths, state_.growth_state().lengths.begin());
+    for (std::size_t slot = 0; slot < saved_positions.size(); ++slot) {
+      state_.set_cell_geometry(static_cast<Slot>(slot), saved_positions[slot],
+                               saved_directions[slot], previous_lengths[slot]);
+    }
     std::ranges::copy(saved_species, state_.species_state().levels.begin());
     if (signal_grid_.has_value()) signal_grid_->set_levels(saved_levels);
     last_signal_solve_report_ = saved_report;
     throw;
   }
   time_ += static_cast<double>(dt);
+  return result;
 }
 
 ContactGraph Simulation::find_cell_contacts(const ContactParameters& parameters) {
@@ -387,75 +478,13 @@ ExternalContactGraph Simulation::find_external_contacts(
   return backend_->find_external_contacts(state_, constraints_, parameters);
 }
 
-MechanicsSolveResult Simulation::solve_cell_mechanics(
-    const MechanicsParameters& mechanics_parameters, const ContactParameters& contact_parameters,
-    const ConstraintContactParameters& constraint_parameters) {
-  if (!backend_->supports(BackendFeature::cell_mechanics)) {
-    throw std::runtime_error("selected backend does not implement cell mechanics");
+ContactSolveResult Simulation::solve_contact_system(const ContactSystem& system,
+                                                    std::span<const float> initial_multipliers,
+                                                    const ContactSolveParameters& parameters) {
+  if (!backend_->supports(BackendFeature::contact_dynamics)) {
+    throw std::runtime_error("selected backend does not implement contact dynamics");
   }
-  validate_constraint_contact_parameters(constraint_parameters);
-  if (!constraints_.empty() && !backend_->supports(BackendFeature::external_constraints)) {
-    throw std::runtime_error("selected backend does not implement external constraints");
-  }
-  const auto contacts = backend_->find_cell_contacts(state_, contact_parameters);
-  ExternalContactGraph external_contacts(state_.size(), {});
-  if (!constraints_.empty()) {
-    external_contacts =
-        backend_->find_external_contacts(state_, constraints_, constraint_parameters);
-  }
-  return backend_->solve_cell_mechanics(state_, contacts, external_contacts, mechanics_parameters);
-}
-
-MechanicsSolveResult Simulation::relax_cell_mechanics(
-    const MechanicsParameters& mechanics_parameters, const ContactParameters& contact_parameters,
-    const MechanicsIntegrationParameters& integration_parameters,
-    const ConstraintContactParameters& constraint_parameters) {
-  auto result =
-      solve_cell_mechanics(mechanics_parameters, contact_parameters, constraint_parameters);
-  if (constraints_.empty()) {
-    integrate_mechanics_result(state_, result, integration_parameters);
-    return result;
-  }
-
-  // Projection resolves a cell toward the nearest face of the wall it is in,
-  // which is the face it entered through only while it is less than halfway
-  // across. The corrections are therefore applied in equal parts that each
-  // move a cell at most its own radius, projecting after every part, so a
-  // large correction from a crowded colony cannot carry a cell through a wall.
-  constexpr std::uint32_t maximum_parts = 16;
-  std::uint32_t parts = 1;
-  const auto geometry = state_.geometry_state();
-  const auto fixed = state_.cell_attributes().fixed;
-  for (std::size_t slot = 0; slot < result.corrections.size() && slot < geometry.size(); ++slot) {
-    const auto travel = norm(result.corrections[slot].translation);
-    if (fixed[slot] != 0 || !std::isfinite(travel) || geometry.radii[slot] <= 0.0F) {
-      continue;
-    }
-    const auto needed = std::ceil(travel / geometry.radii[slot]);
-    parts = std::max(
-        parts, static_cast<std::uint32_t>(std::min(needed, static_cast<float>(maximum_parts))));
-  }
-  if (parts == 1) {
-    integrate_mechanics_result(state_, result, integration_parameters);
-    project_cells_out_of_constraints(state_, constraints_, constraint_parameters);
-    return result;
-  }
-
-  auto part = result;
-  for (auto& correction : part.corrections) {
-    correction.translation = correction.translation * (1.0F / static_cast<float>(parts));
-    correction.rotation = {};
-  }
-  for (std::uint32_t index = 0; index < parts; ++index) {
-    if (index + 1 == parts) {
-      for (std::size_t slot = 0; slot < part.corrections.size(); ++slot) {
-        part.corrections[slot].rotation = result.corrections[slot].rotation;
-      }
-    }
-    integrate_mechanics_result(state_, part, integration_parameters);
-    project_cells_out_of_constraints(state_, constraints_, constraint_parameters);
-  }
-  return result;
+  return backend_->solve_contact_forces(system, initial_multipliers, parameters);
 }
 
 DepthAveragedFlowResult Simulation::solve_depth_averaged_flow(

@@ -6,6 +6,7 @@
 #include <span>
 
 #include "microsimulator/constraints.hpp"
+#include "microsimulator/contact_dynamics.hpp"
 #include "microsimulator/contact_graph.hpp"
 #include "microsimulator/coupled_rates.hpp"
 #include "microsimulator/flow.hpp"
@@ -36,9 +37,10 @@ class ComputeBackend {
   [[nodiscard]] virtual ExternalContactGraph find_external_contacts(
       const WorldState& state, const ConstraintSet& constraints,
       const ConstraintContactParameters& parameters) = 0;
-  [[nodiscard]] virtual MechanicsSolveResult solve_cell_mechanics(
-      const WorldState& state, const ContactGraph& contacts,
-      const ExternalContactGraph& external_contacts, const MechanicsParameters& parameters) = 0;
+  // Solves one substep's contact system from the given multipliers.
+  [[nodiscard]] virtual ContactSolveResult solve_contact_forces(
+      const ContactSystem& system, std::span<const float> initial_multipliers,
+      const ContactSolveParameters& parameters) = 0;
   [[nodiscard]] virtual DepthAveragedFlowResult solve_depth_averaged_flow(
       const SignalGridSpec& spec, std::span<const float> mobility,
       const DepthAveragedFlowParameters& parameters) = 0;

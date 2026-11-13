@@ -385,89 +385,6 @@ void test_outside_box_clear_endpoint_emits_no_row() {
   assert(close(contact.weight, 1.0F));
 }
 
-float deepest_penetration(const microsimulator::WorldState& state,
-                          const microsimulator::ConstraintSet& constraints) {
-  auto deepest = 0.0F;
-  const auto graph = microsimulator::find_external_contacts_cpu(state, constraints);
-  for (const auto& contact : graph.contacts()) {
-    deepest = std::min(deepest, contact.signed_separation);
-  }
-  return deepest;
-}
-
-void test_projection_lays_a_tilted_cell_along_a_wall() {
-  microsimulator::WorldState state;
-  const auto id = add_capsule(state, {1.3F, 0.25F, 0.0F}, {0.1F, 1.0F, 0.0F}, 1.0F);
-  microsimulator::ConstraintSet constraints;
-  microsimulator::BoxConstraintInit box;
-  box.half_extents = {1.0F, 2.0F, 3.0F};
-  constraints.add_box(box);
-
-  microsimulator::project_cells_out_of_constraints(state, constraints);
-
-  // Each end moves out by its own depth, so the rod ends up parallel to the
-  // face, in contact with the wall without being inside it.
-  const auto after = state.cell(id);
-  assert(close(after.position.x, 1.5F, 1.0e-4F));
-  assert(close(after.position.y, 0.25F, 1.0e-4F));
-  assert(close(after.direction.x, 0.0F, 1.0e-4F));
-  assert(close(after.direction.y, 1.0F, 1.0e-4F));
-  assert(close(after.length, 1.0F));
-  const auto resting = deepest_penetration(state, constraints);
-  assert(resting < 0.0F);
-  assert(resting >= -1.0e-4F);
-}
-
-void test_projection_turns_a_wedged_cell_flat() {
-  microsimulator::WorldState state;
-  // A rod standing almost upright in a slot too low for it.
-  const auto id = add_capsule(state, {0.0F, 0.0F, 0.8F}, {0.3F, 0.0F, 1.0F}, 1.5F);
-  microsimulator::ConstraintSet constraints;
-  microsimulator::PlaneConstraintInit floor;
-  floor.inward_normal = {0.0F, 0.0F, 1.0F};
-  constraints.add_plane(floor);
-  microsimulator::PlaneConstraintInit ceiling;
-  ceiling.point = {0.0F, 0.0F, 1.6F};
-  ceiling.inward_normal = {0.0F, 0.0F, -1.0F};
-  constraints.add_plane(ceiling);
-  const auto before = deepest_penetration(state, constraints);
-  assert(before < -0.4F);
-
-  for (int pass = 0; pass < 4; ++pass) {
-    microsimulator::project_cells_out_of_constraints(state, constraints);
-  }
-
-  const auto after = state.cell(id);
-  assert(deepest_penetration(state, constraints) >= -1.0e-3F);
-  assert(std::abs(after.direction.z) * after.length <= 0.6F + 2.0e-3F);
-  assert(close(after.length, 1.5F));
-}
-
-void test_projection_resolves_a_corner_and_leaves_fixed_cells() {
-  microsimulator::WorldState state;
-  const auto mobile = add_capsule(state, {0.2F, 0.3F, 0.0F}, {0.0F, 0.0F, 1.0F}, 0.0F);
-  microsimulator::CellInit pinned;
-  pinned.position = {4.0F, 0.1F, 0.0F};
-  pinned.direction = {0.0F, 0.0F, 1.0F};
-  pinned.length = 0.0F;
-  pinned.radius = 0.5F;
-  pinned.fixed = true;
-  const auto fixed = state.add_cell(pinned);
-  microsimulator::ConstraintSet constraints;
-  microsimulator::PlaneConstraintInit floor;
-  floor.inward_normal = {0.0F, 1.0F, 0.0F};
-  constraints.add_plane(floor);
-  microsimulator::PlaneConstraintInit side;
-  side.inward_normal = {1.0F, 0.0F, 0.0F};
-  constraints.add_plane(side);
-
-  microsimulator::project_cells_out_of_constraints(state, constraints);
-
-  assert(close(state.cell(mobile).position.x, 0.5F, 1.0e-4F));
-  assert(close(state.cell(mobile).position.y, 0.5F, 1.0e-4F));
-  assert(state.cell(fixed).position.y == 0.1F);
-}
-
 void test_cylinder_ids_validation_and_checkpoint() {
   microsimulator::ConstraintSet constraints;
   microsimulator::CylinderConstraintInit cylinder;
@@ -650,9 +567,6 @@ int main() {
   test_outside_box_detects_centered_wall_crossing();
   test_outside_box_tilted_face_contact_keeps_both_endpoints();
   test_outside_box_clear_endpoint_emits_no_row();
-  test_projection_lays_a_tilted_cell_along_a_wall();
-  test_projection_turns_a_wedged_cell_flat();
-  test_projection_resolves_a_corner_and_leaves_fixed_cells();
   test_cylinder_ids_validation_and_checkpoint();
   test_outside_cylinder_barrel_contact_uses_two_weighted_endpoints();
   test_outside_cylinder_rim_contact_has_blended_normal();

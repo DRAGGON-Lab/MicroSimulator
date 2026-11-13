@@ -180,6 +180,19 @@ __global__ void signal_crank_nicolson_residual_terms(
   terms[index] = residual * residual;
 }
 
+__global__ void reduce_sum_pairs(const float* input, float* output, std::uint32_t element_count) {
+  const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+  const auto first = index * 2;
+  if (first >= element_count) {
+    return;
+  }
+  auto value = input[first];
+  if (first + 1 < element_count) {
+    value += input[first + 1];
+  }
+  output[index] = value;
+}
+
 }  // namespace
 
 void launch_advance_signal_grid(
@@ -233,6 +246,14 @@ void launch_signal_crank_nicolson_residual_terms(
       current, right_hand_side, terms, diffusion, advection, fixed_values, reaction_source,
       reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundaries, shape,
       spacing, half_dt, signal_count, level_count);
+}
+
+void launch_reduce_sum_pairs(const float* input, float* output, std::uint32_t element_count,
+                             cudaStream_t stream) {
+  constexpr std::uint32_t threads_per_block = 256;
+  const auto output_count = (element_count + 1) / 2;
+  const auto block_count = ((output_count - 1) / threads_per_block) + 1;
+  reduce_sum_pairs<<<block_count, threads_per_block, 0, stream>>>(input, output, element_count);
 }
 
 }  // namespace microsimulator::cuda
