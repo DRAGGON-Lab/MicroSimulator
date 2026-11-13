@@ -4,9 +4,16 @@
 
 #include <cstdint>
 
-#include "mechanics.cuh"
-
 namespace microsimulator::cuda {
+
+// What a set of contact multipliers does to one cell: its velocity with the
+// elongation rate in w, and its angular velocity with the axial load in w.
+struct alignas(16) ContactResponseGpu {
+  float4 linear_length;
+  float4 rotation;
+};
+
+static_assert(sizeof(ContactResponseGpu) == 32);
 
 // One row of the contact dynamics solve. The w components carry the row's
 // scalars: the first and second length levers ride on the linear parts, the
@@ -56,14 +63,14 @@ void launch_contact_project(const float* multipliers, const float* gaps, float* 
 // the angular velocity and load in `rotation`.
 void launch_contact_respond(const ContactRowGpu* rows, const ContactBodyGpu* bodies,
                             const float* multipliers, const std::uint32_t* incidence_offsets,
-                            const std::uint32_t* incidence_entries, MechanicsDofsGpu* response,
+                            const std::uint32_t* incidence_entries, ContactResponseGpu* response,
                             ContactSolveGpu solve, cudaStream_t stream);
 
 // The gap of every row under the multipliers whose response is given, and the
 // terms of the step that led to them: step . step, step . change,
 // change . change, and the row's residual. The initial evaluation has no
 // previous step and writes only the residual.
-void launch_contact_gaps(const ContactRowGpu* rows, const MechanicsDofsGpu* response,
+void launch_contact_gaps(const ContactRowGpu* rows, const ContactResponseGpu* response,
                          const float* multipliers, float* gaps, const float* previous_multipliers,
                          const float* previous_gaps, float4* terms, ContactSolveGpu solve,
                          bool initial, cudaStream_t stream);

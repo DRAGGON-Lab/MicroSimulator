@@ -178,11 +178,11 @@ std::vector<std::array<float, 6>> Simulation::flow_drift_rates(float dt) const {
   return rates;
 }
 
-void Simulation::apply_flow_drift(float dt, const MechanicsIntegrationParameters& parameters) {
+void Simulation::apply_flow_drift(float dt, const FlowDriftParameters& parameters) {
   if (!std::isfinite(dt) || dt < 0.0F) {
     throw std::invalid_argument("time step must be finite and non-negative");
   }
-  validate_mechanics_integration_parameters(parameters);
+  validate_flow_drift_parameters(parameters);
   if (!signal_grid_.has_value() || !signal_grid_->spec().velocity_field.has_value()) {
     throw std::logic_error("flow drift requires a signal grid with a velocity field");
   }
@@ -469,77 +469,6 @@ ExternalContactGraph Simulation::find_external_contacts(
     throw std::runtime_error("selected backend does not implement external constraints");
   }
   return backend_->find_external_contacts(state_, constraints_, parameters);
-}
-
-MechanicsSolveResult Simulation::solve_cell_mechanics(
-    const MechanicsParameters& mechanics_parameters, const ContactParameters& contact_parameters,
-    const ConstraintContactParameters& constraint_parameters) {
-  if (!backend_->supports(BackendFeature::cell_mechanics)) {
-    throw std::runtime_error("selected backend does not implement cell mechanics");
-  }
-  validate_constraint_contact_parameters(constraint_parameters);
-  if (!constraints_.empty() && !backend_->supports(BackendFeature::external_constraints)) {
-    throw std::runtime_error("selected backend does not implement external constraints");
-  }
-  const auto contacts = backend_->find_cell_contacts(state_, contact_parameters);
-  ExternalContactGraph external_contacts(state_.size(), {});
-  if (!constraints_.empty()) {
-    external_contacts =
-        backend_->find_external_contacts(state_, constraints_, constraint_parameters);
-  }
-  return backend_->solve_cell_mechanics(state_, contacts, external_contacts, mechanics_parameters);
-}
-
-MechanicsSolveResult Simulation::relax_cell_mechanics(
-    const MechanicsParameters& mechanics_parameters, const ContactParameters& contact_parameters,
-    const MechanicsIntegrationParameters& integration_parameters,
-    const ConstraintContactParameters& constraint_parameters) {
-  auto result =
-      solve_cell_mechanics(mechanics_parameters, contact_parameters, constraint_parameters);
-  if (constraints_.empty()) {
-    integrate_mechanics_result(state_, result, integration_parameters);
-    return result;
-  }
-
-  // Projection resolves a cell toward the nearest face of the wall it is in,
-  // which is the face it entered through only while it is less than halfway
-  // across. The corrections are therefore applied in equal parts that each
-  // move a cell at most its own radius, projecting after every part, so a
-  // large correction from a crowded colony cannot carry a cell through a wall.
-  constexpr std::uint32_t maximum_parts = 16;
-  std::uint32_t parts = 1;
-  const auto geometry = state_.geometry_state();
-  const auto fixed = state_.cell_attributes().fixed;
-  for (std::size_t slot = 0; slot < result.corrections.size() && slot < geometry.size(); ++slot) {
-    const auto travel = norm(result.corrections[slot].translation);
-    if (fixed[slot] != 0 || !std::isfinite(travel) || geometry.radii[slot] <= 0.0F) {
-      continue;
-    }
-    const auto needed = std::ceil(travel / geometry.radii[slot]);
-    parts = std::max(
-        parts, static_cast<std::uint32_t>(std::min(needed, static_cast<float>(maximum_parts))));
-  }
-  if (parts == 1) {
-    integrate_mechanics_result(state_, result, integration_parameters);
-    project_cells_out_of_constraints(state_, constraints_, constraint_parameters);
-    return result;
-  }
-
-  auto part = result;
-  for (auto& correction : part.corrections) {
-    correction.translation = correction.translation * (1.0F / static_cast<float>(parts));
-    correction.rotation = {};
-  }
-  for (std::uint32_t index = 0; index < parts; ++index) {
-    if (index + 1 == parts) {
-      for (std::size_t slot = 0; slot < part.corrections.size(); ++slot) {
-        part.corrections[slot].rotation = result.corrections[slot].rotation;
-      }
-    }
-    integrate_mechanics_result(state_, part, integration_parameters);
-    project_cells_out_of_constraints(state_, constraints_, constraint_parameters);
-  }
-  return result;
 }
 
 ContactSolveResult Simulation::solve_contact_system(const ContactSystem& system,

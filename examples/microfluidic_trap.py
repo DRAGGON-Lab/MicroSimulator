@@ -25,7 +25,6 @@ from dataclasses import replace
 from microsimulator import (
     CellInit,
     CellUpdate,
-    ContactDynamicsConfig,
     ControllerStep,
     CoupledRatePlan,
     DivisionEvent,
@@ -187,10 +186,7 @@ def build(context: ModelContext) -> NativeController:
         regulate=_regulate,
         on_division=_divided,
         mechanics=MechanicsConfig(
-            flow_drift=True,
-            contact_dynamics=ContactDynamicsConfig(
-                growth_law="linear", growth_stall_load=GROWTH_STALL_LOAD
-            ),
+            flow_drift=True, growth_law="linear", growth_stall_load=GROWTH_STALL_LOAD
         ),
         state=state,
     )

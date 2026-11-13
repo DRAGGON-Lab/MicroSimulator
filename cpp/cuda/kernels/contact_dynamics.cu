@@ -38,8 +38,8 @@ __global__ void contact_project(const float* multipliers, const float* gaps, flo
 
 __global__ void contact_respond(const ContactRowGpu* rows, const ContactBodyGpu* bodies,
                                 const float* multipliers, const std::uint32_t* incidence_offsets,
-                                const std::uint32_t* incidence_entries, MechanicsDofsGpu* response,
-                                ContactSolveGpu solve) {
+                                const std::uint32_t* incidence_entries,
+                                ContactResponseGpu* response, ContactSolveGpu solve) {
   const std::uint32_t body = blockIdx.x * blockDim.x + threadIdx.x;
   if (body >= solve.body_count) {
     return;
@@ -86,7 +86,7 @@ __global__ void contact_respond(const ContactRowGpu* rows, const ContactBodyGpu*
                   drift_angular.z + torque_z * transverse + axis.z * along, load);
 }
 
-__global__ void contact_gaps(const ContactRowGpu* rows, const MechanicsDofsGpu* response,
+__global__ void contact_gaps(const ContactRowGpu* rows, const ContactResponseGpu* response,
                              const float* multipliers, float* gaps,
                              const float* previous_multipliers, const float* previous_gaps,
                              float4* terms, ContactSolveGpu solve, bool initial) {
@@ -150,13 +150,13 @@ void launch_contact_project(const float* multipliers, const float* gaps, float* 
 
 void launch_contact_respond(const ContactRowGpu* rows, const ContactBodyGpu* bodies,
                             const float* multipliers, const std::uint32_t* incidence_offsets,
-                            const std::uint32_t* incidence_entries, MechanicsDofsGpu* response,
+                            const std::uint32_t* incidence_entries, ContactResponseGpu* response,
                             ContactSolveGpu solve, cudaStream_t stream) {
   contact_respond<<<block_count(solve.body_count), threads_per_block, 0, stream>>>(
       rows, bodies, multipliers, incidence_offsets, incidence_entries, response, solve);
 }
 
-void launch_contact_gaps(const ContactRowGpu* rows, const MechanicsDofsGpu* response,
+void launch_contact_gaps(const ContactRowGpu* rows, const ContactResponseGpu* response,
                          const float* multipliers, float* gaps, const float* previous_multipliers,
                          const float* previous_gaps, float4* terms, ContactSolveGpu solve,
                          bool initial, cudaStream_t stream) {

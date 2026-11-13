@@ -141,22 +141,18 @@ void compare_state(const microsimulator::Simulation& actual,
 void run_trajectory(microsimulator::BackendKind backend, std::uint32_t device_index) {
   auto reference = make_simulation(microsimulator::BackendKind::cpu, 0);
   auto candidate = make_simulation(backend, device_index);
-  microsimulator::MechanicsParameters mechanics;
-  mechanics.residual_rms_tolerance = 2.0e-5F;
-  mechanics.max_iterations = 256;
+  // A tight overlap tolerance holds both backends to the same contact
+  // solution, which is unique.
+  microsimulator::ContactDynamicsParameters dynamics;
+  dynamics.overlap_tolerance = 2.0e-4F;
 
   for (std::size_t step = 0; step < time_steps.size(); ++step) {
-    reference.step(time_steps[step]);
-    candidate.step(time_steps[step]);
-    compare_state(candidate, reference);
+    const auto expected_solve = reference.step(time_steps[step], dynamics);
+    const auto actual_solve = candidate.step(time_steps[step], dynamics);
     assert(reference.last_signal_solve_report()->converged);
     assert(candidate.last_signal_solve_report()->converged);
-
-    const auto expected_solve = reference.relax_cell_mechanics(mechanics);
-    const auto actual_solve = candidate.relax_cell_mechanics(mechanics);
-    assert(expected_solve.report.status == microsimulator::SolverStatus::converged);
-    assert(actual_solve.report.status == microsimulator::SolverStatus::converged);
-    assert(actual_solve.report.final_residual_rms <= mechanics.residual_rms_tolerance);
+    assert(close(actual_solve.report.max_overlap, expected_solve.report.max_overlap,
+                 geometry_tolerance));
     compare_state(candidate, reference);
 
     if (step == 0) {

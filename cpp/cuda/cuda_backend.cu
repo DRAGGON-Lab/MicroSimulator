@@ -16,14 +16,12 @@
 #include <vector>
 
 #include "core/contact_solver.hpp"
-#include "core/mechanics_solver.hpp"
 #include "core/signal_jacobi.hpp"
 #include "cuda_flow.cuh"
 #include "kernels/contact_dynamics.cuh"
 #include "kernels/contacts.cuh"
 #include "kernels/coupled_rates.cuh"
 #include "kernels/growth.cuh"
-#include "kernels/mechanics.cuh"
 #include "kernels/signals.cuh"
 #include "kernels/species.cuh"
 #include "microsimulator/backend.hpp"
@@ -127,8 +125,7 @@ class CudaBackend final : public ComputeBackend {
   [[nodiscard]] bool supports(BackendFeature feature) const noexcept override {
     return feature == BackendFeature::growth || feature == BackendFeature::species ||
            feature == BackendFeature::cell_contacts ||
-           feature == BackendFeature::external_constraints ||
-           feature == BackendFeature::cell_mechanics || feature == BackendFeature::signals ||
+           feature == BackendFeature::external_constraints || feature == BackendFeature::signals ||
            feature == BackendFeature::coupled_rates ||
            feature == BackendFeature::depth_averaged_flow ||
            feature == BackendFeature::resolved_flow || feature == BackendFeature::contact_dynamics;
@@ -751,61 +748,6 @@ class CudaBackend final : public ComputeBackend {
     return download_external_contacts(geometry.size(), contact_count);
   }
 
-  [[nodiscard]] MechanicsSolveResult solve_cell_mechanics(
-      const WorldState& state, const ContactGraph& contacts,
-      const ExternalContactGraph& external_contacts,
-      const MechanicsParameters& parameters) override {
-    activate_device();
-    validate_mechanics_parameters(parameters);
-    state.validate();
-    const auto geometry = state.geometry_state();
-    if (contacts.cell_count() != geometry.size()) {
-      throw std::invalid_argument("contact graph and world state cell counts disagree");
-    }
-    if (external_contacts.cell_count() != geometry.size()) {
-      throw std::invalid_argument("external contact graph and world state cell counts disagree");
-    }
-    if (external_contacts.size() > std::numeric_limits<std::size_t>::max() - contacts.size()) {
-      throw std::overflow_error("CUDA mechanics row count overflow");
-    }
-    const auto row_count = contacts.size() + external_contacts.size();
-    if (geometry.size() > std::numeric_limits<std::uint32_t>::max() ||
-        row_count > std::numeric_limits<std::uint32_t>::max() / 2) {
-      throw std::overflow_error("CUDA mechanics exceeds the uint32 index space");
-    }
-
-    MechanicsSolveResult result;
-    result.corrections.resize(geometry.size());
-    if (geometry.size() == 0 || row_count == 0) {
-      return result;
-    }
-
-    validate_mechanics_contacts(geometry, contacts);
-    validate_external_mechanics_contacts(geometry, external_contacts);
-    ensure_contact_cell_capacity(geometry.size());
-    ensure_contact_output_capacity(row_count);
-    ensure_mechanics_capacity(geometry.size(), row_count);
-    upload_contact_cells(geometry);
-    upload_mechanics_fixed(state.cell_attributes().fixed);
-    upload_mechanics_contacts(contacts, external_contacts);
-    upload_mechanics_incidence(contacts, external_contacts);
-
-    const auto cell_count = static_cast<std::uint32_t>(geometry.size());
-    const auto contact_count = static_cast<std::uint32_t>(row_count);
-    const detail::MechanicsSolverOperations operations{
-        .initialize = [&] { return initialize_mechanics(cell_count, contact_count); },
-        .apply_direction =
-            [&] { return apply_search_direction(cell_count, contact_count, parameters); },
-        .update = [&](float alpha) { return update_solution_residual(cell_count, alpha); },
-        .recompute_residual =
-            [&] { return recompute_residual(cell_count, contact_count, parameters); },
-        .update_direction = [&](float beta) { update_search_direction(cell_count, beta); },
-    };
-    result.report = detail::solve_mechanics_system(operations, geometry.size(), parameters);
-    result.corrections = download_mechanics_solution(geometry.size());
-    return result;
-  }
-
   [[nodiscard]] ContactSolveResult solve_contact_forces(
       const ContactSystem& system, std::span<const float> initial_multipliers,
       const ContactSolveParameters& parameters) override {
@@ -1227,140 +1169,6 @@ class CudaBackend final : public ComputeBackend {
     return ExternalContactGraph(cell_count, std::move(contacts));
   }
 
-  static void validate_mechanics_contacts(const CellGeometryView& geometry,
-                                          const ContactGraph& contacts) {
-    for (const auto& contact : contacts.contacts()) {
-      const auto first = static_cast<std::size_t>(contact.first_slot);
-      const auto second = static_cast<std::size_t>(contact.second_slot);
-      if (geometry.ids[first] != contact.first_id || geometry.ids[second] != contact.second_id) {
-        throw std::invalid_argument("contact graph identifiers do not match current state slots");
-      }
-    }
-  }
-
-  static void validate_external_mechanics_contacts(const CellGeometryView& geometry,
-                                                   const ExternalContactGraph& contacts) {
-    for (const auto& contact : contacts.contacts()) {
-      const auto cell = static_cast<std::size_t>(contact.cell_slot);
-      if (geometry.ids[cell] != contact.cell_id) {
-        throw std::invalid_argument(
-            "external contact graph identifiers do not match current state slots");
-      }
-    }
-  }
-
-  void ensure_mechanics_capacity(std::size_t cell_count, std::size_t contact_count) {
-    mechanics_incidence_offsets_.reserve(cell_count + 1, "mechanics incidence offsets");
-    mechanics_fixed_.reserve(cell_count, "mechanics fixed flags");
-    mechanics_solution_.reserve(cell_count, "mechanics solution");
-    mechanics_rhs_.reserve(cell_count, "mechanics right-hand side");
-    mechanics_residual_.reserve(cell_count, "mechanics residual");
-    mechanics_search_.reserve(cell_count, "mechanics search direction");
-    mechanics_applied_.reserve(cell_count, "mechanics applied vector");
-    mechanics_dot_terms_.reserve(cell_count, "mechanics dot terms");
-    mechanics_reduce_a_.reserve(cell_count, "mechanics reduction A");
-    mechanics_reduce_b_.reserve(cell_count, "mechanics reduction B");
-    mechanics_first_rows_.reserve(contact_count, "mechanics first Jacobian rows");
-    mechanics_second_rows_.reserve(contact_count, "mechanics second Jacobian rows");
-    mechanics_row_values_.reserve(contact_count, "mechanics row values");
-    mechanics_row_rhs_.reserve(contact_count, "mechanics row right-hand side");
-    mechanics_incidence_indices_.reserve(contact_count * 2, "mechanics incidence indices");
-  }
-
-  void upload_mechanics_fixed(std::span<const std::uint8_t> fixed) {
-    check_cuda(cudaMemcpyAsync(mechanics_fixed_.data(), fixed.data(), fixed.size_bytes(),
-                               cudaMemcpyHostToDevice, stream_),
-               "failed to upload CUDA mechanics fixed flags");
-  }
-
-  void upload_mechanics_contacts(const ContactGraph& contacts,
-                                 const ExternalContactGraph& external_contacts) {
-    const auto row_count = contacts.size() + external_contacts.size();
-    std::vector<std::uint32_t> first_slots(row_count);
-    std::vector<std::uint32_t> second_slots(row_count);
-    std::vector<float4> points(row_count);
-    std::vector<float4> normals(row_count);
-    std::vector<float> separations(row_count);
-    std::vector<float> weights(row_count);
-    for (std::size_t index = 0; index < contacts.size(); ++index) {
-      const auto& contact = contacts.contacts()[index];
-      first_slots[index] = contact.first_slot;
-      second_slots[index] = contact.second_slot;
-      points[index] = make_float4(contact.point_on_first.x, contact.point_on_first.y,
-                                  contact.point_on_first.z, 0.0F);
-      normals[index] = make_float4(contact.normal.x, contact.normal.y, contact.normal.z, 0.0F);
-      separations[index] = contact.signed_separation;
-      weights[index] = contact.weight;
-    }
-    for (std::size_t index = 0; index < external_contacts.size(); ++index) {
-      const auto output_index = contacts.size() + index;
-      const auto& contact = external_contacts.contacts()[index];
-      first_slots[output_index] = contact.cell_slot;
-      second_slots[output_index] = invalid_slot;
-      points[output_index] = make_float4(contact.point_on_cell.x, contact.point_on_cell.y,
-                                         contact.point_on_cell.z, 0.0F);
-      normals[output_index] =
-          make_float4(contact.normal.x, contact.normal.y, contact.normal.z, 0.0F);
-      separations[output_index] = contact.signed_separation;
-      weights[output_index] = contact.weight;
-    }
-    copy_to_device(contact_first_slots_, first_slots,
-                   "failed to upload CUDA mechanics first slots");
-    copy_to_device(contact_second_slots_, second_slots,
-                   "failed to upload CUDA mechanics second slots");
-    copy_to_device(contact_points_, points, "failed to upload CUDA mechanics contact points");
-    copy_to_device(contact_normals_, normals, "failed to upload CUDA mechanics contact normals");
-    copy_to_device(contact_separations_, separations,
-                   "failed to upload CUDA mechanics contact separations");
-    copy_to_device(contact_weights_, weights, "failed to upload CUDA mechanics contact weights");
-    check_cuda(cudaStreamSynchronize(stream_), "CUDA mechanics contact upload failed");
-  }
-
-  void upload_mechanics_incidence(const ContactGraph& contacts,
-                                  const ExternalContactGraph& external_contacts) {
-    std::vector<std::uint32_t> offsets(contacts.cell_count() + 1);
-    std::vector<std::uint32_t> indices(contacts.size() * 2 + external_contacts.size());
-    std::uint32_t cursor = 0;
-    for (std::size_t slot = 0; slot < contacts.cell_count(); ++slot) {
-      offsets[slot] = cursor;
-      for (const auto contact_index : contacts.incident_contact_indices(static_cast<Slot>(slot))) {
-        indices[cursor++] = static_cast<std::uint32_t>(contact_index);
-      }
-      for (const auto contact_index :
-           external_contacts.incident_contact_indices(static_cast<Slot>(slot))) {
-        indices[cursor++] = static_cast<std::uint32_t>(contacts.size() + contact_index);
-      }
-    }
-    offsets[contacts.cell_count()] = cursor;
-    if (cursor != contacts.size() * 2 + external_contacts.size()) {
-      throw std::logic_error("contact incidence size is inconsistent");
-    }
-    copy_to_device(mechanics_incidence_offsets_, offsets,
-                   "failed to upload CUDA mechanics incidence offsets");
-    copy_to_device(mechanics_incidence_indices_, indices,
-                   "failed to upload CUDA mechanics incidence indices");
-    check_cuda(cudaStreamSynchronize(stream_), "CUDA mechanics incidence upload failed");
-  }
-
-  void apply_mechanics_operator(const cuda::MechanicsDofsGpu* input, cuda::MechanicsDofsGpu* output,
-                                std::uint32_t cell_count, std::uint32_t contact_count,
-                                const MechanicsParameters& parameters) {
-    cuda::launch_apply_mechanics_b(mechanics_first_rows_.data(), mechanics_second_rows_.data(),
-                                   contact_first_slots_.data(), contact_second_slots_.data(), input,
-                                   mechanics_fixed_.data(), mechanics_row_values_.data(),
-                                   contact_count, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-B kernel");
-    cuda::launch_apply_mechanics_transpose(
-        mechanics_first_rows_.data(), mechanics_second_rows_.data(), mechanics_row_values_.data(),
-        mechanics_incidence_offsets_.data(), mechanics_incidence_indices_.data(),
-        contact_first_slots_.data(), output, cell_count, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-transpose kernel");
-    cuda::launch_add_mechanics_regularizer(contact_axes_.data(), contact_geometry_.data(), input,
-                                           output, mechanics_fixed_.data(), parameters.mu_a,
-                                           parameters.gamma, cell_count, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-regularizer kernel");
-  }
-
   void ensure_signal_solve_capacity(std::uint32_t level_count) {
     signal_cn_a_.reserve(level_count, "signal Jacobi field A");
     signal_cn_b_.reserve(level_count, "signal Jacobi field B");
@@ -1466,85 +1274,6 @@ class CudaBackend final : public ComputeBackend {
     };
     const auto report = detail::solve_signal_jacobi(operations, parameters);
     return {current, report};
-  }
-
-  [[nodiscard]] float reduce_mechanics_dot(const cuda::MechanicsDofsGpu* left,
-                                           const cuda::MechanicsDofsGpu* right,
-                                           std::uint32_t cell_count, const char* operation) {
-    cuda::launch_mechanics_dot_terms(left, right, mechanics_dot_terms_.data(), cell_count, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-dot kernel");
-    const float* input = mechanics_dot_terms_.data();
-    float* output = mechanics_reduce_a_.data();
-    auto element_count = cell_count;
-    while (element_count > 1) {
-      cuda::launch_reduce_sum_pairs(input, output, element_count, stream_);
-      check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-reduction kernel");
-      input = output;
-      output = output == mechanics_reduce_a_.data() ? mechanics_reduce_b_.data()
-                                                    : mechanics_reduce_a_.data();
-      element_count = (element_count + 1) / 2;
-    }
-    float result = 0.0F;
-    check_cuda(cudaMemcpyAsync(&result, input, sizeof(result), cudaMemcpyDeviceToHost, stream_),
-               "failed to download a CUDA mechanics reduction");
-    check_cuda(cudaStreamSynchronize(stream_), operation);
-    return result;
-  }
-
-  [[nodiscard]] float initialize_mechanics(std::uint32_t cell_count, std::uint32_t contact_count) {
-    cuda::launch_build_mechanics_rows(
-        contact_centers_.data(), contact_axes_.data(), contact_geometry_.data(),
-        contact_first_slots_.data(), contact_second_slots_.data(), contact_points_.data(),
-        contact_normals_.data(), contact_separations_.data(), contact_weights_.data(),
-        mechanics_first_rows_.data(), mechanics_second_rows_.data(), mechanics_row_rhs_.data(),
-        contact_count, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-row kernel");
-    cuda::launch_apply_mechanics_transpose(
-        mechanics_first_rows_.data(), mechanics_second_rows_.data(), mechanics_row_rhs_.data(),
-        mechanics_incidence_offsets_.data(), mechanics_incidence_indices_.data(),
-        contact_first_slots_.data(), mechanics_rhs_.data(), cell_count, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-RHS kernel");
-    cuda::launch_initialize_mechanics_vectors(mechanics_rhs_.data(), mechanics_solution_.data(),
-                                              mechanics_residual_.data(), mechanics_search_.data(),
-                                              mechanics_fixed_.data(), cell_count, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-initialize kernel");
-    return reduce_mechanics_dot(mechanics_residual_.data(), mechanics_residual_.data(), cell_count,
-                                "CUDA mechanics initialization failed");
-  }
-
-  [[nodiscard]] float apply_search_direction(std::uint32_t cell_count, std::uint32_t contact_count,
-                                             const MechanicsParameters& parameters) {
-    apply_mechanics_operator(mechanics_search_.data(), mechanics_applied_.data(), cell_count,
-                             contact_count, parameters);
-    return reduce_mechanics_dot(mechanics_search_.data(), mechanics_applied_.data(), cell_count,
-                                "CUDA mechanics operator application failed");
-  }
-
-  [[nodiscard]] float update_solution_residual(std::uint32_t cell_count, float alpha) {
-    cuda::launch_update_mechanics_solution_residual(
-        mechanics_solution_.data(), mechanics_residual_.data(), mechanics_search_.data(),
-        mechanics_applied_.data(), alpha, cell_count, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-update kernel");
-    return reduce_mechanics_dot(mechanics_residual_.data(), mechanics_residual_.data(), cell_count,
-                                "CUDA mechanics update failed");
-  }
-
-  void update_search_direction(std::uint32_t cell_count, float beta) {
-    cuda::launch_update_mechanics_search_direction(
-        mechanics_residual_.data(), mechanics_search_.data(), beta, cell_count, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-search kernel");
-    check_cuda(cudaStreamSynchronize(stream_), "CUDA mechanics search update failed");
-  }
-
-  [[nodiscard]] float recompute_residual(std::uint32_t cell_count, std::uint32_t contact_count,
-                                         const MechanicsParameters& parameters) {
-    apply_mechanics_operator(mechanics_solution_.data(), mechanics_applied_.data(), cell_count,
-                             contact_count, parameters);
-    cuda::launch_subtract_mechanics_vectors(mechanics_rhs_.data(), mechanics_applied_.data(),
-                                            mechanics_residual_.data(), cell_count, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA mechanics-residual kernel");
-    return reduce_mechanics_dot(mechanics_residual_.data(), mechanics_residual_.data(), cell_count,
-                                "CUDA mechanics residual recomputation failed");
   }
 
   void ensure_contact_dynamics_capacity(std::size_t body_count, std::size_t row_count) {
@@ -1659,22 +1388,6 @@ class CudaBackend final : public ComputeBackend {
     };
   }
 
-  [[nodiscard]] std::vector<CellCorrection> download_mechanics_solution(std::size_t cell_count) {
-    std::vector<cuda::MechanicsDofsGpu> values(cell_count);
-    copy_to_host(values, mechanics_solution_, "failed to download CUDA mechanics solution");
-    check_cuda(cudaStreamSynchronize(stream_), "CUDA mechanics solution download failed");
-    std::vector<CellCorrection> result;
-    result.reserve(cell_count);
-    for (const auto& value : values) {
-      result.push_back({
-          .translation = {value.linear_length.x, value.linear_length.y, value.linear_length.z},
-          .rotation = {value.rotation.x, value.rotation.y, value.rotation.z},
-          .length = value.linear_length.w,
-      });
-    }
-    return result;
-  }
-
   template <typename T>
   void copy_to_device(CudaBuffer<T>& destination, const std::vector<T>& source,
                       const char* operation) {
@@ -1780,24 +1493,9 @@ class CudaBackend final : public ComputeBackend {
   CudaBuffer<float> contact_separations_;
   CudaBuffer<float> contact_weights_;
 
-  CudaBuffer<cuda::MechanicsDofsGpu> mechanics_first_rows_;
-  CudaBuffer<cuda::MechanicsDofsGpu> mechanics_second_rows_;
-  CudaBuffer<float> mechanics_row_values_;
-  CudaBuffer<float> mechanics_row_rhs_;
-  CudaBuffer<std::uint32_t> mechanics_incidence_offsets_;
-  CudaBuffer<std::uint32_t> mechanics_incidence_indices_;
-  CudaBuffer<std::uint8_t> mechanics_fixed_;
-  CudaBuffer<cuda::MechanicsDofsGpu> mechanics_solution_;
-  CudaBuffer<cuda::MechanicsDofsGpu> mechanics_rhs_;
-  CudaBuffer<cuda::MechanicsDofsGpu> mechanics_residual_;
-  CudaBuffer<cuda::MechanicsDofsGpu> mechanics_search_;
-  CudaBuffer<cuda::MechanicsDofsGpu> mechanics_applied_;
-  CudaBuffer<float> mechanics_dot_terms_;
-  CudaBuffer<float> mechanics_reduce_a_;
-  CudaBuffer<float> mechanics_reduce_b_;
   CudaBuffer<cuda::ContactRowGpu> contact_rows_;
   CudaBuffer<cuda::ContactBodyGpu> contact_bodies_;
-  CudaBuffer<cuda::MechanicsDofsGpu> contact_response_;
+  CudaBuffer<cuda::ContactResponseGpu> contact_response_;
   CudaBuffer<std::uint32_t> contact_incidence_offsets_;
   CudaBuffer<std::uint32_t> contact_incidence_entries_;
   CudaBuffer<float4> contact_terms_;

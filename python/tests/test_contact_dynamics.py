@@ -12,7 +12,6 @@ from microsimulator import (
     BoxConstraintInit,
     CellInit,
     ConstraintRegion,
-    ContactDynamicsConfig,
     ContactDynamicsParameters,
     ControllerStateError,
     ControllerStep,
@@ -100,7 +99,7 @@ def _tilt_daughters(step: ControllerStep, event: DivisionEvent) -> None:
         )
 
 
-def _chamber(backend: BackendKind, config: ContactDynamicsConfig) -> NativeController:
+def _chamber(backend: BackendKind, config: MechanicsConfig) -> NativeController:
     simulation = _simulation(backend)
     chamber = BoxConstraintInit()
     chamber.half_extents = Vec3(2.0, 2.0, 0.6)
@@ -117,7 +116,7 @@ def _chamber(backend: BackendKind, config: ContactDynamicsConfig) -> NativeContr
         rng=random.Random(3),
         regulate=_divide_at(2.0),
         on_division=_tilt_daughters,
-        mechanics=MechanicsConfig(contact_dynamics=config),
+        mechanics=config,
     )
 
 
@@ -149,40 +148,46 @@ def test_growth_load_response_factor() -> None:
         response.factor(1.0)
 
 
-def test_contact_dynamics_config_round_trips_and_validates() -> None:
-    config = ContactDynamicsConfig(
+def test_mechanics_config_round_trips_and_validates() -> None:
+    config = MechanicsConfig(
         growth_law="linear",
         growth_free_load=1.0,
         growth_stall_load=8.0,
         contact_stiffness=2000.0,
         wall_stiffness=5.0e4,
+        flow_drift=True,
     )
-    mechanics = MechanicsConfig(flow_drift=True, contact_dynamics=config)
-    assert MechanicsConfig.from_json(mechanics.to_json()) == mechanics
+    assert MechanicsConfig.from_json(config.to_json()) == config
 
-    parameters = config.native_parameters()
-    assert parameters.growth.law == GrowthLoadLaw.LINEAR
-    assert parameters.growth.stall_load == 8.0
-    assert parameters.contact_stiffness == 2000.0
-    assert parameters.wall_stiffness == 5.0e4
-
-    # A payload written without the entry selects relaxation passes.
-    legacy = MechanicsConfig(passes=2).to_json()
-    del legacy["contact_dynamics"]
-    assert MechanicsConfig.from_json(legacy) == MechanicsConfig(passes=2)
+    dynamics, contacts, constraints = config.native_parameters()
+    assert dynamics.growth.law == GrowthLoadLaw.LINEAR
+    assert dynamics.growth.stall_load == 8.0
+    assert dynamics.contact_stiffness == 2000.0
+    assert dynamics.wall_stiffness == 5.0e4
+    assert dynamics.flow_drift
+    assert math.isclose(
+        contacts.parallel_sine_threshold, config.contact_parallel_sine_threshold, rel_tol=1e-6
+    )
+    assert math.isclose(
+        constraints.degeneracy_epsilon, config.constraint_degeneracy_epsilon, rel_tol=1e-6
+    )
 
     with pytest.raises(ControllerStateError, match="growth_law"):
-        ContactDynamicsConfig(growth_law="quadratic")
+        MechanicsConfig(growth_law="quadratic")
     with pytest.raises(ControllerStateError, match="stall load"):
-        ContactDynamicsConfig(growth_law="linear", growth_free_load=2.0, growth_stall_load=2.0)
+        MechanicsConfig(growth_law="linear", growth_free_load=2.0, growth_stall_load=2.0)
     with pytest.raises(ControllerStateError, match="contact_stiffness"):
-        ContactDynamicsConfig(contact_stiffness=0.0)
-    invalid = mechanics.to_json()
-    invalid["contact_dynamics"] = {"drag": 1.0}
-    with pytest.raises(ControllerStateError, match="contact dynamics configuration"):
-        MechanicsConfig.from_json(invalid)
-    with pytest.raises(ControllerStateError, match="ContactDynamicsConfig"):
-        MechanicsConfig(contact_dynamics=object())  # type: ignore[arg-type]
+        MechanicsConfig(contact_stiffness=0.0)
+    with pytest.raises(ControllerStateError, match="flow_drift must be Boolean"):
+        MechanicsConfig(flow_drift=1)  # type: ignore[arg-type]
+    incomplete = config.to_json()
+    del incomplete["wall_stiffness"]
+    with pytest.raises(ControllerStateError, match="mechanics configuration is invalid"):
+        MechanicsConfig.from_json(incomplete)
+    unknown = config.to_json()
+    unknown["gamma"] = 10.0
+    with pytest.raises(ControllerStateError, match="mechanics configuration is invalid"):
+        MechanicsConfig.from_json(unknown)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
@@ -249,7 +254,7 @@ def test_cell_between_walls_stalls_and_stops_consuming(backend: BackendKind) -> 
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_closed_chamber_fills_and_holds(backend: BackendKind) -> None:
-    config = ContactDynamicsConfig(growth_law="linear", growth_stall_load=2.0)
+    config = MechanicsConfig(growth_law="linear", growth_stall_load=2.0)
     controller = _chamber(backend, config)
     for _ in range(300):
         controller.step(0.05)
@@ -265,7 +270,6 @@ def test_closed_chamber_fills_and_holds(backend: BackendKind) -> None:
     result = controller.last_contact_dynamics
     assert result is not None
     assert max(result.length_increments) < 1e-5
-    assert controller.last_mechanics_reports == ()
     for cell in simulation.cells():
         assert abs(cell.position.x) <= 2.0 and abs(cell.position.y) <= 2.0
         assert abs(cell.position.z) < 1e-3
@@ -284,7 +288,7 @@ def test_unconfined_colony_grows_in_full_without_overlap(backend: BackendKind) -
         rng=random.Random(5),
         regulate=_divide_at(4.0),
         on_division=_tilt_daughters,
-        mechanics=MechanicsConfig(contact_dynamics=ContactDynamicsConfig()),
+        mechanics=MechanicsConfig(),
     )
     # The same lineage with growth and division alone.
     reference = Simulation(BackendKind.CPU, reserved_capacity=512)
@@ -317,7 +321,7 @@ def test_unconfined_colony_grows_in_full_without_overlap(backend: BackendKind) -
 def test_resume_reproduces_the_uninterrupted_trajectory(
     backend: BackendKind, tmp_path: Path
 ) -> None:
-    config = ContactDynamicsConfig(growth_law="linear", growth_stall_load=2.0)
+    config = MechanicsConfig(growth_law="linear", growth_stall_load=2.0)
     uninterrupted = _chamber(backend, config)
     for _ in range(120):
         uninterrupted.step(0.05)

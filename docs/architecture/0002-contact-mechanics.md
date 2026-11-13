@@ -5,7 +5,7 @@
 
 ## Context
 
-Rod contact and mechanical relaxation require irregular GPU work, dynamic topology, reductions, and iterative solves. A fixed-stride contact table is unsafe at high density and mixes cell pairs, planes, and spheres through integer conventions. A generic portable GPU abstraction would also prevent Metal and CUDA from using their native scan, sort, reduction, and synchronization facilities.
+Rod contact and its mechanics require irregular GPU work, dynamic topology, reductions, and iterative solves. A fixed-stride contact table is unsafe at high density and mixes cell pairs, planes, and spheres through integer conventions. A generic portable GPU abstraction would also prevent Metal and CUDA from using their native scan, sort, reduction, and synchronization facilities.
 
 ## Decision
 
@@ -27,29 +27,19 @@ There is no scientific contact cap. Allocation failure is explicit. In determini
 
 The narrow phase distinguishes one-row from two-row contacts and weights each row of a two-row contact by `1/sqrt(2)`. Degenerate normals are resolved deterministically by projecting center displacement perpendicular to the rod axis; if that also vanishes, the least-aligned Cartesian basis axis defines a perpendicular. Every emitted normal must be finite and unit length.
 
-The solver exposes a matrix-free operator rather than a materialized sparse matrix. The operator is a regularized seven-DOF system. The public result includes convergence status, iteration count, initial and final residuals, and a breakdown reason. A backend may use native reductions and preconditioning, but it must apply the same declared operator and convergence criterion.
-
-For a cell with full capsule length `L = l + 2r`, the reference regularizer uses mass `m = mu_a L`, axial inertia `m r^2 / 2`, transverse inertia `m (L^2 + 3r^2) / 12`, and length weight `gamma`. The operator adds `gamma^-1 M`. A slender-rod tensor gives axial rotation zero energy; this finite-radius tensor does not, which makes the declared seven-DOF operator positive definite for valid cells.
-
-The reference solver starts from zero and uses unpreconditioned conjugate gradient. Residual RMS is `sqrt(dot(r, r) / cell_count)`, and the default iteration limit is `7 * cell_count`. Apparent convergence is checked by recomputing `B^T b - A delta_q`; non-finite residuals, non-finite curvature, and non-positive curvature are reported as typed breakdowns rather than allowed to contaminate the simulation.
-
-The [contact dynamics](0026-contact-dynamics.md) step is the alternative to this relaxation: it solves contact with non-negative forces and growth in one convex problem.
-
-Integration is a separate backend-neutral operation over a solver result. It requires convergence by default, applies translation directly, interprets the rotation vector as axis-angle and caps it at five degrees, and computes the length increment as `max(0, desired_increment + delta_l)`. Mechanics may suppress requested elongation but may not directly shorten a cell. All updates are validated before any world-state array is mutated. `Simulation.step` remains the growth-only primitive; `relax_cell_mechanics` is the explicit contact-relaxation operation.
-
-Walls are impenetrable. The regularized solve weighs each wall row against the cells pressing on it, so on its own it leaves a crowded cell part-way through a wall. After integrating a pass, `relax_cell_mechanics` therefore moves every mobile cell that is more than `1e-4` inside a constraint out of it. Each end of the cell's centerline moves back along the normals of the contacts it is inside, to a depth of `5e-5` so the resting contact stays active for the next solve and visible to contact analysis; a mid-span contact moves both ends; and the cell is rebuilt at its own length between the moved ends. A rod tilted against a wall comes to lie along it, and a rod wedged upright between a floor and a ceiling is turned flat. Up to eight sweeps settle the ends against each other. Length is unchanged, fixed cells are not moved, and the overlap this opens between cells is left to the next contact solve. A cell deeper than a wall's mid-plane would resolve toward the far face, so when any correction exceeds its cell's radius the pass is applied in up to sixteen equal parts that each move a cell at most one radius, projecting after each part. The projection uses the host constraint geometry on every backend. A wall thinner than a cell's diameter, or a correction longer than sixteen radii, is outside this guarantee.
+Contacts are the input to the [contact dynamics](0026-contact-dynamics.md) solve, which turns each one into a row with a non-negative force and solves contact together with growth. That record defines the cell drag, the solve, and how cells and walls are kept apart.
 
 Planes, spheres, boxes, and cylinders are stored in a simulation-owned constraint set with stable IDs shared across constraint kinds. A plane declares a point and a normalized inward normal; its permitted half-space lies in the inward direction. Each finite constraint explicitly declares whether cells are permitted inside or outside. Negative separation means penetration in every case.
 
 Plane half-spaces and inside regions of convex finite constraints are endpoint-extremal, so their contact generation examines both capsule centerline endpoints. Outside regions of finite convex constraints instead minimize the obstacle signed-distance function over the complete centerline and subtract the capsule radius. Sphere minimization uses exact projection onto the segment. Box and cylinder minimization use a deterministic 40-iteration ternary bracket over their convex signed-distance functions; equal sampled distances retain the middle third, selecting a stable central representative on a flat minimum. Cylinder evaluation also includes the analytic radial-axis and axial-center projections, avoiding iterative location error in the barrel and cap cases. Expanded axis-aligned obstacle bounds provide a conservative early rejection for boxes and cylinders.
 
-When a finite outside constraint is closest at the rod mid-span, contact generation emits one row tagged `interior` at that centerline location. When the minimum lies at an endpoint, every endpoint within the activation margin emits its own row: a rod lying against a flat face at a slight angle has both ends inside the surface, and a single row at the deeper end lets the solve answer with a rotation that drives the other end further in. Two endpoint rows each have weight `coefficient / sqrt(2)`; a single row has the full coefficient. An external contact normal points from the permitted region toward the constraint boundary. `point_on_cell` is the capsule surface point reached from the selected centerline location along that normal. Sphere-center, box-face-tie, and cylinder-axis degeneracies use documented deterministic directions before applying the inside/outside orientation. External rows use the same seven-DOF cell Jacobian as pair contacts, but have no second cell term. They therefore enter the declared system as `B_external^T B_external` and `B_external^T b_external` alongside the pair rows. A simulation with constraints must execute both geometry and mechanics on a backend that advertises external-constraint support; unsupported native backends fail explicitly instead of dropping the boundary rows.
+When a finite outside constraint is closest at the rod mid-span, contact generation emits one row tagged `interior` at that centerline location. When the minimum lies at an endpoint, every endpoint within the activation margin emits its own row: a rod lying against a flat face at a slight angle has both ends inside the surface, and a single row at the deeper end lets the solve answer with a rotation that drives the other end further in. Two endpoint rows each have weight `coefficient / sqrt(2)`; a single row has the full coefficient. An external contact normal points from the permitted region toward the constraint boundary. `point_on_cell` is the capsule surface point reached from the selected centerline location along that normal. Sphere-center, box-face-tie, and cylinder-axis degeneracies use documented deterministic directions before applying the inside/outside orientation. A contact with a constraint has no second cell. A simulation with constraints must find those contacts on a backend that advertises external-constraint support; unsupported native backends fail explicitly instead of dropping the boundary contacts.
 
 The public location type is `RodContactLocation`, and `ExternalContact.location` distinguishes `negative`, `positive`, and `interior`. `RodEndpoint` remains a C++ and Python type alias, and the Python `ExternalContact.endpoint` accessor remains a compatibility alias for existing plane and sphere consumers. The C++ record field is intentionally named `location` because not every contact lies at an endpoint.
 
-The Metal and CUDA implementations upload stable-ID-sorted tagged constraints and run native count/scan/fill pipelines over cell-constraint pairs. Each pair emits zero, one, or two location-tagged rows into dynamic storage. Pair and external rows are then combined in the native solver buffers; a reserved invalid second slot marks the one-sided row inside each private operator without reintroducing a sentinel into the public contact model.
+The Metal and CUDA implementations upload stable-ID-sorted tagged constraints and run native count/scan/fill pipelines over cell-constraint pairs. Each pair emits zero, one, or two location-tagged rows into dynamic storage.
 
-CPU, Metal, and CUDA own separate implementations of the contact geometry and the system operator. They share the conjugate-gradient iteration in `cpp/core/mechanics_solver.hpp`, contact fixtures, operator probes, tolerances, and exact location-tag invariants. Metal uses Metal compute pipelines and MSL; CUDA uses CUDA C++ and the CUDA Runtime API.
+CPU, Metal, and CUDA own separate implementations of the contact geometry. They share contact fixtures, tolerances, and exact location-tag invariants. Metal uses Metal compute pipelines and MSL; CUDA uses CUDA C++ and the CUDA Runtime API.
 
 ### Neighbor reporting
 
@@ -61,13 +51,10 @@ CPU, Metal, and CUDA own separate implementations of the contact geometry and th
 2. Shared contact fixtures and a dynamic contact-graph API.
 3. Deterministic sweep-and-prune candidate staging.
 4. Native Metal and CUDA count/scan/fill pipelines.
-5. CPU matrix-free operator and diagnosed conjugate-gradient solver.
-6. Native Metal and CUDA operator, reductions, and solver loops.
-7. Typed plane, sphere, box, and cylinder constraint geometry.
-8. Full-centerline finite-obstacle contact fixtures, including clear endpoints with penetrating mid-spans.
-9. CPU external-constraint mechanics rows.
-10. Native Metal external-constraint conformance.
-11. Native CUDA external-constraint conformance.
+5. Typed plane, sphere, box, and cylinder constraint geometry.
+6. Full-centerline finite-obstacle contact fixtures, including clear endpoints with penetrating mid-spans.
+7. Native Metal external-constraint conformance.
+8. Native CUDA external-constraint conformance.
 
 This sequence isolates geometry disagreements before solver behavior can hide them. Backend support requires the corresponding shared scenario to pass on real hardware.
 

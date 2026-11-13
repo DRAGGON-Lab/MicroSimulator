@@ -90,7 +90,6 @@ class BackendFeature(Enum):
     GROWTH: BackendFeature
     SPECIES: BackendFeature
     CELL_CONTACTS: BackendFeature
-    CELL_MECHANICS: BackendFeature
     EXTERNAL_CONSTRAINTS: BackendFeature
     SIGNALS: BackendFeature
     COUPLED_RATES: BackendFeature
@@ -162,17 +161,6 @@ class RodContactLocation(Enum):
     INTERIOR: RodContactLocation
 
 RodEndpoint = RodContactLocation
-
-class SolverStatus(Enum):
-    CONVERGED: SolverStatus
-    ITERATION_LIMIT: SolverStatus
-    BREAKDOWN: SolverStatus
-
-class SolverBreakdown(Enum):
-    NONE: SolverBreakdown
-    NON_FINITE_RESIDUAL: SolverBreakdown
-    NON_FINITE_CURVATURE: SolverBreakdown
-    NON_POSITIVE_CURVATURE: SolverBreakdown
 
 def backend_available(backend: BackendKind, device_index: int = 0) -> bool: ...
 def backend_device_count(backend: BackendKind) -> int: ...
@@ -591,25 +579,8 @@ class ExternalContactGraph:
     def __len__(self) -> int: ...
     def incident_contact_indices(self, slot: int) -> list[int]: ...
 
-class CellCorrection:
-    @property
-    def translation(self) -> Vec3: ...
-    @property
-    def rotation(self) -> Vec3: ...
-    @property
-    def length(self) -> float: ...
-
-class MechanicsParameters:
-    mu_a: float
-    gamma: float
-    residual_rms_tolerance: float
-    max_iterations: int
-
-    def __init__(self) -> None: ...
-
-class MechanicsIntegrationParameters:
+class FlowDriftParameters:
     max_rotation_radians: float
-    require_convergence: bool
 
     def __init__(self) -> None: ...
 
@@ -665,24 +636,6 @@ class ContactDynamicsResult:
     @property
     def length_increments(self) -> list[float]: ...
 
-class SolverReport:
-    @property
-    def status(self) -> SolverStatus: ...
-    @property
-    def breakdown(self) -> SolverBreakdown: ...
-    @property
-    def iterations(self) -> int: ...
-    @property
-    def initial_residual_rms(self) -> float: ...
-    @property
-    def final_residual_rms(self) -> float: ...
-
-class MechanicsSolveResult:
-    @property
-    def corrections(self) -> list[CellCorrection]: ...
-    @property
-    def report(self) -> SolverReport: ...
-
 class Simulation:
     @overload
     def __init__(
@@ -718,9 +671,7 @@ class Simulation:
     def has_coupled_rate_plan(self) -> bool: ...
     def add_cell(self, cell: CellInit) -> int: ...
     def remove_cell(self, id: int) -> None: ...
-    def apply_flow_drift(
-        self, dt: float, integration: MechanicsIntegrationParameters = ...
-    ) -> None: ...
+    def apply_flow_drift(self, dt: float, parameters: FlowDriftParameters = ...) -> None: ...
     def add_plane_constraint(self, plane: PlaneConstraintInit) -> int: ...
     def add_sphere_constraint(self, sphere: SphereConstraintInit) -> int: ...
     def add_box_constraint(self, box: BoxConstraintInit) -> int: ...
@@ -754,19 +705,6 @@ class Simulation:
     def find_external_contacts(
         self, parameters: ConstraintContactParameters = ...
     ) -> ExternalContactGraph: ...
-    def solve_cell_mechanics(
-        self,
-        mechanics_parameters: MechanicsParameters = ...,
-        contact_parameters: ContactParameters = ...,
-        constraint_parameters: ConstraintContactParameters = ...,
-    ) -> MechanicsSolveResult: ...
-    def relax_cell_mechanics(
-        self,
-        mechanics_parameters: MechanicsParameters = ...,
-        contact_parameters: ContactParameters = ...,
-        integration_parameters: MechanicsIntegrationParameters = ...,
-        constraint_parameters: ConstraintContactParameters = ...,
-    ) -> MechanicsSolveResult: ...
     def solve_depth_averaged_flow(
         self,
         spec: SignalGridSpec,

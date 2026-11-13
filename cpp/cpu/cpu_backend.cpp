@@ -20,7 +20,7 @@ class CpuBackend final : public ComputeBackend {
 
   [[nodiscard]] bool supports(BackendFeature feature) const noexcept override {
     return feature == BackendFeature::growth || feature == BackendFeature::species ||
-           feature == BackendFeature::cell_contacts || feature == BackendFeature::cell_mechanics ||
+           feature == BackendFeature::cell_contacts ||
            feature == BackendFeature::external_constraints || feature == BackendFeature::signals ||
            feature == BackendFeature::coupled_rates ||
            feature == BackendFeature::depth_averaged_flow ||
@@ -57,13 +57,6 @@ class CpuBackend final : public ComputeBackend {
     return find_external_contacts_cpu(state, constraints, parameters);
   }
 
-  [[nodiscard]] MechanicsSolveResult solve_cell_mechanics(
-      const WorldState& state, const ContactGraph& contacts,
-      const ExternalContactGraph& external_contacts,
-      const MechanicsParameters& parameters) override {
-    return solve_cell_mechanics_cpu(state, contacts, external_contacts, parameters);
-  }
-
   [[nodiscard]] ContactSolveResult solve_contact_forces(
       const ContactSystem& system, std::span<const float> initial_multipliers,
       const ContactSolveParameters& parameters) override {
@@ -84,12 +77,6 @@ class CpuBackend final : public ComputeBackend {
 };
 
 }  // namespace
-
-ContactSolveResult ComputeBackend::solve_contact_forces(const ContactSystem&,
-                                                        std::span<const float>,
-                                                        const ContactSolveParameters&) {
-  throw std::runtime_error("selected backend does not implement contact dynamics");
-}
 
 std::unique_ptr<ComputeBackend> make_cpu_backend(std::uint32_t device_index) {
   if (device_index != 0) {

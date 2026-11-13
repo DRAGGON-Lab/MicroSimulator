@@ -14,7 +14,9 @@ struct RateInstruction {
   float value;
 };
 
-struct MechanicsDofs {
+// What a set of contact multipliers does to one cell: its velocity with the
+// elongation rate in w, and its angular velocity with the axial load in w.
+struct ContactResponse {
   float4 linear_length;
   float4 rotation;
 };

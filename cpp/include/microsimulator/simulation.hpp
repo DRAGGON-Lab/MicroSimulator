@@ -32,8 +32,7 @@ class Simulation {
 
   CellId add_cell(const CellInit& cell);
   void remove_cell(CellId id);
-  void apply_flow_drift(float dt, const MechanicsIntegrationParameters& parameters =
-                                      MechanicsIntegrationParameters{});
+  void apply_flow_drift(float dt, const FlowDriftParameters& parameters = FlowDriftParameters{});
   ConstraintId add_plane_constraint(const PlaneConstraintInit& plane);
   ConstraintId add_sphere_constraint(const SphereConstraintInit& sphere);
   ConstraintId add_box_constraint(const BoxConstraintInit& box);
@@ -65,16 +64,6 @@ class Simulation {
       const ContactParameters& parameters = ContactParameters{});
   [[nodiscard]] ExternalContactGraph find_external_contacts(
       const ConstraintContactParameters& parameters = ConstraintContactParameters{});
-  [[nodiscard]] MechanicsSolveResult solve_cell_mechanics(
-      const MechanicsParameters& mechanics_parameters = MechanicsParameters{},
-      const ContactParameters& contact_parameters = ContactParameters{},
-      const ConstraintContactParameters& constraint_parameters = ConstraintContactParameters{});
-  [[nodiscard]] MechanicsSolveResult relax_cell_mechanics(
-      const MechanicsParameters& mechanics_parameters = MechanicsParameters{},
-      const ContactParameters& contact_parameters = ContactParameters{},
-      const MechanicsIntegrationParameters& integration_parameters =
-          MechanicsIntegrationParameters{},
-      const ConstraintContactParameters& constraint_parameters = ConstraintContactParameters{});
   // Solves a contact system on the selected backend. The system stands on
   // its own; it need not describe this simulation's cells.
   [[nodiscard]] ContactSolveResult solve_contact_system(

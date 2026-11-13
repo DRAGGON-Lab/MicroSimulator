@@ -29,15 +29,13 @@ A controller-backed model resumes through `resume(context, checkpoint)`. The ope
 2. apply cell attributes, species, and fixed-state updates;
 3. apply division requests and division callbacks;
 4. apply requested cell removals;
-5. execute `Simulation.step(dt)` for growth and typed rate plans;
-6. apply flow drift when enabled in the mechanics configuration; and
-7. execute exactly `MechanicsConfig.passes` contact/relaxation passes when mechanics is configured and cells remain. Each pass ends by projecting mobile cells out of the external constraints, so cells end the step resting on or clear of the walls.
+5. execute `Simulation.step(dt, ...)` with the mechanics configuration, which advances growth and contact together with the [contact dynamics](0026-contact-dynamics.md) solve, carrying the cells with the flow when flow drift is enabled, and then advances the typed rate plans. Without a mechanics configuration the step is `Simulation.step(dt)`: growth and rate plans alone.
 
-With `MechanicsConfig.contact_dynamics` set, steps 5 to 7 are instead flow drift when enabled, then `Simulation.step(dt, ...)` with the [contact dynamics](0026-contact-dynamics.md) parameters, which advances growth and contact together before the typed rate plans. `NativeController.last_contact_dynamics` holds that step's report, the axial load on each cell, and the elongation each cell was allowed.
+`NativeController.last_contact_dynamics` holds that step's report, the axial load on each cell, and the elongation each cell was allowed.
 
-`UniformLengthDivision.jitter_z` controls only the random perturbation added to daughter orientation: `None` disables jitter, `False` adds XY-only jitter, and `True` adds XYZ jitter. Native normalization can change an inherited nonzero Z component even when the added Z perturbation is zero. Division places daughters along the parent's three-dimensional axis; subsequent contact relaxation and flow drift remain three-dimensional. See the [planarity diagnostics and tutorial audit](../tutorials/planarity.md) for reproducible examples and the limits of finite-height confinement.
+`UniformLengthDivision.jitter_z` controls only the random perturbation added to daughter orientation: `None` disables jitter, `False` adds XY-only jitter, and `True` adds XYZ jitter. Native normalization can change an inherited nonzero Z component even when the added Z perturbation is zero. Division places daughters along the parent's three-dimensional axis; the contact solve and flow drift remain three-dimensional. See the [planarity diagnostics and tutorial audit](../tutorials/planarity.md) for reproducible examples and the limits of finite-height confinement.
 
-The standard payload records a stable model ID and version, completed-step counter, model JSON state, random stream, and every mechanics parameter. `NativeController.from_checkpoint` validates and restores that payload while the checkpoint's native state retains rate plans, signal grids, geometry, and lineage. The number of mechanics passes is an explicit part of the native-controller contract.
+The standard payload records a stable model ID and version, completed-step counter, model JSON state, random stream, and every mechanics parameter. `NativeController.from_checkpoint` validates and restores that payload while the checkpoint's native state retains rate plans, signal grids, geometry, and lineage. Every mechanics parameter is an explicit part of the native-controller contract.
 
 ## Consequences
 

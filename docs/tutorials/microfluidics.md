@@ -2,7 +2,7 @@
 
 This tutorial connects device geometry, flowing media, and cell biology in runnable MicroSimulator models. The [modeling guide](../microfluidics.md) introduces the workflow and the choice of flow solver. Four examples cover the range:
 
-These models use XY-only division jitter and finite-height 3D confinement. A thin cavity can encourage a monolayer, but it does not force a common center Z or eliminate tilt; walls are impenetrable, so every relaxation pass leaves each cell resting on or clear of them, while overlap between cells remains a soft residual that depends on relaxation tolerance and passes. The [dimensionality audit](planarity.md) lists each device and reproduces these distinctions.
+These models use XY-only division jitter and finite-height 3D confinement. A thin cavity can encourage a monolayer, but it does not force a common center Z or eliminate tilt; walls and neighbors are held apart by contact forces, and a contact overlaps by its force divided by its stiffness, with walls a hundred times stiffer than cells by default. The [dimensionality audit](planarity.md) lists each device and reproduces these distinctions.
 
 For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
 
@@ -65,7 +65,7 @@ The constructor's keyword arguments set the trap, channel, and wall dimensions; 
 
 ## Flow on signals and on cells
 
-The velocity field advects every signal with conservative upwind face fluxes under all three signal integrators. With `MechanicsConfig(flow_drift=True)`, the controller translates each non-fixed cell using the velocity sampled at its center and rotates it with a finite-aspect Jeffery approximation, so escaped cells travel down the channel and rods rotate in shear. Contact relaxation then resolves overlaps with walls or neighbors; with contact dynamics the flow velocity is part of the contact solve instead, so cells the flow presses together do not overlap. The [flow-drift design](../architecture/0021-flow-drift.md) describes this kinematic approximation and its integration limits.
+The velocity field advects every signal with conservative upwind face fluxes under all three signal integrators. With `MechanicsConfig(flow_drift=True)`, the controller translates each non-fixed cell using the velocity sampled at its center and rotates it with a finite-aspect Jeffery approximation, so escaped cells travel down the channel and rods rotate in shear. That velocity is part of the contact solve, so cells the flow presses together or into a wall do not overlap. The [flow-drift design](../architecture/0021-flow-drift.md) describes this kinematic approximation and its integration limits.
 
 ## Washout
 
@@ -174,7 +174,7 @@ The model also does not reproduce an experimentally established separation betwe
 - Let the lattice of site centers cover every position a cell can reach, with about a voxel
   of margin past each wall: sampling outside the lattice is an error.
 - Keep the mechanics walls enclosing the solid mask. The device helpers mark a site solid
-  when its center lies inside a wall, and relaxation keeps every cell center at least a
+  when its center lies inside a wall, and the contact solve keeps every cell center about a
   cell radius clear of each wall, so a cell against a wall always has a fluid site to
   sample. A hand-built mask needs the same rule; the
   [pillar channel](flow-solvers.md) shows it for curved walls.

@@ -5,13 +5,13 @@
 
 ## Context
 
-The regularized least-squares relaxation of [ADR 0002](0002-contact-mechanics.md) treats contacts as equalities, minimizes the sum of squared overlaps, and runs after growth is committed. A colony that fills a closed space therefore keeps elongating into itself, pairs pushed past one radius invert and stay inverted, and no value of the length weight suits both a free colony and a jam.
+A contact scheme for growing cells has to keep cells apart in a full space and let a full space stop growing. A regularized least-squares relaxation of the contacts found in [ADR 0002](0002-contact-mechanics.md), applied after growth is committed, does neither: it treats contacts as equalities and minimizes the sum of squared overlaps, so a colony that fills a closed space keeps elongating into itself, pairs pushed past one radius invert and stay inverted, and no weighting suits both a free colony and a jam.
 
 Growing rod-shaped cells are simulated without those failures by solving contact as a complementarity problem: contact forces are non-negative, gaps stay non-negative, and a force acts only where a gap is closed ([Yan, Zhang, and Shelley 2019](https://arxiv.org/abs/1811.04736); [Yan et al. 2020](https://arxiv.org/abs/1909.06623)). Growth enters the same problem when a cell's elongation responds to the compressive load its contacts put on it ([Weady et al. 2024](https://arxiv.org/abs/2405.10158); [Lerchner](https://home.cit.tum.de/~ler/html-data/bacteria/cell-collectives.pdf)).
 
 ## Decision
 
-`Simulation.step(dt, ContactDynamicsParameters)` advances growth and contact together. It is selected per controller by `MechanicsConfig(contact_dynamics=ContactDynamicsConfig(...))`; without it the controller grows the cells and runs least-squares relaxation passes.
+`Simulation.step(dt, ContactDynamicsParameters)` advances growth and contact together. A controller configured with `MechanicsConfig` takes every step this way; `Simulation.step(dt)` alone grows cells without contact.
 
 ### The problem of one substep
 
@@ -22,7 +22,7 @@ gap(g) = phi + h J^T M^-1 J g - h L^T (r * f(L g)) + c g
 ```
 
 - `J g` is the force and torque the rows put on each cell, and `J^T` maps cell velocities to gap rates.
-- `M` is the drag of each cell on its surroundings: `drag * L` in translation for a capsule of full length `L`, with the finite-radius rod inertias of ADR 0002 in rotation. A fixed cell has no mobility.
+- `M` is the drag of each cell on its surroundings. For a capsule of full length `L = l + 2r` it is `m = drag * L` in translation, `m r^2 / 2` about the axis, and `m (L^2 + 3 r^2) / 12` across it; the finite radius keeps rotation about the axis from being free. A fixed cell has no mobility.
 - `L g` is the axial load on each cell. A row contributes its multiplier times the cell's length lever, the fraction of the cell's elongation that closes that contact: the cylinder stretches uniformly about its center and the caps ride on its ends, so the lever is one half for a contact on a cap along the axis and zero for a contact on the side.
 - `r` is the nominal elongation rate `growth_rate * length`, taken from the lengths at the start of the step, and `f` is the growth load response. `L^T` maps elongation to the gap it closes.
 - `c` is the compliance of the row: `1 / contact_stiffness` between cells and `1 / wall_stiffness` against a constraint.
@@ -62,7 +62,7 @@ The stepping carries no state between steps, so a resumed run repeats an uninter
 
 ### Walls
 
-Constraints are rows in the same solve. A box or cylinder that cells live inside contributes one row for every face a cell end is near, from `find_external_contact_faces`: each face is an independent half-space, and a row for the nearest face alone leaves a cell end in a corner free to cross the other wall. These rows come from the host constraint geometry on every backend. The wall projection of ADR 0002 is not applied.
+Constraints are rows in the same solve. A box or cylinder that cells live inside contributes one row for every face a cell end is near, from `find_external_contact_faces`: each face is an independent half-space, and a row for the nearest face alone leaves a cell end in a corner free to cross the other wall. These rows come from the host constraint geometry on every backend.
 
 ### Order within a step
 
