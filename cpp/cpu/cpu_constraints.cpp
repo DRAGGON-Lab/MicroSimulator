@@ -2,6 +2,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <ranges>
 #include <tuple>
 #include <vector>
@@ -307,6 +308,80 @@ SurfacePoint box_surface(const Vec3& point, const BoxConstraint& box, float dege
   return {-clearances[nearest_axis], outward};
 }
 
+// One row for every face of a box container that an end of the cell is within
+// the activation margin of. Each face is its own half-space, so a cell end in
+// a corner is held by every wall that meets there.
+void append_box_face_contacts(std::vector<ExternalContact>& contacts,
+                              const CellGeometryView& geometry, std::size_t slot,
+                              const BoxConstraint& box,
+                              const ConstraintContactParameters& parameters) {
+  const auto radius = geometry.radii[slot];
+  const std::array<float, 3> half_extents{box.half_extents.x, box.half_extents.y,
+                                          box.half_extents.z};
+  for (const auto& endpoint : endpoints(geometry, slot)) {
+    const auto delta = endpoint.centerline_point - box.center;
+    const std::array<float, 3> offsets{delta.x, delta.y, delta.z};
+    for (std::size_t axis = 0; axis < offsets.size(); ++axis) {
+      for (const auto sign : {-1.0F, 1.0F}) {
+        const auto separation = half_extents[axis] - sign * offsets[axis] - radius;
+        if (separation >= parameters.activation_margin) {
+          continue;
+        }
+        Vec3 normal{};
+        (axis == 0 ? normal.x : axis == 1 ? normal.y : normal.z) = sign;
+        contacts.push_back({
+            .cell_id = geometry.ids[slot],
+            .cell_slot = static_cast<Slot>(slot),
+            .constraint_id = box.id,
+            .constraint_kind = ExternalConstraintKind::box,
+            .location = endpoint.location,
+            .point_on_cell = endpoint.centerline_point + normal * radius,
+            .normal = normal,
+            .signed_separation = separation,
+            .weight = box.coefficient,
+        });
+      }
+    }
+  }
+}
+
+// The barrel and both caps of a cylinder container, one row each.
+void append_cylinder_face_contacts(std::vector<ExternalContact>& contacts,
+                                   const CellGeometryView& geometry, std::size_t slot,
+                                   const CylinderConstraint& cylinder,
+                                   const ConstraintContactParameters& parameters) {
+  const auto radius = geometry.radii[slot];
+  for (const auto& endpoint : endpoints(geometry, slot)) {
+    const auto push = [&](Vec3 normal, float separation) {
+      if (separation >= parameters.activation_margin) {
+        return;
+      }
+      contacts.push_back({
+          .cell_id = geometry.ids[slot],
+          .cell_slot = static_cast<Slot>(slot),
+          .constraint_id = cylinder.id,
+          .constraint_kind = ExternalConstraintKind::cylinder,
+          .location = endpoint.location,
+          .point_on_cell = endpoint.centerline_point + normal * radius,
+          .normal = normal,
+          .signed_separation = separation,
+          .weight = cylinder.coefficient,
+      });
+    };
+    const Vec3 radial_delta{endpoint.centerline_point.x - cylinder.center.x,
+                            endpoint.centerline_point.y - cylinder.center.y, 0.0F};
+    const auto radial_distance = norm(radial_delta);
+    const auto radial = radial_distance > parameters.degeneracy_epsilon
+                            ? radial_delta * (1.0F / radial_distance)
+                            : Vec3{1.0F, 0.0F, 0.0F};
+    push(radial, cylinder.radius - radial_distance - radius);
+    const auto z_offset = endpoint.centerline_point.z - cylinder.center.z;
+    for (const auto sign : {-1.0F, 1.0F}) {
+      push({0.0F, 0.0F, sign}, cylinder.half_height - sign * z_offset - radius);
+    }
+  }
+}
+
 void append_box_contacts(std::vector<ExternalContact>& contacts, const CellGeometryView& geometry,
                          std::size_t slot, const BoxConstraint& box,
                          const ConstraintContactParameters& parameters) {
@@ -490,14 +565,18 @@ void append_cylinder_contacts(std::vector<ExternalContact>& contacts,
   }
 }
 
-}  // namespace
+enum class ContainerRows : std::uint8_t {
+  nearest_face,
+  every_face,
+};
 
-ExternalContactGraph find_external_contacts_cpu(const WorldState& state,
-                                                const ConstraintSet& constraints,
-                                                const ConstraintContactParameters& parameters) {
+ExternalContactGraph external_contacts(const WorldState& state, const ConstraintSet& constraints,
+                                       const ConstraintContactParameters& parameters,
+                                       ContainerRows container_rows) {
   validate_constraint_contact_parameters(parameters);
   state.validate();
   const auto geometry = state.geometry_state();
+  const auto every_face = container_rows == ContainerRows::every_face;
   std::vector<ExternalContact> contacts;
   for (std::size_t slot = 0; slot < geometry.size(); ++slot) {
     for (const auto& plane : constraints.planes()) {
@@ -507,16 +586,39 @@ ExternalContactGraph find_external_contacts_cpu(const WorldState& state,
       append_sphere_contacts(contacts, geometry, slot, sphere, parameters);
     }
     for (const auto& box : constraints.boxes()) {
-      append_box_contacts(contacts, geometry, slot, box, parameters);
+      if (every_face && box.allowed_region == ConstraintRegion::inside) {
+        append_box_face_contacts(contacts, geometry, slot, box, parameters);
+      } else {
+        append_box_contacts(contacts, geometry, slot, box, parameters);
+      }
     }
     for (const auto& cylinder : constraints.cylinders()) {
-      append_cylinder_contacts(contacts, geometry, slot, cylinder, parameters);
+      if (every_face && cylinder.allowed_region == ConstraintRegion::inside) {
+        append_cylinder_face_contacts(contacts, geometry, slot, cylinder, parameters);
+      } else {
+        append_cylinder_contacts(contacts, geometry, slot, cylinder, parameters);
+      }
     }
   }
-  std::ranges::sort(contacts, {}, [](const ExternalContact& contact) {
+  // The stable sort keeps the faces of one container in emission order.
+  std::ranges::stable_sort(contacts, {}, [](const ExternalContact& contact) {
     return std::tuple{contact.cell_id, contact.constraint_id, contact.location};
   });
   return ExternalContactGraph(geometry.size(), std::move(contacts));
+}
+
+}  // namespace
+
+ExternalContactGraph find_external_contacts_cpu(const WorldState& state,
+                                                const ConstraintSet& constraints,
+                                                const ConstraintContactParameters& parameters) {
+  return external_contacts(state, constraints, parameters, ContainerRows::nearest_face);
+}
+
+ExternalContactGraph find_external_contact_faces(const WorldState& state,
+                                                 const ConstraintSet& constraints,
+                                                 const ConstraintContactParameters& parameters) {
+  return external_contacts(state, constraints, parameters, ContainerRows::every_face);
 }
 
 void project_cells_out_of_constraints(WorldState& state, const ConstraintSet& constraints,

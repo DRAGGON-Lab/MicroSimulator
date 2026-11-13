@@ -22,6 +22,7 @@ add_library(microsimulator_core STATIC
   cpp/core/channels.cpp
   cpp/core/checkpoint.cpp
   cpp/core/checkpoint_file.cpp
+  cpp/core/contact_dynamics.cpp
   cpp/core/contact_graph.cpp
   cpp/core/constraints.cpp
   cpp/core/coupled_rates.cpp
@@ -38,6 +39,7 @@ add_library(microsimulator_core STATIC
   cpp/cpu/cpu_backend.cpp
   cpp/cpu/cpu_contacts.cpp
   cpp/cpu/cpu_constraints.cpp
+  cpp/cpu/cpu_contact_dynamics.cpp
   cpp/cpu/cpu_coupled.cpp
   cpp/cpu/cpu_flow.cpp
   cpp/cpu/cpu_mechanics.cpp
@@ -216,6 +218,10 @@ if(MICROSIMULATOR_BUILD_TESTS)
   add_executable(microsimulator_mechanics_operator_test tests/cpp/mechanics_operator_test.cpp)
   target_link_libraries(microsimulator_mechanics_operator_test PRIVATE microsimulator::core)
   add_test(NAME mechanics_operator COMMAND microsimulator_mechanics_operator_test)
+
+  add_executable(microsimulator_contact_dynamics_test tests/cpp/contact_dynamics_test.cpp)
+  target_link_libraries(microsimulator_contact_dynamics_test PRIVATE microsimulator::core)
+  add_test(NAME contact_dynamics COMMAND microsimulator_contact_dynamics_test)
 
   add_executable(microsimulator_mechanics_integration_test tests/cpp/mechanics_integration_test.cpp)
   target_link_libraries(microsimulator_mechanics_integration_test PRIVATE microsimulator::core)

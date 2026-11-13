@@ -35,7 +35,8 @@ NB_MODULE(_core, module) {
       .value("SIGNALS", microsimulator::BackendFeature::signals)
       .value("COUPLED_RATES", microsimulator::BackendFeature::coupled_rates)
       .value("DEPTH_AVERAGED_FLOW", microsimulator::BackendFeature::depth_averaged_flow)
-      .value("RESOLVED_FLOW", microsimulator::BackendFeature::resolved_flow);
+      .value("RESOLVED_FLOW", microsimulator::BackendFeature::resolved_flow)
+      .value("CONTACT_DYNAMICS", microsimulator::BackendFeature::contact_dynamics);
 
   nb::enum_<microsimulator::FlowAxis>(module, "FlowAxis")
       .value("X", microsimulator::FlowAxis::x)
@@ -99,6 +100,11 @@ NB_MODULE(_core, module) {
       .value("POSITIVE", microsimulator::RodContactLocation::positive)
       .value("INTERIOR", microsimulator::RodContactLocation::interior);
   module.attr("RodEndpoint") = module.attr("RodContactLocation");
+
+  nb::enum_<microsimulator::GrowthLoadLaw>(module, "GrowthLoadLaw")
+      .value("NONE", microsimulator::GrowthLoadLaw::none)
+      .value("EXPONENTIAL", microsimulator::GrowthLoadLaw::exponential)
+      .value("LINEAR", microsimulator::GrowthLoadLaw::linear);
 
   nb::enum_<microsimulator::SolverStatus>(module, "SolverStatus")
       .value("CONVERGED", microsimulator::SolverStatus::converged)
@@ -512,6 +518,45 @@ NB_MODULE(_core, module) {
       .def_ro("initial_residual_rms", &microsimulator::SolverReport::initial_residual_rms)
       .def_ro("final_residual_rms", &microsimulator::SolverReport::final_residual_rms);
 
+  nb::class_<microsimulator::GrowthLoadResponse>(module, "GrowthLoadResponse")
+      .def(nb::init<>())
+      .def_rw("law", &microsimulator::GrowthLoadResponse::law)
+      .def_rw("sensitivity", &microsimulator::GrowthLoadResponse::sensitivity)
+      .def_rw("free_load", &microsimulator::GrowthLoadResponse::free_load)
+      .def_rw("stall_load", &microsimulator::GrowthLoadResponse::stall_load)
+      .def("factor", [](const microsimulator::GrowthLoadResponse& response, float load) {
+        microsimulator::validate_growth_load_response(response);
+        return microsimulator::growth_load_factor(response, load);
+      });
+
+  nb::class_<microsimulator::ContactDynamicsParameters>(module, "ContactDynamicsParameters")
+      .def(nb::init<>())
+      .def_rw("drag", &microsimulator::ContactDynamicsParameters::drag)
+      .def_rw("contact_stiffness", &microsimulator::ContactDynamicsParameters::contact_stiffness)
+      .def_rw("overlap_tolerance", &microsimulator::ContactDynamicsParameters::overlap_tolerance)
+      .def_rw("candidate_margin", &microsimulator::ContactDynamicsParameters::candidate_margin)
+      .def_rw("max_overlap_recovery",
+              &microsimulator::ContactDynamicsParameters::max_overlap_recovery)
+      .def_rw("max_growth_fraction",
+              &microsimulator::ContactDynamicsParameters::max_growth_fraction)
+      .def_rw("max_iterations", &microsimulator::ContactDynamicsParameters::max_iterations)
+      .def_rw("max_refinements", &microsimulator::ContactDynamicsParameters::max_refinements)
+      .def_rw("max_step_halvings", &microsimulator::ContactDynamicsParameters::max_step_halvings)
+      .def_rw("growth", &microsimulator::ContactDynamicsParameters::growth);
+
+  nb::class_<microsimulator::ContactDynamicsReport>(module, "ContactDynamicsReport")
+      .def_ro("substeps", &microsimulator::ContactDynamicsReport::substeps)
+      .def_ro("halvings", &microsimulator::ContactDynamicsReport::halvings)
+      .def_ro("refinements", &microsimulator::ContactDynamicsReport::refinements)
+      .def_ro("iterations", &microsimulator::ContactDynamicsReport::iterations)
+      .def_ro("max_rows", &microsimulator::ContactDynamicsReport::max_rows)
+      .def_ro("max_overlap", &microsimulator::ContactDynamicsReport::max_overlap);
+
+  nb::class_<microsimulator::ContactDynamicsResult>(module, "ContactDynamicsResult")
+      .def_ro("report", &microsimulator::ContactDynamicsResult::report)
+      .def_ro("axial_loads", &microsimulator::ContactDynamicsResult::axial_loads)
+      .def_ro("length_increments", &microsimulator::ContactDynamicsResult::length_increments);
+
   nb::class_<microsimulator::MechanicsSolveResult>(module, "MechanicsSolveResult")
       .def_ro("corrections", &microsimulator::MechanicsSolveResult::corrections)
       .def_ro("report", &microsimulator::MechanicsSolveResult::report);
@@ -606,7 +651,21 @@ NB_MODULE(_core, module) {
       .def("divide_equal",
            microsimulator::python::exclusive(&microsimulator::Simulation::divide_equal),
            "parent_id"_a)
-      .def("step", microsimulator::python::released(&microsimulator::Simulation::step), "dt"_a)
+      .def(
+          "step",
+          microsimulator::python::released(static_cast<void (microsimulator::Simulation::*)(float)>(
+              &microsimulator::Simulation::step)),
+          "dt"_a)
+      .def("step",
+           microsimulator::python::released(
+               static_cast<microsimulator::ContactDynamicsResult (microsimulator::Simulation::*)(
+                   float, const microsimulator::ContactDynamicsParameters&,
+                   const microsimulator::ContactParameters&,
+                   const microsimulator::ConstraintContactParameters&)>(
+                   &microsimulator::Simulation::step)),
+           "dt"_a, "dynamics_parameters"_a,
+           "contact_parameters"_a = microsimulator::ContactParameters{},
+           "constraint_parameters"_a = microsimulator::ConstraintContactParameters{})
       .def("find_cell_contacts",
            microsimulator::python::released(&microsimulator::Simulation::find_cell_contacts),
            "parameters"_a = microsimulator::ContactParameters{})

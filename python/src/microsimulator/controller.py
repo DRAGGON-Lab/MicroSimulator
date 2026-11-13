@@ -12,7 +12,10 @@ from typing import Protocol, cast, runtime_checkable
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     CellSnapshot,
     ConstraintContactParameters,
+    ContactDynamicsParameters,
+    ContactDynamicsResult,
     ContactParameters,
+    GrowthLoadLaw,
     MechanicsIntegrationParameters,
     MechanicsParameters,
     MechanicsSolveResult,
@@ -170,9 +173,135 @@ def _json_object(value: Mapping[str, JSONValue], path: str) -> dict[str, JSONVal
     return cast(dict[str, JSONValue], decoded)
 
 
+_GROWTH_LOAD_LAWS = {
+    "none": GrowthLoadLaw.NONE,
+    "exponential": GrowthLoadLaw.EXPONENTIAL,
+    "linear": GrowthLoadLaw.LINEAR,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ContactDynamicsConfig:
+    """Checkpointable parameters for growth and contact solved together.
+
+    Cells push each other and the walls apart with non-negative contact forces
+    while they elongate, and a cell's elongation responds to the axial load its
+    contacts put on it. ``growth_law`` selects that response: ``"none"`` ignores
+    load, ``"exponential"`` scales elongation by ``exp(-growth_sensitivity *
+    load)``, and ``"linear"`` leaves it unscaled up to ``growth_free_load`` and
+    stops it at ``growth_stall_load``. Loads are forces in units of ``drag`` times
+    length squared per time.
+    """
+
+    drag: float = 1.0
+    contact_stiffness: float = 1.0e4
+    overlap_tolerance: float = 1.0e-3
+    candidate_margin: float = 0.1
+    max_overlap_recovery: float = 0.05
+    max_growth_fraction: float = 0.25
+    max_iterations: int = 20000
+    max_refinements: int = 10
+    max_step_halvings: int = 12
+    growth_law: str = "none"
+    growth_sensitivity: float = 0.0
+    growth_free_load: float = 0.0
+    growth_stall_load: float = 1.0
+
+    def __post_init__(self) -> None:
+        for name in ("drag", "contact_stiffness", "overlap_tolerance"):
+            if _finite_number(getattr(self, name), f"contact_dynamics.{name}") <= 0.0:
+                raise ControllerStateError(f"contact_dynamics.{name} must be positive")
+        for name in ("max_overlap_recovery", "max_growth_fraction"):
+            if _finite_number(getattr(self, name), f"contact_dynamics.{name}") <= 0.0:
+                raise ControllerStateError(f"contact_dynamics.{name} must be positive")
+        if _finite_number(self.candidate_margin, "contact_dynamics.candidate_margin") < 0.0:
+            raise ControllerStateError("contact_dynamics.candidate_margin must be non-negative")
+        _integer(self.max_iterations, "contact_dynamics.max_iterations", 1, _UINT32_MAX)
+        _integer(self.max_refinements, "contact_dynamics.max_refinements", 0, _UINT32_MAX)
+        _integer(self.max_step_halvings, "contact_dynamics.max_step_halvings", 0, 64)
+        if cast(object, self.growth_law) not in _GROWTH_LOAD_LAWS:
+            raise ControllerStateError(
+                "contact_dynamics.growth_law must be one of " + ", ".join(sorted(_GROWTH_LOAD_LAWS))
+            )
+        sensitivity = _finite_number(
+            self.growth_sensitivity, "contact_dynamics.growth_sensitivity"
+        )
+        free_load = _finite_number(self.growth_free_load, "contact_dynamics.growth_free_load")
+        stall_load = _finite_number(self.growth_stall_load, "contact_dynamics.growth_stall_load")
+        if sensitivity < 0.0 or free_load < 0.0 or stall_load <= free_load:
+            raise ControllerStateError(
+                "contact_dynamics growth sensitivity and free load must be non-negative, "
+                "and the stall load must exceed the free load"
+            )
+
+    def native_parameters(self) -> ContactDynamicsParameters:
+        parameters = ContactDynamicsParameters()
+        parameters.drag = self.drag
+        parameters.contact_stiffness = self.contact_stiffness
+        parameters.overlap_tolerance = self.overlap_tolerance
+        parameters.candidate_margin = self.candidate_margin
+        parameters.max_overlap_recovery = self.max_overlap_recovery
+        parameters.max_growth_fraction = self.max_growth_fraction
+        parameters.max_iterations = self.max_iterations
+        parameters.max_refinements = self.max_refinements
+        parameters.max_step_halvings = self.max_step_halvings
+        growth = parameters.growth
+        growth.law = _GROWTH_LOAD_LAWS[self.growth_law]
+        growth.sensitivity = self.growth_sensitivity
+        growth.free_load = self.growth_free_load
+        growth.stall_load = self.growth_stall_load
+        parameters.growth = growth
+        return parameters
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            field.name: cast(JSONValue, getattr(self, field.name))
+            for field in fields(ContactDynamicsConfig)
+        }
+
+    @classmethod
+    def from_json(cls, value: JSONValue) -> ContactDynamicsConfig:
+        names = {field.name for field in fields(ContactDynamicsConfig)}
+        if not isinstance(value, dict) or set(value) != names:
+            raise ControllerStateError("contact dynamics configuration is invalid")
+        growth_law = value["growth_law"]
+        if not isinstance(growth_law, str):
+            raise ControllerStateError("contact_dynamics.growth_law must be a string")
+
+        def number(name: str) -> float:
+            return _finite_number(value[name], f"contact_dynamics.{name}")
+
+        def count(name: str) -> int:
+            return _integer(value[name], f"contact_dynamics.{name}", 0, _UINT32_MAX)
+
+        return cls(
+            drag=number("drag"),
+            contact_stiffness=number("contact_stiffness"),
+            overlap_tolerance=number("overlap_tolerance"),
+            candidate_margin=number("candidate_margin"),
+            max_overlap_recovery=number("max_overlap_recovery"),
+            max_growth_fraction=number("max_growth_fraction"),
+            max_iterations=count("max_iterations"),
+            max_refinements=count("max_refinements"),
+            max_step_halvings=count("max_step_halvings"),
+            growth_law=growth_law,
+            growth_sensitivity=number("growth_sensitivity"),
+            growth_free_load=number("growth_free_load"),
+            growth_stall_load=number("growth_stall_load"),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class MechanicsConfig:
-    """Checkpointable parameters for exact mechanics passes after each step."""
+    """Checkpointable mechanics parameters applied on each controller step.
+
+    Without ``contact_dynamics`` the controller grows the cells and then runs
+    ``passes`` least-squares relaxation passes. With it, the controller advances
+    growth and contact together with the contact dynamics solve, and the
+    relaxation fields ``passes``, ``gamma``, ``residual_rms_tolerance``,
+    ``max_iterations``, ``max_rotation_radians``, ``require_convergence``, and the
+    two activation margins are unused.
+    """
 
     passes: int = 1
     mu_a: float = 1.0
@@ -187,6 +316,7 @@ class MechanicsConfig:
     constraint_activation_margin: float = 0.0
     constraint_degeneracy_epsilon: float = 1.0e-6
     flow_drift: bool = False
+    contact_dynamics: ContactDynamicsConfig | None = None
 
     def __post_init__(self) -> None:
         _integer(self.passes, "mechanics.passes", 1, _UINT32_MAX)
@@ -225,6 +355,11 @@ class MechanicsConfig:
             raise ControllerStateError("mechanics.require_convergence must be Boolean")
         if not isinstance(cast(object, self.flow_drift), bool):
             raise ControllerStateError("mechanics.flow_drift must be Boolean")
+        dynamics = cast(object, self.contact_dynamics)
+        if dynamics is not None and not isinstance(dynamics, ContactDynamicsConfig):
+            raise ControllerStateError(
+                "mechanics.contact_dynamics must be a ContactDynamicsConfig or None"
+            )
 
     def native_parameters(
         self,
@@ -252,17 +387,26 @@ class MechanicsConfig:
         return mechanics, contacts, integration, constraints
 
     def to_json(self) -> dict[str, JSONValue]:
-        return {
+        result = {
             field.name: cast(JSONValue, getattr(self, field.name))
             for field in fields(MechanicsConfig)
+            if field.name != "contact_dynamics"
         }
+        result["contact_dynamics"] = (
+            None if self.contact_dynamics is None else self.contact_dynamics.to_json()
+        )
+        return result
 
     @classmethod
     def from_json(cls, value: JSONValue) -> MechanicsConfig:
-        if not isinstance(value, dict) or set(value) != {
-            field.name for field in fields(MechanicsConfig)
-        }:
+        # A payload without a contact dynamics entry selects relaxation passes.
+        names = {field.name for field in fields(MechanicsConfig)}
+        if not isinstance(value, dict) or set(value) | {"contact_dynamics"} != names:
             raise ControllerStateError("controller mechanics configuration is invalid")
+        dynamics_value = value.get("contact_dynamics")
+        contact_dynamics = (
+            None if dynamics_value is None else ContactDynamicsConfig.from_json(dynamics_value)
+        )
         require_convergence = value["require_convergence"]
         if not isinstance(require_convergence, bool):
             raise ControllerStateError("mechanics.require_convergence must be Boolean")
@@ -304,6 +448,7 @@ class MechanicsConfig:
                 "mechanics.constraint_degeneracy_epsilon",
             ),
             flow_drift=flow_drift,
+            contact_dynamics=contact_dynamics,
         )
 
 
@@ -348,6 +493,7 @@ class NativeController:
             completed_steps, "native controller completed steps", 0, _UINT64_MAX
         )
         self._last_mechanics_reports: tuple[MechanicsSolveResult, ...] = ()
+        self._last_contact_dynamics: ContactDynamicsResult | None = None
 
     @property
     def completed_steps(self) -> int:
@@ -360,6 +506,15 @@ class NativeController:
     @property
     def last_mechanics_reports(self) -> tuple[MechanicsSolveResult, ...]:
         return self._last_mechanics_reports
+
+    @property
+    def last_contact_dynamics(self) -> ContactDynamicsResult | None:
+        """The result of the last step's contact dynamics solve, if it ran.
+
+        Its ``axial_loads`` and ``length_increments`` are indexed by cell slot.
+        """
+
+        return self._last_contact_dynamics
 
     def _context(self) -> ControllerStep:
         return ControllerStep(
@@ -471,19 +626,30 @@ class NativeController:
         for removal in plan.removals:
             self.simulation.remove_cell(removal)
 
-        self.simulation.step(dt)
         reports: list[MechanicsSolveResult] = []
-        if (
-            self._mechanics is not None
-            and self._mechanics.flow_drift
-            and self.simulation.cell_count != 0
-        ):
-            _, _, integration, _ = self._mechanics.native_parameters()
-            self.simulation.apply_flow_drift(dt, integration)
-        if self._mechanics is not None and self.simulation.cell_count != 0:
-            parameters = self._mechanics.native_parameters()
-            for _ in range(self._mechanics.passes):
-                reports.append(self.simulation.relax_cell_mechanics(*parameters))
+        mechanics = self._mechanics
+        drifts = (
+            mechanics is not None and mechanics.flow_drift and self.simulation.cell_count != 0
+        )
+        if mechanics is not None and mechanics.contact_dynamics is not None:
+            # The flow moves the cells first, so the step ends with every
+            # contact resolved.
+            _, contacts, integration, constraints = mechanics.native_parameters()
+            if drifts:
+                self.simulation.apply_flow_drift(dt, integration)
+            self._last_contact_dynamics = self.simulation.step(
+                dt, mechanics.contact_dynamics.native_parameters(), contacts, constraints
+            )
+        else:
+            self._last_contact_dynamics = None
+            self.simulation.step(dt)
+            if mechanics is not None and drifts:
+                _, _, integration, _ = mechanics.native_parameters()
+                self.simulation.apply_flow_drift(dt, integration)
+            if mechanics is not None and self.simulation.cell_count != 0:
+                parameters = mechanics.native_parameters()
+                for _ in range(mechanics.passes):
+                    reports.append(self.simulation.relax_cell_mechanics(*parameters))
         self._last_mechanics_reports = tuple(reports)
         self._completed_steps += 1
 

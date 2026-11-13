@@ -96,6 +96,7 @@ class BackendFeature(Enum):
     COUPLED_RATES: BackendFeature
     DEPTH_AVERAGED_FLOW: BackendFeature
     RESOLVED_FLOW: BackendFeature
+    CONTACT_DYNAMICS: BackendFeature
 
 class FlowAxis(Enum):
     X: FlowAxis
@@ -612,6 +613,56 @@ class MechanicsIntegrationParameters:
 
     def __init__(self) -> None: ...
 
+class GrowthLoadLaw(Enum):
+    NONE: GrowthLoadLaw
+    EXPONENTIAL: GrowthLoadLaw
+    LINEAR: GrowthLoadLaw
+
+class GrowthLoadResponse:
+    law: GrowthLoadLaw
+    sensitivity: float
+    free_load: float
+    stall_load: float
+
+    def __init__(self) -> None: ...
+    def factor(self, load: float) -> float: ...
+
+class ContactDynamicsParameters:
+    drag: float
+    contact_stiffness: float
+    overlap_tolerance: float
+    candidate_margin: float
+    max_overlap_recovery: float
+    max_growth_fraction: float
+    max_iterations: int
+    max_refinements: int
+    max_step_halvings: int
+    growth: GrowthLoadResponse
+
+    def __init__(self) -> None: ...
+
+class ContactDynamicsReport:
+    @property
+    def substeps(self) -> int: ...
+    @property
+    def halvings(self) -> int: ...
+    @property
+    def refinements(self) -> int: ...
+    @property
+    def iterations(self) -> int: ...
+    @property
+    def max_rows(self) -> int: ...
+    @property
+    def max_overlap(self) -> float: ...
+
+class ContactDynamicsResult:
+    @property
+    def report(self) -> ContactDynamicsReport: ...
+    @property
+    def axial_loads(self) -> list[float]: ...
+    @property
+    def length_increments(self) -> list[float]: ...
+
 class SolverReport:
     @property
     def status(self) -> SolverStatus: ...
@@ -687,7 +738,16 @@ class Simulation:
     def set_signal_reaction(self, reaction: SignalGridAffineReaction | None) -> None: ...
     def divide(self, parent_id: int, first_fraction: float) -> tuple[int, int]: ...
     def divide_equal(self, parent_id: int) -> tuple[int, int]: ...
+    @overload
     def step(self, dt: float) -> None: ...
+    @overload
+    def step(
+        self,
+        dt: float,
+        dynamics_parameters: ContactDynamicsParameters,
+        contact_parameters: ContactParameters = ...,
+        constraint_parameters: ConstraintContactParameters = ...,
+    ) -> ContactDynamicsResult: ...
     def find_cell_contacts(self, parameters: ContactParameters = ...) -> ContactGraph: ...
     def find_external_contacts(
         self, parameters: ConstraintContactParameters = ...

@@ -72,6 +72,7 @@ enum class BackendFeature : std::uint8_t {
   coupled_rates,
   depth_averaged_flow,
   resolved_flow,
+  contact_dynamics,
 };
 
 struct BackendInfo {

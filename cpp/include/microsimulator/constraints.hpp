@@ -181,6 +181,16 @@ class ExternalContactGraph {
     const WorldState& state, const ConstraintSet& constraints,
     const ConstraintContactParameters& parameters = ConstraintContactParameters{});
 
+// The contacts of `find_external_contacts_cpu`, except that a box or cylinder
+// that cells live inside reports one contact for every face a cell end is
+// near rather than for the nearest face alone. Each face of a container is an
+// independent half-space, which is what a solve with unilateral rows needs to
+// hold a cell in a corner. The contacts come from the host geometry on every
+// backend.
+[[nodiscard]] ExternalContactGraph find_external_contact_faces(
+    const WorldState& state, const ConstraintSet& constraints,
+    const ConstraintContactParameters& parameters = ConstraintContactParameters{});
+
 // Moves every mobile cell out of the external constraints it penetrates.
 // The regularized contact solve weighs a wall row against the cells pressing
 // on it, so a crowded colony leaves a cell part-way through a wall; this makes

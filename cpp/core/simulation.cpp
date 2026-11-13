@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <tuple>
 
+#include "core/contact_stepper.hpp"
+
 namespace microsimulator {
 namespace {
 
@@ -311,7 +313,29 @@ std::pair<CellId, CellId> Simulation::divide_equal(CellId parent_id) {
   return state_.divide_equal(parent_id);
 }
 
+struct Simulation::ContactDynamicsRequest {
+  const ContactDynamicsParameters& dynamics;
+  const ContactParameters& contacts;
+  const ConstraintContactParameters& constraints;
+};
+
 void Simulation::step(float dt) {
+  std::ignore = advance(dt, nullptr);
+}
+
+ContactDynamicsResult Simulation::step(float dt,
+                                       const ContactDynamicsParameters& dynamics_parameters,
+                                       const ContactParameters& contact_parameters,
+                                       const ConstraintContactParameters& constraint_parameters) {
+  if (!backend_->supports(BackendFeature::contact_dynamics)) {
+    throw std::runtime_error("selected backend does not implement contact dynamics");
+  }
+  const ContactDynamicsRequest request{dynamics_parameters, contact_parameters,
+                                       constraint_parameters};
+  return advance(dt, &request);
+}
+
+ContactDynamicsResult Simulation::advance(float dt, const ContactDynamicsRequest* dynamics) {
   if (!std::isfinite(dt) || dt < 0.0F) {
     throw std::invalid_argument("time step must be finite and non-negative");
   }
@@ -334,13 +358,33 @@ void Simulation::step(float dt) {
     signal_grid_->validate_step(dt);
   }
   // Growth, species, and coupled updates write only cell lengths and species
-  // levels, so those two arrays are the whole cell-state rollback record.
+  // levels. Contact dynamics also moves and turns the cells, so its rollback
+  // record holds their positions and directions too.
   const auto species_levels = state_.species_state().levels;
   const std::vector<float> saved_species(species_levels.begin(), species_levels.end());
   const auto saved_levels = signal_grid_.has_value() ? signal_levels() : std::vector<float>{};
   const auto saved_report = last_signal_solve_report_;
+  std::vector<Vec3> saved_positions;
+  std::vector<Vec3> saved_directions;
+  if (dynamics != nullptr) {
+    saved_positions.reserve(geometry.size());
+    saved_directions.reserve(geometry.size());
+    for (std::size_t slot = 0; slot < geometry.size(); ++slot) {
+      saved_positions.push_back(
+          {geometry.position_x[slot], geometry.position_y[slot], geometry.position_z[slot]});
+      saved_directions.push_back(
+          {geometry.direction_x[slot], geometry.direction_y[slot], geometry.direction_z[slot]});
+    }
+  }
+  ContactDynamicsResult result;
   try {
-    backend_->advance_growth(state_, dt);
+    if (dynamics != nullptr) {
+      result =
+          detail::advance_contact_dynamics(state_, constraints_, *backend_, dt, dynamics->dynamics,
+                                           dynamics->contacts, dynamics->constraints);
+    } else {
+      backend_->advance_growth(state_, dt);
+    }
     if (!std::ranges::all_of(state_.geometry_state().lengths, [](float length) {
           return std::isfinite(length) && length >= 0.0F;
         })) {
@@ -360,12 +404,17 @@ void Simulation::step(float dt) {
     }
   } catch (...) {
     std::ranges::copy(previous_lengths, state_.growth_state().lengths.begin());
+    for (std::size_t slot = 0; slot < saved_positions.size(); ++slot) {
+      state_.set_cell_geometry(static_cast<Slot>(slot), saved_positions[slot],
+                               saved_directions[slot], previous_lengths[slot]);
+    }
     std::ranges::copy(saved_species, state_.species_state().levels.begin());
     if (signal_grid_.has_value()) signal_grid_->set_levels(saved_levels);
     last_signal_solve_report_ = saved_report;
     throw;
   }
   time_ += static_cast<double>(dt);
+  return result;
 }
 
 ContactGraph Simulation::find_cell_contacts(const ContactParameters& parameters) {

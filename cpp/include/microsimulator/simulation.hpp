@@ -51,6 +51,15 @@ class Simulation {
   std::pair<CellId, CellId> divide(CellId parent_id, float first_fraction);
   std::pair<CellId, CellId> divide_equal(CellId parent_id);
   void step(float dt);
+  // Advances growth and contact together: cells elongate, push each other
+  // and the constraints apart, and slow under the load that puts on them.
+  // Species, coupled, and signal updates then see the elongation that
+  // happened. The activation margins of the contact parameters are replaced
+  // by the candidate margin of the dynamics parameters.
+  ContactDynamicsResult step(
+      float dt, const ContactDynamicsParameters& dynamics_parameters,
+      const ContactParameters& contact_parameters = ContactParameters{},
+      const ConstraintContactParameters& constraint_parameters = ConstraintContactParameters{});
   [[nodiscard]] ContactGraph find_cell_contacts(
       const ContactParameters& parameters = ContactParameters{});
   [[nodiscard]] ExternalContactGraph find_external_contacts(
@@ -81,6 +90,9 @@ class Simulation {
   void validate() const;
 
  private:
+  struct ContactDynamicsRequest;
+  ContactDynamicsResult advance(float dt, const ContactDynamicsRequest* dynamics);
+
   WorldState state_;
   ConstraintSet constraints_;
   std::unique_ptr<ComputeBackend> backend_;
