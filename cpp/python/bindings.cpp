@@ -46,6 +46,13 @@ NB_MODULE(_core, module) {
       .value("NO_FLUX", microsimulator::GridBoundaryKind::no_flux)
       .value("PERIODIC", microsimulator::GridBoundaryKind::periodic)
       .value("FIXED", microsimulator::GridBoundaryKind::fixed);
+  nb::enum_<microsimulator::GridFace>(module, "GridFace")
+      .value("X_LOWER", microsimulator::GridFace::x_lower)
+      .value("X_UPPER", microsimulator::GridFace::x_upper)
+      .value("Y_LOWER", microsimulator::GridFace::y_lower)
+      .value("Y_UPPER", microsimulator::GridFace::y_upper)
+      .value("Z_LOWER", microsimulator::GridFace::z_lower)
+      .value("Z_UPPER", microsimulator::GridFace::z_upper);
 
   nb::enum_<microsimulator::SignalIntegrationKind>(module, "SignalIntegrationKind")
       .value("FORWARD_EULER", microsimulator::SignalIntegrationKind::forward_euler)
@@ -601,6 +608,14 @@ NB_MODULE(_core, module) {
       .def("set_signal_reaction",
            microsimulator::python::exclusive(&microsimulator::Simulation::set_signal_reaction),
            "reaction"_a.none())
+      .def(
+          "set_signal_boundary_values",
+          [](microsimulator::Simulation& simulation, microsimulator::GridFace face,
+             const std::vector<float>& values) {
+            microsimulator::python::BusyObjects::require_idle(&simulation);
+            simulation.set_signal_boundary_values(face, values);
+          },
+          "face"_a, "values"_a)
       .def("divide", microsimulator::python::exclusive(&microsimulator::Simulation::divide),
            "parent_id"_a, "first_fraction"_a)
       .def("divide_equal",

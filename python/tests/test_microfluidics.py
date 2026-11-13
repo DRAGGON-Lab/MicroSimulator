@@ -12,11 +12,12 @@ from microsimulator import (
     GridShape,
     ModelContext,
     SignalGridSpec,
+    Simulation,
     SimulationController,
     Vec3,
     backend_available,
 )
-from microsimulator.microfluidics import BiopixelTrapDevice, TrapChannelDevice
+from microsimulator.microfluidics import BiopixelTrapDevice, InletSchedule, TrapChannelDevice
 from microsimulator.runner import build_model
 
 _EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
@@ -272,3 +273,69 @@ def test_biopixel_example_confines_a_monolayer_under_flow() -> None:
     checkpoint = model.simulation._checkpoint()
     assert checkpoint.signal_grid is not None
     assert checkpoint.signal_grid.spec.velocity_field is not None
+
+
+def test_inlet_schedule_switches_ramps_and_pulses() -> None:
+    switching = InletSchedule((10.0, 0.0), (5.0, 8.0), ((10.0, 2.0), (4.0, 0.0)))
+    assert switching.values_at(0.0) == [10.0, 0.0]
+    assert switching.values_at(4.999) == [10.0, 0.0]
+    assert switching.values_at(5.0) == [10.0, 2.0]
+    assert switching.values_at(7.0) == [10.0, 2.0]
+    assert switching.values_at(100.0) == [4.0, 0.0]
+
+    ramp = InletSchedule((1.0,), (2.0, 4.0), ((1.0,), (5.0,)), ramp=True)
+    assert ramp.values_at(1.0) == [1.0]
+    assert ramp.values_at(3.0) == [3.0]
+    assert ramp.values_at(4.0) == [5.0]
+    assert ramp.values_at(9.0) == [5.0]
+
+    pulse = InletSchedule.pulse([0.0], [3.0], start=2.0, end=6.0)
+    assert [pulse.values_at(time)[0] for time in (1.9, 2.0, 5.9, 6.0)] == [0.0, 3.0, 3.0, 0.0]
+    assert InletSchedule((7.0,)).values_at(123.0) == [7.0]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (((1.0,), (1.0,), ()), "one composition per time"),
+        (((1.0,), (2.0, 2.0), ((1.0,), (1.0,))), "strictly increasing"),
+        (((1.0,), (math.inf,), ((1.0,),)), "strictly increasing"),
+        (((), (), ()), "at least one signal"),
+        (((1.0,), (1.0,), ((1.0, 2.0),)), "share one signal count"),
+        (((1.0,), (1.0,), ((-1.0,),)), "finite and non-negative"),
+    ],
+)
+def test_inlet_schedule_rejects_invalid_definitions(
+    arguments: tuple[tuple[float, ...], tuple[float, ...], tuple[tuple[float, ...], ...]],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        InletSchedule(*arguments)
+    with pytest.raises(ValueError, match="time must be finite"):
+        InletSchedule((1.0,)).values_at(math.nan)
+
+
+def test_device_inlet_values_change_the_media_entering_the_channel() -> None:
+    device = TrapChannelDevice()
+    spec = _grid()
+    device.apply_to_grid(spec, inlet_values=[0.0], outlet_values=[0.0])
+    simulation = Simulation()
+    simulation.configure_signal_grid(spec, [0.0] * (spec.shape.x * spec.shape.y * spec.shape.z))
+    simulation.step(0.01)
+    assert max(simulation.signal_levels) == 0.0
+
+    schedule = InletSchedule.pulse([0.0], [10.0], start=0.0, end=0.05)
+    for _ in range(5):
+        device.set_inlet_values(simulation, schedule.values_at(simulation.time))
+        simulation.step(0.01)
+    levels = simulation.signal_levels
+    shape = spec.shape
+    inlet_row = [
+        levels[x * shape.y * shape.z + z]
+        for x in range(shape.x)
+        for z in range(shape.z)
+        if spec.obstacles[x * shape.y * shape.z + z] == 0
+    ]
+    assert inlet_row and min(inlet_row) > 0.0
+    # Solid voxels never store signal, whatever the inlet carries.
+    assert all(level == 0.0 for level, solid in zip(levels, spec.obstacles, strict=True) if solid)
