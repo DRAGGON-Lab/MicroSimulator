@@ -418,6 +418,156 @@ def test_free_colony_matches_the_continuum_pressure_profile(backend: BackendKind
     assert means[0] > 3.0 * means[-1]
 
 
+def _divide_and_tilt(
+    simulation: Simulation, thresholds: dict[int, float], rng: random.Random
+) -> None:
+    """Divide cells at lengths spread around 4, turning daughters slightly in the plane."""
+
+    for cell in simulation.cells():
+        threshold = thresholds.setdefault(cell.id, 4.0 * (1.0 + 0.2 * (rng.random() - 0.5)))
+        if cell.length < threshold:
+            continue
+        for daughter_id in simulation.divide(cell.id, 0.5):
+            daughter = simulation.cell(daughter_id)
+            angle = rng.gauss(0.0, 0.02)
+            x, y = daughter.direction.x, daughter.direction.y
+            simulation.set_cell_geometry(
+                daughter_id,
+                daughter.position,
+                Vec3(
+                    x * math.cos(angle) - y * math.sin(angle),
+                    x * math.sin(angle) + y * math.cos(angle),
+                    0.0,
+                ),
+                daughter.length,
+            )
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_load_sensitive_colony_matches_the_continuum_solution(backend: BackendKind) -> None:
+    """A colony whose growth falls exponentially with load.
+
+    With areal growth g exp(-s p) and drag zeta per unit area, the radial
+    pressure of a colony of radius R is
+    p(r) = (2 zeta g / k) ln(1 / (8 c) - c k r^2), with k = s zeta g and
+    c = (sqrt(1 + k R^2 / 2) - 1) / (2 k R^2), and its edge advances at
+    4 g c R / (1 / (8 c) - c k R^2) (Weady et al. 2024). The axial load on a
+    cell is the pressure across its diameter, so s is the load sensitivity
+    times the diameter.
+    """
+
+    simulation = _simulation(backend, reserved_capacity=4096)
+    founder = CellInit()
+    founder.length = 2.0
+    simulation.add_cell(founder)
+    # The same division rule with nothing to slow it gives the unloaded rate.
+    unloaded = Simulation(BackendKind.CPU, reserved_capacity=1 << 16)
+    unloaded.add_cell(founder)
+
+    parameters = ContactDynamicsParameters()
+    growth = parameters.growth
+    growth.law = GrowthLoadLaw.EXPONENTIAL
+    growth.sensitivity = 0.03
+    parameters.growth = growth
+    rng, unloaded_rng = random.Random(1), random.Random(1)
+    thresholds: dict[int, float] = {}
+    unloaded_thresholds: dict[int, float] = {}
+    step_length = 0.05
+    edges: list[float] = []
+    unloaded_areas: list[float] = []
+    result = simulation.step(0.0, parameters)
+    radii: list[float] = []
+    for step in range(280):
+        _divide_and_tilt(simulation, thresholds, rng)
+        result = simulation.step(step_length, parameters)
+        if step < 200:
+            _divide_and_tilt(unloaded, unloaded_thresholds, unloaded_rng)
+            unloaded.step(step_length)
+            unloaded_areas.append(_footprint(unloaded))
+        cells = simulation.cells()
+        center_x = sum(cell.position.x for cell in cells) / len(cells)
+        center_y = sum(cell.position.y for cell in cells) / len(cells)
+        radii = [
+            math.hypot(cell.position.x - center_x, cell.position.y - center_y) for cell in cells
+        ]
+        edges.append(sorted(radii)[int(0.98 * len(radii))])
+
+    cells = simulation.cells()
+    assert len(cells) > 800
+    colony_radius = edges[-1]
+    packing = _footprint(simulation) / (math.pi * colony_radius**2)
+    rate = math.log(unloaded_areas[-1] / unloaded_areas[-21]) / (20 * step_length)
+    drag_per_area = parameters.drag * packing  # per unit diameter, which the load carries
+    k = growth.sensitivity * drag_per_area * rate
+    c = (math.sqrt(1.0 + k * colony_radius**2 / 2.0) - 1.0) / (2.0 * k * colony_radius**2)
+    # The response matters here: the colony is well past the unloaded regime.
+    assert k * colony_radius**2 > 10.0
+
+    bin_count = 6
+    bins: list[list[float]] = [[] for _ in range(bin_count)]
+    for radius, cell in zip(radii, cells, strict=True):
+        bins[min(bin_count - 1, int(radius / colony_radius * bin_count))].append(
+            result.axial_loads[cell.slot]
+        )
+    for index, loads in enumerate(bins):
+        position = (index + 0.5) / bin_count * colony_radius
+        predicted = (
+            drag_per_area * rate * (2.0 / k) * math.log(1.0 / (8.0 * c) - c * k * position**2)
+        )
+        unloaded_prediction = drag_per_area * rate * (colony_radius**2 - position**2) / 4.0
+        mean = sum(loads) / len(loads)
+        assert math.isclose(mean, predicted, rel_tol=0.25)
+        assert mean < 0.6 * unloaded_prediction
+
+    speed = (edges[-1] - edges[-21]) / (20 * step_length)
+    predicted_speed = (
+        rate * 4.0 * c * colony_radius / (1.0 / (8.0 * c) - c * k * colony_radius**2)
+    )
+    assert math.isclose(speed, predicted_speed, rel_tol=0.25)
+    assert speed < 0.6 * rate * colony_radius / 2.0
+
+
+def _spanning_pair(backend: BackendKind, tilt: float) -> Simulation:
+    """Two cells end to end that exactly span a closed 4 by 4 chamber."""
+
+    simulation = _simulation(backend)
+    chamber = BoxConstraintInit()
+    chamber.half_extents = Vec3(2.0, 2.0, 0.6)
+    chamber.allowed_region = ConstraintRegion.INSIDE
+    simulation.add_box_constraint(chamber)
+    cell = CellInit()
+    cell.length, cell.radius = 1.2, 0.4
+    for sign in (-1.0, 1.0):
+        cell.position = Vec3(sign * 1.0, 0.0, 0.0)
+        cell.direction = Vec3(math.cos(sign * tilt), math.sin(sign * tilt), 0.0)
+        simulation.add_cell(cell)
+    return simulation
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_collinear_cells_spanning_a_chamber_buckle(backend: BackendKind) -> None:
+    # Growth that ignores load has to go somewhere: the pair turns out of line.
+    simulation = _spanning_pair(backend, 0.01)
+    parameters = ContactDynamicsParameters()
+    for _ in range(12):
+        result = simulation.step(0.05, parameters)
+    cells = simulation.cells()
+    assert all(abs(cell.direction.y) > 0.3 for cell in cells)
+    assert all(cell.length > 1.2 * 1.6 for cell in cells)
+    assert result.report.max_overlap < 0.01
+    assert all(abs(cell.position.z) < 1e-3 for cell in cells)
+
+    # A perfectly straight pair has no direction to turn in. With a load
+    # response it stalls where it is.
+    straight = _spanning_pair(backend, 0.0)
+    stalling = _stalling(4.0)
+    for _ in range(40):
+        straight.step(0.05, stalling)
+    for cell in straight.cells():
+        assert cell.direction.y == 0.0
+        assert math.isclose(cell.length, 1.2, abs_tol=5e-3)
+
+
 def _uniform_flow(backend: BackendKind, speed: float) -> Simulation:
     simulation = _simulation(backend)
     sites = 9
