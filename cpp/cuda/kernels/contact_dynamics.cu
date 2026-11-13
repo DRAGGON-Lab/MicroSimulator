@@ -1,7 +1,6 @@
-#include "contact_dynamics.cuh"
-
 #include <cmath>
 
+#include "contact_dynamics.cuh"
 #include "core/shared_constants.hpp"
 
 namespace microsimulator::cuda {
@@ -73,11 +72,11 @@ __global__ void contact_respond(const ContactRowGpu* rows, const ContactBodyGpu*
   const float transverse = bodies[body].rates.x;
   const float axial = bodies[body].rates.y;
   const float nominal = bodies[body].rates.z;
-  const float along = (axial - transverse) * (axis.x * torque_x + axis.y * torque_y +
-                                             axis.z * torque_z);
+  const float along =
+      (axial - transverse) * (axis.x * torque_x + axis.y * torque_y + axis.z * torque_z);
   const float rate = nominal > 0.0F ? nominal * contact_growth_factor(solve, load) : nominal;
-  response[body].linear_length = make_float4(force_x * translational, force_y * translational,
-                                             force_z * translational, rate);
+  response[body].linear_length =
+      make_float4(force_x * translational, force_y * translational, force_z * translational, rate);
   response[body].rotation =
       make_float4(torque_x * transverse + axis.x * along, torque_y * transverse + axis.y * along,
                   torque_z * transverse + axis.z * along, load);
@@ -141,8 +140,8 @@ std::uint32_t block_count(std::uint32_t count) {
 
 void launch_contact_project(const float* multipliers, const float* gaps, float* next,
                             float step_length, std::uint32_t row_count, cudaStream_t stream) {
-  contact_project<<<block_count(row_count), threads_per_block, 0, stream>>>(
-      multipliers, gaps, next, step_length, row_count);
+  contact_project<<<block_count(row_count), threads_per_block, 0, stream>>>(multipliers, gaps, next,
+                                                                            step_length, row_count);
 }
 
 void launch_contact_respond(const ContactRowGpu* rows, const ContactBodyGpu* bodies,
@@ -166,7 +165,7 @@ void launch_contact_reduce(const float4* input, float4* output, std::uint32_t el
                            cudaStream_t stream) {
   const auto output_count = (element_count + 1) / 2;
   contact_reduce<<<block_count(output_count), threads_per_block, 0, stream>>>(input, output,
-                                                                             element_count);
+                                                                              element_count);
 }
 
 }  // namespace microsimulator::cuda

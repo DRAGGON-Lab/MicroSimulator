@@ -33,6 +33,9 @@ constexpr float solve_tolerance_fraction = 0.25F;
 // Fraction of the load scale of the growth response that an accepted overlap
 // may add to a contact force.
 constexpr float load_resolution_fraction = 0.1F;
+// Refinement rounds within which a substep counts as short enough to try a
+// longer one next.
+constexpr std::uint32_t easy_refinements = 2;
 // A rotation this large in one substep is outside the linearization the
 // substep's rows rest on.
 constexpr float maximum_substep_rotation = 0.5F;
@@ -258,9 +261,15 @@ using TouchKey = std::tuple<Slot, bool, std::uint64_t>;
                   load_resolution_fraction * load_scale / parameters.contact_stiffness);
 }
 
+// The contact forces of a solved substep by contact, in row order, which
+// start the solve of the next substep: a contact that persists carries nearly
+// the same force.
+using ForceMemory = std::map<TouchKey, std::vector<float>>;
+
 struct Substep {
   Geometry geometry;
   std::vector<float> loads;
+  ForceMemory forces;
   std::uint32_t refinements{0};
   std::size_t rows{0};
   float max_overlap{0.0F};
@@ -272,7 +281,8 @@ struct Substep {
     WorldState& state, const Geometry& base, std::span<const float> rate_lengths,
     const ConstraintSet& constraints, ComputeBackend& backend, float dt,
     const ContactDynamicsParameters& parameters, const ContactParameters& contact_parameters,
-    const ConstraintContactParameters& constraint_parameters, std::uint64_t& iterations) {
+    const ConstraintContactParameters& constraint_parameters, const ForceMemory& remembered,
+    std::uint64_t& iterations) {
   const auto radii = state.geometry_state().radii;
   const auto bodies = make_bodies(state, rate_lengths, parameters.drag);
   const auto candidates = find_touches(state, constraints, backend, contact_parameters,
@@ -297,6 +307,17 @@ struct Substep {
   };
 
   std::vector<float> multipliers(rows.size(), 0.0F);
+  std::map<TouchKey, std::size_t> used;
+  for (std::size_t index = 0; index < rows.size(); ++index) {
+    const auto memory = remembered.find(keys[index]);
+    if (memory == remembered.end()) {
+      continue;
+    }
+    const auto position = used[keys[index]]++;
+    if (position < memory->second.size()) {
+      multipliers[index] = memory->second[position];
+    }
+  }
   for (std::uint32_t refinement = 0; refinement <= parameters.max_refinements; ++refinement) {
     const ContactSystem system{
         .rows = rows,
@@ -334,9 +355,14 @@ struct Substep {
       }
     }
     if (overlapping.empty()) {
+      ForceMemory memory;
+      for (std::size_t index = 0; index < rows.size(); ++index) {
+        memory[keys[index]].push_back(multipliers[index]);
+      }
       return Substep{
           .geometry = *trial,
           .loads = response.loads,
+          .forces = std::move(memory),
           .refinements = refinement,
           .rows = rows.size(),
           .max_overlap = max_overlap,
@@ -487,14 +513,15 @@ ContactDynamicsResult advance_contact_dynamics(
 
     auto remaining = static_cast<double>(dt);
     auto length = longest;
+    ForceMemory forces;
     while (remaining > 0.0) {
       // A final piece within rounding of the remainder takes all of it.
       if (static_cast<double>(length) >= remaining * (1.0 - 1.0e-6)) {
         length = static_cast<float>(remaining);
       }
-      auto substep =
-          advance_substep(state, base, initial.lengths, constraints, backend, length, parameters,
-                          contact_parameters, constraint_parameters, result.report.iterations);
+      auto substep = advance_substep(state, base, initial.lengths, constraints, backend, length,
+                                     parameters, contact_parameters, constraint_parameters, forces,
+                                     result.report.iterations);
       if (!substep.has_value()) {
         length *= 0.5F;
         ++result.report.halvings;
@@ -512,7 +539,11 @@ ContactDynamicsResult advance_contact_dynamics(
       result.report.refinements += substep->refinements;
       result.report.max_rows = std::max(result.report.max_rows, substep->rows);
       result.report.max_overlap = substep->max_overlap;
-      length = std::min(longest, length * 2.0F);
+      forces = std::move(substep->forces);
+      // A substep that settled in few rounds has room to lengthen.
+      if (substep->refinements <= easy_refinements) {
+        length = std::min(longest, length * 2.0F);
+      }
     }
   } catch (...) {
     restore(state, initial);
