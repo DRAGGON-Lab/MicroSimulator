@@ -121,6 +121,10 @@ class UniformLengthDivision:
         targets = policy["targets"]
         if not isinstance(targets, dict):
             raise ControllerStateError(f"controller state {self.state_key!r} targets are invalid")
+        return targets
+
+    def _validated_targets(self, step: ControllerStep) -> dict[str, JSONValue]:
+        targets = self._targets(step)
         for target in targets.values():
             if (
                 not isinstance(target, int | float)
@@ -134,7 +138,7 @@ class UniformLengthDivision:
     def requests(self, step: ControllerStep) -> tuple[DivisionRequest, ...]:
         """Return stable-ID-ordered division requests for cells above target length."""
 
-        targets = self._targets(step)
+        targets = self._validated_targets(step)
         if set(targets) != {str(cell.id) for cell in step.cells}:
             raise ControllerStateError("division targets do not match active cell identities")
         return tuple(
@@ -153,15 +157,14 @@ class UniformLengthDivision:
     def on_division(self, step: ControllerStep, event: DivisionEvent) -> None:
         """Transfer policy state, apply optional jitter, and sample daughter targets."""
 
+        # `requests` checks the targets against every active cell once a step;
+        # an event checks only the three cells it concerns, so a step's events
+        # together cost time linear in the population.
         targets = self._targets(step)
         parent_key = str(event.parent.id)
-        daughter_keys = {str(event.first.id), str(event.second.id)}
-        active = {str(cell.id) for cell in step.cells}
-        # Plan removals apply after divisions, so cells already forgotten for
-        # this step's removals are still active here; targets may be a subset
-        # of the pre-division identities but never contain anything else.
-        expected = (active - daughter_keys) | {parent_key}
-        if parent_key not in targets or not set(targets) <= expected:
+        first_key = str(event.first.id)
+        second_key = str(event.second.id)
+        if parent_key not in targets or first_key in targets or second_key in targets:
             raise ControllerStateError("division targets do not match pre-division identities")
         del targets[parent_key]
         if self.jitter_z is not None:
@@ -180,5 +183,5 @@ class UniformLengthDivision:
                     direction,
                     daughter.length,
                 )
-        targets[str(event.first.id)] = self._sample(step.rng)
-        targets[str(event.second.id)] = self._sample(step.rng)
+        targets[first_key] = self._sample(step.rng)
+        targets[second_key] = self._sample(step.rng)

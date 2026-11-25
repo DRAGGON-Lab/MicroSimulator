@@ -4,15 +4,15 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <map>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "core/contact_stepper.hpp"
+#include "core/parallel.hpp"
 #include "core/shared_constants.hpp"
 #include "microsimulator/mechanics.hpp"
 
@@ -39,6 +39,18 @@ constexpr std::uint32_t easy_refinements = 2;
 // A rotation this large in one substep is outside the linearization the
 // substep's rows rest on.
 constexpr float maximum_substep_rotation = 0.5F;
+// The rotation a substep's length is planned for. The margin below the limit
+// absorbs a turn rate that changes as the contacts do.
+constexpr float planned_substep_rotation = 0.8F * maximum_substep_rotation;
+// Solver iterations after which the fastest-turning cell's rotation is read
+// to decide whether a substep of untried length is worth solving. A cell
+// turns under the forces of its own neighbors, which settle long before the
+// pressure across a colony does.
+constexpr std::uint32_t rotation_probe_iterations = 128;
+
+// Cells and contacts handed to one thread at a time.
+constexpr std::size_t cell_grain = 2048;
+constexpr std::size_t touch_grain = 1024;
 
 [[nodiscard]] bool finite(const Vec3& value) {
   return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
@@ -57,23 +69,28 @@ struct Geometry {
 [[nodiscard]] Geometry capture(const WorldState& state) {
   const auto view = state.geometry_state();
   Geometry geometry;
-  geometry.positions.reserve(view.size());
-  geometry.directions.reserve(view.size());
-  geometry.lengths.assign(view.lengths.begin(), view.lengths.end());
-  for (std::size_t slot = 0; slot < view.size(); ++slot) {
-    geometry.positions.push_back(
-        {view.position_x[slot], view.position_y[slot], view.position_z[slot]});
-    geometry.directions.push_back(
-        {view.direction_x[slot], view.direction_y[slot], view.direction_z[slot]});
-  }
+  geometry.positions.resize(view.size());
+  geometry.directions.resize(view.size());
+  geometry.lengths.resize(view.size());
+  detail::parallel_for(view.size(), cell_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t slot = begin; slot < end; ++slot) {
+      geometry.positions[slot] = {view.position_x[slot], view.position_y[slot],
+                                  view.position_z[slot]};
+      geometry.directions[slot] = {view.direction_x[slot], view.direction_y[slot],
+                                   view.direction_z[slot]};
+      geometry.lengths[slot] = view.lengths[slot];
+    }
+  });
   return geometry;
 }
 
 void restore(WorldState& state, const Geometry& geometry) {
-  for (std::size_t slot = 0; slot < geometry.size(); ++slot) {
-    state.set_cell_geometry(static_cast<Slot>(slot), geometry.positions[slot],
-                            geometry.directions[slot], geometry.lengths[slot]);
-  }
+  detail::parallel_for(geometry.size(), cell_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t slot = begin; slot < end; ++slot) {
+      state.set_cell_geometry(static_cast<Slot>(slot), geometry.positions[slot],
+                              geometry.directions[slot], geometry.lengths[slot]);
+    }
+  });
 }
 
 // A contact reduced to what a row needs. `partner` is the second cell's slot
@@ -87,11 +104,74 @@ struct Touch {
   float separation{0.0F};
 };
 
-using TouchKey = std::tuple<Slot, bool, std::uint64_t>;
+// What identifies a contact from one substep to the next. A capsule pair with
+// two contact points has two rows under one key.
+struct TouchKey {
+  Slot first_slot{invalid_slot};
+  bool wall{false};
+  std::uint64_t partner{0};
+
+  [[nodiscard]] bool operator==(const TouchKey&) const = default;
+};
 
 [[nodiscard]] TouchKey key_of(const Touch& touch) {
   return {touch.first_slot, touch.second_slot == invalid_slot, touch.partner};
 }
+
+// The rows of a solve filed under the first cell of each, in row order. A
+// cell has a handful of rows, so the rows of one key are found by scanning
+// its first cell's.
+class KeyedRows {
+ public:
+  KeyedRows() = default;
+
+  KeyedRows(std::size_t cell_count, std::span<const TouchKey> keys)
+      : offsets_(cell_count + 1, 0), rows_(keys.size()) {
+    for (const auto& key : keys) {
+      ++offsets_[static_cast<std::size_t>(key.first_slot) + 1];
+    }
+    for (std::size_t slot = 0; slot < cell_count; ++slot) {
+      offsets_[slot + 1] += offsets_[slot];
+    }
+    std::vector<std::uint32_t> cursors(offsets_.begin(), offsets_.end() - 1);
+    for (std::size_t row = 0; row < keys.size(); ++row) {
+      rows_[cursors[keys[row].first_slot]++] = static_cast<std::uint32_t>(row);
+    }
+  }
+
+  // The rows whose first cell is `slot`, in row order.
+  [[nodiscard]] std::span<const std::uint32_t> of(Slot slot) const {
+    if (offsets_.empty()) {
+      return {};
+    }
+    const auto begin = offsets_[slot];
+    return std::span(rows_).subspan(begin, offsets_[static_cast<std::size_t>(slot) + 1] - begin);
+  }
+
+ private:
+  std::vector<std::uint32_t> offsets_;
+  std::vector<std::uint32_t> rows_;
+};
+
+// The contact forces of a solved substep by contact, in row order, which
+// start the solve of the next substep: a contact that persists carries nearly
+// the same force.
+struct ForceMemory {
+  KeyedRows rows;
+  std::vector<TouchKey> keys;
+  std::vector<float> multipliers;
+
+  // The force of the row numbered `occurrence` among those of `key`, or zero
+  // when the solve had no such row.
+  [[nodiscard]] float force(const TouchKey& key, std::size_t occurrence) const {
+    for (const auto row : rows.of(key.first_slot)) {
+      if (keys[row] == key && occurrence-- == 0) {
+        return multipliers[row];
+      }
+    }
+    return 0.0F;
+  }
+};
 
 [[nodiscard]] std::vector<Touch> find_touches(const WorldState& state,
                                               const ConstraintSet& constraints,
@@ -180,24 +260,26 @@ using TouchKey = std::tuple<Slot, bool, std::uint64_t>;
   const auto geometry = state.geometry_state();
   const auto attributes = state.cell_attributes();
   std::vector<ContactBody> bodies(geometry.size());
-  for (std::size_t slot = 0; slot < bodies.size(); ++slot) {
-    auto& body = bodies[slot];
-    body.axis = {geometry.direction_x[slot], geometry.direction_y[slot],
-                 geometry.direction_z[slot]};
-    body.length_rate = attributes.growth_rates[slot] * rate_lengths[slot];
-    if (attributes.fixed[slot] != 0) {
-      continue;
+  detail::parallel_for(bodies.size(), cell_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t slot = begin; slot < end; ++slot) {
+      auto& body = bodies[slot];
+      body.axis = {geometry.direction_x[slot], geometry.direction_y[slot],
+                   geometry.direction_z[slot]};
+      body.length_rate = attributes.growth_rates[slot] * rate_lengths[slot];
+      if (attributes.fixed[slot] != 0) {
+        continue;
+      }
+      const auto radius = geometry.radii[slot];
+      const auto total_length = geometry.lengths[slot] + 2.0F * radius;
+      const auto translational = drag * total_length;
+      const auto axial = 0.5F * translational * radius * radius;
+      const auto transverse =
+          translational * ((total_length * total_length) + 3.0F * radius * radius) / 12.0F;
+      body.translational_mobility = 1.0F / translational;
+      body.axial_mobility = 1.0F / axial;
+      body.transverse_mobility = 1.0F / transverse;
     }
-    const auto radius = geometry.radii[slot];
-    const auto total_length = geometry.lengths[slot] + 2.0F * radius;
-    const auto translational = drag * total_length;
-    const auto axial = 0.5F * translational * radius * radius;
-    const auto transverse =
-        translational * ((total_length * total_length) + 3.0F * radius * radius) / 12.0F;
-    body.translational_mobility = 1.0F / translational;
-    body.axial_mobility = 1.0F / axial;
-    body.transverse_mobility = 1.0F / transverse;
-  }
+  });
   return bodies;
 }
 
@@ -218,28 +300,77 @@ using TouchKey = std::tuple<Slot, bool, std::uint64_t>;
   return rate;
 }
 
-// The geometry after moving every cell for `dt` under a response, or nothing
-// when the move is not a valid geometry.
-[[nodiscard]] std::optional<Geometry> moved(const Geometry& base, const ContactResponse& response,
-                                            float dt) {
-  auto result = base;
-  for (std::size_t slot = 0; slot < base.size(); ++slot) {
-    const auto& velocity = response.velocities[slot];
-    const Vec3 rotation{velocity[3] * dt, velocity[4] * dt, velocity[5] * dt};
-    if (!finite(rotation) || norm(rotation) > maximum_substep_rotation) {
-      return std::nullopt;
-    }
-    result.positions[slot] =
-        base.positions[slot] + Vec3{velocity[0], velocity[1], velocity[2]} * dt;
-    result.directions[slot] =
-        rotate_axis_angle(base.directions[slot], rotation, maximum_substep_rotation);
-    result.lengths[slot] = base.lengths[slot] + response.length_rates[slot] * dt;
-    if (!finite(result.positions[slot]) || !finite(result.directions[slot]) ||
-        !std::isfinite(result.lengths[slot]) || result.lengths[slot] < 0.0F) {
-      return std::nullopt;
-    }
+// A move of every cell for `dt` under a response. `geometry` is empty when
+// the move is not a valid geometry. `rotation` is the largest angle any cell
+// turns through, whether or not the move is valid.
+struct Move {
+  std::optional<Geometry> geometry;
+  float rotation{0.0F};
+};
+
+[[nodiscard]] Move moved(const Geometry& base, const ContactResponse& response, float dt) {
+  struct Piece {
+    float rotation{0.0F};
+    bool valid{true};
+  };
+  Geometry result;
+  result.positions.resize(base.size());
+  result.directions.resize(base.size());
+  result.lengths.resize(base.size());
+  const auto whole = detail::parallel_reduce(
+      base.size(), cell_grain, Piece{},
+      [&](std::size_t begin, std::size_t end) {
+        Piece piece;
+        for (std::size_t slot = begin; slot < end; ++slot) {
+          const auto& velocity = response.velocities[slot];
+          const Vec3 rotation{velocity[3] * dt, velocity[4] * dt, velocity[5] * dt};
+          if (!finite(rotation)) {
+            piece.valid = false;
+            continue;
+          }
+          const auto angle = norm(rotation);
+          piece.rotation = std::max(piece.rotation, angle);
+          if (angle > maximum_substep_rotation) {
+            piece.valid = false;
+            continue;
+          }
+          result.positions[slot] =
+              base.positions[slot] + Vec3{velocity[0], velocity[1], velocity[2]} * dt;
+          result.directions[slot] =
+              rotate_axis_angle(base.directions[slot], rotation, maximum_substep_rotation);
+          result.lengths[slot] = base.lengths[slot] + response.length_rates[slot] * dt;
+          if (!finite(result.positions[slot]) || !finite(result.directions[slot]) ||
+              !std::isfinite(result.lengths[slot]) || result.lengths[slot] < 0.0F) {
+            piece.valid = false;
+          }
+        }
+        return piece;
+      },
+      [](Piece left, const Piece& right) {
+        return Piece{std::max(left.rotation, right.rotation), left.valid && right.valid};
+      });
+  if (!whole.valid) {
+    return {.geometry = std::nullopt, .rotation = whole.rotation};
   }
-  return result;
+  return {.geometry = std::move(result), .rotation = whole.rotation};
+}
+
+// The largest angle any cell turns through in `dt` under a response, or
+// infinity when a turn is not finite.
+[[nodiscard]] float largest_rotation(const ContactResponse& response, float dt) {
+  return detail::parallel_reduce(
+      response.velocities.size(), cell_grain, 0.0F,
+      [&](std::size_t begin, std::size_t end) {
+        auto largest = 0.0F;
+        for (std::size_t slot = begin; slot < end; ++slot) {
+          const auto& velocity = response.velocities[slot];
+          const auto angle = norm(Vec3{velocity[3] * dt, velocity[4] * dt, velocity[5] * dt});
+          largest = std::isfinite(angle) ? std::max(largest, angle)
+                                         : std::numeric_limits<float>::infinity();
+        }
+        return largest;
+      },
+      [](float left, float right) { return std::max(left, right); });
 }
 
 // The overlap accepted at the end of a substep. An overlap of e that a jammed
@@ -261,11 +392,6 @@ using TouchKey = std::tuple<Slot, bool, std::uint64_t>;
                   load_resolution_fraction * load_scale / parameters.contact_stiffness);
 }
 
-// The contact forces of a solved substep by contact, in row order, which
-// start the solve of the next substep: a contact that persists carries nearly
-// the same force.
-using ForceMemory = std::map<TouchKey, std::vector<float>>;
-
 struct Substep {
   Geometry geometry;
   std::vector<float> loads;
@@ -275,14 +401,25 @@ struct Substep {
   float max_overlap{0.0F};
 };
 
+// What an attempt at a substep came to. `substep` is empty when the attempt
+// failed. `rotation` is the largest angle any cell turned through in the last
+// move the attempt tried, which is what the next attempt's length is planned
+// from.
+struct SubstepAttempt {
+  std::optional<Substep> substep;
+  float rotation{0.0F};
+};
+
 // One substep from the geometry the state holds. On failure the state holds
-// that geometry again.
-[[nodiscard]] std::optional<Substep> advance_substep(
+// that geometry again. With `probe`, an attempt whose cells turn too far is
+// given up after the first few solver iterations rather than solved to the
+// end and then discarded.
+[[nodiscard]] SubstepAttempt advance_substep(
     WorldState& state, const Geometry& base, std::span<const float> rate_lengths,
     const ConstraintSet& constraints, ComputeBackend& backend, float dt,
     const ContactDynamicsParameters& parameters, const ContactParameters& contact_parameters,
     const ConstraintContactParameters& constraint_parameters, const detail::ContactDrift& drift,
-    const ForceMemory& remembered, std::uint64_t& iterations) {
+    const ForceMemory& remembered, bool probe, std::uint64_t& iterations) {
   const auto radii = state.geometry_state().radii;
   auto bodies = make_bodies(state, rate_lengths, parameters.drag);
   if (drift.rates) {
@@ -293,22 +430,27 @@ struct Substep {
   }
   const auto candidates = find_touches(state, constraints, backend, contact_parameters,
                                        constraint_parameters, parameters.candidate_margin);
-  std::vector<ContactRow> rows;
-  std::vector<TouchKey> keys;
-  rows.reserve(candidates.size());
-  keys.reserve(candidates.size());
-  auto starting_overlap = 0.0F;
   // A wall is rigid next to a cell, so a wall contact yields less.
   const auto compliance_of = [&parameters](const Touch& touch) {
     return 1.0F / (touch.second_slot == invalid_slot ? parameters.wall_stiffness
                                                      : parameters.contact_stiffness);
   };
-  for (const auto& touch : candidates) {
-    starting_overlap = std::max(starting_overlap, -touch.separation);
-    rows.push_back(
-        make_row(base, radii, touch, compliance_of(touch), parameters.max_overlap_recovery));
-    keys.push_back(key_of(touch));
-  }
+  std::vector<ContactRow> rows(candidates.size());
+  std::vector<TouchKey> keys(candidates.size());
+  const auto starting_overlap = detail::parallel_reduce(
+      candidates.size(), touch_grain, 0.0F,
+      [&](std::size_t begin, std::size_t end) {
+        auto deepest = 0.0F;
+        for (std::size_t index = begin; index < end; ++index) {
+          const auto& touch = candidates[index];
+          deepest = std::max(deepest, -touch.separation);
+          rows[index] =
+              make_row(base, radii, touch, compliance_of(touch), parameters.max_overlap_recovery);
+          keys[index] = key_of(touch);
+        }
+        return deepest;
+      },
+      [](float left, float right) { return std::max(left, right); });
   // Overlap deeper than one substep recovers is accepted for now.
   const auto tolerance = effective_overlap_tolerance(parameters);
   const auto slack = tolerance + std::max(0.0F, starting_overlap - parameters.max_overlap_recovery);
@@ -317,18 +459,21 @@ struct Substep {
       .max_iterations = parameters.max_iterations,
   };
 
+  KeyedRows keyed(bodies.size(), keys);
+  auto rotation = 0.0F;
   std::vector<float> multipliers(rows.size(), 0.0F);
-  std::map<TouchKey, std::size_t> used;
-  for (std::size_t index = 0; index < rows.size(); ++index) {
-    const auto memory = remembered.find(keys[index]);
-    if (memory == remembered.end()) {
-      continue;
+  detail::parallel_for(rows.size(), touch_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t index = begin; index < end; ++index) {
+      auto occurrence = std::size_t{0};
+      for (const auto row : keyed.of(keys[index].first_slot)) {
+        if (row >= index) {
+          break;
+        }
+        occurrence += keys[row] == keys[index] ? 1 : 0;
+      }
+      multipliers[index] = remembered.force(keys[index], occurrence);
     }
-    const auto position = used[keys[index]]++;
-    if (position < memory->second.size()) {
-      multipliers[index] = memory->second[position];
-    }
-  }
+  });
   for (std::uint32_t refinement = 0; refinement <= parameters.max_refinements; ++refinement) {
     const ContactSystem system{
         .rows = rows,
@@ -336,48 +481,84 @@ struct Substep {
         .dt = dt,
         .growth = parameters.growth,
     };
-    auto solve = backend.solve_contact_forces(system, multipliers, solve_parameters);
+    auto remaining_iterations = solve_parameters.max_iterations;
+    if (probe && refinement == 0 && remaining_iterations > rotation_probe_iterations) {
+      auto early = backend.solve_contact_forces(
+          system, multipliers,
+          {.tolerance = solve_parameters.tolerance, .max_iterations = rotation_probe_iterations});
+      iterations += early.report.iterations;
+      remaining_iterations -= early.report.iterations;
+      if (early.report.status == ContactSolveStatus::breakdown) {
+        break;
+      }
+      multipliers = std::move(early.multipliers);
+      if (early.report.status != ContactSolveStatus::converged) {
+        rotation = largest_rotation(evaluate_contact_response(system, multipliers), dt);
+        if (rotation > maximum_substep_rotation) {
+          break;
+        }
+      }
+    }
+    auto solve = backend.solve_contact_forces(
+        system, multipliers,
+        {.tolerance = solve_parameters.tolerance, .max_iterations = remaining_iterations});
     iterations += solve.report.iterations;
     if (solve.report.status != ContactSolveStatus::converged) {
       break;
     }
     multipliers = std::move(solve.multipliers);
-    const auto response = evaluate_contact_response(system, multipliers);
-    const auto trial = moved(base, response, dt);
-    if (!trial.has_value()) {
+    auto response = evaluate_contact_response(system, multipliers);
+    auto move = moved(base, response, dt);
+    rotation = move.rotation;
+    if (!move.geometry.has_value()) {
       break;
     }
-    restore(state, *trial);
+    const auto& trial = *move.geometry;
+    restore(state, trial);
 
     const auto found =
         find_touches(state, constraints, backend, contact_parameters, constraint_parameters, 0.0F);
-    std::map<TouchKey, float> forces;
-    for (std::size_t index = 0; index < rows.size(); ++index) {
-      forces[keys[index]] += multipliers[index];
-    }
-    std::vector<Touch> overlapping;
-    auto max_overlap = 0.0F;
-    for (const auto& touch : found) {
-      max_overlap = std::max(max_overlap, -touch.separation);
-      const auto force = forces.find(key_of(touch));
-      const auto allowed =
-          slack + (force == forces.end() ? 0.0F : force->second * compliance_of(touch));
-      if (touch.separation < -allowed) {
-        overlapping.push_back(touch);
+    // A contact may overlap by the slack plus what its own force presses in.
+    const auto force_on = [&](const TouchKey& key) {
+      auto force = 0.0F;
+      for (const auto row : keyed.of(key.first_slot)) {
+        if (keys[row] == key) {
+          force += multipliers[row];
+        }
       }
-    }
+      return force;
+    };
+    std::vector<std::vector<Touch>> pieces((found.size() + touch_grain - 1) / touch_grain);
+    const auto max_overlap = detail::parallel_reduce(
+        found.size(), touch_grain, 0.0F,
+        [&](std::size_t begin, std::size_t end) {
+          auto deepest = 0.0F;
+          for (std::size_t index = begin; index < end; ++index) {
+            const auto& touch = found[index];
+            deepest = std::max(deepest, -touch.separation);
+            const auto allowed = slack + force_on(key_of(touch)) * compliance_of(touch);
+            if (touch.separation < -allowed) {
+              pieces[begin / touch_grain].push_back(touch);
+            }
+          }
+          return deepest;
+        },
+        [](float left, float right) { return std::max(left, right); });
+    const auto overlapping = detail::concatenate(pieces);
     if (overlapping.empty()) {
-      ForceMemory memory;
-      for (std::size_t index = 0; index < rows.size(); ++index) {
-        memory[keys[index]].push_back(multipliers[index]);
-      }
-      return Substep{
-          .geometry = *trial,
-          .loads = response.loads,
-          .forces = std::move(memory),
-          .refinements = refinement,
-          .rows = rows.size(),
-          .max_overlap = max_overlap,
+      return {
+          .substep =
+              Substep{
+                  .geometry = std::move(*move.geometry),
+                  .loads = std::move(response.loads),
+                  .forces = {.rows = std::move(keyed),
+                             .keys = std::move(keys),
+                             .multipliers = std::move(multipliers)},
+                  .refinements = refinement,
+                  .rows = rows.size(),
+                  .max_overlap = max_overlap,
+              },
+          .rotation = rotation,
       };
     }
 
@@ -386,15 +567,16 @@ struct Substep {
     // move actually left.
     for (const auto& touch : overlapping) {
       auto row =
-          make_row(*trial, radii, touch, compliance_of(touch), parameters.max_overlap_recovery);
+          make_row(trial, radii, touch, compliance_of(touch), parameters.max_overlap_recovery);
       row.offset -= dt * predicted_rate(row, response);
       rows.push_back(row);
       keys.push_back(key_of(touch));
       multipliers.push_back(0.0F);
     }
+    keyed = KeyedRows(bodies.size(), keys);
   }
   restore(state, base);
-  return std::nullopt;
+  return {.substep = std::nullopt, .rotation = rotation};
 }
 
 }  // namespace
@@ -535,26 +717,37 @@ ContactDynamicsResult advance_contact_dynamics(
 
     auto remaining = static_cast<double>(dt);
     auto length = longest;
+    // The longest substep this step has taken. A longer one is untried.
+    auto proven = 0.0F;
     ForceMemory forces;
     while (remaining > 0.0) {
       // A final piece within rounding of the remainder takes all of it.
       if (static_cast<double>(length) >= remaining * (1.0 - 1.0e-6)) {
         length = static_cast<float>(remaining);
       }
-      auto substep = advance_substep(state, base, initial.lengths, constraints, backend, length,
+      auto attempt = advance_substep(state, base, initial.lengths, constraints, backend, length,
                                      parameters, contact_parameters, constraint_parameters, drift,
-                                     forces, result.report.iterations);
+                                     forces, length > proven, result.report.iterations);
+      auto& substep = attempt.substep;
       if (!substep.has_value()) {
-        length *= 0.5F;
-        ++result.report.halvings;
+        // Rotation is close to proportional to the length of a substep, so an
+        // attempt that turned a cell too far is retried at the length that
+        // brings the turn within the planned rotation, not merely at half.
+        const auto excess = attempt.rotation / planned_substep_rotation;
+        const auto halvings =
+            excess > 2.0F ? static_cast<std::uint32_t>(std::ceil(std::log2(excess))) : 1U;
+        const auto failed = length;
+        length = std::ldexp(length, -static_cast<int>(std::min<std::uint32_t>(halvings, 64)));
+        result.report.halvings += halvings;
         if (length < shortest) {
           throw std::runtime_error(
               "contact dynamics did not resolve the contacts of a substep of " +
-              std::to_string(length * 2.0F));
+              std::to_string(failed));
         }
         continue;
       }
       remaining -= static_cast<double>(length);
+      proven = std::max(proven, length);
       base = std::move(substep->geometry);
       result.axial_loads = std::move(substep->loads);
       ++result.report.substeps;
@@ -562,8 +755,10 @@ ContactDynamicsResult advance_contact_dynamics(
       result.report.max_rows = std::max(result.report.max_rows, substep->rows);
       result.report.max_overlap = substep->max_overlap;
       forces = std::move(substep->forces);
-      // A substep that settled in few rounds has room to lengthen.
-      if (substep->refinements <= easy_refinements) {
+      // A substep that settled in few rounds has room to lengthen, unless
+      // doubling it would turn a cell further than planned.
+      if (substep->refinements <= easy_refinements &&
+          2.0F * attempt.rotation <= planned_substep_rotation) {
         length = std::min(longest, length * 2.0F);
       }
     }

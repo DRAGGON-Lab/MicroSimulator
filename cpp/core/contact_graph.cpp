@@ -1,11 +1,15 @@
 #include "microsimulator/contact_graph.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
+
+#include "core/parallel.hpp"
 
 namespace microsimulator {
 namespace {
@@ -19,7 +23,184 @@ struct CapsuleBounds {
   double maximum_y;
   double minimum_z;
   double maximum_z;
+
+  [[nodiscard]] std::array<double, 3> minimum() const {
+    return {minimum_x, minimum_y, minimum_z};
+  }
+
+  [[nodiscard]] std::array<double, 3> maximum() const {
+    return {maximum_x, maximum_y, maximum_z};
+  }
 };
+
+// Boxes that touch count as overlapping.
+[[nodiscard]] bool overlap(const CapsuleBounds& left, const CapsuleBounds& right) {
+  return left.maximum_x >= right.minimum_x && right.maximum_x >= left.minimum_x &&
+         left.maximum_y >= right.minimum_y && right.maximum_y >= left.minimum_y &&
+         left.maximum_z >= right.minimum_z && right.maximum_z >= left.minimum_z;
+}
+
+// Cells handed to one thread at a time.
+constexpr std::size_t bounds_grain = 2048;
+constexpr std::size_t search_grain = 256;
+constexpr std::size_t adjacency_grain = 1024;
+// A grid with more boxes than this multiple of the cell count is too sparse
+// to index densely.
+constexpr std::size_t grid_boxes_per_cell = 8;
+constexpr std::size_t grid_spare_boxes = 4096;
+
+// The overlapping pairs of boxes, each ordered by identifier and the whole
+// sorted, found through a uniform grid. Every grid box is at least as wide as
+// the widest capsule box, so two overlapping capsule boxes have centers in
+// the same or adjacent grid boxes. Returns nothing when the cells are spread
+// too thinly for a dense grid.
+[[nodiscard]] std::optional<std::vector<ContactCandidate>> grid_candidates(
+    std::span<const CapsuleBounds> bounds) {
+  const auto count = bounds.size();
+  std::array<double, 3> low = bounds.front().minimum();
+  std::array<double, 3> high = bounds.front().maximum();
+  std::array<double, 3> width{};
+  for (const auto& box : bounds) {
+    const auto minimum = box.minimum();
+    const auto maximum = box.maximum();
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      low[axis] = std::min(low[axis], minimum[axis]);
+      high[axis] = std::max(high[axis], maximum[axis]);
+      width[axis] = std::max(width[axis], maximum[axis] - minimum[axis]);
+    }
+  }
+  std::array<std::size_t, 3> dimensions{};
+  std::array<double, 3> inverse_width{};
+  auto box_count = std::size_t{1};
+  const auto box_limit = grid_boxes_per_cell * count + grid_spare_boxes;
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    // The margin keeps rounding from placing overlapping boxes two apart.
+    const auto box_width = std::max(width[axis] * 1.001, std::numeric_limits<double>::min());
+    const auto extent = std::floor((high[axis] - low[axis]) / box_width) + 1.0;
+    if (!(extent <= static_cast<double>(box_limit))) {
+      return std::nullopt;
+    }
+    dimensions[axis] = static_cast<std::size_t>(extent);
+    inverse_width[axis] = 1.0 / box_width;
+    box_count *= dimensions[axis];
+    if (box_count > box_limit) {
+      return std::nullopt;
+    }
+  }
+  const auto coordinates = [&](const CapsuleBounds& box) {
+    const auto minimum = box.minimum();
+    const auto maximum = box.maximum();
+    std::array<std::size_t, 3> result{};
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      const auto center = 0.5 * (minimum[axis] + maximum[axis]);
+      const auto position = std::max(0.0, (center - low[axis]) * inverse_width[axis]);
+      result[axis] = std::min(dimensions[axis] - 1, static_cast<std::size_t>(position));
+    }
+    return result;
+  };
+  const auto flat = [&](std::size_t x, std::size_t y, std::size_t z) {
+    return (x * dimensions[1] + y) * dimensions[2] + z;
+  };
+
+  std::vector<std::uint32_t> box_of(count);
+  detail::parallel_for(count, bounds_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t index = begin; index < end; ++index) {
+      const auto at = coordinates(bounds[index]);
+      box_of[index] = static_cast<std::uint32_t>(flat(at[0], at[1], at[2]));
+    }
+  });
+  std::vector<std::uint32_t> starts(box_count + 1, 0);
+  for (const auto box : box_of) {
+    ++starts[static_cast<std::size_t>(box) + 1];
+  }
+  for (std::size_t box = 0; box < box_count; ++box) {
+    starts[box + 1] += starts[box];
+  }
+  std::vector<std::uint32_t> members(count);
+  {
+    std::vector<std::uint32_t> cursors(starts.begin(), starts.end() - 1);
+    for (std::size_t index = 0; index < count; ++index) {
+      members[cursors[box_of[index]]++] = static_cast<std::uint32_t>(index);
+    }
+  }
+
+  // Each cell finds its partners of higher identifier, so that the cells
+  // taken in identifier order yield the pairs already sorted.
+  std::vector<std::uint32_t> order(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    order[index] = static_cast<std::uint32_t>(index);
+  }
+  if (!std::ranges::is_sorted(bounds, {}, &CapsuleBounds::id)) {
+    std::ranges::sort(order, {}, [&](std::uint32_t index) { return bounds[index].id; });
+  }
+  std::vector<std::vector<ContactCandidate>> pieces((count + search_grain - 1) / search_grain);
+  detail::parallel_for(count, search_grain, [&](std::size_t begin, std::size_t end) {
+    auto& piece = pieces[begin / search_grain];
+    std::vector<std::pair<CellId, Slot>> partners;
+    for (std::size_t position = begin; position < end; ++position) {
+      const auto& current = bounds[order[position]];
+      const auto at = coordinates(current);
+      std::array<std::size_t, 3> first{};
+      std::array<std::size_t, 3> last{};
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        first[axis] = at[axis] == 0 ? 0 : at[axis] - 1;
+        last[axis] = std::min(dimensions[axis] - 1, at[axis] + 1);
+      }
+      partners.clear();
+      for (auto x = first[0]; x <= last[0]; ++x) {
+        for (auto y = first[1]; y <= last[1]; ++y) {
+          for (auto z = first[2]; z <= last[2]; ++z) {
+            const auto box = flat(x, y, z);
+            for (auto member = starts[box]; member < starts[box + 1]; ++member) {
+              const auto& other = bounds[members[member]];
+              if (other.id > current.id && overlap(current, other)) {
+                partners.emplace_back(other.id, other.slot);
+              }
+            }
+          }
+        }
+      }
+      std::ranges::sort(partners);
+      for (const auto& [id, slot] : partners) {
+        piece.push_back({current.slot, slot});
+      }
+    }
+  });
+  return detail::concatenate(pieces);
+}
+
+// The same pairs found by sweeping the boxes along x, for cells spread too
+// thinly for a grid.
+[[nodiscard]] std::vector<ContactCandidate> sweep_candidates(std::vector<CapsuleBounds> bounds,
+                                                             const CellGeometryView& geometry) {
+  std::ranges::sort(bounds, [](const CapsuleBounds& left, const CapsuleBounds& right) {
+    return std::tuple{left.minimum_x, left.id} < std::tuple{right.minimum_x, right.id};
+  });
+
+  std::vector<const CapsuleBounds*> active;
+  std::vector<ContactCandidate> candidates;
+  for (const auto& current : bounds) {
+    const auto expired = std::ranges::remove_if(active, [&current](const CapsuleBounds* candidate) {
+      return candidate->maximum_x < current.minimum_x;
+    });
+    active.erase(expired.begin(), expired.end());
+    for (const auto* candidate : active) {
+      if (!overlap(*candidate, current)) {
+        continue;
+      }
+      candidates.push_back(candidate->id < current.id
+                               ? ContactCandidate{candidate->slot, current.slot}
+                               : ContactCandidate{current.slot, candidate->slot});
+    }
+    active.push_back(&current);
+  }
+  std::ranges::sort(
+      candidates, [&geometry](const ContactCandidate& left, const ContactCandidate& right) {
+        return std::tuple{geometry.ids[left.first_slot], geometry.ids[left.second_slot]} <
+               std::tuple{geometry.ids[right.first_slot], geometry.ids[right.second_slot]};
+      });
+  return candidates;
+}
 
 bool finite(const Vec3& value) {
   return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
@@ -74,63 +255,48 @@ std::vector<ContactCandidate> find_cell_contact_candidates(const WorldState& sta
                                                            const ContactParameters& parameters) {
   validate_contact_parameters(parameters);
   const auto geometry = state.geometry_state();
-  std::vector<CapsuleBounds> bounds;
-  bounds.reserve(geometry.size());
+  std::vector<CapsuleBounds> bounds(geometry.size());
   const auto margin_per_cell = static_cast<double>(parameters.activation_margin) * 0.5;
-  for (std::size_t index = 0; index < geometry.size(); ++index) {
-    const auto half_length = static_cast<double>(geometry.lengths[index]) * 0.5;
-    const auto padding = static_cast<double>(geometry.radii[index]) + margin_per_cell;
-    const auto extent_x =
-        std::abs(static_cast<double>(geometry.direction_x[index])) * half_length + padding;
-    const auto extent_y =
-        std::abs(static_cast<double>(geometry.direction_y[index])) * half_length + padding;
-    const auto extent_z =
-        std::abs(static_cast<double>(geometry.direction_z[index])) * half_length + padding;
-    const auto center_x = static_cast<double>(geometry.position_x[index]);
-    const auto center_y = static_cast<double>(geometry.position_y[index]);
-    const auto center_z = static_cast<double>(geometry.position_z[index]);
-    bounds.push_back({
-        .id = geometry.ids[index],
-        .slot = static_cast<Slot>(index),
-        .minimum_x = center_x - extent_x,
-        .maximum_x = center_x + extent_x,
-        .minimum_y = center_y - extent_y,
-        .maximum_y = center_y + extent_y,
-        .minimum_z = center_z - extent_z,
-        .maximum_z = center_z + extent_z,
-    });
-  }
-  std::ranges::sort(bounds, [](const CapsuleBounds& left, const CapsuleBounds& right) {
-    return std::tuple{left.minimum_x, left.id} < std::tuple{right.minimum_x, right.id};
-  });
-
-  std::vector<const CapsuleBounds*> active;
-  std::vector<ContactCandidate> candidates;
-  for (const auto& current : bounds) {
-    const auto expired = std::ranges::remove_if(active, [&current](const CapsuleBounds* candidate) {
-      return candidate->maximum_x < current.minimum_x;
-    });
-    active.erase(expired.begin(), expired.end());
-    for (const auto* candidate : active) {
-      const auto overlaps_y =
-          candidate->maximum_y >= current.minimum_y && current.maximum_y >= candidate->minimum_y;
-      const auto overlaps_z =
-          candidate->maximum_z >= current.minimum_z && current.maximum_z >= candidate->minimum_z;
-      if (!overlaps_y || !overlaps_z) {
-        continue;
-      }
-      candidates.push_back(candidate->id < current.id
-                               ? ContactCandidate{candidate->slot, current.slot}
-                               : ContactCandidate{current.slot, candidate->slot});
+  detail::parallel_for(bounds.size(), bounds_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t index = begin; index < end; ++index) {
+      const auto half_length = static_cast<double>(geometry.lengths[index]) * 0.5;
+      const auto padding = static_cast<double>(geometry.radii[index]) + margin_per_cell;
+      const auto extent_x =
+          std::abs(static_cast<double>(geometry.direction_x[index])) * half_length + padding;
+      const auto extent_y =
+          std::abs(static_cast<double>(geometry.direction_y[index])) * half_length + padding;
+      const auto extent_z =
+          std::abs(static_cast<double>(geometry.direction_z[index])) * half_length + padding;
+      const auto center_x = static_cast<double>(geometry.position_x[index]);
+      const auto center_y = static_cast<double>(geometry.position_y[index]);
+      const auto center_z = static_cast<double>(geometry.position_z[index]);
+      bounds[index] = {
+          .id = geometry.ids[index],
+          .slot = static_cast<Slot>(index),
+          .minimum_x = center_x - extent_x,
+          .maximum_x = center_x + extent_x,
+          .minimum_y = center_y - extent_y,
+          .maximum_y = center_y + extent_y,
+          .minimum_z = center_z - extent_z,
+          .maximum_z = center_z + extent_z,
+      };
     }
-    active.push_back(&current);
+  });
+  if (bounds.size() < 2) {
+    return {};
   }
-  std::ranges::sort(
-      candidates, [&geometry](const ContactCandidate& left, const ContactCandidate& right) {
-        return std::tuple{geometry.ids[left.first_slot], geometry.ids[left.second_slot]} <
-               std::tuple{geometry.ids[right.first_slot], geometry.ids[right.second_slot]};
-      });
-  return candidates;
+  // A box that is not finite has no place in a grid; the sweep orders it.
+  const auto finite_bounds = std::ranges::all_of(bounds, [](const CapsuleBounds& box) {
+    return std::isfinite(box.minimum_x) && std::isfinite(box.maximum_x) &&
+           std::isfinite(box.minimum_y) && std::isfinite(box.maximum_y) &&
+           std::isfinite(box.minimum_z) && std::isfinite(box.maximum_z);
+  });
+  if (finite_bounds) {
+    if (auto candidates = grid_candidates(bounds)) {
+      return std::move(*candidates);
+    }
+  }
+  return sweep_candidates(std::move(bounds), geometry);
 }
 
 ContactGraph::ContactGraph(std::size_t cell_count, std::vector<CellContact> contacts)
@@ -142,8 +308,12 @@ ContactGraph::ContactGraph(std::size_t cell_count, std::vector<CellContact> cont
     throw std::overflow_error("contact incidence index size overflow");
   }
 
+  detail::parallel_for(contacts_.size(), adjacency_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t index = begin; index < end; ++index) {
+      validate_contact(contacts_[index], cell_count_);
+    }
+  });
   for (const auto& contact : contacts_) {
-    validate_contact(contact, cell_count_);
     ++incidence_offsets_[static_cast<std::size_t>(contact.first_slot) + 1];
     ++incidence_offsets_[static_cast<std::size_t>(contact.second_slot) + 1];
   }
@@ -159,19 +329,35 @@ ContactGraph::ContactGraph(std::size_t cell_count, std::vector<CellContact> cont
     incidence_contact_indices_[cursors[contact.second_slot]++] = index;
   }
 
-  std::vector<std::vector<CellId>> neighbors(cell_count_);
-  for (const auto& contact : contacts_) {
-    neighbors[contact.first_slot].push_back(contact.second_id);
-    neighbors[contact.second_slot].push_back(contact.first_id);
-  }
+  // Each cell's neighbors are the distinct partners of its incident contacts.
+  // They are sorted in the cell's own stretch of the incidence layout and
+  // then packed together.
+  std::vector<CellId> partners(incidence_contact_indices_.size());
+  std::vector<std::size_t> distinct(cell_count_);
+  detail::parallel_for(cell_count_, adjacency_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t slot = begin; slot < end; ++slot) {
+      const auto first = incidence_offsets_[slot];
+      const auto last = incidence_offsets_[slot + 1];
+      for (auto entry = first; entry < last; ++entry) {
+        const auto& contact = contacts_[incidence_contact_indices_[entry]];
+        partners[entry] = contact.first_slot == slot ? contact.second_id : contact.first_id;
+      }
+      const auto ids = std::span(partners).subspan(first, last - first);
+      std::ranges::sort(ids);
+      distinct[slot] = ids.size() - std::ranges::unique(ids).size();
+    }
+  });
   for (std::size_t slot = 0; slot < cell_count_; ++slot) {
-    auto& ids = neighbors[slot];
-    std::ranges::sort(ids);
-    const auto unique_end = std::ranges::unique(ids).begin();
-    ids.erase(unique_end, ids.end());
-    neighbor_offsets_[slot + 1] = neighbor_offsets_[slot] + ids.size();
-    neighbor_ids_.insert(neighbor_ids_.end(), ids.begin(), ids.end());
+    neighbor_offsets_[slot + 1] = neighbor_offsets_[slot] + distinct[slot];
   }
+  neighbor_ids_.resize(neighbor_offsets_.back());
+  detail::parallel_for(cell_count_, adjacency_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t slot = begin; slot < end; ++slot) {
+      std::copy_n(partners.begin() + static_cast<std::ptrdiff_t>(incidence_offsets_[slot]),
+                  distinct[slot],
+                  neighbor_ids_.begin() + static_cast<std::ptrdiff_t>(neighbor_offsets_[slot]));
+    }
+  });
 }
 
 std::size_t ContactGraph::cell_count() const noexcept {

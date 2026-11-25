@@ -5,6 +5,7 @@
 #include <nanobind/stl/vector.h>
 
 #include "microsimulator/simulation.hpp"
+#include "microsimulator/threads.hpp"
 #include "native_call.hpp"
 
 namespace nb = nanobind;
@@ -18,6 +19,17 @@ NB_MODULE(_core, module) {
   module.def("backend_device_count", &microsimulator::backend_device_count, "backend"_a);
   module.def("backend_available", &microsimulator::backend_available, "backend"_a,
              "device_index"_a = 0);
+  module.def("cpu_thread_count", &microsimulator::cpu_thread_count,
+             "Threads that native CPU work is spread over. Results do not depend on it.");
+  module.def(
+      "set_cpu_thread_count",
+      [](std::size_t count) {
+        // The change waits for native work on another thread, which may need
+        // the interpreter to finish.
+        const nb::gil_scoped_release release;
+        microsimulator::set_cpu_thread_count(count);
+      },
+      "count"_a, "Sets the native CPU thread count. Zero restores the default.");
 
   nb::enum_<microsimulator::BackendKind>(module, "BackendKind")
       .value("CPU", microsimulator::BackendKind::cpu)

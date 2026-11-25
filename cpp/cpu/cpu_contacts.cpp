@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/parallel.hpp"
 #include "core/shared_constants.hpp"
 #include "microsimulator/contact_graph.hpp"
 
@@ -29,6 +30,15 @@ struct PointPair {
   Vec3 first;
   Vec3 second;
 };
+
+// The one or two contact points of a capsule pair.
+struct PointPairs {
+  std::array<PointPair, 2> pairs{};
+  std::size_t count{0};
+};
+
+// Candidate pairs handed to one thread at a time.
+constexpr std::size_t pair_grain = 512;
 
 Capsule capsule_at(const CellGeometryView& state, std::size_t index) {
   return {
@@ -97,13 +107,13 @@ PointPair closest_points(const Capsule& first, const Capsule& second, float epsi
   };
 }
 
-std::vector<PointPair> contact_points(const Capsule& first, const Capsule& second,
-                                      const ContactParameters& parameters) {
+PointPairs contact_points(const Capsule& first, const Capsule& second,
+                          const ContactParameters& parameters) {
   const auto axis_dot = std::clamp(dot(first.axis, second.axis), -1.0F, 1.0F);
   const auto sine = std::sqrt(std::max(0.0F, 1.0F - (axis_dot * axis_dot)));
   if (sine > parameters.parallel_sine_threshold || first.length <= parameters.degeneracy_epsilon ||
       second.length <= parameters.degeneracy_epsilon) {
-    return {closest_points(first, second, parameters.degeneracy_epsilon)};
+    return {.pairs = {closest_points(first, second, parameters.degeneracy_epsilon)}, .count = 1};
   }
 
   const auto first_half = first.length * 0.5F;
@@ -113,19 +123,18 @@ std::vector<PointPair> contact_points(const Capsule& first, const Capsule& secon
   const auto overlap_begin = std::max(-first_half, center_coordinate - projected_second_half);
   const auto overlap_end = std::min(first_half, center_coordinate + projected_second_half);
   if (overlap_end - overlap_begin <= parameters.degeneracy_epsilon) {
-    return {closest_points(first, second, parameters.degeneracy_epsilon)};
+    return {.pairs = {closest_points(first, second, parameters.degeneracy_epsilon)}, .count = 1};
   }
 
-  std::vector<PointPair> result;
-  result.reserve(2);
+  PointPairs result;
   for (const auto first_parameter : {overlap_begin, overlap_end}) {
     const auto point_on_first = first.center + (first.axis * first_parameter);
     const auto second_parameter =
         std::clamp(dot(point_on_first - second.center, second.axis), -second_half, second_half);
-    result.push_back({
+    result.pairs[result.count++] = {
         .first = point_on_first,
         .second = second.center + (second.axis * second_parameter),
-    });
+    };
   }
   return result;
 }
@@ -159,39 +168,46 @@ Vec3 deterministic_normal(const Capsule& first, const Capsule& second, const Poi
 ContactGraph contacts_for_candidates(const WorldState& state, const ContactParameters& parameters,
                                      std::span<const ContactCandidate> candidates) {
   const auto geometry = state.geometry_state();
-  std::vector<CellContact> contacts;
+  std::vector<std::vector<CellContact>> pieces((candidates.size() + pair_grain - 1) / pair_grain);
+  detail::parallel_for(candidates.size(), pair_grain, [&](std::size_t begin, std::size_t end) {
+    auto& piece = pieces[begin / pair_grain];
+    for (std::size_t index = begin; index < end; ++index) {
+      const auto first = capsule_at(geometry, candidates[index].first_slot);
+      const auto second = capsule_at(geometry, candidates[index].second_slot);
 
-  for (const auto& candidate : candidates) {
-    auto first = capsule_at(geometry, candidate.first_slot);
-    auto second = capsule_at(geometry, candidate.second_slot);
-
-    const auto points = contact_points(first, second, parameters);
-    const auto weight = points.size() == 2 ? inverse_sqrt_two : 1.0F;
-    for (std::size_t ordinal = 0; ordinal < points.size(); ++ordinal) {
-      const auto point_delta = points[ordinal].second - points[ordinal].first;
-      const auto separation = norm(point_delta) - (first.radius + second.radius);
-      if (separation >= parameters.activation_margin) {
-        continue;
+      const auto points = contact_points(first, second, parameters);
+      const auto weight = points.count == 2 ? inverse_sqrt_two : 1.0F;
+      for (std::size_t ordinal = 0; ordinal < points.count; ++ordinal) {
+        const auto& pair = points.pairs[ordinal];
+        const auto point_delta = pair.second - pair.first;
+        const auto separation = norm(point_delta) - (first.radius + second.radius);
+        if (separation >= parameters.activation_margin) {
+          continue;
+        }
+        const auto normal =
+            deterministic_normal(first, second, pair, parameters.degeneracy_epsilon);
+        piece.push_back({
+            .first_id = first.id,
+            .second_id = second.id,
+            .first_slot = first.slot,
+            .second_slot = second.slot,
+            .ordinal = static_cast<std::uint8_t>(ordinal),
+            .point_on_first = pair.first + (normal * first.radius),
+            .normal = normal,
+            .signed_separation = separation,
+            .weight = weight,
+        });
       }
-      const auto normal =
-          deterministic_normal(first, second, points[ordinal], parameters.degeneracy_epsilon);
-      contacts.push_back({
-          .first_id = first.id,
-          .second_id = second.id,
-          .first_slot = first.slot,
-          .second_slot = second.slot,
-          .ordinal = static_cast<std::uint8_t>(ordinal),
-          .point_on_first = points[ordinal].first + (normal * first.radius),
-          .normal = normal,
-          .signed_separation = separation,
-          .weight = weight,
-      });
     }
-  }
-
-  std::ranges::sort(contacts, {}, [](const CellContact& contact) {
-    return std::tuple{contact.first_id, contact.second_id, contact.ordinal};
   });
+  auto contacts = detail::concatenate(pieces);
+  // Candidates sorted by identifier yield contacts already in order.
+  const auto key = [](const CellContact& contact) {
+    return std::tuple{contact.first_id, contact.second_id, contact.ordinal};
+  };
+  if (!std::ranges::is_sorted(contacts, {}, key)) {
+    std::ranges::sort(contacts, {}, key);
+  }
   return ContactGraph(geometry.size(), std::move(contacts));
 }
 

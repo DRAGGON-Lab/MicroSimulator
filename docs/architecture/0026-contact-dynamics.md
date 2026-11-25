@@ -56,7 +56,19 @@ A step is divided so that no cell end elongates by more than `max_growth_fractio
 3. finds the contacts that overlap at the moved geometry by more than the accepted overlap plus what their force accounts for;
 4. appends a row for each, linearized where it was found with its offset set so that the multipliers that produced the move predict the gap the move left, and solves again from the current multipliers.
 
-Rows are never rebuilt once added, which is the recursively generated complementarity scheme of [Palmer, Aktulga, and Gao 2025](https://arxiv.org/abs/2506.14097). A substep that does not converge, or needs more than `max_refinements` rounds, is retried at half its length, and after `max_step_halvings` the step throws. A step that throws leaves the simulation unchanged.
+Rows are never rebuilt once added, which is the recursively generated complementarity scheme of [Palmer, Aktulga, and Gao 2025](https://arxiv.org/abs/2506.14097). A substep that does not converge, needs more than `max_refinements` rounds, or turns a cell through more than half a radian is retried at a shorter length, and after `max_step_halvings` the step throws. A step that throws leaves the simulation unchanged.
+
+### The length of a substep
+
+A step begins with the longest substep the growth bound allows. A substep that settles in few rounds doubles the length of the next one, up to that longest length.
+
+The rows of a substep are linearized at its start, so no cell may turn through more than half a radian within it. The angle a cell turns through is close to proportional to the length of the substep, which lets the length be planned from the turn rather than found by trial:
+
+- A substep whose cells turn too far is retried at the length, among halvings, that brings the largest turn within 0.4 radians. One failure can therefore shorten the substep several times over.
+- A substep is not lengthened when doubling it would turn a cell through more than 0.4 radians.
+- A substep longer than any the step has yet taken is untried. Its solve stops after 128 iterations to read the largest turn, and is abandoned there if the turn is already too far. A cell turns under the forces of its own neighbors, which settle within those iterations, long before the pressure across a colony does. Otherwise the solve continues from where it stopped.
+
+A crowded colony always has a few cells turning quickly, pinched between their neighbors. Without the plan, most solver iterations of a step go to substeps that converge and are then discarded for those cells.
 
 The stepping carries no state between steps, so a resumed run repeats an uninterrupted one.
 

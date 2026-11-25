@@ -21,6 +21,22 @@
       }
     },
     {
+      "name": "cpu-tsan",
+      "displayName": "CPU reference (ThreadSanitizer)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cpu-tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "MICROSIMULATOR_BUILD_PYTHON": "OFF",
+        "MICROSIMULATOR_BUILD_TESTS": "ON",
+        "MICROSIMULATOR_ENABLE_CUDA": "OFF",
+        "MICROSIMULATOR_ENABLE_METAL": "OFF"
+      }
+    },
+    {
       "name": "metal-debug",
       "displayName": "Native Metal (Debug)",
       "generator": "Ninja",
@@ -56,6 +72,10 @@
       "configurePreset": "cpu-debug"
     },
     {
+      "name": "cpu-tsan",
+      "configurePreset": "cpu-tsan"
+    },
+    {
       "name": "metal-debug",
       "configurePreset": "metal-debug"
     },
@@ -70,6 +90,17 @@
       "configurePreset": "cpu-debug",
       "output": {
         "outputOnFailure": true
+      }
+    },
+    {
+      "name": "cpu-tsan",
+      "configurePreset": "cpu-tsan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "environment": {
+        "MICROSIMULATOR_NUM_THREADS": "4",
+        "TSAN_OPTIONS": "halt_on_error=1"
       }
     },
     {

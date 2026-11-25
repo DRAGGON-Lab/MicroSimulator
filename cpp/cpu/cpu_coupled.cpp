@@ -6,12 +6,16 @@
 #include <string>
 #include <vector>
 
+#include "core/parallel.hpp"
 #include "microsimulator/coupled_rates.hpp"
 #include "microsimulator/signals.hpp"
 #include "microsimulator/world_state.hpp"
 
 namespace microsimulator {
 namespace {
+
+// Cells handed to one thread at a time.
+constexpr std::size_t cell_grain = 256;
 
 float evaluate_instruction(const RateInstruction& instruction, std::span<const float> workspace,
                            std::span<const float> species, std::span<const float> signals,
@@ -107,14 +111,16 @@ void validate_coupled_step(const WorldState& state, const SignalGrid& grid,
     throw std::invalid_argument("previous cell lengths must be finite and non-negative");
   }
   const auto geometry = state.geometry_state();
-  for (std::size_t cell = 0; cell < state.size(); ++cell) {
-    const auto stencil = signal_grid_stencil(
-        grid.spec(),
-        {geometry.position_x[cell], geometry.position_y[cell], geometry.position_z[cell]});
-    if (stencil.entirely_solid) {
-      throw std::invalid_argument("signal sample position is inside a grid obstacle");
+  detail::parallel_for(state.size(), cell_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t cell = begin; cell < end; ++cell) {
+      const auto stencil = signal_grid_stencil(
+          grid.spec(),
+          {geometry.position_x[cell], geometry.position_y[cell], geometry.position_z[cell]});
+      if (stencil.entirely_solid) {
+        throw std::invalid_argument("signal sample position is inside a grid obstacle");
+      }
     }
-  }
+  });
 }
 
 SignalSolveReport advance_coupled_cpu(WorldState& state, SignalGrid& grid,
@@ -129,65 +135,70 @@ SignalSolveReport advance_coupled_cpu(WorldState& state, SignalGrid& grid,
   const auto old_grid = grid.levels();
   const auto site_count = grid_spec.site_count();
 
-  std::vector<SignalGridStencil> stencils;
-  stencils.reserve(state.size());
-  std::vector<float> sampled(state.size() * plan.signal_count(), 0.0F);
-  for (std::size_t cell = 0; cell < state.size(); ++cell) {
-    const auto stencil = signal_grid_stencil(
-        grid_spec,
-        {geometry.position_x[cell], geometry.position_y[cell], geometry.position_z[cell]});
-    stencils.push_back(stencil);
-    for (std::size_t entry = 0; entry < stencil.count; ++entry) {
-      for (std::size_t signal = 0; signal < plan.signal_count(); ++signal) {
-        sampled[(cell * plan.signal_count()) + signal] +=
-            stencil.weights[entry] * old_grid[(signal * site_count) + stencil.sites[entry]];
-      }
-    }
-  }
-
+  const auto species_count = state.species_count();
+  const auto signal_count = plan.signal_count();
+  const auto instructions = plan.instructions();
+  std::vector<SignalGridStencil> stencils(state.size());
   std::vector<float> next_species(species_state.levels.begin(), species_state.levels.end());
-  for (std::size_t cell = 0; cell < state.size(); ++cell) {
-    const auto previous_volume =
-        effective_cell_volume(previous_lengths[cell], geometry.radii[cell]);
-    const auto current_volume = effective_cell_volume(geometry.lengths[cell], geometry.radii[cell]);
-    const auto dilution = previous_volume / current_volume;
-    const auto offset = cell * state.species_count();
-    for (std::size_t species = 0; species < state.species_count(); ++species) {
-      next_species[offset + species] *= dilution;
-    }
-  }
+  // What each cell exchanges with the grid, as a concentration rate of every
+  // signal.
+  std::vector<float> exchange(state.size() * signal_count);
+  detail::parallel_for(state.size(), cell_grain, [&](std::size_t begin, std::size_t end) {
+    std::vector<float> sampled(signal_count);
+    std::vector<float> workspace(instructions.size());
+    for (std::size_t cell = begin; cell < end; ++cell) {
+      const auto stencil = signal_grid_stencil(
+          grid_spec,
+          {geometry.position_x[cell], geometry.position_y[cell], geometry.position_z[cell]});
+      stencils[cell] = stencil;
+      std::ranges::fill(sampled, 0.0F);
+      for (std::size_t entry = 0; entry < stencil.count; ++entry) {
+        for (std::size_t signal = 0; signal < signal_count; ++signal) {
+          sampled[signal] +=
+              stencil.weights[entry] * old_grid[(signal * site_count) + stencil.sites[entry]];
+        }
+      }
 
+      const auto previous_volume =
+          effective_cell_volume(previous_lengths[cell], geometry.radii[cell]);
+      const auto current_volume =
+          effective_cell_volume(geometry.lengths[cell], geometry.radii[cell]);
+      const auto dilution = previous_volume / current_volume;
+      const auto cell_species =
+          std::span(next_species).subspan(cell * species_count, species_count);
+      for (auto& level : cell_species) {
+        level *= dilution;
+      }
+
+      const auto volume_change_rate = dt == 0.0F ? 0.0F : (current_volume - previous_volume) / dt;
+      for (std::size_t index = 0; index < instructions.size(); ++index) {
+        workspace[index] =
+            evaluate_instruction(instructions[index], workspace, cell_species, sampled, geometry,
+                                 attributes, cell, volume_change_rate);
+        if (!std::isfinite(workspace[index])) {
+          throw std::domain_error("coupled rate instruction " + std::to_string(index) +
+                                  " produced a non-finite value");
+        }
+      }
+      for (std::size_t species = 0; species < species_count; ++species) {
+        cell_species[species] += dt * workspace[plan.species_outputs()[species]];
+        if (!std::isfinite(cell_species[species])) {
+          throw std::domain_error("coupled species update produced a non-finite level");
+        }
+      }
+      for (std::size_t signal = 0; signal < signal_count; ++signal) {
+        exchange[(cell * signal_count) + signal] =
+            workspace[plan.signal_outputs()[signal]] / grid_spec.voxel_volume();
+      }
+    }
+  });
+
+  // Cells share grid sites, so the sources are summed one cell at a time.
   std::vector<float> signal_sources(grid_spec.level_count(), 0.0F);
-  std::vector<float> workspace(plan.instructions().size());
   for (std::size_t cell = 0; cell < state.size(); ++cell) {
-    const auto species_offset = cell * state.species_count();
-    const auto cell_species =
-        std::span<const float>(next_species).subspan(species_offset, state.species_count());
-    const auto cell_signals =
-        std::span<const float>(sampled).subspan(cell * plan.signal_count(), plan.signal_count());
-    for (std::size_t index = 0; index < plan.instructions().size(); ++index) {
-      workspace[index] = evaluate_instruction(
-          plan.instructions()[index], workspace, cell_species, cell_signals, geometry, attributes,
-          cell,
-          dt == 0.0F ? 0.0F
-                     : (effective_cell_volume(geometry.lengths[cell], geometry.radii[cell]) -
-                        effective_cell_volume(previous_lengths[cell], geometry.radii[cell])) /
-                           dt);
-      if (!std::isfinite(workspace[index])) {
-        throw std::domain_error("coupled rate instruction " + std::to_string(index) +
-                                " produced a non-finite value");
-      }
-    }
-    for (std::size_t species = 0; species < state.species_count(); ++species) {
-      next_species[species_offset + species] += dt * workspace[plan.species_outputs()[species]];
-      if (!std::isfinite(next_species[species_offset + species])) {
-        throw std::domain_error("coupled species update produced a non-finite level");
-      }
-    }
     const auto& stencil = stencils[cell];
-    for (std::size_t signal = 0; signal < plan.signal_count(); ++signal) {
-      const auto concentration_rate =
-          workspace[plan.signal_outputs()[signal]] / grid_spec.voxel_volume();
+    for (std::size_t signal = 0; signal < signal_count; ++signal) {
+      const auto concentration_rate = exchange[(cell * signal_count) + signal];
       for (std::size_t entry = 0; entry < stencil.count; ++entry) {
         signal_sources[(signal * site_count) + stencil.sites[entry]] +=
             stencil.weights[entry] * concentration_rate;
@@ -207,9 +218,11 @@ SignalSolveReport advance_coupled_cpu(WorldState& state, SignalGrid& grid,
     next_grid = std::move(result.levels);
   } else {
     next_grid = signal_grid_forward_euler_candidate(grid, dt);
-    for (std::size_t index = 0; index < next_grid.size(); ++index) {
-      next_grid[index] += dt * signal_sources[index];
-    }
+    detail::parallel_for(next_grid.size(), 16384, [&](std::size_t begin, std::size_t end) {
+      for (std::size_t index = begin; index < end; ++index) {
+        next_grid[index] += dt * signal_sources[index];
+      }
+    });
   }
   SignalGridCheckpoint{.spec = grid_spec, .levels = next_grid}.validate();
   std::ranges::copy(next_species, species_state.levels.begin());
