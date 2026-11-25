@@ -46,3 +46,29 @@ jobs:
 
       - name: Test
         run: ctest --preset cpu-debug
+
+  # The thread pool and every loop that runs on it, checked for data races.
+  # Four threads are requested whatever the runner has, so the threaded paths
+  # run even on a small machine.
+  cpu-thread-sanitizer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          clean: true
+          persist-credentials: false
+
+      - name: Install the build tool
+        run: sudo apt-get update && sudo apt-get install --yes ninja-build
+
+      - name: Configure
+        run: cmake --preset cpu-tsan
+
+      - name: Build
+        run: cmake --build --preset cpu-tsan
+
+      - name: Test
+        run: ctest --preset cpu-tsan

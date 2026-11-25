@@ -23,6 +23,8 @@ Every conformance scenario records absolute and relative tolerances per field. T
 
 `deterministic` uses counter-based random numbers, stable event ordering, and reproducible reduction policies where the backend permits them. It promises repeatability on the same device and toolchain, not bitwise identity across different GPU architectures.
 
+CPU results do not depend on the number of threads: loops are cut into pieces of fixed size and reductions combine the pieces in index order. See [ADR 0027](0027-cpu-threading.md).
+
 `fast` permits backend-specific ordering and algebraic fusion. Long-running chaotic simulations are compared through declared ensemble statistics.
 
 ## Precision

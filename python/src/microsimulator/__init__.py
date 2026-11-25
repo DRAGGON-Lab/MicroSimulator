@@ -61,6 +61,8 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     Vec3,
     backend_available,
     backend_device_count,
+    cpu_thread_count,
+    set_cpu_thread_count,
 )
 from .channels import ChannelMetadata, ChannelMetadataError
 from .checkpoint import (
@@ -243,6 +245,7 @@ __all__ = [
     "capped_founder_length",
     "capture_random_state",
     "capture_scene",
+    "cpu_thread_count",
     "dumps_scene",
     "execute_run_job",
     "load_checkpoint",
@@ -256,6 +259,7 @@ __all__ = [
     "run_simulation",
     "save_checkpoint",
     "save_scene",
+    "set_cpu_thread_count",
 ]
 
 __version__ = "0.1.0"

@@ -12,9 +12,13 @@
 #include <utility>
 #include <vector>
 
+#include "core/parallel.hpp"
 #include "microsimulator/flow.hpp"
 
 namespace microsimulator::detail {
+
+// Sites and faces handed to one thread at a time.
+inline constexpr std::size_t flow_grain = 4096;
 
 class FlowGridLayout {
  public:
@@ -409,33 +413,35 @@ class DepthAveragedFlowSystem {
       throw std::invalid_argument("depth-averaged flow vector has the wrong size");
     }
     output.assign(input.size(), 0.0);
-    for (std::size_t site = 0; site < input.size(); ++site) {
-      if (diagonal_[site] == 0.0F) {
-        continue;
-      }
-      double result = 0.0;
-      const auto coordinates = layout_.site_coordinates(site);
-      const auto axis = layout_.flow_axis();
-      const double boundary =
-          2.0 * mobility_[site] /
-          (static_cast<double>(layout_.spacing()[axis]) * layout_.spacing()[axis]);
-      if (coordinates[axis] == 0) result += boundary * input[site];
-      if (coordinates[axis] + 1 == layout_.dimensions()[axis]) result += boundary * input[site];
-      for (std::size_t component = 0; component < 3; ++component) {
-        const auto inverse_square = 1.0 / (static_cast<double>(layout_.spacing()[component]) *
-                                           layout_.spacing()[component]);
-        for (const auto offset : {-1, 1}) {
-          const auto neighbor = layout_.neighbor_site(site, component, offset);
-          if (neighbor.has_value()) {
-            const auto conductance =
-                static_cast<double>(harmonic_mean(mobility_[site], mobility_[*neighbor])) *
-                inverse_square;
-            result += conductance * (input[site] - input[*neighbor]);
+    parallel_for(input.size(), flow_grain, [&](std::size_t begin, std::size_t end) {
+      for (std::size_t site = begin; site < end; ++site) {
+        if (diagonal_[site] == 0.0F) {
+          continue;
+        }
+        double result = 0.0;
+        const auto coordinates = layout_.site_coordinates(site);
+        const auto axis = layout_.flow_axis();
+        const double boundary =
+            2.0 * mobility_[site] /
+            (static_cast<double>(layout_.spacing()[axis]) * layout_.spacing()[axis]);
+        if (coordinates[axis] == 0) result += boundary * input[site];
+        if (coordinates[axis] + 1 == layout_.dimensions()[axis]) result += boundary * input[site];
+        for (std::size_t component = 0; component < 3; ++component) {
+          const auto inverse_square = 1.0 / (static_cast<double>(layout_.spacing()[component]) *
+                                             layout_.spacing()[component]);
+          for (const auto offset : {-1, 1}) {
+            const auto neighbor = layout_.neighbor_site(site, component, offset);
+            if (neighbor.has_value()) {
+              const auto conductance =
+                  static_cast<double>(harmonic_mean(mobility_[site], mobility_[*neighbor])) *
+                  inverse_square;
+              result += conductance * (input[site] - input[*neighbor]);
+            }
           }
         }
+        output[site] = result;
       }
-      output[site] = result;
-    }
+    });
   }
 
   [[nodiscard]] std::vector<float> velocity(std::span<const double> pressure) const {
@@ -597,33 +603,35 @@ class ResolvedFlowSystem {
       throw std::invalid_argument("resolved-flow face vector has the wrong size");
     }
     output.assign(input.size(), 0.0);
-    for (std::size_t index = 0; index < input.size(); ++index) {
-      if (active_[index] == 0) {
-        continue;
-      }
-      const auto component = layout_.face_coordinates(index).first;
-      auto result = static_cast<double>(face_drag_[index]) * input[index];
-      for (std::size_t axis = 0; axis < 3; ++axis) {
-        if (layout_.dimensions()[axis] == 1) {
+    parallel_for(input.size(), flow_grain, [&](std::size_t begin, std::size_t end) {
+      for (std::size_t index = begin; index < end; ++index) {
+        if (active_[index] == 0) {
           continue;
         }
-        const auto inverse_square =
-            1.0 / (static_cast<double>(layout_.spacing()[axis]) * layout_.spacing()[axis]);
-        for (const auto offset : {-1, 1}) {
-          const auto neighbor_index = layout_.neighbor_face(index, axis, offset);
-          auto neighbor = 0.0;
-          if (axis == component) {
-            neighbor = neighbor_index.has_value() ? input[*neighbor_index] : input[index];
-          } else if (neighbor_index.has_value() && exists_[*neighbor_index] != 0) {
-            neighbor = input[*neighbor_index];
-          } else {
-            neighbor = -input[index];
+        const auto component = layout_.face_coordinates(index).first;
+        auto result = static_cast<double>(face_drag_[index]) * input[index];
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+          if (layout_.dimensions()[axis] == 1) {
+            continue;
           }
-          result -= (neighbor - input[index]) * inverse_square;
+          const auto inverse_square =
+              1.0 / (static_cast<double>(layout_.spacing()[axis]) * layout_.spacing()[axis]);
+          for (const auto offset : {-1, 1}) {
+            const auto neighbor_index = layout_.neighbor_face(index, axis, offset);
+            auto neighbor = 0.0;
+            if (axis == component) {
+              neighbor = neighbor_index.has_value() ? input[*neighbor_index] : input[index];
+            } else if (neighbor_index.has_value() && exists_[*neighbor_index] != 0) {
+              neighbor = input[*neighbor_index];
+            } else {
+              neighbor = -input[index];
+            }
+            result -= (neighbor - input[index]) * inverse_square;
+          }
         }
+        output[index] = result;
       }
-      output[index] = result;
-    }
+    });
   }
 
   [[nodiscard]] std::vector<double> gradient(std::span<const double> pressure) const {
@@ -631,17 +639,19 @@ class ResolvedFlowSystem {
       throw std::invalid_argument("resolved-flow pressure vector has the wrong size");
     }
     std::vector<double> result(layout_.total_face_count(), 0.0);
-    for (std::size_t index = 0; index < result.size(); ++index) {
-      if (active_[index] == 0) {
-        continue;
+    parallel_for(result.size(), flow_grain, [&](std::size_t begin, std::size_t end) {
+      for (std::size_t index = begin; index < end; ++index) {
+        if (active_[index] == 0) {
+          continue;
+        }
+        const auto [component, face] = layout_.face_coordinates(index);
+        const auto lower = layout_.adjacent_site(component, face, -1);
+        const auto upper = layout_.adjacent_site(component, face, 1);
+        const auto lower_value = lower.has_value() && fluid_[*lower] != 0 ? pressure[*lower] : 0.0;
+        const auto upper_value = upper.has_value() && fluid_[*upper] != 0 ? pressure[*upper] : 0.0;
+        result[index] = (upper_value - lower_value) / layout_.spacing()[component];
       }
-      const auto [component, face] = layout_.face_coordinates(index);
-      const auto lower = layout_.adjacent_site(component, face, -1);
-      const auto upper = layout_.adjacent_site(component, face, 1);
-      const auto lower_value = lower.has_value() && fluid_[*lower] != 0 ? pressure[*lower] : 0.0;
-      const auto upper_value = upper.has_value() && fluid_[*upper] != 0 ? pressure[*upper] : 0.0;
-      result[index] = (upper_value - lower_value) / layout_.spacing()[component];
-    }
+    });
     return result;
   }
 
@@ -650,21 +660,23 @@ class ResolvedFlowSystem {
       throw std::invalid_argument("resolved-flow velocity vector has the wrong size");
     }
     std::vector<double> result(layout_.site_count(), 0.0);
-    for (std::size_t site = 0; site < result.size(); ++site) {
-      if (fluid_[site] == 0) {
-        continue;
+    parallel_for(result.size(), flow_grain, [&](std::size_t begin, std::size_t end) {
+      for (std::size_t site = begin; site < end; ++site) {
+        if (fluid_[site] == 0) {
+          continue;
+        }
+        const auto coordinates = layout_.site_coordinates(site);
+        for (std::size_t component = 0; component < 3; ++component) {
+          auto upper = coordinates;
+          ++upper[component];
+          const auto upper_face = layout_.face_index(component, upper[0], upper[1], upper[2]);
+          const auto lower_face =
+              layout_.face_index(component, coordinates[0], coordinates[1], coordinates[2]);
+          result[site] +=
+              (velocity[upper_face] - velocity[lower_face]) / layout_.spacing()[component];
+        }
       }
-      const auto coordinates = layout_.site_coordinates(site);
-      for (std::size_t component = 0; component < 3; ++component) {
-        auto upper = coordinates;
-        ++upper[component];
-        const auto upper_face = layout_.face_index(component, upper[0], upper[1], upper[2]);
-        const auto lower_face =
-            layout_.face_index(component, coordinates[0], coordinates[1], coordinates[2]);
-        result[site] +=
-            (velocity[upper_face] - velocity[lower_face]) / layout_.spacing()[component];
-      }
-    }
+    });
     return result;
   }
 

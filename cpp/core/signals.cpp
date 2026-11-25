@@ -8,10 +8,34 @@
 #include <string>
 #include <utility>
 
+#include "core/parallel.hpp"
 #include "core/signal_jacobi.hpp"
 
 namespace microsimulator {
 namespace {
+
+// Grid values handed to one thread at a time.
+constexpr std::size_t level_grain = 16384;
+
+[[nodiscard]] bool all_finite(std::span<const float> values) {
+  return detail::parallel_reduce(
+      values.size(), level_grain, true,
+      [&](std::size_t begin, std::size_t end) {
+        return std::all_of(values.begin() + static_cast<std::ptrdiff_t>(begin),
+                           values.begin() + static_cast<std::ptrdiff_t>(end),
+                           [](float value) { return std::isfinite(value); });
+      },
+      [](bool left, bool right) { return left && right; });
+}
+
+// Calls body(signal, x) for every plane of constant x of every signal. A
+// plane is the unit of work one thread takes.
+template <typename Body>
+void for_each_plane(const SignalGridSpec& spec, const Body& body) {
+  detail::parallel_for(spec.signal_count * spec.shape.x, 1, [&](std::size_t plane, std::size_t) {
+    body(plane / spec.shape.x, static_cast<std::uint32_t>(plane % spec.shape.x));
+  });
+}
 
 std::size_t checked_multiply(std::size_t left, std::size_t right, const char* name) {
   if (right != 0 && left > std::numeric_limits<std::size_t>::max() / right) {
@@ -242,9 +266,11 @@ void operator_rates_into(const SignalGrid& grid, std::span<const float> levels,
   if (!reaction.has_value()) {
     return;
   }
-  for (std::size_t index = 0; index < rates.size(); ++index) {
-    rates[index] += reaction->source_rates[index] - (reaction->loss_rates[index] * levels[index]);
-  }
+  detail::parallel_for(rates.size(), level_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t index = begin; index < end; ++index) {
+      rates[index] += reaction->source_rates[index] - (reaction->loss_rates[index] * levels[index]);
+    }
+  });
 }
 
 double max_reaction_loss(const SignalGridSpec& spec, std::size_t signal) {
@@ -261,10 +287,16 @@ float rms(std::span<const float> values) {
   if (values.empty()) {
     return 0.0F;
   }
-  double sum = 0.0;
-  for (const auto value : values) {
-    sum += static_cast<double>(value) * static_cast<double>(value);
-  }
+  const auto sum = detail::parallel_reduce(
+      values.size(), level_grain, 0.0,
+      [&](std::size_t begin, std::size_t end) {
+        double piece = 0.0;
+        for (std::size_t index = begin; index < end; ++index) {
+          piece += static_cast<double>(values[index]) * static_cast<double>(values[index]);
+        }
+        return piece;
+      },
+      [](double left, double right) { return left + right; });
   return static_cast<float>(std::sqrt(sum / static_cast<double>(values.size())));
 }
 
@@ -308,16 +340,22 @@ SignalGridStencil signal_grid_stencil(const SignalGridSpec& spec, Vec3 position,
     }
     std::array<bool, 8> connected{};
     connected[seed] = true;
-    for (std::size_t pass = 0; pass < result.count; ++pass) {
+    // The component grows by at least one site per pass until it is whole.
+    for (bool grew = true; grew;) {
+      grew = false;
       for (std::size_t i = 0; i < result.count; ++i) {
-        if (result.weights[i] <= 0.0F) continue;
+        if (result.weights[i] <= 0.0F || connected[i]) continue;
         for (std::size_t j = 0; j < result.count; ++j) {
           unsigned distance = 0;
           for (std::size_t axis = 0; axis < 3; ++axis) {
             distance += static_cast<unsigned>(std::abs(static_cast<int>(coordinates[i][axis]) -
                                                        static_cast<int>(coordinates[j][axis])));
           }
-          if (connected[j] && distance == 1) connected[i] = true;
+          if (connected[j] && distance == 1) {
+            connected[i] = true;
+            grew = true;
+            break;
+          }
         }
       }
     }
@@ -808,15 +846,17 @@ std::vector<float> signal_grid_forward_euler_candidate(const SignalGrid& grid, f
   const auto levels = grid.levels();
   std::vector<float> rates;
   operator_rates_into(grid, levels, rates);
-  std::vector<float> updated(levels.begin(), levels.end());
-  for (std::size_t index = 0; index < updated.size(); ++index) {
-    const auto candidate = levels[index] + (dt * rates[index]);
-    if (!std::isfinite(candidate) || candidate < 0.0F) {
-      throw std::runtime_error(
-          "signal grid update produced a non-finite or negative concentration");
+  std::vector<float> updated(levels.size());
+  detail::parallel_for(updated.size(), level_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t index = begin; index < end; ++index) {
+      const auto candidate = levels[index] + (dt * rates[index]);
+      if (!std::isfinite(candidate) || candidate < 0.0F) {
+        throw std::runtime_error(
+            "signal grid update produced a non-finite or negative concentration");
+      }
+      updated[index] = candidate;
     }
-    updated[index] = candidate;
-  }
+  });
   return updated;
 }
 
@@ -836,82 +876,80 @@ void transport_rates_into(const SignalGrid& grid, std::span<const float> levels,
   if (levels.size() != spec.level_count()) {
     throw std::invalid_argument("signal transport level count does not match the grid");
   }
-  if (!std::ranges::all_of(levels, [](float value) { return std::isfinite(value); })) {
+  if (!all_finite(levels)) {
     throw std::invalid_argument("signal transport levels must be finite");
   }
   const auto sites = spec.site_count();
-  rates.assign(levels.size(), 0.0F);
+  rates.resize(levels.size());
 
   const auto level = [&](std::size_t signal, std::uint32_t x, std::uint32_t y, std::uint32_t z) {
     return levels[(signal * sites) + flat_site(spec.shape, x, y, z)];
   };
 
-  for (std::size_t signal = 0; signal < spec.signal_count; ++signal) {
+  for_each_plane(spec, [&](std::size_t signal, std::uint32_t x) {
     const auto diffusion = spec.diffusion[signal];
     const std::array<float, 3> spacing{spec.spacing.x, spec.spacing.y, spec.spacing.z};
-    for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
-      for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
-        for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
-          if (solid_at(spec, x, y, z)) {
-            rates[(signal * sites) + flat_site(spec.shape, x, y, z)] = 0.0F;
+    for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
+      for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
+        if (solid_at(spec, x, y, z)) {
+          rates[(signal * sites) + flat_site(spec.shape, x, y, z)] = 0.0F;
+          continue;
+        }
+        const auto current = level(signal, x, y, z);
+        const auto faces = face_velocities(spec, signal, x, y, z);
+        const auto closure = face_closure(spec, x, y, z);
+        std::array<float, 3> lower{};
+        std::array<float, 3> upper{};
+        lower[0] = x == 0 ? boundary_value(spec.x_lower, signal, current,
+                                           level(signal, spec.shape.x - 1, y, z))
+                          : level(signal, x - 1, y, z);
+        upper[0] = x + 1 == spec.shape.x
+                       ? boundary_value(spec.x_upper, signal, current, level(signal, 0, y, z))
+                       : level(signal, x + 1, y, z);
+        lower[1] = y == 0 ? boundary_value(spec.y_lower, signal, current,
+                                           level(signal, x, spec.shape.y - 1, z))
+                          : level(signal, x, y - 1, z);
+        upper[1] = y + 1 == spec.shape.y
+                       ? boundary_value(spec.y_upper, signal, current, level(signal, x, 0, z))
+                       : level(signal, x, y + 1, z);
+        lower[2] = z == 0 ? boundary_value(spec.z_lower, signal, current,
+                                           level(signal, x, y, spec.shape.z - 1))
+                          : level(signal, x, y, z - 1);
+        upper[2] = z + 1 == spec.shape.z
+                       ? boundary_value(spec.z_upper, signal, current, level(signal, x, y, 0))
+                       : level(signal, x, y, z + 1);
+
+        float rate = 0.0F;
+        const std::array<std::uint32_t, 3> dimensions{spec.shape.x, spec.shape.y, spec.shape.z};
+        for (std::size_t axis = 0; axis < dimensions.size(); ++axis) {
+          if (dimensions[axis] == 1) {
             continue;
           }
-          const auto current = level(signal, x, y, z);
-          const auto faces = face_velocities(spec, signal, x, y, z);
-          const auto closure = face_closure(spec, x, y, z);
-          std::array<float, 3> lower{};
-          std::array<float, 3> upper{};
-          lower[0] = x == 0 ? boundary_value(spec.x_lower, signal, current,
-                                             level(signal, spec.shape.x - 1, y, z))
-                            : level(signal, x - 1, y, z);
-          upper[0] = x + 1 == spec.shape.x
-                         ? boundary_value(spec.x_upper, signal, current, level(signal, 0, y, z))
-                         : level(signal, x + 1, y, z);
-          lower[1] = y == 0 ? boundary_value(spec.y_lower, signal, current,
-                                             level(signal, x, spec.shape.y - 1, z))
-                            : level(signal, x, y - 1, z);
-          upper[1] = y + 1 == spec.shape.y
-                         ? boundary_value(spec.y_upper, signal, current, level(signal, x, 0, z))
-                         : level(signal, x, y + 1, z);
-          lower[2] = z == 0 ? boundary_value(spec.z_lower, signal, current,
-                                             level(signal, x, y, spec.shape.z - 1))
-                            : level(signal, x, y, z - 1);
-          upper[2] = z + 1 == spec.shape.z
-                         ? boundary_value(spec.z_upper, signal, current, level(signal, x, y, 0))
-                         : level(signal, x, y, z + 1);
-
-          float rate = 0.0F;
-          const std::array<std::uint32_t, 3> dimensions{spec.shape.x, spec.shape.y, spec.shape.z};
-          for (std::size_t axis = 0; axis < dimensions.size(); ++axis) {
-            if (dimensions[axis] == 1) {
-              continue;
-            }
-            if (closure.lower[axis]) {
-              lower[axis] = current;
-            }
-            if (closure.upper[axis]) {
-              upper[axis] = current;
-            }
-            const auto inverse_spacing = 1.0F / spacing[axis];
-            rate += diffusion * (lower[axis] - (2.0F * current) + upper[axis]) * inverse_spacing *
-                    inverse_spacing;
-            auto lower_flux = faces.lower[axis] >= 0.0F ? faces.lower[axis] * lower[axis]
-                                                        : faces.lower[axis] * current;
-            auto upper_flux = faces.upper[axis] >= 0.0F ? faces.upper[axis] * current
-                                                        : faces.upper[axis] * upper[axis];
-            if (closure.lower[axis]) {
-              lower_flux = 0.0F;
-            }
-            if (closure.upper[axis]) {
-              upper_flux = 0.0F;
-            }
-            rate -= (upper_flux - lower_flux) * inverse_spacing;
+          if (closure.lower[axis]) {
+            lower[axis] = current;
           }
-          rates[(signal * sites) + flat_site(spec.shape, x, y, z)] = rate;
+          if (closure.upper[axis]) {
+            upper[axis] = current;
+          }
+          const auto inverse_spacing = 1.0F / spacing[axis];
+          rate += diffusion * (lower[axis] - (2.0F * current) + upper[axis]) * inverse_spacing *
+                  inverse_spacing;
+          auto lower_flux = faces.lower[axis] >= 0.0F ? faces.lower[axis] * lower[axis]
+                                                      : faces.lower[axis] * current;
+          auto upper_flux = faces.upper[axis] >= 0.0F ? faces.upper[axis] * current
+                                                      : faces.upper[axis] * upper[axis];
+          if (closure.lower[axis]) {
+            lower_flux = 0.0F;
+          }
+          if (closure.upper[axis]) {
+            upper_flux = 0.0F;
+          }
+          rate -= (upper_flux - lower_flux) * inverse_spacing;
         }
+        rates[(signal * sites) + flat_site(spec.shape, x, y, z)] = rate;
       }
     }
-  }
+  });
 }
 
 }  // namespace
@@ -926,7 +964,7 @@ SignalSolveResult signal_grid_crank_nicolson_candidate(const SignalGrid& grid, f
   if (!source_rates.empty() && source_rates.size() != spec.level_count()) {
     throw std::invalid_argument("signal source rate count does not match the grid");
   }
-  if (!std::ranges::all_of(source_rates, [](float value) { return std::isfinite(value); })) {
+  if (!all_finite(source_rates)) {
     throw std::invalid_argument("signal source rates must be finite");
   }
   const auto old = grid.levels();
@@ -940,10 +978,32 @@ SignalSolveResult signal_grid_crank_nicolson_candidate(const SignalGrid& grid, f
   const auto half_dt = (backward ? 1.0F : 0.5F) * dt;
   const auto explicit_dt = backward ? 0.0F : half_dt;
   std::vector<float> right_hand_side(old.size());
-  for (std::size_t index = 0; index < old.size(); ++index) {
-    const auto source = source_rates.empty() ? 0.0F : source_rates[index];
-    right_hand_side[index] = old[index] + (explicit_dt * rates[index]) + (dt * source);
-  }
+  detail::parallel_for(old.size(), level_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t index = begin; index < end; ++index) {
+      const auto source = source_rates.empty() ? 0.0F : source_rates[index];
+      right_hand_side[index] = old[index] + (explicit_dt * rates[index]) + (dt * source);
+    }
+  });
+  // The operator's diagonal depends only on the grid, so every sweep shares it.
+  std::vector<float> diagonal(old.size());
+  for_each_plane(spec, [&](std::size_t signal, std::uint32_t x) {
+    for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
+      for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
+        diagonal[(signal * spec.site_count()) + flat_site(spec.shape, x, y, z)] =
+            signal_operator_diagonal(spec, signal, x, y, z);
+      }
+    }
+  });
+  const auto operator_scale = detail::parallel_reduce(
+      diagonal.size(), level_grain, 1.0F,
+      [&](std::size_t begin, std::size_t end) {
+        auto scale = 1.0F;
+        for (std::size_t index = begin; index < end; ++index) {
+          scale = std::max(scale, 1.0F - (half_dt * diagonal[index]));
+        }
+        return scale;
+      },
+      [](float left, float right) { return std::max(left, right); });
   std::vector<float> current(old.begin(), old.end());
   std::vector<float> next(old.size());
   std::vector<float> residual(old.size());
@@ -951,32 +1011,31 @@ SignalSolveResult signal_grid_crank_nicolson_candidate(const SignalGrid& grid, f
   // next sweep reuses.
   const auto residual_rms = [&] {
     operator_rates_into(grid, current, rates);
-    for (std::size_t index = 0; index < current.size(); ++index) {
-      residual[index] = right_hand_side[index] - current[index] + (half_dt * rates[index]);
-    }
+    detail::parallel_for(current.size(), level_grain, [&](std::size_t begin, std::size_t end) {
+      for (std::size_t index = begin; index < end; ++index) {
+        residual[index] = right_hand_side[index] - current[index] + (half_dt * rates[index]);
+      }
+    });
     return rms(residual);
   };
   const detail::SignalJacobiOperations operations{
       .initial_residual_rms = residual_rms,
       .right_hand_side_rms = [&] { return rms(right_hand_side); },
-      .operator_scale = signal_implicit_operator_scale(spec, half_dt),
+      .operator_scale = operator_scale,
       .begin_sweeps = [] {},
       .sweep =
           [&] {
             const auto sites = spec.site_count();
-            for (std::size_t signal = 0; signal < spec.signal_count; ++signal) {
-              for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
-                for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
-                  for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
-                    const auto index = (signal * sites) + flat_site(spec.shape, x, y, z);
-                    const auto diagonal = signal_operator_diagonal(spec, signal, x, y, z);
-                    const auto remainder = rates[index] - (diagonal * current[index]);
-                    next[index] = (right_hand_side[index] + (half_dt * remainder)) /
-                                  (1.0F - (half_dt * diagonal));
-                  }
+            for_each_plane(spec, [&](std::size_t signal, std::uint32_t x) {
+              for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
+                for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
+                  const auto index = (signal * sites) + flat_site(spec.shape, x, y, z);
+                  const auto remainder = rates[index] - (diagonal[index] * current[index]);
+                  next[index] = (right_hand_side[index] + (half_dt * remainder)) /
+                                (1.0F - (half_dt * diagonal[index]));
                 }
               }
-            }
+            });
             current.swap(next);
             return detail::SignalSweepResult{.residual_rms = residual_rms()};
           },

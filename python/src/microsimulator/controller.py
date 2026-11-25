@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import random
 import re
@@ -100,11 +101,25 @@ class ControllerStep:
     """Read view plus explicit mutable model state and random stream."""
 
     simulation: Simulation
-    cells: tuple[CellSnapshot, ...]
     completed_steps: int
     time: float
     rng: random.Random
     state: dict[str, JSONValue]
+    _snapshot: list[tuple[CellSnapshot, ...]] = dataclasses.field(
+        default_factory=list[tuple[CellSnapshot, ...]], repr=False, compare=False
+    )
+
+    @property
+    def cells(self) -> tuple[CellSnapshot, ...]:
+        """Snapshots of every active cell, taken when first read.
+
+        A callback that never reads them costs nothing per cell, which keeps a
+        step with many division events linear in the population.
+        """
+
+        if not self._snapshot:
+            self._snapshot.append(tuple(self.simulation.cells()))
+        return self._snapshot[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,7 +403,6 @@ class NativeController:
     def _context(self) -> ControllerStep:
         return ControllerStep(
             simulation=self.simulation,
-            cells=tuple(self.simulation.cells()),
             completed_steps=self._completed_steps,
             time=self.simulation.time,
             rng=self._rng,

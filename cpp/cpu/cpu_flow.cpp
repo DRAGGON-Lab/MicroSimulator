@@ -28,11 +28,26 @@ struct ConjugateGradientResult {
   if (left.size() != right.size()) {
     throw std::logic_error("conjugate-gradient vectors have inconsistent sizes");
   }
-  double result = 0.0;
-  for (std::size_t index = 0; index < left.size(); ++index) {
-    result += left[index] * right[index];
-  }
-  return result;
+  return detail::parallel_reduce(
+      left.size(), detail::flow_grain, 0.0,
+      [&](std::size_t begin, std::size_t end) {
+        double piece = 0.0;
+        for (std::size_t index = begin; index < end; ++index) {
+          piece += left[index] * right[index];
+        }
+        return piece;
+      },
+      [](double first, double second) { return first + second; });
+}
+
+// Calls body(index) for every index below `count`.
+template <typename Body>
+void for_each_entry(std::size_t count, const Body& body) {
+  detail::parallel_for(count, detail::flow_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t index = begin; index < end; ++index) {
+      body(index);
+    }
+  });
 }
 
 template <typename Apply>
@@ -48,9 +63,9 @@ template <typename Apply>
   std::vector<double> direction;
   std::vector<double> transformed;
   const auto precondition = [&] {
-    for (std::size_t index = 0; index < residual.size(); ++index) {
+    for_each_entry(residual.size(), [&](std::size_t index) {
       preconditioned[index] = diagonal[index] > 0.0F ? residual[index] / diagonal[index] : 0.0;
-    }
+    });
   };
   const detail::ConjugateGradientOperations operations{
       .initialize =
@@ -67,17 +82,17 @@ template <typename Apply>
           },
       .update =
           [&](double alpha) {
-            for (std::size_t index = 0; index < solution.size(); ++index) {
+            for_each_entry(solution.size(), [&](std::size_t index) {
               solution[index] += alpha * direction[index];
               residual[index] -= alpha * transformed[index];
-            }
+            });
           },
       .precondition = precondition,
       .update_direction =
           [&](double beta) {
-            for (std::size_t index = 0; index < direction.size(); ++index) {
+            for_each_entry(direction.size(), [&](std::size_t index) {
               direction[index] = preconditioned[index] + beta * direction[index];
-            }
+            });
           },
   };
   const auto report =
@@ -248,7 +263,7 @@ ResolvedFlowResult solve_resolved_flow_cpu(const SignalGridSpec& spec, std::span
   ops.make_zero = [&] { return Vector(nu + np, 0.0); };
   ops.copy = [](const Vector& source, Vector& target) { target = source; };
   ops.axpy = [](Vector& target, double alpha, const Vector& source) {
-    for (std::size_t i = 0; i < target.size(); ++i) target[i] += alpha * source[i];
+    for_each_entry(target.size(), [&](std::size_t i) { target[i] += alpha * source[i]; });
   };
   ops.dot = [](const Vector& a, const Vector& b) { return dot_product(a, b); };
   ops.apply = [&](const Vector& input, Vector& output) {
@@ -258,15 +273,16 @@ ResolvedFlowResult solve_resolved_flow_cpu(const SignalGridSpec& spec, std::span
     system.apply_momentum(u, momentum);
     const auto gradient = system.gradient(p);
     const auto divergence = system.divergence(u);
-    for (std::size_t i = 0; i < nu; ++i) output[i] = momentum[i] + gradient[i];
-    for (std::size_t i = 0; i < np; ++i) output[nu + i] = continuity_scale * divergence[i];
+    for_each_entry(nu, [&](std::size_t i) { output[i] = momentum[i] + gradient[i]; });
+    for_each_entry(np, [&](std::size_t i) { output[nu + i] = continuity_scale * divergence[i]; });
   };
   ops.precondition = [&](const Vector& input, Vector& output) {
     const auto u = solve_momentum(std::span<const double>(input).first(nu));
     std::copy(u.begin(), u.end(), output.begin());
-    for (std::size_t i = 0; i < np; ++i)
+    for_each_entry(np, [&](std::size_t i) {
       output[nu + i] =
           pressure_diagonal[i] > 0 ? -input[nu + i] / (continuity_scale * pressure_diagonal[i]) : 0;
+    });
   };
   auto rhs = ops.make_zero();
   std::copy(system.force().begin(), system.force().end(), rhs.begin());

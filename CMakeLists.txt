@@ -30,6 +30,7 @@ add_library(microsimulator_core STATIC
   cpp/core/mechanics_integration.cpp
   cpp/core/names.cpp
   cpp/core/occupancy.cpp
+  cpp/core/parallel.cpp
   cpp/core/scene.cpp
   cpp/core/sha256.cpp
   cpp/core/signals.cpp
@@ -48,6 +49,8 @@ add_library(microsimulator::core ALIAS microsimulator_core)
 
 target_compile_features(microsimulator_core PUBLIC cxx_std_23)
 target_include_directories(microsimulator_core PUBLIC cpp/include PRIVATE cpp)
+find_package(Threads REQUIRED)
+target_link_libraries(microsimulator_core PUBLIC Threads::Threads)
 # Vendored single-header libraries, used only inside core sources.
 target_include_directories(microsimulator_core SYSTEM PRIVATE cpp/third_party)
 set_target_properties(microsimulator_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -218,6 +221,15 @@ if(MICROSIMULATOR_BUILD_TESTS)
   target_link_libraries(microsimulator_contact_dynamics_test PRIVATE microsimulator::core)
   add_test(NAME contact_dynamics COMMAND microsimulator_contact_dynamics_test)
 
+  add_executable(microsimulator_parallel_test tests/cpp/parallel_test.cpp)
+  target_link_libraries(microsimulator_parallel_test PRIVATE microsimulator::core)
+  target_include_directories(microsimulator_parallel_test PRIVATE cpp)
+  add_test(NAME parallel COMMAND microsimulator_parallel_test)
+
+  add_executable(microsimulator_thread_invariance_test tests/cpp/thread_invariance_test.cpp)
+  target_link_libraries(microsimulator_thread_invariance_test PRIVATE microsimulator::core)
+  add_test(NAME thread_invariance COMMAND microsimulator_thread_invariance_test)
+
   add_executable(microsimulator_species_test tests/cpp/species_test.cpp)
   target_link_libraries(microsimulator_species_test PRIVATE microsimulator::core)
   add_test(NAME species COMMAND microsimulator_species_test)
@@ -232,6 +244,7 @@ if(MICROSIMULATOR_BUILD_TESTS)
 
   add_executable(microsimulator_flow_test tests/cpp/flow_test.cpp)
   target_link_libraries(microsimulator_flow_test PRIVATE microsimulator::core)
+  target_include_directories(microsimulator_flow_test PRIVATE cpp)
   add_test(NAME flow COMMAND microsimulator_flow_test)
 
   add_executable(microsimulator_json_test tests/cpp/json_test.cpp)

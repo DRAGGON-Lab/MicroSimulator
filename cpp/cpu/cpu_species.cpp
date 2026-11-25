@@ -5,11 +5,15 @@
 #include <string>
 #include <vector>
 
+#include "core/parallel.hpp"
 #include "microsimulator/species.hpp"
 #include "microsimulator/world_state.hpp"
 
 namespace microsimulator {
 namespace {
+
+// Cells handed to one thread at a time.
+constexpr std::size_t cell_grain = 256;
 
 float evaluate_instruction(const RateInstruction& instruction, std::span<const float> workspace,
                            std::span<const float> species, const CellGeometryView& geometry,
@@ -97,50 +101,46 @@ void advance_species_cpu(WorldState& state, const SpeciesRatePlan& plan,
   if (state.empty() || state.species_count() == 0) {
     return;
   }
+  if (!std::ranges::all_of(previous_lengths,
+                           [](float value) { return std::isfinite(value) && value >= 0.0F; })) {
+    throw std::invalid_argument("previous cell lengths must be finite and non-negative");
+  }
 
   const auto geometry = state.geometry_state();
   const auto attributes = state.cell_attributes();
   auto species_state = state.species_state();
+  const auto species_count = state.species_count();
+  const auto instructions = plan.instructions();
   std::vector<float> next_levels(species_state.levels.begin(), species_state.levels.end());
-  for (std::size_t cell = 0; cell < state.size(); ++cell) {
-    if (!std::isfinite(previous_lengths[cell]) || previous_lengths[cell] < 0.0F) {
-      throw std::invalid_argument("previous cell lengths must be finite and non-negative");
-    }
-    const auto radius = geometry.radii[cell];
-    const auto previous_volume = effective_cell_volume(previous_lengths[cell], radius);
-    const auto current_volume = effective_cell_volume(geometry.lengths[cell], radius);
-    const auto dilution = previous_volume / current_volume;
-    const auto offset = cell * state.species_count();
-    for (std::size_t species = 0; species < state.species_count(); ++species) {
-      next_levels[offset + species] *= dilution;
-    }
-  }
+  detail::parallel_for(state.size(), cell_grain, [&](std::size_t begin, std::size_t end) {
+    std::vector<float> workspace(instructions.size());
+    for (std::size_t cell = begin; cell < end; ++cell) {
+      const auto radius = geometry.radii[cell];
+      const auto previous_volume = effective_cell_volume(previous_lengths[cell], radius);
+      const auto current_volume = effective_cell_volume(geometry.lengths[cell], radius);
+      const auto dilution = previous_volume / current_volume;
+      const auto cell_species = std::span(next_levels).subspan(cell * species_count, species_count);
+      for (auto& level : cell_species) {
+        level *= dilution;
+      }
 
-  std::vector<float> workspace(plan.instructions().size());
-  for (std::size_t cell = 0; cell < state.size(); ++cell) {
-    const auto offset = cell * state.species_count();
-    const auto cell_species =
-        std::span<const float>(next_levels).subspan(offset, state.species_count());
-    for (std::size_t index = 0; index < plan.instructions().size(); ++index) {
-      workspace[index] = evaluate_instruction(
-          plan.instructions()[index], workspace, cell_species, geometry, attributes, cell,
-          dt == 0.0F ? 0.0F
-                     : (effective_cell_volume(geometry.lengths[cell], geometry.radii[cell]) -
-                        effective_cell_volume(previous_lengths[cell], geometry.radii[cell])) /
-                           dt);
-      if (!std::isfinite(workspace[index])) {
-        throw std::domain_error("species rate instruction " + std::to_string(index) +
-                                " produced a non-finite value");
+      const auto volume_change_rate = dt == 0.0F ? 0.0F : (current_volume - previous_volume) / dt;
+      for (std::size_t index = 0; index < instructions.size(); ++index) {
+        workspace[index] = evaluate_instruction(instructions[index], workspace, cell_species,
+                                                geometry, attributes, cell, volume_change_rate);
+        if (!std::isfinite(workspace[index])) {
+          throw std::domain_error("species rate instruction " + std::to_string(index) +
+                                  " produced a non-finite value");
+        }
+      }
+      for (std::size_t species = 0; species < species_count; ++species) {
+        cell_species[species] += dt * workspace[plan.outputs()[species]];
+        if (!std::isfinite(cell_species[species])) {
+          throw std::domain_error("species Euler update produced a non-finite level");
+        }
       }
     }
-    for (std::size_t species = 0; species < state.species_count(); ++species) {
-      const auto rate = workspace[plan.outputs()[species]];
-      next_levels[offset + species] += dt * rate;
-      if (!std::isfinite(next_levels[offset + species])) {
-        throw std::domain_error("species Euler update produced a non-finite level");
-      }
-    }
-  }
+  });
   std::ranges::copy(next_levels, species_state.levels.begin());
 }
 

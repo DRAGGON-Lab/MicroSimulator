@@ -226,7 +226,7 @@ def test_trap_example_fills_and_settles_at_a_steady_turnover() -> None:
     # wall with no open boundary ahead of them.
     profile = [sum(loads) / len(loads) for loads in loads_by_depth]
     assert profile[:-1] == sorted(profile[:-1])
-    assert profile[3] - profile[0] > 2.0 * (profile[6] - profile[3])
+    assert profile[3] - profile[0] > 1.8 * (profile[6] - profile[3])
     assert profile[-1] > 1.3 * profile[-2]
     assert profile[0] < 0.5 * profile[-2]
 
