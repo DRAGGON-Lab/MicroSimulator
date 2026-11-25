@@ -4,7 +4,7 @@ MicroSimulator connects the physical environment of a microfluidic device to the
 
 ## From device to experiment
 
-1. **Describe the device.** Define the channels, cavities, and obstacles that shape the experiment. Device helpers produce mechanical constraints, solid transport masks, and inlet and outlet boundaries from one description. The [device tutorial](tutorials/microfluidics.md) covers traps and channels; the [pillar example](tutorials/flow-solvers.md) shows curved obstacles.
+1. **Describe the device.** Define the channels, cavities, and obstacles that shape the experiment. Device helpers produce mechanical constraints, solid transport masks, and inlet and outlet boundaries from one description. The [device tutorial](tutorials/microfluidics.md) covers traps and channels, and [devices read from a chip design](tutorials/microfluidics.md#a-device-from-a-chip-design); the [pillar example](tutorials/flow-solvers.md) shows curved obstacles.
 2. **Solve the flow.** Choose a shallow or resolved steady-flow model, set the mean inlet speed, and obtain the face velocities used by solute transport. Refresh the field when the model's stationary resistance changes.
 3. **Add biology.** Define founders, growth and division rules, intracellular rates, and exchange with extracellular nutrients or signals. Growth, dilution, division, and uptake share an explicit [biochemical biomass convention](architecture/0024-biomass-accounting.md).
 4. **Define attachment and exit rules.** Fixed cells represent an attached population. Free cells drift and rotate in the velocity field, with their contacts solved in the same step. Model rules determine attachment, daughter release, and washout, while stable identifiers retain lineage history.

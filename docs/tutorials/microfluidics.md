@@ -15,6 +15,8 @@ The microfluidic-trap, Danino, biopixel, and pillar tutorial founders request ce
 | [`examples/tutorials/danino_clock.py`](../../examples/tutorials/danino_clock.py) | trap + channel | the full quorum clock in a device |
 | [`examples/tutorials/biopixel_trap.py`](../../examples/tutorials/biopixel_trap.py) | biopixel array trap | reported cavity, CAD layout, monolayer model |
 
+A device can also be read from a chip design; see [a device from a chip design](#a-device-from-a-chip-design).
+
 Run any of them live:
 
 ```console
@@ -62,6 +64,36 @@ DEVICE.apply_to_grid(
 ```
 
 The constructor's keyword arguments set the trap, channel, and wall dimensions; the trap example passes its own, and the Danino clock uses the defaults. `apply_to_grid` materializes the solid mask, fixed inlet and outlet boundaries on the y axis, and the numerically solved steady device flow on the grid's face-staggered velocity field (see the next section). Passing the model's `Simulation` makes the solve execute through the backend selected by the runner. Flow runs through the channel, circulates weakly at the open trap face, and the dead-end trap exchanges with the channel chiefly by diffusion in this model.
+
+## A device from a chip design
+
+A chip drawn in the [`microfluidics` design tool](https://github.com/marpaia/microfluidics) need not be stated again here. That tool writes each design as a scene, one JSON document holding the chip's rectangles by layer, each layer's height, and the flow it solved. `microsimulator.design` reads the scene as plain data, and `LayoutDevice` projects a window of it into the same engine inputs as the devices above:
+
+```python
+from microsimulator.design import load_design_scene
+from microsimulator.microfluidics import LayoutDevice
+
+scene = load_design_scene("trap_chamber.scene.json")
+trap = scene.instance("trap")                    # one placed region, by its path in the design
+window = scene.window(trap.low, trap.high)       # its fluid, in coordinates local to the window
+DEVICE = LayoutDevice(window.boxes, window.size, mean_flow_speed=20.0)
+
+origin, shape = DEVICE.lattice((5.0, 5.0, 0.825))
+DEVICE.add_constraints(simulation)
+DEVICE.apply_to_grid(grid, inlet_values=[10.0], outlet_values=[0.0], simulation=simulation)
+```
+
+`python -c "import json; from microfluidics.project import Project; print(json.dumps(Project('trap_chamber.py').scene()))"` writes a design's scene with the design tool installed; MicroSimulator needs only the file.
+
+A window is any rectangle of the chip, in the design's micrometers. Its low corner becomes the device's origin and the glass its floor at `z = 0`, so positions stay small beside the chip's own millimeter coordinates; `window.local(x, y)` maps a point of the design, and `window.origin` is the low corner. Every rectangle is clipped to the window and rises from the floor to its layer's height. Of a row of repeated features, such as the trenches of a mother machine, only those that reach the window are placed.
+
+`LayoutDevice` takes media in through the window face named by `inlet` (the lower y face unless stated; any of the four sides) and out through the face opposite. Both must cut fluid, and the channel continues past them as it meets them. The other two sides are walls: fluid the window cuts there ends there, so a window is drawn wide enough to hold what matters across the flow. `lattice(spacing)` gives a grid origin and shape whose site centers cover the window with a voxel of wall beyond each side, and `gap_height(x, y)` gives the fluid's height above a point of the floor.
+
+Walls follow the drawn edges exactly, with the half-voxel staircase of any mask. For the window above, which draws the biopixel cavity and channel, the solid mask and solved flow match `BiopixelTrapDevice` site for site on the same lattice.
+
+The scene also carries what the design says of how the chip is run. `scene.flows_of("trap")` gives the flow through a region with its mean speed in millimeters per second, `scene.viscosity_mpa_s` the viscosity, and `scene.fraction(species, vertex)` the share of a fed species arriving at a vertex of the flow graph, from 0 to 1, which scales a reservoir concentration into an inlet value. These are physical quantities, and `mean_flow_speed` is in model units: converting needs the model's choice of seconds per model time unit. A chip flushed at microliters per minute moves its medium at millimeters to hundreds of millimeters per second, many orders above the speeds these tutorials use, and the limit on drift per step under [numerical guidance](#numerical-guidance) then binds for cells loose in the channel. `scene.passes` reports whether the design passed the design tool's own checks; the reader does not refuse one that did not.
+
+The reader takes scenes of format `0.6`, at patch `0.6.0` or later, and refuses any other version, since a field of another version may mean something else. It reads the fields it names, passes over every other, and executes nothing.
 
 ## Changing the inlet media
 

@@ -7,6 +7,10 @@ signal grid, and a numerically solved face-staggered flow field for advection
 fluxes through supported column geometries). The runtime receives only materialized data;
 every predicate here is authoring-time.
 
+`TrapChannelDevice` and `BiopixelTrapDevice` state one geometry each through a
+few dimensions. `LayoutDevice` takes any fluid drawn as boxes standing on a
+common floor, such as a window of a chip design read by `microsimulator.design`.
+
 The media entering at the inlet carries one concentration per signal. A model
 changes that composition during a run with `set_inlet_values`, and
 `InletSchedule` describes a composition that switches or ramps over model time.
@@ -20,8 +24,10 @@ features cannot be recovered by renaming or enlarging the fluid region.
 from __future__ import annotations
 
 import math
+from bisect import bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendKind,
@@ -29,6 +35,7 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     ConstraintRegion,
     GridBoundaryKind,
     GridFace,
+    GridShape,
     PlaneConstraintInit,
     SignalGridSpec,
     Simulation,
@@ -43,6 +50,14 @@ _EDGE_TOLERANCE = 1.0e-6
 
 # Wall blocks as (low corner, high corner) pairs in device coordinates.
 _Blocks = tuple[tuple[tuple[float, float, float], tuple[float, float, float]], ...]
+
+# The flow axis each inlet face sets, and whether media runs toward its lower end.
+_INLET_FLOW = {
+    GridFace.X_LOWER: ("x", False),
+    GridFace.X_UPPER: ("x", True),
+    GridFace.Y_LOWER: ("y", False),
+    GridFace.Y_UPPER: ("y", True),
+}
 
 
 def _reaches(edge: float, wall: float, half: float) -> bool:
@@ -125,17 +140,24 @@ class InletSchedule:
 
 
 class _ChannelDevice:
-    """A trap fed by a straight channel along y, projected onto engine inputs.
+    """Fluid fed by a straight channel, projected onto engine inputs.
 
     Subclasses describe their geometry with `_solid`, a predicate over a
     voxel's center and half extents, and inherit the projection of that
     geometry into a solid mask, a solved flow field, and inlet and outlet
-    boundaries.
+    boundaries. Media enters through the grid face `_inlet_face` names, the
+    lower y face unless a subclass says otherwise, and leaves through the face
+    opposite.
     """
 
     __slots__ = ()
 
     mean_flow_speed: float
+
+    def _inlet_face(self) -> GridFace:
+        """The grid face media enters through."""
+
+        return GridFace.Y_LOWER
 
     def _solid(self, px: float, py: float, pz: float, half: tuple[float, float, float]) -> bool:
         """Whether a voxel lies entirely inside a wall."""
@@ -146,10 +168,10 @@ class _ChannelDevice:
         """Set the concentration of every signal in the media entering at the inlet.
 
         The simulation's grid must come from `apply_to_grid`, which makes the
-        lower y face the fixed inlet boundary.
+        device's inlet face a fixed boundary.
         """
 
-        simulation.set_signal_boundary_values(GridFace.Y_LOWER, list(values))
+        simulation.set_signal_boundary_values(self._inlet_face(), list(values))
 
     def _wall_boxes(
         self, simulation: Simulation, blocks: _Blocks, region: ConstraintRegion
@@ -200,16 +222,21 @@ class _ChannelDevice:
         spec.obstacles = obstacles
 
         spec.advection = [Vec3() for _ in range(spec.signal_count)]
-        spec.y_lower.kind = GridBoundaryKind.FIXED
-        spec.y_lower.values = list(inlet_values)
-        spec.y_upper.kind = GridBoundaryKind.FIXED
-        spec.y_upper.values = list(outlet_values)
+        axis, toward_lower = _INLET_FLOW[self._inlet_face()]
+        lower, upper = (spec.x_lower, spec.x_upper) if axis == "x" else (spec.y_lower, spec.y_upper)
+        entering, leaving = (upper, lower) if toward_lower else (lower, upper)
+        entering.kind = GridBoundaryKind.FIXED
+        entering.values = list(inlet_values)
+        leaving.kind = GridBoundaryKind.FIXED
+        leaving.values = list(outlet_values)
 
         if self.mean_flow_speed != 0.0:
+            # The solver runs flow from the lower to the upper face of its axis
+            # and reverses it for a negative speed.
             field, _ = solve_flow_field(
                 spec,
-                mean_inlet_speed=self.mean_flow_speed,
-                axis="y",
+                mean_inlet_speed=-self.mean_flow_speed if toward_lower else self.mean_flow_speed,
+                axis=axis,
                 mobility=gap_mobility(spec),
                 simulation=simulation,
                 backend=backend,
@@ -417,3 +444,226 @@ class BiopixelTrapDevice(_ChannelDevice):
         if _reaches(px - hx, self.trap_depth, hx):
             return True
         return _reaches(px - hx, 0.0, hx) and _reaches(pz - hz, self.trap_height, hz)
+
+
+@dataclass(frozen=True, slots=True)
+class _HeightMap:
+    """The gap height over a window, as cells between the edges of its boxes.
+
+    Cell ``(i, j)`` spans ``xs[i]`` to ``xs[i + 1]`` and ``ys[j]`` to
+    ``ys[j + 1]``; its height is that of the tallest box covering it, and zero
+    where no box does.
+    """
+
+    xs: tuple[float, ...]
+    ys: tuple[float, ...]
+    heights: tuple[tuple[float, ...], ...]
+    tallest: float
+
+
+@lru_cache(maxsize=16)
+def _height_map(boxes: _Blocks, size: tuple[float, float]) -> _HeightMap:
+    xs = tuple(sorted({0.0, size[0], *(edge[0] for box in boxes for edge in box)}))
+    ys = tuple(sorted({0.0, size[1], *(edge[1] for box in boxes for edge in box)}))
+    heights = [[0.0] * (len(ys) - 1) for _ in range(len(xs) - 1)]
+    for low, high in boxes:
+        for i in range(xs.index(low[0]), xs.index(high[0])):
+            column = heights[i]
+            for j in range(ys.index(low[1]), ys.index(high[1])):
+                column[j] = max(column[j], high[2])
+    return _HeightMap(
+        xs, ys, tuple(tuple(column) for column in heights), max(box[1][2] for box in boxes)
+    )
+
+
+def _cells_at(edges: tuple[float, ...], position: float, through: bool) -> tuple[int, ...]:
+    """The cells along one axis that a position lies in or between.
+
+    A position on an edge two cells share lies between both. Along the flow
+    axis (``through``) the window's end cells extend without limit, so the
+    geometry continues past the inlet and outlet; across it a position on or
+    past the window's edge lies in no cell.
+    """
+
+    last = len(edges) - 2
+    if position <= edges[0]:
+        return (0,) if through else ()
+    if position >= edges[-1]:
+        return (last,) if through else ()
+    cell = bisect_right(edges, position) - 1
+    return (cell - 1, cell) if position == edges[cell] else (cell,)
+
+
+@dataclass(frozen=True, slots=True)
+class LayoutDevice(_ChannelDevice):
+    """Fluid drawn as boxes on a common floor, such as a window of a chip design.
+
+    ``boxes`` are (low corner, high corner) pairs in device coordinates. The
+    window spans ``0`` to ``size[0]`` in x and ``0`` to ``size[1]`` in y, the
+    floor is ``z = 0``, and every box rises from the floor: a chip cast on a
+    mold and bonded to glass has all its cavities, whatever their depth, open
+    onto the glass. Where boxes overlap the fluid is as high as the tallest.
+    `microsimulator.design.DesignWindow` supplies ``boxes`` and ``size`` for a
+    part of a design.
+
+    Media enters through the ``inlet`` face of the window and leaves through
+    the face opposite; both must cut fluid, and the geometry at each continues
+    past the window unchanged. The window's other two sides are walls, so fluid
+    the window cuts there ends there. ``mean_flow_speed`` is in model units, as
+    for every device: a speed a design reports in physical units is converted
+    with the model's own choice of seconds per model time unit.
+
+    Walls, floor and ceiling follow the box edges exactly. A voxel is fluid
+    when its center lies inside the fluid, so a center on a wall plane is solid
+    and a center on the seam where two boxes meet is fluid where both are.
+    """
+
+    boxes: _Blocks
+    size: tuple[float, float]
+    inlet: GridFace = GridFace.Y_LOWER
+    wall_thickness: float = 10.0
+    mean_flow_speed: float = 0.0
+
+    def __post_init__(self) -> None:
+        if len(self.size) != 2 or not all(
+            math.isfinite(extent) and extent > 0.0 for extent in self.size
+        ):
+            raise ValueError("a layout device's size must be two positive finite extents")
+        if self.inlet not in _INLET_FLOW:
+            raise ValueError("a layout device's inlet must be a lower or upper x or y face")
+        if not math.isfinite(self.wall_thickness) or self.wall_thickness <= 0.0:
+            raise ValueError("a layout device's wall thickness must be positive and finite")
+        if not math.isfinite(self.mean_flow_speed):
+            raise ValueError("a layout device's mean flow speed must be finite")
+        if not self.boxes:
+            raise ValueError("a layout device needs at least one fluid box")
+        for low, high in self.boxes:
+            if not all(math.isfinite(value) for value in (*low, *high)):
+                raise ValueError("a fluid box's corners must be finite")
+            if low[2] != 0.0:
+                raise ValueError("a fluid box must rise from the floor at z = 0")
+            if any(far <= near for near, far in zip(low, high, strict=True)):
+                raise ValueError("a fluid box's high corner must lie beyond its low corner")
+            if low[0] < 0.0 or low[1] < 0.0 or high[0] > self.size[0] or high[1] > self.size[1]:
+                raise ValueError("a fluid box must lie inside the window")
+        held = _height_map(self.boxes, self.size)
+        along_x = _INLET_FLOW[self.inlet][0] == "x"
+        if along_x:
+            ends = (held.heights[0], held.heights[-1])
+        else:
+            ends = tuple(tuple(column[at] for column in held.heights) for at in (0, -1))
+        if any(max(end) == 0.0 for end in ends):
+            raise ValueError("a layout device's inlet and outlet faces must both cut fluid")
+
+    def _inlet_face(self) -> GridFace:
+        return self.inlet
+
+    @property
+    def height(self) -> float:
+        """The height of the tallest fluid, where the device's ceiling stands."""
+
+        return _height_map(self.boxes, self.size).tallest
+
+    def gap_height(self, x: float, y: float) -> float:
+        """The height of the fluid above a point of the floor, zero inside a wall."""
+
+        held = _height_map(self.boxes, self.size)
+        along_x = _INLET_FLOW[self.inlet][0] == "x"
+        columns = _cells_at(held.xs, x, along_x)
+        rows = _cells_at(held.ys, y, not along_x)
+        if not columns or not rows:
+            return 0.0
+        return min(held.heights[i][j] for i in columns for j in rows)
+
+    def lattice(self, spacing: tuple[float, float, float]) -> tuple[Vec3, GridShape]:
+        """The origin and shape of a signal grid that covers the device.
+
+        Site centers run from the inlet face to the outlet face along the flow
+        axis. Across it and in z they start half a voxel outside the window and
+        continue to the first center past its far side, so every position a
+        cell can reach has solid sites beyond it to sample against.
+        """
+
+        if not all(math.isfinite(step) and step > 0.0 for step in spacing):
+            raise ValueError("lattice spacing must be positive and finite")
+        along_x = _INLET_FLOW[self.inlet][0] == "x"
+
+        def through(extent: float, step: float) -> tuple[float, int]:
+            return step * 0.5, max(1, round(extent / step))
+
+        def across(extent: float, step: float) -> tuple[float, int]:
+            return -step * 0.5, math.floor(extent / step + 0.5) + 2
+
+        x = (through if along_x else across)(self.size[0], spacing[0])
+        y = (across if along_x else through)(self.size[1], spacing[1])
+        z = across(self.height, spacing[2])
+        shape = GridShape()
+        shape.x, shape.y, shape.z = x[1], y[1], z[1]
+        return Vec3(x[0], y[0], z[0]), shape
+
+    def add_constraints(self, simulation: Simulation) -> None:
+        """Add the device's wall constraints to a simulation."""
+
+        held = _height_map(self.boxes, self.size)
+        thickness = self.wall_thickness
+
+        floor = PlaneConstraintInit()
+        floor.point = Vec3(0.0, 0.0, 0.0)
+        floor.inward_normal = Vec3(0.0, 0.0, 1.0)
+        simulation.add_plane_constraint(floor)
+
+        ceiling = PlaneConstraintInit()
+        ceiling.point = Vec3(0.0, 0.0, held.tallest)
+        ceiling.inward_normal = Vec3(0.0, 0.0, -1.0)
+        simulation.add_plane_constraint(ceiling)
+
+        # Everything lower than the ceiling is solid above its own height: a
+        # wall where that height is zero, the roof of a shallow cavity
+        # otherwise. Runs of cells of one height along x that repeat along y
+        # merge into one block. Blocks stand proud of the ceiling and of the
+        # window's sides, and walls of the floor, so that a cell pressed into
+        # one leaves by the face it entered through.
+        def edge(edges: tuple[float, ...], at: int) -> float:
+            if at == 0:
+                return edges[0] - thickness
+            return edges[at] + thickness if at == len(edges) - 1 else edges[at]
+
+        open_runs: dict[tuple[int, int, float], int] = {}
+        blocks: list[tuple[tuple[float, float, float], tuple[float, float, float]]] = []
+
+        def close(run: tuple[int, int, float], begun: int, ended: int) -> None:
+            first, past, height = run
+            blocks.append(
+                (
+                    (edge(held.xs, first), edge(held.ys, begun), height if height else -thickness),
+                    (edge(held.xs, past), edge(held.ys, ended), held.tallest + thickness),
+                )
+            )
+
+        for j in range(len(held.ys) - 1):
+            runs: list[tuple[int, int, float]] = []
+            first = 0
+            for i in range(1, len(held.xs)):
+                height = held.heights[first][j]
+                if i == len(held.xs) - 1 or held.heights[i][j] != height:
+                    if height < held.tallest:
+                        runs.append((first, i, height))
+                    first = i
+            for run in [run for run in open_runs if run not in runs]:
+                close(run, open_runs.pop(run), j)
+            for run in runs:
+                open_runs.setdefault(run, j)
+        for run, begun in open_runs.items():
+            close(run, begun, len(held.ys) - 1)
+        self._wall_boxes(simulation, tuple(blocks), ConstraintRegion.OUTSIDE)
+
+        chamber = BoxConstraintInit()
+        chamber.center = Vec3(self.size[0] * 0.5, self.size[1] * 0.5, held.tallest * 0.5)
+        chamber.half_extents = Vec3(self.size[0] * 0.5, self.size[1] * 0.5, held.tallest * 0.5)
+        chamber.coefficient = 1.0
+        chamber.allowed_region = ConstraintRegion.INSIDE
+        simulation.add_box_constraint(chamber)
+
+    def _solid(self, px: float, py: float, pz: float, half: tuple[float, float, float]) -> bool:
+        del half
+        return pz <= 0.0 or pz >= self.gap_height(px, py)
