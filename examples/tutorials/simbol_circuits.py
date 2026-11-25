@@ -217,7 +217,7 @@ def build(context: ModelContext) -> NativeController:
         rng=context.rng,
         regulate=_regulate,
         on_division=DIVISION.on_division,
-        mechanics=MechanicsConfig(gamma=100.0),
+        mechanics=MechanicsConfig(),
         state=state,
     )
 

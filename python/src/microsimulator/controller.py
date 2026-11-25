@@ -12,10 +12,10 @@ from typing import Protocol, cast, runtime_checkable
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     CellSnapshot,
     ConstraintContactParameters,
+    ContactDynamicsParameters,
+    ContactDynamicsResult,
     ContactParameters,
-    MechanicsIntegrationParameters,
-    MechanicsParameters,
-    MechanicsSolveResult,
+    GrowthLoadLaw,
     Simulation,
 )
 from .channels import UNNAMED_CHANNELS, ChannelMetadata
@@ -170,86 +170,115 @@ def _json_object(value: Mapping[str, JSONValue], path: str) -> dict[str, JSONVal
     return cast(dict[str, JSONValue], decoded)
 
 
+_GROWTH_LOAD_LAWS = {
+    "none": GrowthLoadLaw.NONE,
+    "exponential": GrowthLoadLaw.EXPONENTIAL,
+    "linear": GrowthLoadLaw.LINEAR,
+}
+_MECHANICS_INTEGERS = ("max_iterations", "max_refinements", "max_step_halvings")
+_MECHANICS_POSITIVE = (
+    "drag",
+    "contact_stiffness",
+    "wall_stiffness",
+    "overlap_tolerance",
+    "max_overlap_recovery",
+    "max_growth_fraction",
+    "contact_degeneracy_epsilon",
+    "constraint_degeneracy_epsilon",
+)
+
+
 @dataclass(frozen=True, slots=True)
 class MechanicsConfig:
-    """Checkpointable parameters for exact mechanics passes after each step."""
+    """Checkpointable parameters for growth and contact solved together.
 
-    passes: int = 1
-    mu_a: float = 1.0
-    gamma: float = 10.0
-    residual_rms_tolerance: float = 5.0e-3
-    max_iterations: int = 0
-    contact_activation_margin: float = 0.01
+    Cells push each other and the walls apart with non-negative contact forces
+    while they elongate, and a cell's elongation responds to the axial load its
+    contacts put on it. ``growth_law`` selects that response: ``"none"`` ignores
+    load, ``"exponential"`` scales elongation by ``exp(-growth_sensitivity *
+    load)``, and ``"linear"`` leaves it unscaled up to ``growth_free_load`` and
+    stops it at ``growth_stall_load``. Loads are forces in units of ``drag`` times
+    length squared per time. A contact under force ``f`` overlaps by ``f /
+    contact_stiffness`` between cells and ``f / wall_stiffness`` against a wall.
+    With ``flow_drift`` the signal grid's velocity field carries the cells inside
+    the same solve.
+    """
+
+    drag: float = 1.0
+    contact_stiffness: float = 1.0e4
+    wall_stiffness: float = 1.0e6
+    overlap_tolerance: float = 1.0e-3
+    candidate_margin: float = 0.1
+    max_overlap_recovery: float = 0.05
+    max_growth_fraction: float = 0.25
+    max_iterations: int = 20000
+    max_refinements: int = 10
+    max_step_halvings: int = 12
+    growth_law: str = "none"
+    growth_sensitivity: float = 0.0
+    growth_free_load: float = 0.0
+    growth_stall_load: float = 1.0
     contact_parallel_sine_threshold: float = 0.1
     contact_degeneracy_epsilon: float = 1.0e-6
-    max_rotation_radians: float = 0.0872664626
-    require_convergence: bool = True
-    constraint_activation_margin: float = 0.0
     constraint_degeneracy_epsilon: float = 1.0e-6
     flow_drift: bool = False
 
     def __post_init__(self) -> None:
-        _integer(self.passes, "mechanics.passes", 1, _UINT32_MAX)
-        _integer(self.max_iterations, "mechanics.max_iterations", 0, _UINT32_MAX)
-        mu_a = _finite_number(self.mu_a, "mechanics.mu_a")
-        gamma = _finite_number(self.gamma, "mechanics.gamma")
-        tolerance = _finite_number(self.residual_rms_tolerance, "mechanics.residual_rms_tolerance")
-        contact_margin = _finite_number(
-            self.contact_activation_margin, "mechanics.contact_activation_margin"
-        )
+        for name in _MECHANICS_POSITIVE:
+            if _finite_number(getattr(self, name), f"mechanics.{name}") <= 0.0:
+                raise ControllerStateError(f"mechanics.{name} must be positive")
+        if _finite_number(self.candidate_margin, "mechanics.candidate_margin") < 0.0:
+            raise ControllerStateError("mechanics.candidate_margin must be non-negative")
+        _integer(self.max_iterations, "mechanics.max_iterations", 1, _UINT32_MAX)
+        _integer(self.max_refinements, "mechanics.max_refinements", 0, _UINT32_MAX)
+        _integer(self.max_step_halvings, "mechanics.max_step_halvings", 0, 64)
+        if cast(object, self.growth_law) not in _GROWTH_LOAD_LAWS:
+            raise ControllerStateError(
+                "mechanics.growth_law must be one of " + ", ".join(sorted(_GROWTH_LOAD_LAWS))
+            )
+        sensitivity = _finite_number(self.growth_sensitivity, "mechanics.growth_sensitivity")
+        free_load = _finite_number(self.growth_free_load, "mechanics.growth_free_load")
+        stall_load = _finite_number(self.growth_stall_load, "mechanics.growth_stall_load")
+        if sensitivity < 0.0 or free_load < 0.0 or stall_load <= free_load:
+            raise ControllerStateError(
+                "mechanics growth sensitivity and free load must be non-negative, "
+                "and the stall load must exceed the free load"
+            )
         parallel_threshold = _finite_number(
-            self.contact_parallel_sine_threshold,
-            "mechanics.contact_parallel_sine_threshold",
+            self.contact_parallel_sine_threshold, "mechanics.contact_parallel_sine_threshold"
         )
-        contact_epsilon = _finite_number(
-            self.contact_degeneracy_epsilon, "mechanics.contact_degeneracy_epsilon"
-        )
-        rotation = _finite_number(self.max_rotation_radians, "mechanics.max_rotation_radians")
-        constraint_margin = _finite_number(
-            self.constraint_activation_margin,
-            "mechanics.constraint_activation_margin",
-        )
-        constraint_epsilon = _finite_number(
-            self.constraint_degeneracy_epsilon,
-            "mechanics.constraint_degeneracy_epsilon",
-        )
-        if mu_a <= 0.0 or gamma <= 0.0:
-            raise ControllerStateError("mechanics mu_a and gamma must be positive")
-        if tolerance < 0.0 or contact_margin < 0.0 or rotation < 0.0:
-            raise ControllerStateError("mechanics tolerances, margins, and limits are invalid")
         if parallel_threshold < 0.0 or parallel_threshold > 1.0:
             raise ControllerStateError("mechanics contact parallel threshold is invalid")
-        if contact_epsilon <= 0.0 or constraint_epsilon <= 0.0 or constraint_margin < 0.0:
-            raise ControllerStateError("mechanics constraint/contact parameters are invalid")
-        if not isinstance(cast(object, self.require_convergence), bool):
-            raise ControllerStateError("mechanics.require_convergence must be Boolean")
         if not isinstance(cast(object, self.flow_drift), bool):
             raise ControllerStateError("mechanics.flow_drift must be Boolean")
 
     def native_parameters(
         self,
-    ) -> tuple[
-        MechanicsParameters,
-        ContactParameters,
-        MechanicsIntegrationParameters,
-        ConstraintContactParameters,
-    ]:
-        mechanics = MechanicsParameters()
-        mechanics.mu_a = self.mu_a
-        mechanics.gamma = self.gamma
-        mechanics.residual_rms_tolerance = self.residual_rms_tolerance
-        mechanics.max_iterations = self.max_iterations
+    ) -> tuple[ContactDynamicsParameters, ContactParameters, ConstraintContactParameters]:
+        dynamics = ContactDynamicsParameters()
+        dynamics.drag = self.drag
+        dynamics.contact_stiffness = self.contact_stiffness
+        dynamics.wall_stiffness = self.wall_stiffness
+        dynamics.overlap_tolerance = self.overlap_tolerance
+        dynamics.candidate_margin = self.candidate_margin
+        dynamics.max_overlap_recovery = self.max_overlap_recovery
+        dynamics.max_growth_fraction = self.max_growth_fraction
+        dynamics.max_iterations = self.max_iterations
+        dynamics.max_refinements = self.max_refinements
+        dynamics.max_step_halvings = self.max_step_halvings
+        dynamics.flow_drift = self.flow_drift
+        growth = dynamics.growth
+        growth.law = _GROWTH_LOAD_LAWS[self.growth_law]
+        growth.sensitivity = self.growth_sensitivity
+        growth.free_load = self.growth_free_load
+        growth.stall_load = self.growth_stall_load
+        dynamics.growth = growth
         contacts = ContactParameters()
-        contacts.activation_margin = self.contact_activation_margin
         contacts.parallel_sine_threshold = self.contact_parallel_sine_threshold
         contacts.degeneracy_epsilon = self.contact_degeneracy_epsilon
-        integration = MechanicsIntegrationParameters()
-        integration.max_rotation_radians = self.max_rotation_radians
-        integration.require_convergence = self.require_convergence
         constraints = ConstraintContactParameters()
-        constraints.activation_margin = self.constraint_activation_margin
         constraints.degeneracy_epsilon = self.constraint_degeneracy_epsilon
-        return mechanics, contacts, integration, constraints
+        return dynamics, contacts, constraints
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -259,50 +288,40 @@ class MechanicsConfig:
 
     @classmethod
     def from_json(cls, value: JSONValue) -> MechanicsConfig:
-        if not isinstance(value, dict) or set(value) != {
-            field.name for field in fields(MechanicsConfig)
-        }:
+        names = {field.name for field in fields(MechanicsConfig)}
+        if not isinstance(value, dict) or set(value) != names:
             raise ControllerStateError("controller mechanics configuration is invalid")
-        require_convergence = value["require_convergence"]
-        if not isinstance(require_convergence, bool):
-            raise ControllerStateError("mechanics.require_convergence must be Boolean")
+        growth_law = value["growth_law"]
+        if not isinstance(growth_law, str):
+            raise ControllerStateError("mechanics.growth_law must be a string")
         flow_drift = value["flow_drift"]
         if not isinstance(flow_drift, bool):
             raise ControllerStateError("mechanics.flow_drift must be Boolean")
+
+        def number(name: str) -> float:
+            return _finite_number(value[name], f"mechanics.{name}")
+
+        def count(name: str) -> int:
+            return _integer(value[name], f"mechanics.{name}", 0, _UINT32_MAX)
+
         return cls(
-            passes=_integer(value["passes"], "mechanics.passes", 1, _UINT32_MAX),
-            mu_a=_finite_number(value["mu_a"], "mechanics.mu_a"),
-            gamma=_finite_number(value["gamma"], "mechanics.gamma"),
-            residual_rms_tolerance=_finite_number(
-                value["residual_rms_tolerance"], "mechanics.residual_rms_tolerance"
-            ),
-            max_iterations=_integer(
-                value["max_iterations"], "mechanics.max_iterations", 0, _UINT32_MAX
-            ),
-            contact_activation_margin=_finite_number(
-                value["contact_activation_margin"],
-                "mechanics.contact_activation_margin",
-            ),
-            contact_parallel_sine_threshold=_finite_number(
-                value["contact_parallel_sine_threshold"],
-                "mechanics.contact_parallel_sine_threshold",
-            ),
-            contact_degeneracy_epsilon=_finite_number(
-                value["contact_degeneracy_epsilon"],
-                "mechanics.contact_degeneracy_epsilon",
-            ),
-            max_rotation_radians=_finite_number(
-                value["max_rotation_radians"], "mechanics.max_rotation_radians"
-            ),
-            require_convergence=require_convergence,
-            constraint_activation_margin=_finite_number(
-                value["constraint_activation_margin"],
-                "mechanics.constraint_activation_margin",
-            ),
-            constraint_degeneracy_epsilon=_finite_number(
-                value["constraint_degeneracy_epsilon"],
-                "mechanics.constraint_degeneracy_epsilon",
-            ),
+            drag=number("drag"),
+            contact_stiffness=number("contact_stiffness"),
+            wall_stiffness=number("wall_stiffness"),
+            overlap_tolerance=number("overlap_tolerance"),
+            candidate_margin=number("candidate_margin"),
+            max_overlap_recovery=number("max_overlap_recovery"),
+            max_growth_fraction=number("max_growth_fraction"),
+            max_iterations=count("max_iterations"),
+            max_refinements=count("max_refinements"),
+            max_step_halvings=count("max_step_halvings"),
+            growth_law=growth_law,
+            growth_sensitivity=number("growth_sensitivity"),
+            growth_free_load=number("growth_free_load"),
+            growth_stall_load=number("growth_stall_load"),
+            contact_parallel_sine_threshold=number("contact_parallel_sine_threshold"),
+            contact_degeneracy_epsilon=number("contact_degeneracy_epsilon"),
+            constraint_degeneracy_epsilon=number("constraint_degeneracy_epsilon"),
             flow_drift=flow_drift,
         )
 
@@ -347,7 +366,7 @@ class NativeController:
         self._completed_steps = _integer(
             completed_steps, "native controller completed steps", 0, _UINT64_MAX
         )
-        self._last_mechanics_reports: tuple[MechanicsSolveResult, ...] = ()
+        self._last_contact_dynamics: ContactDynamicsResult | None = None
 
     @property
     def completed_steps(self) -> int:
@@ -358,8 +377,13 @@ class NativeController:
         return self._state
 
     @property
-    def last_mechanics_reports(self) -> tuple[MechanicsSolveResult, ...]:
-        return self._last_mechanics_reports
+    def last_contact_dynamics(self) -> ContactDynamicsResult | None:
+        """The result of the last step's contact dynamics solve, if it ran.
+
+        Its ``axial_loads`` and ``length_increments`` are indexed by cell slot.
+        """
+
+        return self._last_contact_dynamics
 
     def _context(self) -> ControllerStep:
         return ControllerStep(
@@ -471,20 +495,12 @@ class NativeController:
         for removal in plan.removals:
             self.simulation.remove_cell(removal)
 
-        self.simulation.step(dt)
-        reports: list[MechanicsSolveResult] = []
-        if (
-            self._mechanics is not None
-            and self._mechanics.flow_drift
-            and self.simulation.cell_count != 0
-        ):
-            _, _, integration, _ = self._mechanics.native_parameters()
-            self.simulation.apply_flow_drift(dt, integration)
-        if self._mechanics is not None and self.simulation.cell_count != 0:
-            parameters = self._mechanics.native_parameters()
-            for _ in range(self._mechanics.passes):
-                reports.append(self.simulation.relax_cell_mechanics(*parameters))
-        self._last_mechanics_reports = tuple(reports)
+        mechanics = self._mechanics
+        if mechanics is None:
+            self._last_contact_dynamics = None
+            self.simulation.step(dt)
+        else:
+            self._last_contact_dynamics = self.simulation.step(dt, *mechanics.native_parameters())
         self._completed_steps += 1
 
     def controller_state(self) -> dict[str, JSONValue]:

@@ -190,7 +190,7 @@ def build(context: ModelContext) -> NativeController:
         rng=context.rng,
         regulate=_regulate,
         on_division=_divided,
-        mechanics=MechanicsConfig(flow_drift=True, passes=2),
+        mechanics=MechanicsConfig(flow_drift=True),
         state=state,
     )
 

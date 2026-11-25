@@ -181,20 +181,14 @@ class ExternalContactGraph {
     const WorldState& state, const ConstraintSet& constraints,
     const ConstraintContactParameters& parameters = ConstraintContactParameters{});
 
-// Moves every mobile cell out of the external constraints it penetrates.
-// The regularized contact solve weighs a wall row against the cells pressing
-// on it, so a crowded colony leaves a cell part-way through a wall; this makes
-// walls impenetrable. Each end of a cell's centerline moves back along the
-// normals of the contacts it is inside until it rests in contact with those
-// surfaces, a mid-span contact moves both ends, and the cell is rebuilt at its
-// own length between the moved ends. A rod tilted against a wall therefore
-// comes to lie along it, and one wedged upright between a floor and a ceiling
-// is turned flat. Repeated sweeps settle the ends against each other. Fixed
-// cells stay put, and overlap the move opens between cells is left to the
-// next contact solve. The contacts come from the host geometry on every
+// The contacts of `find_external_contacts_cpu`, except that a box or cylinder
+// that cells live inside reports one contact for every face a cell end is
+// near rather than for the nearest face alone. Each face of a container is an
+// independent half-space, which is what a solve with unilateral rows needs to
+// hold a cell in a corner. The contacts come from the host geometry on every
 // backend.
-void project_cells_out_of_constraints(
-    WorldState& state, const ConstraintSet& constraints,
+[[nodiscard]] ExternalContactGraph find_external_contact_faces(
+    const WorldState& state, const ConstraintSet& constraints,
     const ConstraintContactParameters& parameters = ConstraintContactParameters{});
 
 }  // namespace microsimulator

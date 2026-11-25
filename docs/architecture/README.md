@@ -20,6 +20,7 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 ## Cell biology and mechanics
 
 - [Typed dynamic contact mechanics](0002-contact-mechanics.md)
+- [Contact dynamics with growth](0026-contact-dynamics.md)
 - [Explicit daughter fractions](0007-division.md)
 - [Persistent fixed rod cells](0009-fixed-cells.md)
 - [Biomass, growth, division, and uptake](0024-biomass-accounting.md)

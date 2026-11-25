@@ -102,9 +102,8 @@ class Trace:
             "divide": "division",
             "divide_equal": "division",
             "remove_cell": "removal",
-            "step": "growth_and_chemistry",
+            "step": "growth_contact_and_chemistry",
             "apply_flow_drift": "flow_drift",
-            "relax_cell_mechanics": "contact_and_constraint_relaxation",
             "set_cell_geometry": "geometry_edit",
         }
         originals = {}
@@ -156,6 +155,27 @@ def add(simulation, position=(0, 0, 0), direction=(1, 0, 0), length=4.0, radius=
     return simulation.add_cell(cell)
 
 
+def deepest_overlap(simulation):
+    contacts = simulation.find_cell_contacts().contacts
+    walls = simulation.find_external_contacts().contacts
+    return max([0.0, *(-contact.signed_separation for contact in (*contacts, *walls))])
+
+
+def resolve(simulation, dt, tolerance=2e-3, max_steps=60):
+    """Step the contact solve until no overlap deeper than the tolerance remains.
+
+    Returns the deepest overlap before each step and after the last. The cells
+    of these fixtures do not grow, so each step only moves them apart, by at
+    most the recovery limit.
+    """
+
+    overlaps = [deepest_overlap(simulation)]
+    while overlaps[-1] > tolerance and len(overlaps) <= max_steps:
+        simulation.step(dt, *MechanicsConfig().native_parameters())
+        overlaps.append(deepest_overlap(simulation))
+    return overlaps
+
+
 def fixtures(backend, seed, dt):
     results = {}
     for name in ("separated_planar", "crossing", "coincident_parallel"):
@@ -171,11 +191,12 @@ def fixtures(backend, seed, dt):
         ]
         trace = Trace(simulation)
         with trace.instrument():
-            simulation.relax_cell_mechanics(*MechanicsConfig().native_parameters())
+            overlaps = resolve(simulation, dt)
         results[name] = dict(
             classification="expected 3D contact behavior",
             mechanics=MechanicsConfig().to_json(),
             contact_normals=normals,
+            overlap_by_step=overlaps,
             **trace.report(),
         )
     for name, direction in (("planar_division", (1, 0, 0)), ("inherited_tilt", (1, 0, 0.2))):
@@ -213,36 +234,12 @@ def fixtures(backend, seed, dt):
         simulation.add_plane_constraint(plane)
     trace = Trace(simulation, plane_z=0.8)
 
-    def relax_to_tolerance(config):
-        residuals = []
-        for _ in range(20):
-            residuals.append(
-                max(
-                    (
-                        max(0.0, -contact.signed_separation)
-                        for contact in simulation.find_external_contacts().contacts
-                    ),
-                    default=0.0,
-                )
-            )
-            if residuals[-1] <= 1e-6 or (len(residuals) > 1 and residuals[-1] == residuals[-2]):
-                break
-            simulation.relax_cell_mechanics(*config.native_parameters())
-        return residuals
-
-    default_config = MechanicsConfig()
-    tight_config = MechanicsConfig(residual_rms_tolerance=1e-8)
     with trace.instrument():
-        default_residuals = relax_to_tolerance(default_config)
-        default_geometry = cells(simulation)
-        tight_residuals = relax_to_tolerance(tight_config)
+        penetrations = resolve(simulation, dt)
     results["finite_height_constraints"] = dict(
-        classification="expected 3D wall relaxation; finite height is not strict 2D",
-        default_mechanics=default_config.to_json(),
-        tight_mechanics=tight_config.to_json(),
-        default_wall_penetration_by_pass=default_residuals,
-        tight_wall_penetration_by_pass=tight_residuals,
-        default_final_geometry=default_geometry,
+        classification="expected 3D wall contact; finite height is not strict 2D",
+        mechanics=MechanicsConfig().to_json(),
+        wall_penetration_by_step=penetrations,
         **trace.report(),
     )
     simulation = Simulation(backend)

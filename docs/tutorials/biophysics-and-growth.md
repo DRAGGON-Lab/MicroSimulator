@@ -113,11 +113,11 @@ uv run microsimulator view \
   --open
 ```
 
-Five `PlaneConstraintInit` values define a floor and four walls. Each plane has a point, an inward unit normal, and a positive row coefficient. The permitted half-space lies in the inward direction. The founder begins at `z = 0.5`, so its radius-0.5 capsule initially touches rather than penetrates the floor.
+Five `PlaneConstraintInit` values define a floor and four walls. Each plane has a point and an inward unit normal. The permitted half-space lies in the inward direction. The founder begins at `z = 0.5`, so its radius-0.5 capsule initially touches rather than penetrates the floor.
 
-The tutorial sets `MechanicsConfig(gamma=20)`. Here, `gamma` is the positive length regularizer in the seven-degree-of-freedom mechanics operator. It affects how strongly changes in cell length are penalized during relaxation.
+The tutorial uses the default `MechanicsConfig()`. Each step solves growth and contact together: cells and walls push with non-negative contact forces while the cells elongate, as the [contact dynamics design](../architecture/0026-contact-dynamics.md) describes. The box is open at the top, so growth that ignores load always has somewhere to go; a closed space needs a growth load response such as `growth_law="linear"` with a stall load.
 
-After each biological step the controller runs a mechanics pass. Pair and constraint contacts are re-derived dynamically; there is no `max_planes`, `max_contacts`, or fixed contact-table capacity to tune.
+Pair and constraint contacts are re-derived dynamically; there is no `max_planes`, `max_contacts`, or fixed contact-table capacity to tune.
 
 ## Experiments
 

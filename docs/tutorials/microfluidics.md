@@ -2,7 +2,7 @@
 
 This tutorial connects device geometry, flowing media, and cell biology in runnable MicroSimulator models. The [modeling guide](../microfluidics.md) introduces the workflow and the choice of flow solver. Four examples cover the range:
 
-These models use XY-only division jitter and finite-height 3D confinement. A thin cavity can encourage a monolayer, but it does not force a common center Z or eliminate tilt; walls are impenetrable, so every relaxation pass leaves each cell resting on or clear of them, while overlap between cells remains a soft residual that depends on relaxation tolerance and passes. The [dimensionality audit](planarity.md) lists each device and reproduces these distinctions.
+These models use XY-only division jitter and finite-height 3D confinement. A thin cavity can encourage a monolayer, but it does not force a common center Z or eliminate tilt; walls and neighbors are held apart by contact forces, and a contact overlaps by its force divided by its stiffness, with walls a hundred times stiffer than cells by default. The [dimensionality audit](planarity.md) lists each device and reproduces these distinctions.
 
 For backend selection, PowerShell syntax, quoted JSON parameters, and paths with spaces, see [tutorial commands by backend and shell](commands.md#choose-a-shell). Multiline commands on this page use POSIX shell backslashes; the guide provides the PowerShell equivalents and [explicit CPU, Metal, and CUDA trap launches](commands.md#run-the-same-trap-on-cpu-metal-or-cuda).
 
@@ -21,7 +21,7 @@ Run any of them live:
 uv run microsimulator view --model examples/microfluidic_trap.py --seed 42 --dt 0.02 --backend cpu --open
 ```
 
-The trap example is sized to one population: a 40 by 20 micrometer trap, 1.5 micrometers deep, beside a 20 micrometer channel. A few hundred cells fill it as a monolayer. Its growth rule multiplies the Monod rate by a compression factor that falls linearly to zero as a cell's deepest overlap with a neighbor reaches a fifth of its diameter, so the packed interior stops elongating while cells at the mouth keep growing, spill into the channel, and wash out. The population settles near 320 cells with continuous turnover. The compression limit is a model choice, not a measured mechanical response.
+The trap example is sized to one population: a 40 by 20 micrometer trap, 1.5 micrometers deep, beside a 20 micrometer channel. A few hundred cells fill it as a monolayer. It solves growth and contact together with [contact dynamics](../architecture/0026-contact-dynamics.md): cells push each other toward the mouth with contact forces, and a cell's elongation falls linearly with the axial load on it, stopping at a stall load. The cells at the back carry the load of everything between them and the mouth, so they slow and stall, while cells at the mouth keep growing, spill into the channel, and wash out. The trap holds about 260 cells with continuous turnover. The stall load is a model choice, not a measured mechanical response.
 
 ## Walls that cells and chemistry both respect
 
@@ -94,7 +94,7 @@ fixed boundary of the signal grid.
 
 ## Flow on signals and on cells
 
-The velocity field advects every signal with conservative upwind face fluxes under all three signal integrators. With `MechanicsConfig(flow_drift=True)`, the controller translates each non-fixed cell using the velocity sampled at its center and rotates it with a finite-aspect Jeffery approximation, so escaped cells travel down the channel and rods rotate in shear. Contact relaxation then resolves overlaps with walls or neighbors. The [flow-drift design](../architecture/0021-flow-drift.md) describes this kinematic approximation and its integration limits.
+The velocity field advects every signal with conservative upwind face fluxes under all three signal integrators. With `MechanicsConfig(flow_drift=True)`, the controller translates each non-fixed cell using the velocity sampled at its center and rotates it with a finite-aspect Jeffery approximation, so escaped cells travel down the channel and rods rotate in shear. That velocity is part of the contact solve, so cells the flow presses together or into a wall do not overlap. The [flow-drift design](../architecture/0021-flow-drift.md) describes this kinematic approximation and its integration limits.
 
 ## Washout
 
@@ -203,7 +203,7 @@ The model also does not reproduce an experimentally established separation betwe
 - Let the lattice of site centers cover every position a cell can reach, with about a voxel
   of margin past each wall: sampling outside the lattice is an error.
 - Keep the mechanics walls enclosing the solid mask. The device helpers mark a site solid
-  when its center lies inside a wall, and relaxation keeps every cell center at least a
+  when its center lies inside a wall, and the contact solve keeps every cell center about a
   cell radius clear of each wall, so a cell against a wall always has a fluid site to
   sample. A hand-built mask needs the same rule; the
   [pillar channel](flow-solvers.md) shows it for curved walls.

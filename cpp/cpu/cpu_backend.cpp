@@ -20,11 +20,11 @@ class CpuBackend final : public ComputeBackend {
 
   [[nodiscard]] bool supports(BackendFeature feature) const noexcept override {
     return feature == BackendFeature::growth || feature == BackendFeature::species ||
-           feature == BackendFeature::cell_contacts || feature == BackendFeature::cell_mechanics ||
+           feature == BackendFeature::cell_contacts ||
            feature == BackendFeature::external_constraints || feature == BackendFeature::signals ||
            feature == BackendFeature::coupled_rates ||
            feature == BackendFeature::depth_averaged_flow ||
-           feature == BackendFeature::resolved_flow;
+           feature == BackendFeature::resolved_flow || feature == BackendFeature::contact_dynamics;
   }
 
   void advance_growth(WorldState& state, float dt) override {
@@ -57,11 +57,10 @@ class CpuBackend final : public ComputeBackend {
     return find_external_contacts_cpu(state, constraints, parameters);
   }
 
-  [[nodiscard]] MechanicsSolveResult solve_cell_mechanics(
-      const WorldState& state, const ContactGraph& contacts,
-      const ExternalContactGraph& external_contacts,
-      const MechanicsParameters& parameters) override {
-    return solve_cell_mechanics_cpu(state, contacts, external_contacts, parameters);
+  [[nodiscard]] ContactSolveResult solve_contact_forces(
+      const ContactSystem& system, std::span<const float> initial_multipliers,
+      const ContactSolveParameters& parameters) override {
+    return solve_contact_system_cpu(system, initial_multipliers, parameters);
   }
 
   [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(

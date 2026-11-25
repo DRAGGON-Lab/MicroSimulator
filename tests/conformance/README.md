@@ -34,7 +34,7 @@ The lifecycle scenario interleaves growth with two generations of deterministic 
 
 ## Composed trajectory
 
-The trajectory scenario composes coupled intracellular/extracellular rates, growth, cell and plane contacts, fixed-cell projection, mechanics relaxation, and equal division over three heterogeneous time steps. It compares every intermediate cell and signal state with a fresh CPU trajectory, requires each mechanics solve to converge, checks exact lineage identities, and confirms the final contact count. Geometry uses a `2e-3` absolute and relative tolerance, species use `2e-4`, and signal levels use `5e-4`; the wider bounds account for native solver differences feeding subsequent trajectory stages.
+The trajectory scenario composes coupled intracellular/extracellular rates, growth and contact solved together with cell and plane contacts and a fixed cell, and equal division over three heterogeneous time steps. It compares every intermediate cell and signal state with a fresh CPU trajectory, checks exact lineage identities, and confirms the final contact count. Geometry uses a `2e-3` absolute and relative tolerance, species use `2e-4`, and signal levels use `5e-4`; the wider bounds account for native solver differences feeding subsequent trajectory stages.
 
 ## Signal grid
 
@@ -60,10 +60,6 @@ The contact scenario compares each contact-capable backend with the CPU geometry
 
 The external-constraint scenario compares every typed field and per-cell incidence index with the CPU oracle for mixed planes, spheres, boxes, and cylinders; inside and outside regions; empty inputs; stable IDs across constraint kinds; deterministic degeneracies; rods tilted against a box face and a pillar barrel with both ends or one end inside the surface; and finite obstacles intersected only by a capsule mid-span. Geometry fields use absolute and relative tolerances of `2e-5`; identities, kinds, centerline-location tags, graph sizes, and incidence are exact.
 
-## Mechanics
+## Contact dynamics
 
-The CPU mechanics fixtures probe the declared regularizer, operator symmetry and positive definiteness, solver convergence, exact residual recomputation, iteration-limit reporting, and non-finite-curvature breakdown. The shared mechanics scenario then compares native correction vectors and diagnostics with the CPU reference for a mixed colony, a one-iteration limit, empty systems, and buffer growth. It also applies a converged mixed-colony result and compares the resulting position, direction, and length state. Corrections, geometry, and initial residuals use absolute and relative tolerances of `3e-4`; convergence status and breakdown type are exact.
-
-## Constraint mechanics
-
-The external-constraint mechanics scenario compares correction vectors and integrated cell geometry with the CPU reference for plane, sphere, box, and cylinder boundaries, including outside finite obstacles whose only contact lies at the rod mid-span. It uses the mechanics tolerances above and requires an available backend without external-constraint support to reject a nonempty constraint set explicitly. The same executable is the native Metal and CUDA hardware acceptance gate.
+The contact dynamics scenario solves the same contact systems on each backend and on the CPU reference: a pair, and chains of cells pressed together against a wall with a fixed cell at the far end, an inactive row, mixed compliances, and each growth load law. Both solves must converge, the backend's multipliers must satisfy the complementarity conditions to twice the solve tolerance, and the velocities, elongation rates, and loads they produce must match the reference, whose solution is unique. A solve restarted from its own solution takes no iterations, an iteration limit is reported with the multipliers reached, and an empty system is accepted. The scenario then runs a closed chamber until it fills and holds, and an unconfined colony that must elongate exactly as the same lineage does without contact. The same executable is the native Metal and CUDA hardware acceptance gate.

@@ -565,7 +565,7 @@ int main() {
     capped.configure_signal_grid(spec);
     const auto capped_id = capped.add_cell(rod);
     capped.apply_flow_drift(1.0F);
-    const auto limit = microsimulator::MechanicsIntegrationParameters{}.max_rotation_radians;
+    const auto limit = microsimulator::FlowDriftParameters{}.max_rotation_radians;
     assert(capped.cell(capped_id).direction.x > 3 * std::sin(limit));
     assert_close(microsimulator::norm(capped.cell(capped_id).direction), 1.0F);
 
@@ -573,7 +573,7 @@ int main() {
     frozen.configure_signal_grid(spec);
     const auto frozen_id = frozen.add_cell(rod);
     frozen.apply_flow_drift(
-        1.0F, microsimulator::MechanicsIntegrationParameters{.max_rotation_radians = 0.0F});
+        1.0F, microsimulator::FlowDriftParameters{.max_rotation_radians = 0.0F});
     assert_close(frozen.cell(frozen_id).direction.x, 0.0F);
     assert_close(frozen.cell(frozen_id).direction.y, 1.0F);
   }

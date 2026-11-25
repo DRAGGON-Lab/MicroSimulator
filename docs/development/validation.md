@@ -46,7 +46,7 @@ The native gate performs a fresh Metal-enabled build, constructs every enumerate
 Together, these gates cover:
 
 - growth, equal and asymmetric division, stable identity, and lineage;
-- cell contacts, plane, sphere, box, and cylinder constraints, full-capsule finite-obstacle contact, fixed cells, and mechanics relaxation;
+- cell contacts, plane, sphere, box, and cylinder constraints, full-capsule finite-obstacle contact, fixed cells, and contact dynamics;
 - species, signal transport, Forward Euler, Crank-Nicolson, backward Euler, and coupled rates;
 - depth-averaged Hele-Shaw/Darcy flow and resolved MAC Stokes-Brinkman flow;
 - checkpoint round trips, exact controller resume, and deterministic runtime random state;
@@ -82,7 +82,7 @@ The Python and C++ suites exercise more than numerical parity:
 - SBML fixtures cover supported Level 3 Version 2 Core symbols and operators, ordered metadata, local and global parameters, stoichiometry, and explicit rejection of unsupported semantics.
 - Signal fixtures cover mass conservation, fixed reservoirs, periodic upwind advection, reduced dimensions, 3D interpolation, nonuniform affine sources and losses, stability rejection, checkpoint round trips, and diagnosed solver convergence.
 - Coupled fixtures cover old-field sampling, post-growth intracellular rates, amount-to-voxel conversion, repeated scatter destinations, empty colonies, and failure atomicity.
-- Contact and mechanics fixtures cover sparse and dense candidate staging, coincident cells, stable ordering after slot reuse, operator properties, convergence and breakdown diagnostics, buffer growth, fixed-cell projection, and integrated geometry.
+- Contact and contact dynamics fixtures cover sparse and dense candidate staging, coincident cells, stable ordering after slot reuse, complementarity of the solved contact forces, agreement with the CPU solution, iteration limits, buffer growth, fixed cells, and the chamber and colony trajectories.
 - Checkpoint fixtures compare every persisted field before continuing execution and reject corrupt, malformed, non-finite, duplicate, unknown, or unsupported data.
 - Batch and manifest fixtures cover seed reproducibility, model digests, periodic output names, stopping rules, path resolution, collision preflight, and import-before-authentication hazards.
 - Scene and viewer fixtures cover strict cross-language decoding, RFC 8785 digests, browser-safe identities, coloring, signal slicing, token and origin checks, WebSocket messages, reset, and checkpointing.

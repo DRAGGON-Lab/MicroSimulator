@@ -106,7 +106,7 @@ def build(context: ModelContext) -> NativeController:
         rng=context.rng,
         regulate=regulate,
         on_division=divided,
-        mechanics=MechanicsConfig(gamma=10.0),
+        mechanics=MechanicsConfig(),
         state={
             "transfer_probability": transfer_probability,
             "division_targets": targets,

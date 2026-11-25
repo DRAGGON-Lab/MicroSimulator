@@ -36,10 +36,15 @@ def test_three_dimensional_diagnostic_fixtures(backend: BackendKind) -> None:
     for name in ("crossing", "coincident_parallel"):
         result = results[name]
         assert any(abs(normal[2]) > 0.99 for normal in result["contact_normals"])
-        assert result["first_out_of_plane"]["stage"] == "contact_and_constraint_relaxation"
+        assert result["first_out_of_plane"]["stage"] == "growth_contact_and_chemistry"
+        overlaps = result["overlap_by_step"]
+        assert math.isclose(overlaps[0], 1.0, abs_tol=1e-6)
+        assert all(after < before for before, after in pairwise(overlaps))
+        assert overlaps[-1] <= 2e-3
+        # The rods end a diameter apart in Z, each having moved half of it.
         negative, positive = sorted(cell["center"][2] for cell in result["final_geometry"])
-        assert math.isclose(negative, -0.4, abs_tol=1e-6)
-        assert math.isclose(positive, 0.4, abs_tol=1e-6)
+        assert math.isclose(negative, -0.5, abs_tol=2e-3)
+        assert math.isclose(positive, 0.5, abs_tol=2e-3)
     inherited = results["inherited_tilt"]
     assert inherited["first_out_of_plane"]["stage"] == "initialization"
     assert any(
@@ -52,15 +57,13 @@ def test_three_dimensional_diagnostic_fixtures(backend: BackendKind) -> None:
     assert all(stage["requested_direction_delta_z"] == 0 for stage in jitter)
     assert any(stage["max_stage_direction_change_z"] > 1e-6 for stage in jitter)
     confined = results["finite_height_constraints"]
-    default = confined["default_wall_penetration_by_pass"]
-    tight = confined["tight_wall_penetration_by_pass"]
-    assert math.isclose(default[0], 0.3, abs_tol=1e-6)
-    assert 1e-6 < default[-1] < 0.005
-    assert tight[-1] < 1e-6
-    assert all(after <= before + 1e-7 for before, after in pairwise(tight))
+    penetrations = confined["wall_penetration_by_step"]
+    assert math.isclose(penetrations[0], 0.3, abs_tol=1e-6)
+    assert all(after < before for before, after in pairwise(penetrations))
+    assert penetrations[-1] <= 2e-3
     final = confined["final_geometry"][0]
     axial_z_extent = abs(final["direction"][2]) * final["length"] / 2 + final["radius"]
-    assert final["center"][2] + axial_z_extent <= 1 + 1e-6
+    assert final["center"][2] + axial_z_extent <= 1 + 2e-3
     assert final["center"][2] > 0.49  # walls permit nonzero Z; they do not impose z=0
     flow = results["vertical_flow"]
     assert flow["first_out_of_plane"]["stage"] == "flow_drift"
@@ -86,7 +89,6 @@ def test_diagnostics_preserve_rng_and_restore_native_methods_on_failure() -> Non
             "remove_cell",
             "step",
             "apply_flow_drift",
-            "relax_cell_mechanics",
             "set_cell_geometry",
         )
     }

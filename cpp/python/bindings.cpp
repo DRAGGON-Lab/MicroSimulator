@@ -30,12 +30,12 @@ NB_MODULE(_core, module) {
       .value("GROWTH", microsimulator::BackendFeature::growth)
       .value("SPECIES", microsimulator::BackendFeature::species)
       .value("CELL_CONTACTS", microsimulator::BackendFeature::cell_contacts)
-      .value("CELL_MECHANICS", microsimulator::BackendFeature::cell_mechanics)
       .value("EXTERNAL_CONSTRAINTS", microsimulator::BackendFeature::external_constraints)
       .value("SIGNALS", microsimulator::BackendFeature::signals)
       .value("COUPLED_RATES", microsimulator::BackendFeature::coupled_rates)
       .value("DEPTH_AVERAGED_FLOW", microsimulator::BackendFeature::depth_averaged_flow)
-      .value("RESOLVED_FLOW", microsimulator::BackendFeature::resolved_flow);
+      .value("RESOLVED_FLOW", microsimulator::BackendFeature::resolved_flow)
+      .value("CONTACT_DYNAMICS", microsimulator::BackendFeature::contact_dynamics);
 
   nb::enum_<microsimulator::FlowAxis>(module, "FlowAxis")
       .value("X", microsimulator::FlowAxis::x)
@@ -107,16 +107,10 @@ NB_MODULE(_core, module) {
       .value("INTERIOR", microsimulator::RodContactLocation::interior);
   module.attr("RodEndpoint") = module.attr("RodContactLocation");
 
-  nb::enum_<microsimulator::SolverStatus>(module, "SolverStatus")
-      .value("CONVERGED", microsimulator::SolverStatus::converged)
-      .value("ITERATION_LIMIT", microsimulator::SolverStatus::iteration_limit)
-      .value("BREAKDOWN", microsimulator::SolverStatus::breakdown);
-
-  nb::enum_<microsimulator::SolverBreakdown>(module, "SolverBreakdown")
-      .value("NONE", microsimulator::SolverBreakdown::none)
-      .value("NON_FINITE_RESIDUAL", microsimulator::SolverBreakdown::non_finite_residual)
-      .value("NON_FINITE_CURVATURE", microsimulator::SolverBreakdown::non_finite_curvature)
-      .value("NON_POSITIVE_CURVATURE", microsimulator::SolverBreakdown::non_positive_curvature);
+  nb::enum_<microsimulator::GrowthLoadLaw>(module, "GrowthLoadLaw")
+      .value("NONE", microsimulator::GrowthLoadLaw::none)
+      .value("EXPONENTIAL", microsimulator::GrowthLoadLaw::exponential)
+      .value("LINEAR", microsimulator::GrowthLoadLaw::linear);
 
   nb::class_<microsimulator::Vec3>(module, "Vec3")
       .def(nb::init<float, float, float>(), "x"_a = 0.0F, "y"_a = 0.0F, "z"_a = 0.0F)
@@ -491,37 +485,50 @@ NB_MODULE(_core, module) {
           },
           "slot"_a);
 
-  nb::class_<microsimulator::CellCorrection>(module, "CellCorrection")
-      .def_ro("translation", &microsimulator::CellCorrection::translation)
-      .def_ro("rotation", &microsimulator::CellCorrection::rotation)
-      .def_ro("length", &microsimulator::CellCorrection::length);
-
-  nb::class_<microsimulator::MechanicsParameters>(module, "MechanicsParameters")
+  nb::class_<microsimulator::FlowDriftParameters>(module, "FlowDriftParameters")
       .def(nb::init<>())
-      .def_rw("mu_a", &microsimulator::MechanicsParameters::mu_a)
-      .def_rw("gamma", &microsimulator::MechanicsParameters::gamma)
-      .def_rw("residual_rms_tolerance",
-              &microsimulator::MechanicsParameters::residual_rms_tolerance)
-      .def_rw("max_iterations", &microsimulator::MechanicsParameters::max_iterations);
+      .def_rw("max_rotation_radians", &microsimulator::FlowDriftParameters::max_rotation_radians);
 
-  nb::class_<microsimulator::MechanicsIntegrationParameters>(module,
-                                                             "MechanicsIntegrationParameters")
+  nb::class_<microsimulator::GrowthLoadResponse>(module, "GrowthLoadResponse")
       .def(nb::init<>())
-      .def_rw("max_rotation_radians",
-              &microsimulator::MechanicsIntegrationParameters::max_rotation_radians)
-      .def_rw("require_convergence",
-              &microsimulator::MechanicsIntegrationParameters::require_convergence);
+      .def_rw("law", &microsimulator::GrowthLoadResponse::law)
+      .def_rw("sensitivity", &microsimulator::GrowthLoadResponse::sensitivity)
+      .def_rw("free_load", &microsimulator::GrowthLoadResponse::free_load)
+      .def_rw("stall_load", &microsimulator::GrowthLoadResponse::stall_load)
+      .def("factor", [](const microsimulator::GrowthLoadResponse& response, float load) {
+        microsimulator::validate_growth_load_response(response);
+        return microsimulator::growth_load_factor(response, load);
+      });
 
-  nb::class_<microsimulator::SolverReport>(module, "SolverReport")
-      .def_ro("status", &microsimulator::SolverReport::status)
-      .def_ro("breakdown", &microsimulator::SolverReport::breakdown)
-      .def_ro("iterations", &microsimulator::SolverReport::iterations)
-      .def_ro("initial_residual_rms", &microsimulator::SolverReport::initial_residual_rms)
-      .def_ro("final_residual_rms", &microsimulator::SolverReport::final_residual_rms);
+  nb::class_<microsimulator::ContactDynamicsParameters>(module, "ContactDynamicsParameters")
+      .def(nb::init<>())
+      .def_rw("drag", &microsimulator::ContactDynamicsParameters::drag)
+      .def_rw("contact_stiffness", &microsimulator::ContactDynamicsParameters::contact_stiffness)
+      .def_rw("wall_stiffness", &microsimulator::ContactDynamicsParameters::wall_stiffness)
+      .def_rw("overlap_tolerance", &microsimulator::ContactDynamicsParameters::overlap_tolerance)
+      .def_rw("candidate_margin", &microsimulator::ContactDynamicsParameters::candidate_margin)
+      .def_rw("max_overlap_recovery",
+              &microsimulator::ContactDynamicsParameters::max_overlap_recovery)
+      .def_rw("max_growth_fraction",
+              &microsimulator::ContactDynamicsParameters::max_growth_fraction)
+      .def_rw("max_iterations", &microsimulator::ContactDynamicsParameters::max_iterations)
+      .def_rw("max_refinements", &microsimulator::ContactDynamicsParameters::max_refinements)
+      .def_rw("max_step_halvings", &microsimulator::ContactDynamicsParameters::max_step_halvings)
+      .def_rw("flow_drift", &microsimulator::ContactDynamicsParameters::flow_drift)
+      .def_rw("growth", &microsimulator::ContactDynamicsParameters::growth);
 
-  nb::class_<microsimulator::MechanicsSolveResult>(module, "MechanicsSolveResult")
-      .def_ro("corrections", &microsimulator::MechanicsSolveResult::corrections)
-      .def_ro("report", &microsimulator::MechanicsSolveResult::report);
+  nb::class_<microsimulator::ContactDynamicsReport>(module, "ContactDynamicsReport")
+      .def_ro("substeps", &microsimulator::ContactDynamicsReport::substeps)
+      .def_ro("halvings", &microsimulator::ContactDynamicsReport::halvings)
+      .def_ro("refinements", &microsimulator::ContactDynamicsReport::refinements)
+      .def_ro("iterations", &microsimulator::ContactDynamicsReport::iterations)
+      .def_ro("max_rows", &microsimulator::ContactDynamicsReport::max_rows)
+      .def_ro("max_overlap", &microsimulator::ContactDynamicsReport::max_overlap);
+
+  nb::class_<microsimulator::ContactDynamicsResult>(module, "ContactDynamicsResult")
+      .def_ro("report", &microsimulator::ContactDynamicsResult::report)
+      .def_ro("axial_loads", &microsimulator::ContactDynamicsResult::axial_loads)
+      .def_ro("length_increments", &microsimulator::ContactDynamicsResult::length_increments);
 
   nb::class_<microsimulator::Simulation>(module, "Simulation")
       .def(nb::init<microsimulator::BackendKind, std::size_t, std::size_t, std::uint32_t>(),
@@ -554,7 +561,7 @@ NB_MODULE(_core, module) {
            microsimulator::python::exclusive(&microsimulator::Simulation::remove_cell), "id"_a)
       .def("apply_flow_drift",
            microsimulator::python::released(&microsimulator::Simulation::apply_flow_drift), "dt"_a,
-           "integration"_a = microsimulator::MechanicsIntegrationParameters{})
+           "parameters"_a = microsimulator::FlowDriftParameters{})
       .def("add_plane_constraint",
            microsimulator::python::exclusive(&microsimulator::Simulation::add_plane_constraint),
            "plane"_a)
@@ -621,24 +628,27 @@ NB_MODULE(_core, module) {
       .def("divide_equal",
            microsimulator::python::exclusive(&microsimulator::Simulation::divide_equal),
            "parent_id"_a)
-      .def("step", microsimulator::python::released(&microsimulator::Simulation::step), "dt"_a)
+      .def(
+          "step",
+          microsimulator::python::released(static_cast<void (microsimulator::Simulation::*)(float)>(
+              &microsimulator::Simulation::step)),
+          "dt"_a)
+      .def("step",
+           microsimulator::python::released(
+               static_cast<microsimulator::ContactDynamicsResult (microsimulator::Simulation::*)(
+                   float, const microsimulator::ContactDynamicsParameters&,
+                   const microsimulator::ContactParameters&,
+                   const microsimulator::ConstraintContactParameters&)>(
+                   &microsimulator::Simulation::step)),
+           "dt"_a, "dynamics_parameters"_a,
+           "contact_parameters"_a = microsimulator::ContactParameters{},
+           "constraint_parameters"_a = microsimulator::ConstraintContactParameters{})
       .def("find_cell_contacts",
            microsimulator::python::released(&microsimulator::Simulation::find_cell_contacts),
            "parameters"_a = microsimulator::ContactParameters{})
       .def("find_external_contacts",
            microsimulator::python::released(&microsimulator::Simulation::find_external_contacts),
            "parameters"_a = microsimulator::ConstraintContactParameters{})
-      .def("solve_cell_mechanics",
-           microsimulator::python::released(&microsimulator::Simulation::solve_cell_mechanics),
-           "mechanics_parameters"_a = microsimulator::MechanicsParameters{},
-           "contact_parameters"_a = microsimulator::ContactParameters{},
-           "constraint_parameters"_a = microsimulator::ConstraintContactParameters{})
-      .def("relax_cell_mechanics",
-           microsimulator::python::released(&microsimulator::Simulation::relax_cell_mechanics),
-           "mechanics_parameters"_a = microsimulator::MechanicsParameters{},
-           "contact_parameters"_a = microsimulator::ContactParameters{},
-           "integration_parameters"_a = microsimulator::MechanicsIntegrationParameters{},
-           "constraint_parameters"_a = microsimulator::ConstraintContactParameters{})
       .def(
           "solve_depth_averaged_flow",
           [](microsimulator::Simulation& simulation, const microsimulator::SignalGridSpec& spec,

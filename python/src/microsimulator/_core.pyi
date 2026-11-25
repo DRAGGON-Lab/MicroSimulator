@@ -90,12 +90,12 @@ class BackendFeature(Enum):
     GROWTH: BackendFeature
     SPECIES: BackendFeature
     CELL_CONTACTS: BackendFeature
-    CELL_MECHANICS: BackendFeature
     EXTERNAL_CONSTRAINTS: BackendFeature
     SIGNALS: BackendFeature
     COUPLED_RATES: BackendFeature
     DEPTH_AVERAGED_FLOW: BackendFeature
     RESOLVED_FLOW: BackendFeature
+    CONTACT_DYNAMICS: BackendFeature
 
 class FlowAxis(Enum):
     X: FlowAxis
@@ -169,17 +169,6 @@ class RodContactLocation(Enum):
     INTERIOR: RodContactLocation
 
 RodEndpoint = RodContactLocation
-
-class SolverStatus(Enum):
-    CONVERGED: SolverStatus
-    ITERATION_LIMIT: SolverStatus
-    BREAKDOWN: SolverStatus
-
-class SolverBreakdown(Enum):
-    NONE: SolverBreakdown
-    NON_FINITE_RESIDUAL: SolverBreakdown
-    NON_FINITE_CURVATURE: SolverBreakdown
-    NON_POSITIVE_CURVATURE: SolverBreakdown
 
 def backend_available(backend: BackendKind, device_index: int = 0) -> bool: ...
 def backend_device_count(backend: BackendKind) -> int: ...
@@ -598,45 +587,62 @@ class ExternalContactGraph:
     def __len__(self) -> int: ...
     def incident_contact_indices(self, slot: int) -> list[int]: ...
 
-class CellCorrection:
-    @property
-    def translation(self) -> Vec3: ...
-    @property
-    def rotation(self) -> Vec3: ...
-    @property
-    def length(self) -> float: ...
-
-class MechanicsParameters:
-    mu_a: float
-    gamma: float
-    residual_rms_tolerance: float
-    max_iterations: int
-
-    def __init__(self) -> None: ...
-
-class MechanicsIntegrationParameters:
+class FlowDriftParameters:
     max_rotation_radians: float
-    require_convergence: bool
 
     def __init__(self) -> None: ...
 
-class SolverReport:
+class GrowthLoadLaw(Enum):
+    NONE: GrowthLoadLaw
+    EXPONENTIAL: GrowthLoadLaw
+    LINEAR: GrowthLoadLaw
+
+class GrowthLoadResponse:
+    law: GrowthLoadLaw
+    sensitivity: float
+    free_load: float
+    stall_load: float
+
+    def __init__(self) -> None: ...
+    def factor(self, load: float) -> float: ...
+
+class ContactDynamicsParameters:
+    drag: float
+    contact_stiffness: float
+    wall_stiffness: float
+    overlap_tolerance: float
+    candidate_margin: float
+    max_overlap_recovery: float
+    max_growth_fraction: float
+    max_iterations: int
+    max_refinements: int
+    max_step_halvings: int
+    flow_drift: bool
+    growth: GrowthLoadResponse
+
+    def __init__(self) -> None: ...
+
+class ContactDynamicsReport:
     @property
-    def status(self) -> SolverStatus: ...
+    def substeps(self) -> int: ...
     @property
-    def breakdown(self) -> SolverBreakdown: ...
+    def halvings(self) -> int: ...
+    @property
+    def refinements(self) -> int: ...
     @property
     def iterations(self) -> int: ...
     @property
-    def initial_residual_rms(self) -> float: ...
+    def max_rows(self) -> int: ...
     @property
-    def final_residual_rms(self) -> float: ...
+    def max_overlap(self) -> float: ...
 
-class MechanicsSolveResult:
+class ContactDynamicsResult:
     @property
-    def corrections(self) -> list[CellCorrection]: ...
+    def report(self) -> ContactDynamicsReport: ...
     @property
-    def report(self) -> SolverReport: ...
+    def axial_loads(self) -> list[float]: ...
+    @property
+    def length_increments(self) -> list[float]: ...
 
 class Simulation:
     @overload
@@ -673,9 +679,7 @@ class Simulation:
     def has_coupled_rate_plan(self) -> bool: ...
     def add_cell(self, cell: CellInit) -> int: ...
     def remove_cell(self, id: int) -> None: ...
-    def apply_flow_drift(
-        self, dt: float, integration: MechanicsIntegrationParameters = ...
-    ) -> None: ...
+    def apply_flow_drift(self, dt: float, parameters: FlowDriftParameters = ...) -> None: ...
     def add_plane_constraint(self, plane: PlaneConstraintInit) -> int: ...
     def add_sphere_constraint(self, sphere: SphereConstraintInit) -> int: ...
     def add_box_constraint(self, box: BoxConstraintInit) -> int: ...
@@ -696,24 +700,20 @@ class Simulation:
     def set_signal_boundary_values(self, face: GridFace, values: list[float]) -> None: ...
     def divide(self, parent_id: int, first_fraction: float) -> tuple[int, int]: ...
     def divide_equal(self, parent_id: int) -> tuple[int, int]: ...
+    @overload
     def step(self, dt: float) -> None: ...
+    @overload
+    def step(
+        self,
+        dt: float,
+        dynamics_parameters: ContactDynamicsParameters,
+        contact_parameters: ContactParameters = ...,
+        constraint_parameters: ConstraintContactParameters = ...,
+    ) -> ContactDynamicsResult: ...
     def find_cell_contacts(self, parameters: ContactParameters = ...) -> ContactGraph: ...
     def find_external_contacts(
         self, parameters: ConstraintContactParameters = ...
     ) -> ExternalContactGraph: ...
-    def solve_cell_mechanics(
-        self,
-        mechanics_parameters: MechanicsParameters = ...,
-        contact_parameters: ContactParameters = ...,
-        constraint_parameters: ConstraintContactParameters = ...,
-    ) -> MechanicsSolveResult: ...
-    def relax_cell_mechanics(
-        self,
-        mechanics_parameters: MechanicsParameters = ...,
-        contact_parameters: ContactParameters = ...,
-        integration_parameters: MechanicsIntegrationParameters = ...,
-        constraint_parameters: ConstraintContactParameters = ...,
-    ) -> MechanicsSolveResult: ...
     def solve_depth_averaged_flow(
         self,
         spec: SignalGridSpec,

@@ -9,6 +9,7 @@ from typing import cast
 
 from microsimulator import (
     CellInit,
+    ContactDynamicsParameters,
     ModelContext,
     Simulation,
     capped_founder_length,
@@ -136,9 +137,7 @@ class PlasmidController:
             if first_counts[1] + second_counts[1] != 2 * b_count:
                 raise AssertionError("plasmid B copies were not conserved")
 
-        self.simulation.step(dt)
-        if self.simulation.cell_count:
-            self.simulation.relax_cell_mechanics()
+        self.simulation.step(dt, ContactDynamicsParameters())
         self._present_state()
         self._completed_steps += 1
         self._validate()

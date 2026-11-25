@@ -13,13 +13,7 @@ MicroSimulator needs the useful behavior without introducing a second, incompati
 
 Fixedness is a persistent Boolean cell attribute. A fixed cell remains a rod: growth, species rates, signal sampling and secretion, and division continue to use the ordinary cell lifecycle. Daughters inherit the parent's fixedness. Callers may change the attribute by stable cell identifier.
 
-Mechanics constrains all seven correction degrees of freedom for fixed cells. With `P` denoting the diagonal projection that zeros fixed-cell degrees of freedom, the constrained system is
-
-```text
-(P A P + I - P) x = P b.
-```
-
-This preserves a symmetric positive-definite operator for conjugate gradient, makes the fixed solution entries exactly zero, and lets movable cells react to contacts with immovable cells. Mechanics integration independently ignores fixed-cell translation, rotation, and contact-induced length correction. An explicit desired growth increment still increases rod length.
+A fixed cell has no mobility in the [contact dynamics](0026-contact-dynamics.md) solve: contact forces do not move or turn it, and the flow does not carry it. Movable cells react to contacts with it as they do with a wall. It still elongates, at its growth rate scaled by the growth load response to the axial load its contacts put on it, and that elongation closes the gaps of its contacts.
 
 Checkpoints record `fixed` for every active cell.
 

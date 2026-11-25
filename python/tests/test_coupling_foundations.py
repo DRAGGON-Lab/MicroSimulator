@@ -7,9 +7,9 @@ import pytest
 from microsimulator import (
     BackendKind,
     CellInit,
+    FlowDriftParameters,
     GridBoundaryKind,
     GridShape,
-    MechanicsIntegrationParameters,
     RatePlanBuilder,
     SignalGridAffineReaction,
     SignalGridSpec,
@@ -71,7 +71,7 @@ def test_rigid_rotation_has_second_order_drift_convergence() -> None:
         cell = CellInit()
         cell.position, cell.direction = Vec3(1, 0, 0), Vec3(1, 0, 0)
         cid = sim.add_cell(cell)
-        parameters = MechanicsIntegrationParameters()
+        parameters = FlowDriftParameters()
         parameters.max_rotation_radians = 0.5
         for _ in range(n):
             sim.apply_flow_drift(0.8 / n, parameters)
