@@ -115,6 +115,10 @@ class GridFace(Enum):
     Z_LOWER: GridFace
     Z_UPPER: GridFace
 
+class SignalAdvectionKind(Enum):
+    UPWIND: SignalAdvectionKind
+    VAN_LEER: SignalAdvectionKind
+
 class SignalIntegrationKind(Enum):
     FORWARD_EULER: SignalIntegrationKind
     CRANK_NICOLSON: SignalIntegrationKind
@@ -415,6 +419,7 @@ class SignalGridSpec:
     obstacles: list[int]
     velocity_field: SignalGridVelocityField | None
     integration: SignalIntegrationKind
+    advection_scheme: SignalAdvectionKind
     solver: SignalSolveParameters
     x_lower: GridBoundary
     x_upper: GridBoundary

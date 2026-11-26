@@ -91,9 +91,9 @@ id<MTLBuffer> allocate_shared_buffer(id<MTLDevice> device, std::size_t byte_coun
 
 // Writes a grid's boundary kinds and fixed reservoir concentrations as the
 // transport kernels read them, growing `buffer` to hold the concentrations.
-// The result is the six boundary kinds followed by the six block offsets of
-// detail::FixedBoundaryTable.
-std::array<std::uint32_t, 12> write_boundaries(id<MTLDevice> device, const SignalGridSpec& spec,
+// The result is the six boundary kinds, the six block offsets of
+// detail::FixedBoundaryTable, and the grid's advection scheme.
+std::array<std::uint32_t, 13> write_boundaries(id<MTLDevice> device, const SignalGridSpec& spec,
                                                id<MTLBuffer> __strong& buffer,
                                                const char* description) {
   const auto table = detail::fixed_boundary_table(spec);
@@ -104,11 +104,12 @@ std::array<std::uint32_t, 12> write_boundaries(id<MTLDevice> device, const Signa
   std::memcpy(buffer.contents, table.values.data(), byte_count);
   constexpr std::array<GridFace, 6> faces{GridFace::x_lower, GridFace::x_upper, GridFace::y_lower,
                                           GridFace::y_upper, GridFace::z_lower, GridFace::z_upper};
-  std::array<std::uint32_t, 12> boundaries{};
+  std::array<std::uint32_t, 13> boundaries{};
   for (std::size_t face = 0; face < faces.size(); ++face) {
     boundaries[face] = static_cast<std::uint32_t>(spec.boundary(faces[face]).kind);
     boundaries[faces.size() + face] = table.offsets[face];
   }
+  boundaries[12] = static_cast<std::uint32_t>(spec.advection_scheme);
   return boundaries;
 }
 
@@ -122,6 +123,9 @@ void wait_for_command(id<MTLCommandBuffer> command_buffer, const char* operation
 
 void dispatch_1d(id<MTLComputeCommandEncoder> encoder, id<MTLComputePipelineState> pipeline,
                  std::uint32_t count) {
+  if (count == 0) {
+    return;
+  }
   const auto width = std::min<NSUInteger>(pipeline.maxTotalThreadsPerThreadgroup, 256);
   [encoder dispatchThreads:MTLSizeMake(count, 1, 1) threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
 }
@@ -412,7 +416,6 @@ class MetalBackend final : public ComputeBackend {
   }
 
   SignalSolveReport advance_signal_grid(SignalGrid& grid, float dt) override {
-    grid.validate();
     grid.validate_step(dt);
     if (dt == 0.0F) {
       return {};
@@ -421,41 +424,13 @@ class MetalBackend final : public ComputeBackend {
     const auto levels = grid.levels();
     const auto level_count = static_cast<std::uint32_t>(levels.size());
     const auto signal_count = spec.signal_count;
-    ensure_signal_capacity(levels.size(), signal_count);
-
+    const auto& statics = sync_grid(grid);
+    ensure_signal_level_capacity(levels.size());
+    const auto& boundary_kinds = statics.boundary_kinds;
+    const auto has_velocity_field = statics.has_velocity_field;
+    const auto fluid_count = statics.fluid_count;
+    const auto fluid_level_count = signal_count * fluid_count;
     std::memcpy(signal_levels_.contents, levels.data(), levels.size_bytes());
-    std::memcpy(signal_diffusion_.contents, spec.diffusion.data(),
-                spec.diffusion.size() * sizeof(float));
-    auto* reaction_source = static_cast<float*>(signal_reaction_source_.contents);
-    auto* reaction_loss = static_cast<float*>(signal_reaction_loss_.contents);
-    if (spec.reaction.has_value()) {
-      std::memcpy(reaction_source, spec.reaction->source_rates.data(), levels.size_bytes());
-      std::memcpy(reaction_loss, spec.reaction->loss_rates.data(), levels.size_bytes());
-    } else {
-      std::fill_n(reaction_source, levels.size(), 0.0F);
-      std::fill_n(reaction_loss, levels.size(), 0.0F);
-    }
-    auto* obstacles = static_cast<std::uint8_t*>(signal_obstacles_.contents);
-    if (spec.has_obstacles()) {
-      std::memcpy(obstacles, spec.obstacles.data(), spec.obstacles.size());
-    } else {
-      std::fill_n(obstacles, spec.site_count(), std::uint8_t{0});
-    }
-    ensure_signal_face_capacity(largest_face_count(spec));
-    fill_velocity_faces(spec, signal_x_faces_, signal_y_faces_, signal_z_faces_);
-    const auto has_velocity_field = static_cast<std::uint32_t>(spec.velocity_field.has_value());
-    auto* advection = static_cast<MetalFloat4*>(signal_advection_.contents);
-    for (std::size_t signal = 0; signal < signal_count; ++signal) {
-      advection[signal] = {
-          spec.advection[signal].x,
-          spec.advection[signal].y,
-          spec.advection[signal].z,
-          0.0F,
-      };
-    }
-
-    const auto boundary_kinds =
-        write_boundaries(device_, spec, signal_fixed_values_, "signal-grid boundary values");
     *static_cast<std::uint32_t*>(signal_error_.contents) = 0;
 
     const MetalGridShape shape{spec.shape.x, spec.shape.y, spec.shape.z,
@@ -491,7 +466,9 @@ class MetalBackend final : public ComputeBackend {
       [encoder setBuffer:signal_y_faces_ offset:0 atIndex:17];
       [encoder setBuffer:signal_z_faces_ offset:0 atIndex:18];
       [encoder setBytes:&has_velocity_field length:sizeof(has_velocity_field) atIndex:19];
-      dispatch_1d(encoder, signals_pipeline_, level_count);
+      [encoder setBuffer:signal_fluid_sites_ offset:0 atIndex:20];
+      [encoder setBytes:&fluid_count length:sizeof(fluid_count) atIndex:21];
+      dispatch_1d(encoder, signals_pipeline_, fluid_level_count);
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal signal-grid command failed");
     }
@@ -508,16 +485,16 @@ class MetalBackend final : public ComputeBackend {
           signal_x_faces_, signal_y_faces_, signal_z_faces_, has_velocity_field, signal_error_,
           boundary_kinds, shape, spacing, (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count,
           level_count, spec.solver,
-          signal_implicit_operator_scale(spec, crank_nicolson == 2 ? dt : 0.5F * dt));
+          grid.layout().implicit_operator_scale(crank_nicolson == 2 ? dt : 0.5F * dt));
       result_buffer = solve.first;
       report = solve.second;
       if (!report.converged) {
-        throw std::runtime_error("Metal Implicit signal solve did not converge after " +
-                                 std::to_string(report.iterations) + " iterations");
+        throw std::runtime_error(
+            signal_solve_failure("Metal Implicit signal solve", spec, report.iterations));
       }
     }
     const auto* output = static_cast<const float*>(result_buffer.contents);
-    grid.replace_levels(std::vector<float>(output, output + levels.size()));
+    grid.accept_step(std::vector<float>(output, output + levels.size()));
     return report;
   }
 
@@ -598,33 +575,9 @@ class MetalBackend final : public ComputeBackend {
     std::memcpy(coupled_signal_outputs_.contents, plan.signal_outputs().data(),
                 plan.signal_outputs().size_bytes());
     std::memcpy(coupled_grid_levels_.contents, grid_levels.data(), grid_levels.size_bytes());
-    std::memcpy(coupled_diffusion_.contents, spec.diffusion.data(),
-                spec.diffusion.size() * sizeof(float));
-    auto* reaction_source = static_cast<float*>(coupled_reaction_source_.contents);
-    auto* reaction_loss = static_cast<float*>(coupled_reaction_loss_.contents);
-    if (spec.reaction.has_value()) {
-      std::memcpy(reaction_source, spec.reaction->source_rates.data(), grid_levels.size_bytes());
-      std::memcpy(reaction_loss, spec.reaction->loss_rates.data(), grid_levels.size_bytes());
-    } else {
-      std::fill_n(reaction_source, grid_level_count, 0.0F);
-      std::fill_n(reaction_loss, grid_level_count, 0.0F);
-    }
-    auto* obstacles = static_cast<std::uint8_t*>(coupled_obstacles_.contents);
-    if (spec.has_obstacles()) {
-      std::memcpy(obstacles, spec.obstacles.data(), spec.obstacles.size());
-    } else {
-      std::fill_n(obstacles, spec.site_count(), std::uint8_t{0});
-    }
-    ensure_coupled_face_capacity(largest_face_count(spec));
-    fill_velocity_faces(spec, coupled_x_faces_, coupled_y_faces_, coupled_z_faces_);
-    const auto has_velocity_field = static_cast<std::uint32_t>(spec.velocity_field.has_value());
-    auto* advection = static_cast<MetalFloat4*>(coupled_advection_.contents);
-    for (std::size_t signal = 0; signal < signal_count_size; ++signal) {
-      advection[signal] = {spec.advection[signal].x, spec.advection[signal].y,
-                           spec.advection[signal].z, 0.0F};
-    }
-    const auto boundary_kinds =
-        write_boundaries(device_, spec, coupled_fixed_values_, "coupled boundary values");
+    const auto& statics = sync_grid(grid);
+    const auto& boundary_kinds = statics.boundary_kinds;
+    const auto has_velocity_field = statics.has_velocity_field;
     *static_cast<std::uint32_t*>(coupled_error_.contents) = 0;
 
     const auto cell_count = static_cast<std::uint32_t>(cell_count_size);
@@ -667,7 +620,7 @@ class MetalBackend final : public ComputeBackend {
         [encoder setBytes:&signal_count length:sizeof(signal_count) atIndex:18];
         [encoder setBytes:&instruction_count length:sizeof(instruction_count) atIndex:19];
         [encoder setBytes:&cell_count length:sizeof(cell_count) atIndex:20];
-        [encoder setBuffer:coupled_obstacles_ offset:0 atIndex:21];
+        [encoder setBuffer:signal_obstacles_ offset:0 atIndex:21];
         dispatch_1d(encoder, coupled_cells_pipeline_, cell_count);
         [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
         scatter_ends = encode_coupled_scatter_lists(encoder, shape, origin, spacing, cell_count);
@@ -676,9 +629,9 @@ class MetalBackend final : public ComputeBackend {
       [encoder setComputePipelineState:coupled_grid_pipeline_];
       [encoder setBuffer:coupled_grid_levels_ offset:0 atIndex:0];
       [encoder setBuffer:coupled_grid_output_ offset:0 atIndex:1];
-      [encoder setBuffer:coupled_diffusion_ offset:0 atIndex:2];
-      [encoder setBuffer:coupled_advection_ offset:0 atIndex:3];
-      [encoder setBuffer:coupled_fixed_values_ offset:0 atIndex:4];
+      [encoder setBuffer:signal_diffusion_ offset:0 atIndex:2];
+      [encoder setBuffer:signal_advection_ offset:0 atIndex:3];
+      [encoder setBuffer:signal_fixed_values_ offset:0 atIndex:4];
       [encoder setBuffer:coupled_centers_ offset:0 atIndex:5];
       [encoder setBuffer:coupled_cell_signal_rates_ offset:0 atIndex:6];
       [encoder setBuffer:coupled_error_ offset:0 atIndex:7];
@@ -693,12 +646,12 @@ class MetalBackend final : public ComputeBackend {
       [encoder setBytes:&cell_count length:sizeof(cell_count) atIndex:14];
       [encoder setBytes:&level_count length:sizeof(level_count) atIndex:15];
       [encoder setBytes:&crank_nicolson length:sizeof(crank_nicolson) atIndex:16];
-      [encoder setBuffer:coupled_reaction_source_ offset:0 atIndex:17];
-      [encoder setBuffer:coupled_reaction_loss_ offset:0 atIndex:18];
-      [encoder setBuffer:coupled_obstacles_ offset:0 atIndex:19];
-      [encoder setBuffer:coupled_x_faces_ offset:0 atIndex:20];
-      [encoder setBuffer:coupled_y_faces_ offset:0 atIndex:21];
-      [encoder setBuffer:coupled_z_faces_ offset:0 atIndex:22];
+      [encoder setBuffer:signal_reaction_source_ offset:0 atIndex:17];
+      [encoder setBuffer:signal_reaction_loss_ offset:0 atIndex:18];
+      [encoder setBuffer:signal_obstacles_ offset:0 atIndex:19];
+      [encoder setBuffer:signal_x_faces_ offset:0 atIndex:20];
+      [encoder setBuffer:signal_y_faces_ offset:0 atIndex:21];
+      [encoder setBuffer:signal_z_faces_ offset:0 atIndex:22];
       [encoder setBytes:&has_velocity_field length:sizeof(has_velocity_field) atIndex:23];
       [encoder setBuffer:scatter_ends offset:0 atIndex:24];
       [encoder setBuffer:coupled_scatter_cells_ offset:0 atIndex:25];
@@ -715,27 +668,28 @@ class MetalBackend final : public ComputeBackend {
     SignalSolveReport report;
     if (crank_nicolson != 0) {
       const auto solve = solve_signal_crank_nicolson(
-          coupled_grid_levels_, coupled_grid_output_, coupled_diffusion_, coupled_advection_,
-          coupled_fixed_values_, coupled_reaction_source_, coupled_reaction_loss_,
-          coupled_obstacles_, coupled_x_faces_, coupled_y_faces_, coupled_z_faces_,
-          has_velocity_field, coupled_error_, boundary_kinds, shape, spacing,
-          (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count, level_count, spec.solver,
-          signal_implicit_operator_scale(spec, crank_nicolson == 2 ? dt : 0.5F * dt));
+          coupled_grid_levels_, coupled_grid_output_, signal_diffusion_, signal_advection_,
+          signal_fixed_values_, signal_reaction_source_, signal_reaction_loss_, signal_obstacles_,
+          signal_x_faces_, signal_y_faces_, signal_z_faces_, has_velocity_field, coupled_error_,
+          boundary_kinds, shape, spacing, (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count,
+          level_count, spec.solver,
+          grid.layout().implicit_operator_scale(crank_nicolson == 2 ? dt : 0.5F * dt));
       result_buffer = solve.first;
       report = solve.second;
       if (!report.converged) {
-        throw std::runtime_error("Metal Implicit coupled signal solve did not converge after " +
-                                 std::to_string(report.iterations) + " iterations");
+        throw std::runtime_error(
+            signal_solve_failure("Metal Implicit coupled signal solve", spec, report.iterations));
       }
     }
     const auto* output = static_cast<const float*>(result_buffer.contents);
     std::vector<float> next_grid(output, output + grid_level_count);
-    SignalGridCheckpoint{.spec = spec, .levels = next_grid}.validate();
+    // The grid refuses levels it cannot hold, so it takes its own before the
+    // species take theirs: a refused step changes neither.
+    grid.accept_step(std::move(next_grid));
     if (!species_state.levels.empty()) {
       std::memcpy(species_state.levels.data(), coupled_species_levels_.contents,
                   species_state.levels.size_bytes());
     }
-    grid.replace_levels(std::move(next_grid));
     return report;
   }
 
@@ -979,19 +933,96 @@ class MetalBackend final : public ComputeBackend {
     std::memcpy(z_buffer.contents, field.z_faces.data(), field.z_faces.size() * sizeof(float));
   }
 
-  void ensure_signal_capacity(std::size_t level_count, std::size_t signal_count) {
-    if (level_count > signal_level_capacity_) {
-      const auto signal_level_capacity = std::bit_ceil(level_count);
-      const auto byte_count = signal_level_capacity * sizeof(float);
-      signal_levels_ = allocate_shared_buffer(device_, byte_count, "signal-grid levels");
-      signal_output_ = allocate_shared_buffer(device_, byte_count, "signal-grid output");
+  // What the transport kernels are told of the grid on the device.
+  struct GridStatics {
+    // The six boundary kinds, the six block offsets of
+    // detail::FixedBoundaryTable, and the advection scheme.
+    std::array<std::uint32_t, 13> boundary_kinds{};
+    std::uint32_t has_velocity_field{0};
+    std::uint32_t fluid_count{0};
+  };
+
+  // Puts on the device everything transport reads of a grid besides its
+  // levels: coefficients, reaction field, obstacles, face velocities,
+  // boundary values and the list of fluid sites. They change only with the
+  // grid's specification, so a step whose grid the device already holds
+  // uploads nothing.
+  const GridStatics& sync_grid(const SignalGrid& grid) {
+    if (grid.revision() == grid_revision_) {
+      return grid_statics_;
+    }
+    grid_revision_ = 0;
+    const auto& spec = grid.spec();
+    const auto level_count = spec.level_count();
+    const auto sites = spec.site_count();
+    ensure_grid_static_capacity(level_count, spec.signal_count);
+    std::memcpy(signal_diffusion_.contents, spec.diffusion.data(),
+                spec.diffusion.size() * sizeof(float));
+    auto* advection = static_cast<MetalFloat4*>(signal_advection_.contents);
+    for (std::size_t signal = 0; signal < spec.signal_count; ++signal) {
+      advection[signal] = {spec.advection[signal].x, spec.advection[signal].y,
+                           spec.advection[signal].z, 0.0F};
+    }
+    auto* reaction_source = static_cast<float*>(signal_reaction_source_.contents);
+    auto* reaction_loss = static_cast<float*>(signal_reaction_loss_.contents);
+    if (spec.reaction.has_value()) {
+      std::memcpy(reaction_source, spec.reaction->source_rates.data(), level_count * sizeof(float));
+      std::memcpy(reaction_loss, spec.reaction->loss_rates.data(), level_count * sizeof(float));
+    } else {
+      std::fill_n(reaction_source, level_count, 0.0F);
+      std::fill_n(reaction_loss, level_count, 0.0F);
+    }
+    // The kernels write fluid levels only, so their output buffers must hold
+    // zero wherever this grid has an obstacle. They do unless the device last
+    // held a grid with other obstacles.
+    auto* obstacles = static_cast<std::uint8_t*>(signal_obstacles_.contents);
+    auto obstacles_differ = grid_site_count_ != sites;
+    if (spec.has_obstacles()) {
+      obstacles_differ =
+          obstacles_differ || std::memcmp(obstacles, spec.obstacles.data(), sites) != 0;
+      std::memcpy(obstacles, spec.obstacles.data(), sites);
+    } else {
+      obstacles_differ =
+          obstacles_differ ||
+          std::any_of(obstacles, obstacles + sites, [](std::uint8_t value) { return value != 0; });
+      std::fill_n(obstacles, sites, std::uint8_t{0});
+    }
+    if (obstacles_differ) {
+      for (id<MTLBuffer> buffer : {signal_output_, signal_cn_a_, signal_cn_b_}) {
+        if (buffer != nil) {
+          std::memset(buffer.contents, 0, buffer.length);
+        }
+      }
+    }
+    ensure_signal_face_capacity(largest_face_count(spec));
+    fill_velocity_faces(spec, signal_x_faces_, signal_y_faces_, signal_z_faces_);
+    grid_statics_.boundary_kinds =
+        write_boundaries(device_, spec, signal_fixed_values_, "signal-grid boundary values");
+    grid_statics_.has_velocity_field = static_cast<std::uint32_t>(spec.velocity_field.has_value());
+    const std::span<const std::uint32_t> fluid = grid.layout().fluid_sites;
+    const auto fluid_bytes = std::max<std::size_t>(fluid.size(), 1) * sizeof(std::uint32_t);
+    if (signal_fluid_sites_ == nil || signal_fluid_sites_.length < fluid_bytes) {
+      signal_fluid_sites_ =
+          allocate_shared_buffer(device_, std::bit_ceil(fluid_bytes), "signal-grid fluid sites");
+    }
+    std::memcpy(signal_fluid_sites_.contents, fluid.data(), fluid.size_bytes());
+    grid_statics_.fluid_count = static_cast<std::uint32_t>(fluid.size());
+    grid_site_count_ = sites;
+    grid_revision_ = grid.revision();
+    return grid_statics_;
+  }
+
+  void ensure_grid_static_capacity(std::size_t level_count, std::size_t signal_count) {
+    if (level_count > grid_static_capacity_) {
+      const auto capacity = std::bit_ceil(level_count);
+      const auto byte_count = capacity * sizeof(float);
       signal_reaction_source_ =
           allocate_shared_buffer(device_, byte_count, "signal-grid affine sources");
       signal_reaction_loss_ =
           allocate_shared_buffer(device_, byte_count, "signal-grid affine losses");
-      signal_obstacles_ =
-          allocate_shared_buffer(device_, signal_level_capacity, "signal-grid obstacles");
-      signal_level_capacity_ = signal_level_capacity;
+      signal_obstacles_ = allocate_shared_buffer(device_, capacity, "signal-grid obstacles");
+      grid_static_capacity_ = capacity;
+      grid_site_count_ = 0;
     }
     if (signal_count > signal_count_capacity_) {
       const auto signal_count_capacity = std::bit_ceil(signal_count);
@@ -1000,6 +1031,16 @@ class MetalBackend final : public ComputeBackend {
       signal_advection_ = allocate_shared_buffer(
           device_, signal_count_capacity * sizeof(MetalFloat4), "signal-grid advection");
       signal_count_capacity_ = signal_count_capacity;
+    }
+  }
+
+  void ensure_signal_level_capacity(std::size_t level_count) {
+    if (level_count > signal_level_capacity_) {
+      const auto signal_level_capacity = std::bit_ceil(level_count);
+      const auto byte_count = signal_level_capacity * sizeof(float);
+      signal_levels_ = allocate_shared_buffer(device_, byte_count, "signal-grid levels");
+      signal_output_ = allocate_shared_buffer(device_, byte_count, "signal-grid output");
+      signal_level_capacity_ = signal_level_capacity;
     }
     if (signal_error_ == nil) {
       signal_error_ =
@@ -1015,17 +1056,6 @@ class MetalBackend final : public ComputeBackend {
       signal_y_faces_ = allocate_shared_buffer(device_, byte_count, "signal-grid y faces");
       signal_z_faces_ = allocate_shared_buffer(device_, byte_count, "signal-grid z faces");
       signal_face_capacity_ = signal_face_capacity;
-    }
-  }
-
-  void ensure_coupled_face_capacity(std::size_t face_count) {
-    if (face_count > coupled_face_capacity_) {
-      const auto coupled_face_capacity = std::bit_ceil(face_count);
-      const auto byte_count = coupled_face_capacity * sizeof(float);
-      coupled_x_faces_ = allocate_shared_buffer(device_, byte_count, "coupled x faces");
-      coupled_y_faces_ = allocate_shared_buffer(device_, byte_count, "coupled y faces");
-      coupled_z_faces_ = allocate_shared_buffer(device_, byte_count, "coupled z faces");
-      coupled_face_capacity_ = coupled_face_capacity;
     }
   }
 
@@ -1068,7 +1098,7 @@ class MetalBackend final : public ComputeBackend {
       id<MTLBuffer> diffusion, id<MTLBuffer> advection, id<MTLBuffer> fixed_values,
       id<MTLBuffer> reaction_source, id<MTLBuffer> reaction_loss, id<MTLBuffer> obstacles,
       id<MTLBuffer> x_faces, id<MTLBuffer> y_faces, id<MTLBuffer> z_faces,
-      std::uint32_t has_velocity_field, const std::array<std::uint32_t, 12>& boundary_kinds,
+      std::uint32_t has_velocity_field, const std::array<std::uint32_t, 13>& boundary_kinds,
       const MetalGridShape& shape, const MetalFloat4& spacing, float half_dt,
       std::uint32_t signal_count, std::uint32_t level_count) {
     [encoder setComputePipelineState:signals_cn_residual_pipeline_];
@@ -1093,9 +1123,13 @@ class MetalBackend final : public ComputeBackend {
     [encoder setBuffer:y_faces offset:0 atIndex:16];
     [encoder setBuffer:z_faces offset:0 atIndex:17];
     [encoder setBytes:&has_velocity_field length:sizeof(has_velocity_field) atIndex:18];
-    dispatch_1d(encoder, signals_cn_residual_pipeline_, level_count);
+    const auto fluid_count = grid_statics_.fluid_count;
+    const auto fluid_level_count = signal_count * fluid_count;
+    [encoder setBuffer:signal_fluid_sites_ offset:0 atIndex:19];
+    [encoder setBytes:&fluid_count length:sizeof(fluid_count) atIndex:20];
+    dispatch_1d(encoder, signals_cn_residual_pipeline_, fluid_level_count);
     [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
-    return encode_signal_reduction(encoder, level_count);
+    return encode_signal_reduction(encoder, fluid_level_count);
   }
 
   [[nodiscard]] float signal_residual_rms(id<MTLBuffer> current, id<MTLBuffer> right_hand_side,
@@ -1104,7 +1138,7 @@ class MetalBackend final : public ComputeBackend {
                                           id<MTLBuffer> reaction_loss, id<MTLBuffer> obstacles,
                                           id<MTLBuffer> x_faces, id<MTLBuffer> y_faces,
                                           id<MTLBuffer> z_faces, std::uint32_t has_velocity_field,
-                                          const std::array<std::uint32_t, 12>& boundary_kinds,
+                                          const std::array<std::uint32_t, 13>& boundary_kinds,
                                           const MetalGridShape& shape, const MetalFloat4& spacing,
                                           float half_dt, std::uint32_t signal_count,
                                           std::uint32_t level_count) {
@@ -1120,12 +1154,20 @@ class MetalBackend final : public ComputeBackend {
           shape, spacing, half_dt, signal_count, level_count);
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal signal residual failed");
-      const auto sum = *static_cast<const float*>(reduction.contents);
+      const auto sum =
+          grid_statics_.fluid_count == 0 ? 0.0F : *static_cast<const float*>(reduction.contents);
       return std::sqrt(sum / static_cast<float>(level_count));
     }
   }
 
-  [[nodiscard]] float signal_rhs_rms(id<MTLBuffer> right_hand_side, std::uint32_t level_count) {
+  [[nodiscard]] float signal_rhs_rms(id<MTLBuffer> right_hand_side, std::uint32_t signal_count,
+                                     std::uint32_t level_count) {
+    const auto fluid_count = grid_statics_.fluid_count;
+    const auto fluid_level_count = signal_count * fluid_count;
+    const auto sites = level_count / signal_count;
+    if (fluid_level_count == 0) {
+      return 0.0F;
+    }
     @autoreleasepool {
       id<MTLCommandBuffer> command_buffer = [queue_ commandBuffer];
       id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
@@ -1135,10 +1177,13 @@ class MetalBackend final : public ComputeBackend {
       [encoder setComputePipelineState:signals_square_pipeline_];
       [encoder setBuffer:right_hand_side offset:0 atIndex:0];
       [encoder setBuffer:signal_cn_terms_ offset:0 atIndex:1];
-      [encoder setBytes:&level_count length:sizeof(level_count) atIndex:2];
-      dispatch_1d(encoder, signals_square_pipeline_, level_count);
+      [encoder setBytes:&fluid_level_count length:sizeof(fluid_level_count) atIndex:2];
+      [encoder setBuffer:signal_fluid_sites_ offset:0 atIndex:3];
+      [encoder setBytes:&fluid_count length:sizeof(fluid_count) atIndex:4];
+      [encoder setBytes:&sites length:sizeof(sites) atIndex:5];
+      dispatch_1d(encoder, signals_square_pipeline_, fluid_level_count);
       [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
-      const auto reduction = encode_signal_reduction(encoder, level_count);
+      const auto reduction = encode_signal_reduction(encoder, fluid_level_count);
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal signal norm failed");
       const auto sum = *static_cast<const float*>(reduction.contents);
@@ -1151,11 +1196,13 @@ class MetalBackend final : public ComputeBackend {
       id<MTLBuffer> advection, id<MTLBuffer> fixed_values, id<MTLBuffer> reaction_source,
       id<MTLBuffer> reaction_loss, id<MTLBuffer> obstacles, id<MTLBuffer> x_faces,
       id<MTLBuffer> y_faces, id<MTLBuffer> z_faces, std::uint32_t has_velocity_field,
-      id<MTLBuffer> error, const std::array<std::uint32_t, 12>& boundary_kinds,
+      id<MTLBuffer> error, const std::array<std::uint32_t, 13>& boundary_kinds,
       const MetalGridShape& shape, const MetalFloat4& spacing, float dt, std::uint32_t signal_count,
       std::uint32_t level_count, const SignalSolveParameters& parameters, float operator_scale) {
     ensure_signal_solve_capacity(level_count);
     const auto half_dt = dt;
+    const auto fluid_count = grid_statics_.fluid_count;
+    const auto fluid_level_count = signal_count * fluid_count;
     id<MTLBuffer> current = initial;
     const detail::SignalJacobiOperations operations{
         .initial_residual_rms =
@@ -1165,7 +1212,8 @@ class MetalBackend final : public ComputeBackend {
                   reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field,
                   boundary_kinds, shape, spacing, half_dt, signal_count, level_count);
             },
-        .right_hand_side_rms = [&] { return signal_rhs_rms(right_hand_side, level_count); },
+        .right_hand_side_rms =
+            [&] { return signal_rhs_rms(right_hand_side, signal_count, level_count); },
         .operator_scale = operator_scale,
         .begin_sweeps = [&] { *static_cast<std::uint32_t*>(error.contents) = 0; },
         .sweep =
@@ -1201,7 +1249,9 @@ class MetalBackend final : public ComputeBackend {
                 [encoder setBuffer:y_faces offset:0 atIndex:17];
                 [encoder setBuffer:z_faces offset:0 atIndex:18];
                 [encoder setBytes:&has_velocity_field length:sizeof(has_velocity_field) atIndex:19];
-                dispatch_1d(encoder, signals_cn_jacobi_pipeline_, level_count);
+                [encoder setBuffer:signal_fluid_sites_ offset:0 atIndex:20];
+                [encoder setBytes:&fluid_count length:sizeof(fluid_count) atIndex:21];
+                dispatch_1d(encoder, signals_cn_jacobi_pipeline_, fluid_level_count);
                 [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
                 const auto reduction = encode_signal_residual(
                     encoder, output, right_hand_side, diffusion, advection, fixed_values,
@@ -1210,7 +1260,8 @@ class MetalBackend final : public ComputeBackend {
                     level_count);
                 [encoder endEncoding];
                 wait_for_command(command_buffer, "Metal signal Jacobi iteration failed");
-                const auto sum = *static_cast<const float*>(reduction.contents);
+                const auto sum =
+                    fluid_level_count == 0 ? 0.0F : *static_cast<const float*>(reduction.contents);
                 result.residual_rms = std::sqrt(sum / static_cast<float>(level_count));
               }
               current = output;
@@ -1271,10 +1322,6 @@ class MetalBackend final : public ComputeBackend {
       coupled_signal_outputs_ =
           allocate_shared_buffer(device_, coupled_signal_output_capacity * sizeof(std::uint32_t),
                                  "coupled signal outputs");
-      coupled_diffusion_ = allocate_shared_buffer(
-          device_, coupled_signal_output_capacity * sizeof(float), "coupled diffusion");
-      coupled_advection_ = allocate_shared_buffer(
-          device_, coupled_signal_output_capacity * sizeof(MetalFloat4), "coupled advection");
       coupled_signal_output_capacity_ = coupled_signal_output_capacity;
     }
     const auto requested_workspace = at_least_one(workspace_count);
@@ -1296,11 +1343,6 @@ class MetalBackend final : public ComputeBackend {
       const auto byte_count = coupled_grid_level_capacity * sizeof(float);
       coupled_grid_levels_ = allocate_shared_buffer(device_, byte_count, "coupled grid levels");
       coupled_grid_output_ = allocate_shared_buffer(device_, byte_count, "coupled grid output");
-      coupled_reaction_source_ =
-          allocate_shared_buffer(device_, byte_count, "coupled affine sources");
-      coupled_reaction_loss_ = allocate_shared_buffer(device_, byte_count, "coupled affine losses");
-      coupled_obstacles_ =
-          allocate_shared_buffer(device_, coupled_grid_level_capacity, "coupled grid obstacles");
       coupled_grid_level_capacity_ = coupled_grid_level_capacity;
     }
     if (coupled_error_ == nil) {
@@ -2051,9 +2093,17 @@ class MetalBackend final : public ComputeBackend {
   id<MTLBuffer> signal_y_faces_{nil};
   id<MTLBuffer> signal_z_faces_{nil};
   std::size_t signal_face_capacity_{0};
+  id<MTLBuffer> signal_fluid_sites_{nil};
   id<MTLBuffer> signal_error_{nil};
   std::size_t signal_level_capacity_{0};
+  std::size_t grid_static_capacity_{0};
   std::size_t signal_count_capacity_{0};
+  // The grid specification the transport buffers hold, zero for none, and
+  // what the kernels are told of it.
+  std::uint64_t grid_revision_{0};
+  GridStatics grid_statics_;
+  // The site count of the obstacle mask on the device, zero for none.
+  std::size_t grid_site_count_{0};
   id<MTLBuffer> signal_cn_a_{nil};
   id<MTLBuffer> signal_cn_b_{nil};
   id<MTLBuffer> signal_cn_terms_{nil};
@@ -2074,16 +2124,6 @@ class MetalBackend final : public ComputeBackend {
   id<MTLBuffer> coupled_cell_signal_rates_{nil};
   id<MTLBuffer> coupled_grid_levels_{nil};
   id<MTLBuffer> coupled_grid_output_{nil};
-  id<MTLBuffer> coupled_diffusion_{nil};
-  id<MTLBuffer> coupled_advection_{nil};
-  id<MTLBuffer> coupled_fixed_values_{nil};
-  id<MTLBuffer> coupled_reaction_source_{nil};
-  id<MTLBuffer> coupled_reaction_loss_{nil};
-  id<MTLBuffer> coupled_obstacles_{nil};
-  id<MTLBuffer> coupled_x_faces_{nil};
-  id<MTLBuffer> coupled_y_faces_{nil};
-  id<MTLBuffer> coupled_z_faces_{nil};
-  std::size_t coupled_face_capacity_{0};
   id<MTLBuffer> coupled_error_{nil};
   std::size_t coupled_cell_capacity_{0};
   std::size_t coupled_species_level_capacity_{0};

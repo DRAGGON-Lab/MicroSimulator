@@ -522,6 +522,12 @@ kernel void advance_coupled_grid(
       upper_flux = 0.0f;
     }
     rate -= (upper_flux - lower_flux) * inverse_spacing;
+    if (boundary_kinds[12] == 1u) {
+      rate -= van_leer_correction(levels, obstacles, shape, boundary_kinds, signal, uint3(x, y, z),
+                                  axis, current, lower[axis], upper[axis], closed_lower[axis],
+                                  closed_upper[axis], faces.lower[axis], faces.upper[axis]) *
+              inverse_spacing;
+    }
   }
   rate += reaction_source[index] - reaction_loss[index] * current;
 
@@ -539,7 +545,10 @@ kernel void advance_coupled_grid(
   float transport_scale = crank_nicolson == 0u ? dt : (crank_nicolson == 1u ? 0.5f * dt : 0.0f);
   float candidate = current + transport_scale * rate + dt * source;
   output[index] = candidate;
-  if (!isfinite(candidate) || (crank_nicolson == 0u && candidate < 0.0f)) {
+  // Under the van Leer scheme an explicit level may fall below zero by
+  // rounding; the host judges those when it takes the step's levels.
+  if (!isfinite(candidate) ||
+      (crank_nicolson == 0u && boundary_kinds[12] == 0u && candidate < 0.0f)) {
     atomic_fetch_or_explicit(error, 2u, memory_order_relaxed);
   }
 }

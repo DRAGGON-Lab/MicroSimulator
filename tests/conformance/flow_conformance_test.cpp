@@ -220,6 +220,56 @@ void run_depth_port_case(microsimulator::BackendKind backend, std::uint32_t devi
   }
 }
 
+// A grid that is mostly wall, with one channel two sites wide winding across
+// it from an inlet to an outlet: the shape of a chip. The solve takes several
+// hundred iterations, so a backend that iterates in batches converges inside
+// one, and must report the iteration it converged at.
+void run_winding_channel_case(microsimulator::BackendKind backend, std::uint32_t device_index) {
+  auto spec = duct(24, 42, 1, {1.0F, 1.0F, 2.0F});
+  spec.obstacles.assign(spec.site_count(), 1);
+  std::size_t fluid = 0;
+  for (std::uint32_t x = 1; x <= 22; ++x) {
+    for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
+      const auto band = y / 8;
+      const auto run = y % 8 < 2;
+      const auto turn = band % 2 == 0 ? x >= 21 : x <= 2;
+      if (run || turn) {
+        spec.obstacles[site_index(spec, x, y, 0)] = 0;
+        ++fluid;
+      }
+    }
+  }
+  assert(fluid * 3 < spec.site_count());
+  using microsimulator::FlowPortKind;
+  using microsimulator::GridFace;
+  const std::vector<microsimulator::FlowPort> ports{
+      {.face = GridFace::y_lower,
+       .patch = {.begin = {1, 0}, .end = {3, 1}},
+       .kind = FlowPortKind::speed,
+       .value = 2.0F},
+      {.face = GridFace::y_upper,
+       .patch = {.begin = {1, 0}, .end = {3, 1}},
+       .kind = FlowPortKind::pressure,
+       .value = 0.0F},
+  };
+  microsimulator::Simulation reference;
+  microsimulator::Simulation candidate(backend, 0, 0, device_index);
+  const auto expected = reference.solve_depth_averaged_port_flow(spec, ports, {});
+  const auto actual = candidate.solve_depth_averaged_port_flow(spec, ports, {});
+  assert(expected.report.iterations > 200);
+  assert(actual.report.relative_residual <= 1.1e-6F);
+  const auto difference = static_cast<std::int64_t>(actual.report.iterations) -
+                          static_cast<std::int64_t>(expected.report.iterations);
+  assert(std::abs(difference) <= 2);
+  compare_fields(actual.field, expected.field, "winding channel flow");
+  for (std::size_t index = 0; index < ports.size(); ++index) {
+    assert(close(actual.ports[index].flux, expected.ports[index].flux));
+  }
+  // What enters leaves, and nothing crosses a wall.
+  assert(close(actual.ports[0].flux, -actual.ports[1].flux));
+  assert(close(actual.ports[0].mean_speed, ports[0].value));
+}
+
 // A main inlet, a side inlet on a perpendicular face, and one outlet, around
 // an obstacle and through a layer of drag.
 void run_resolved_port_case(microsimulator::BackendKind backend, std::uint32_t device_index) {
@@ -284,6 +334,7 @@ int main(int argc, char** argv) {
           run_depth_case(backend, device_index);
           run_ill_conditioned_depth_case(backend, device_index);
           run_depth_port_case(backend, device_index);
+          run_winding_channel_case(backend, device_index);
         }
         if (resolved_only) {
           run_resolved_case(backend, device_index);

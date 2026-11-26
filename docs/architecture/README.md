@@ -12,6 +12,8 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 - [Axis-aligned cylinder constraints](0018-cylinder-constraints.md)
 - [Signal grid obstacles](0017-grid-obstacles.md)
 - [Face-staggered signal velocity fields](0019-velocity-fields.md)
+- [Limited second-order advection](0028-limited-advection.md)
+- [Transport and flow over fluid sites](0029-transport-over-fluid-sites.md)
 - [Depth-integrated shallow flow](0022-brinkman-flow.md)
 - [Resolved MAC Stokes-Brinkman flow and benchmarks](0023-mac-stokes.md)
 - [Finite-aspect flow drift on cells](0021-flow-drift.md)

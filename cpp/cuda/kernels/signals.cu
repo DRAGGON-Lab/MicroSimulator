@@ -98,6 +98,14 @@ __device__ TransportPoint transport_point(
       upper_flux = 0.0F;
     }
     rate -= (upper_flux - lower_flux) * inverse_spacing;
+    if (boundaries.advection_scheme == 1) {
+      const std::uint32_t periodic_kinds[3]{boundaries.x_lower, boundaries.y_lower,
+                                            boundaries.z_lower};
+      rate -= van_leer_correction(levels, obstacles, shape, periodic_kinds[axis], signal, x, y, z,
+                                  axis, current, lower[axis], upper[axis], closed_lower[axis],
+                                  closed_upper[axis], face_lower[axis], face_upper[axis]) *
+              inverse_spacing;
+    }
     if (!closed_upper[axis] && face_upper[axis] > 0.0F) {
       diagonal -= face_upper[axis] * inverse_spacing;
     }
@@ -118,11 +126,12 @@ __global__ void advance_signal_grid(const float* levels, float* output, const fl
                                     std::uint32_t has_velocity_field, std::uint32_t* error,
                                     SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
                                     float4 spacing, float dt, std::uint32_t signal_count,
-                                    std::uint32_t level_count, std::uint32_t crank_nicolson) {
-  const auto index = (blockIdx.x * blockDim.x) + threadIdx.x;
-  if (index >= level_count) {
+                                    SignalFluidGpu fluid, std::uint32_t crank_nicolson) {
+  const auto entry = (blockIdx.x * blockDim.x) + threadIdx.x;
+  if (entry >= signal_count * fluid.count) {
     return;
   }
+  const auto index = fluid_level(fluid, shape.sites, entry);
 
   const auto transport =
       transport_point(levels, diffusion, advection, fixed_values, reaction_source, reaction_loss,
@@ -131,15 +140,20 @@ __global__ void advance_signal_grid(const float* levels, float* output, const fl
   const auto scale = crank_nicolson == 0 ? dt : (crank_nicolson == 1 ? 0.5F * dt : 0.0F);
   const auto candidate = levels[index] + scale * transport.rate;
   output[index] = candidate;
-  if (!isfinite(candidate) || (!crank_nicolson && candidate < 0.0F)) {
+  // Under the van Leer scheme an explicit level may fall below zero by
+  // rounding; the host judges those when it takes the step's levels.
+  if (!isfinite(candidate) ||
+      (!crank_nicolson && boundaries.advection_scheme == 0 && candidate < 0.0F)) {
     atomicOr(error, 1U);
   }
 }
 
-__global__ void signal_square_terms(const float* input, float* terms, std::uint32_t level_count) {
-  const auto index = (blockIdx.x * blockDim.x) + threadIdx.x;
-  if (index < level_count) {
-    terms[index] = input[index] * input[index];
+__global__ void signal_square_terms(const float* input, float* terms, std::uint32_t signal_count,
+                                    std::uint32_t grid_sites, SignalFluidGpu fluid) {
+  const auto entry = (blockIdx.x * blockDim.x) + threadIdx.x;
+  if (entry < signal_count * fluid.count) {
+    const auto value = input[fluid_level(fluid, grid_sites, entry)];
+    terms[entry] = value * value;
   }
 }
 
@@ -149,18 +163,21 @@ __global__ void signal_crank_nicolson_jacobi(
     const float* reaction_loss, const std::uint8_t* obstacles, const float* x_faces,
     const float* y_faces, const float* z_faces, std::uint32_t has_velocity_field,
     std::uint32_t* error, SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
-    float4 spacing, float half_dt, std::uint32_t signal_count, std::uint32_t level_count) {
-  const auto index = (blockIdx.x * blockDim.x) + threadIdx.x;
-  if (index >= level_count) {
+    float4 spacing, float half_dt, std::uint32_t signal_count, SignalFluidGpu fluid) {
+  const auto entry = (blockIdx.x * blockDim.x) + threadIdx.x;
+  if (entry >= signal_count * fluid.count) {
     return;
   }
+  const auto index = fluid_level(fluid, shape.sites, entry);
   const auto transport =
       transport_point(current, diffusion, advection, fixed_values, reaction_source, reaction_loss,
                       obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundaries, shape,
                       spacing, signal_count, index);
   const auto remainder = transport.rate - transport.diagonal * current[index];
-  const auto candidate =
+  const auto update =
       (right_hand_side[index] + half_dt * remainder) / (1.0F - half_dt * transport.diagonal);
+  const auto relaxation = boundaries.advection_scheme == 1 ? shared::van_leer_relaxation : 1.0F;
+  const auto candidate = current[index] + relaxation * (update - current[index]);
   output[index] = candidate;
   if (!isfinite(candidate)) {
     atomicOr(error, 1U);
@@ -173,17 +190,18 @@ __global__ void signal_crank_nicolson_residual_terms(
     const float* reaction_loss, const std::uint8_t* obstacles, const float* x_faces,
     const float* y_faces, const float* z_faces, std::uint32_t has_velocity_field,
     SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape, float4 spacing, float half_dt,
-    std::uint32_t signal_count, std::uint32_t level_count) {
-  const auto index = (blockIdx.x * blockDim.x) + threadIdx.x;
-  if (index >= level_count) {
+    std::uint32_t signal_count, SignalFluidGpu fluid) {
+  const auto entry = (blockIdx.x * blockDim.x) + threadIdx.x;
+  if (entry >= signal_count * fluid.count) {
     return;
   }
+  const auto index = fluid_level(fluid, shape.sites, entry);
   const auto transport =
       transport_point(current, diffusion, advection, fixed_values, reaction_source, reaction_loss,
                       obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundaries, shape,
                       spacing, signal_count, index);
   const auto residual = right_hand_side[index] - current[index] + half_dt * transport.rate;
-  terms[index] = residual * residual;
+  terms[entry] = residual * residual;
 }
 
 __global__ void reduce_sum_pairs(const float* input, float* output, std::uint32_t element_count) {
@@ -199,6 +217,14 @@ __global__ void reduce_sum_pairs(const float* input, float* output, std::uint32_
   output[index] = value;
 }
 
+constexpr std::uint32_t threads_per_block = 256;
+
+// How many blocks give every fluid level of every signal a thread.
+std::uint32_t fluid_blocks(std::uint32_t signal_count, SignalFluidGpu fluid) {
+  const auto entries = signal_count * fluid.count;
+  return entries == 0 ? 0 : ((entries - 1) / threads_per_block) + 1;
+}
+
 }  // namespace
 
 void launch_advance_signal_grid(
@@ -207,20 +233,26 @@ void launch_advance_signal_grid(
     const std::uint8_t* obstacles, const float* x_faces, const float* y_faces, const float* z_faces,
     std::uint32_t has_velocity_field, std::uint32_t* error, SignalGridBoundariesGpu boundaries,
     SignalGridShapeGpu shape, float4 spacing, float dt, std::uint32_t signal_count,
-    std::uint32_t level_count, std::uint32_t crank_nicolson, cudaStream_t stream) {
-  constexpr std::uint32_t threads_per_block = 256;
-  const auto block_count = ((level_count - 1) / threads_per_block) + 1;
+    SignalFluidGpu fluid, std::uint32_t crank_nicolson, cudaStream_t stream) {
+  const auto block_count = fluid_blocks(signal_count, fluid);
+  if (block_count == 0) {
+    return;
+  }
   advance_signal_grid<<<block_count, threads_per_block, 0, stream>>>(
       levels, output, diffusion, advection, fixed_values, reaction_source, reaction_loss, obstacles,
       x_faces, y_faces, z_faces, has_velocity_field, error, boundaries, shape, spacing, dt,
-      signal_count, level_count, crank_nicolson);
+      signal_count, fluid, crank_nicolson);
 }
 
-void launch_signal_square_terms(const float* input, float* terms, std::uint32_t level_count,
+void launch_signal_square_terms(const float* input, float* terms, std::uint32_t signal_count,
+                                std::uint32_t grid_sites, SignalFluidGpu fluid,
                                 cudaStream_t stream) {
-  constexpr std::uint32_t threads_per_block = 256;
-  const auto block_count = ((level_count - 1) / threads_per_block) + 1;
-  signal_square_terms<<<block_count, threads_per_block, 0, stream>>>(input, terms, level_count);
+  const auto block_count = fluid_blocks(signal_count, fluid);
+  if (block_count == 0) {
+    return;
+  }
+  signal_square_terms<<<block_count, threads_per_block, 0, stream>>>(input, terms, signal_count,
+                                                                     grid_sites, fluid);
 }
 
 void launch_signal_crank_nicolson_jacobi(
@@ -229,14 +261,16 @@ void launch_signal_crank_nicolson_jacobi(
     const float* reaction_loss, const std::uint8_t* obstacles, const float* x_faces,
     const float* y_faces, const float* z_faces, std::uint32_t has_velocity_field,
     std::uint32_t* error, SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
-    float4 spacing, float half_dt, std::uint32_t signal_count, std::uint32_t level_count,
+    float4 spacing, float half_dt, std::uint32_t signal_count, SignalFluidGpu fluid,
     cudaStream_t stream) {
-  constexpr std::uint32_t threads_per_block = 256;
-  const auto block_count = ((level_count - 1) / threads_per_block) + 1;
+  const auto block_count = fluid_blocks(signal_count, fluid);
+  if (block_count == 0) {
+    return;
+  }
   signal_crank_nicolson_jacobi<<<block_count, threads_per_block, 0, stream>>>(
       current, output, right_hand_side, diffusion, advection, fixed_values, reaction_source,
       reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, error, boundaries,
-      shape, spacing, half_dt, signal_count, level_count);
+      shape, spacing, half_dt, signal_count, fluid);
 }
 
 void launch_signal_crank_nicolson_residual_terms(
@@ -245,18 +279,19 @@ void launch_signal_crank_nicolson_residual_terms(
     const float* reaction_loss, const std::uint8_t* obstacles, const float* x_faces,
     const float* y_faces, const float* z_faces, std::uint32_t has_velocity_field,
     SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape, float4 spacing, float half_dt,
-    std::uint32_t signal_count, std::uint32_t level_count, cudaStream_t stream) {
-  constexpr std::uint32_t threads_per_block = 256;
-  const auto block_count = ((level_count - 1) / threads_per_block) + 1;
+    std::uint32_t signal_count, SignalFluidGpu fluid, cudaStream_t stream) {
+  const auto block_count = fluid_blocks(signal_count, fluid);
+  if (block_count == 0) {
+    return;
+  }
   signal_crank_nicolson_residual_terms<<<block_count, threads_per_block, 0, stream>>>(
       current, right_hand_side, terms, diffusion, advection, fixed_values, reaction_source,
       reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundaries, shape,
-      spacing, half_dt, signal_count, level_count);
+      spacing, half_dt, signal_count, fluid);
 }
 
 void launch_reduce_sum_pairs(const float* input, float* output, std::uint32_t element_count,
                              cudaStream_t stream) {
-  constexpr std::uint32_t threads_per_block = 256;
   const auto output_count = (element_count + 1) / 2;
   const auto block_count = ((output_count - 1) / threads_per_block) + 1;
   reduce_sum_pairs<<<block_count, threads_per_block, 0, stream>>>(input, output, element_count);

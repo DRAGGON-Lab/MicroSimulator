@@ -116,6 +116,7 @@ constexpr std::uint64_t uint64_max = std::numeric_limits<std::uint64_t>::max();
             array_json(spec.obstacles, [](std::uint8_t solid) { return unsigned_json(solid); })},
            {"velocity_field", std::move(velocity_field)},
            {"integration", name_json(signal_integration_kind_name(spec.integration))},
+           {"advection_scheme", name_json(signal_advection_kind_name(spec.advection_scheme))},
            {"solver", JsonValue::object({
                           {"max_iterations", unsigned_json(spec.solver.max_iterations)},
                           {"absolute_tolerance", JsonValue::number(spec.solver.absolute_tolerance)},
@@ -306,9 +307,10 @@ constexpr std::uint64_t uint64_max = std::numeric_limits<std::uint64_t>::max();
   expect_object(value, path, {"spec", "levels"});
   const auto& spec_value = *value.find("spec");
   const auto spec_path = path["spec"];
-  expect_object(spec_value, spec_path,
-                {"signal_count", "shape", "origin", "spacing", "diffusion", "advection", "reaction",
-                 "obstacles", "velocity_field", "integration", "solver", "boundaries"});
+  expect_object(
+      spec_value, spec_path,
+      {"signal_count", "shape", "origin", "spacing", "diffusion", "advection", "reaction",
+       "obstacles", "velocity_field", "integration", "advection_scheme", "solver", "boundaries"});
 
   SignalGridCheckpoint grid;
   auto& spec = grid.spec;
@@ -363,6 +365,14 @@ constexpr std::uint64_t uint64_max = std::numeric_limits<std::uint64_t>::max();
     fail(integration_path, "unknown integration '" + integration_name + "'");
   }
   spec.integration = *integration;
+
+  const auto scheme_path = spec_path["advection_scheme"];
+  const auto& scheme_name = expect_string(*spec_value.find("advection_scheme"), scheme_path);
+  const auto scheme = parse_signal_advection_kind(scheme_name);
+  if (!scheme.has_value()) {
+    fail(scheme_path, "unknown advection scheme '" + scheme_name + "'");
+  }
+  spec.advection_scheme = *scheme;
 
   const auto& solver = *spec_value.find("solver");
   const auto solver_path = spec_path["solver"];

@@ -102,6 +102,16 @@ template <typename Apply>
           .relative_residual = report.relative_residual};
 }
 
+// Solves a depth-averaged pressure system for the pressures of its active
+// sites.
+[[nodiscard]] ConjugateGradientResult solve_active_depth_system(
+    const detail::DepthAveragedFlowSystem& system, float tolerance, std::uint32_t max_iterations) {
+  return conjugate_gradient([&](std::span<const double> input,
+                                std::vector<double>& output) { system.apply(input, output); },
+                            system.active().right_hand_side, system.active().diagonal, tolerance,
+                            max_iterations, "depth-averaged flow");
+}
+
 [[nodiscard]] std::array<const GridBoundary*, 2> axis_boundaries(const SignalGridSpec& spec,
                                                                  std::size_t axis) {
   const std::array<std::array<const GridBoundary*, 2>, 3> boundaries{{
@@ -160,11 +170,7 @@ namespace detail {
 
 std::vector<double> solve_depth_averaged_pressure(const DepthAveragedFlowSystem& system,
                                                   float tolerance, std::uint32_t max_iterations) {
-  return conjugate_gradient([&](std::span<const double> input,
-                                std::vector<double>& output) { system.apply(input, output); },
-                            system.right_hand_side(), system.diagonal(), tolerance, max_iterations,
-                            "depth-averaged flow")
-      .solution;
+  return system.scatter(solve_active_depth_system(system, tolerance, max_iterations).solution);
 }
 
 }  // namespace detail
@@ -338,11 +344,8 @@ DepthAveragedFlowResult solve_depth_averaged_flow_cpu(
       reduction.grid(), reduction.conductance(),
       detail::axis_flow_boundary(reduction.reduced_layout(), axis));
   const auto solve =
-      conjugate_gradient([&](std::span<const double> input,
-                             std::vector<double>& output) { system.apply(input, output); },
-                         system.right_hand_side(), system.diagonal(), parameters.relative_tolerance,
-                         parameters.max_iterations, "depth-averaged flow");
-  const auto unscaled = system.velocity(solve.solution);
+      solve_active_depth_system(system, parameters.relative_tolerance, parameters.max_iterations);
+  const auto unscaled = system.velocity(system.scatter(solve.solution));
   const auto scaled =
       detail::scale_velocity(spec, reduction.original_layout(), reduction.lift(unscaled),
                              reduction.open_inlet_faces(axis), parameters.mean_inlet_speed);
@@ -362,16 +365,12 @@ DepthAveragedPortFlowResult solve_depth_averaged_port_flow_cpu(
   const detail::ShallowPortFlow flow(spec, ports, mobility);
   DepthAveragedPortFlowReport report;
   const auto solution = flow.solve([&](const detail::DepthAveragedFlowSystem& system) {
-    const auto solve = conjugate_gradient(
-        [&](std::span<const double> input, std::vector<double>& output) {
-          system.apply(input, output);
-        },
-        system.right_hand_side(), system.diagonal(), parameters.relative_tolerance,
-        parameters.max_iterations, "depth-averaged flow");
+    const auto solve =
+        solve_active_depth_system(system, parameters.relative_tolerance, parameters.max_iterations);
     report.iterations += solve.iterations;
     report.relative_residual =
         std::max(report.relative_residual, static_cast<float>(solve.relative_residual));
-    return system.velocity(solve.solution);
+    return system.velocity(system.scatter(solve.solution));
   });
   report.solves = solution.solves;
   report.max_speed = solution.max_speed;

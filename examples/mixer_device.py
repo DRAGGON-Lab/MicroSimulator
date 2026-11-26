@@ -31,7 +31,19 @@ transport adds numerical mixing in the serpentine's bends, so the mixing seen
 here is an upper bound until checked on a finer grid.
 
 The model holds no cells. Its geometry and total flow come from the scene; the
-grid spacing, time step and diffusivity are model choices.
+grid spacing, time step, diffusivity and advection scheme are model choices.
+The ``spacing`` parameter sets the grid spacing across the chip, in micrometers,
+and ``scheme`` the advection scheme, ``van_leer`` unless ``upwind`` is asked for.
+
+The limited scheme is the one to use here: upwind transport blends the streams
+at every bend on its own. The spacing sets what the model can say. At 50, four
+voxels across a channel, it shows the split and the streams but understates
+how distinct they stay; at 12.5, sixteen across, it reproduces the mixing that
+diffusion predicts. The limited scheme needs a step that carries the fastest
+fluid, about 3 mm/s, across no more than about six voxels: 0.1 s at 50, 0.04 s
+at 25, 0.02 s at 12.5. With those steps the model runs about 25 times faster
+than the liquids at 50, 5 times at 25, and at about their own pace at 12.5.
+Building it, flow solve included, takes two to three seconds at 12.5.
 """
 
 from __future__ import annotations
@@ -42,13 +54,14 @@ from microsimulator import (
     ChannelMetadata,
     GridFace,
     ModelContext,
+    SignalAdvectionKind,
     SignalGridSpec,
     SignalIntegrationKind,
     Simulation,
     Vec3,
 )
 from microsimulator.checkpoint import JSONValue
-from microsimulator.design import DesignScene, load_design_scene
+from microsimulator.design import DesignScene, DesignWindow, load_design_scene
 from microsimulator.microfluidics import LayoutDevice, LayoutPort
 
 # The design's access pads: the inlets from the collector's closed end toward
@@ -68,8 +81,13 @@ CHANNELS = ChannelMetadata(
 SIGNALS = 1 + len(INLETS)
 # Wall left around the channels on the window's two sides that cut no pad.
 MARGIN = 300.0
-SPACING = (50.0, 50.0, 50.0)
+# Grid spacing across the chip, and through its one layer of fluid. The model's
+# ``spacing`` parameter replaces the first; four voxels span a channel at 50.
+SPACING = 50.0
+DEPTH_SPACING = 50.0
 DIFFUSIVITY = 500.0
+# The model's ``scheme`` parameter picks the advection scheme by these names.
+SCHEMES = {"upwind": SignalAdvectionKind.UPWIND, "van_leer": SignalAdvectionKind.VAN_LEER}
 # One pressure for every inlet, in the flow solver's units. Only its being the
 # same at each inlet matters: the outlet's stated flow sets the scale.
 INLET_PRESSURE = 1.0
@@ -86,8 +104,8 @@ def _corners(scene: DesignScene, path: str) -> tuple[tuple[float, float], tuple[
     return instance.low, instance.high
 
 
-def device(scene: DesignScene) -> LayoutDevice:
-    """The whole chip as a device, with a port where the window cuts each access pad."""
+def window_of(scene: DesignScene) -> DesignWindow:
+    """The window that takes in every channel and cuts each access pad through its middle."""
 
     drawn = [
         (instance.low, instance.high)
@@ -101,8 +119,13 @@ def device(scene: DesignScene) -> LayoutDevice:
     # the first and its right side through the middle of the second.
     low = (min(corner[0] for corner, _ in drawn) - MARGIN, (inlet_low[1] + inlet_high[1]) * 0.5)
     high = ((outlet_low[0] + outlet_high[0]) * 0.5, max(far[1] for _, far in drawn) + MARGIN)
-    window = scene.window(low, high)
+    return scene.window(low, high)
 
+
+def device(scene: DesignScene) -> LayoutDevice:
+    """The whole chip as a device, with a port where the window cuts each access pad."""
+
+    window = window_of(scene)
     inlets = sorted(
         (crossing for crossing in window.crossings if crossing.side == GridFace.Y_LOWER),
         key=lambda crossing: crossing.low,
@@ -128,15 +151,22 @@ def device(scene: DesignScene) -> LayoutDevice:
     return LayoutDevice(window.boxes, window.size, ports=tuple(ports), wall_thickness=50.0)
 
 
-def grid_for(chip: LayoutDevice) -> SignalGridSpec:
+def grid_for(
+    chip: LayoutDevice,
+    *,
+    spacing: float = SPACING,
+    scheme: SignalAdvectionKind = SignalAdvectionKind.VAN_LEER,
+) -> SignalGridSpec:
     """A signal grid over the chip, one layer of fluid deep: the marker and each liquid."""
 
-    origin, shape = chip.lattice(SPACING)
+    steps = (spacing, spacing, DEPTH_SPACING)
+    origin, shape = chip.lattice(steps)
     grid = SignalGridSpec()
     grid.signal_count = SIGNALS
-    grid.shape, grid.origin, grid.spacing = shape, origin, Vec3(*SPACING)
+    grid.shape, grid.origin, grid.spacing = shape, origin, Vec3(*steps)
     grid.diffusion = [DIFFUSIVITY] * SIGNALS
     grid.integration = SignalIntegrationKind.BACKWARD_EULER
+    grid.advection_scheme = scheme
     grid.solver.absolute_tolerance = 1.0e-5
     return grid
 
@@ -164,9 +194,15 @@ def build(context: ModelContext) -> _Transport:
     scene_path = context.parameters.get("scene")
     if not isinstance(scene_path, str):
         raise ValueError("the mixer needs a scene parameter: the path of a design scene")
+    spacing = context.parameters.get("spacing", SPACING)
+    scheme = context.parameters.get("scheme", "van_leer")
+    if not isinstance(spacing, int | float) or isinstance(spacing, bool) or spacing <= 0:
+        raise ValueError("the mixer's spacing parameter must be a positive number")
+    if not isinstance(scheme, str) or scheme not in SCHEMES:
+        raise ValueError(f"the mixer's scheme parameter must be one of {sorted(SCHEMES)}")
     chip = device(load_design_scene(Path(scene_path)))
     simulation = context.simulation()
-    grid = grid_for(chip)
+    grid = grid_for(chip, spacing=float(spacing), scheme=SCHEMES[scheme])
     empty = [0.0] * SIGNALS
     chip.apply_to_grid(grid, empty, empty, simulation=simulation, tolerance=FLOW_TOLERANCE)
     shape = grid.shape

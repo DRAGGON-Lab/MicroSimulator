@@ -124,7 +124,21 @@ A port with a `speed` carries that mean speed over its open area, positive into 
 
 Which crossing is an inlet, at what speed and with what media is the model's to state. The scene supplies what a design knows: `scene.flows_of(channel)` gives each feeding channel's mean speed, and `scene.fraction(species, vertex)` what arrives at a junction. For a mixer whose liquids are carried through in seconds, the natural model time unit is the second, and a speed in millimeters per second is a thousand model units of micrometers per second. The test of the design tool's own mixer builds its junction this way: three inlets at the design's speeds, each with one pure liquid, and at a steady state the stream leaving holds the liquids in the shares the design's flow solution states, to within a percent.
 
-Two limits bear on mixing. Transport upwinds to first order, which adds numerical diffusion wherever flow runs oblique to the grid, as in a serpentine's bends, and so mixes more than the liquids would; a mixing length needs a refinement check. And the design tool takes liquids as fully mixed at every vertex, which a simulated junction does not: beside each other in one channel, they mix only as fast as they diffuse.
+The design tool takes liquids as fully mixed at every vertex. A simulated junction does not: beside each other in one channel, liquids mix only as fast as they diffuse, and the whole chip can be simulated to see how far. [`examples/mixer_device.py`](../../examples/mixer_device.py) builds the mixer's whole chip, with its three inlets held at one pressure so that the split among the liquids is the flow solver's own: 19.7, 29.8 and 50.5 percent against the design's 20, 30 and 50.
+
+How far the liquids have mixed is a harder question than how they split, and the answer depends on the grid and the advection scheme. [`scripts/run_mixer_study.py`](../../scripts/run_mixer_study.py) measures the segregation of the half-share liquid across the mixing channel, 1 for streams side by side and 0 for a blend, at three sections, and compares it with what diffusion alone gives a plug flow in a channel of that width:
+
+| Spacing | Sites across | Scheme | Just joined | After one bend | Serpentine end |
+| --- | --- | --- | --- | --- | --- |
+| 50 | 4 | upwind | 0.323 | 0.013 | 0.000 |
+| 50 | 4 | van Leer | 0.493 | 0.116 | 0.000 |
+| 25 | 8 | upwind | 0.449 | 0.059 | 0.000 |
+| 25 | 8 | van Leer | 0.586 | 0.252 | 0.009 |
+| 12.5 | 16 | upwind | 0.529 | 0.131 | 0.000 |
+| 12.5 | 16 | van Leer | 0.621 | 0.296 | 0.018 |
+| | | expected | 0.646 | 0.303 | 0.019 |
+
+Three things follow. First-order upwinding blends the streams at each bend, and refinement alone recovers that slowly: at 16 sites across it is still worse than the limited scheme at 8. The limited scheme at 16 sites across reproduces the expected values to within a few percent, and at 8 it is close where the streams are still distinct. And for this mixer the answer itself is that the liquids leave mostly but not wholly mixed: the difference between the streams has fallen to about 15 percent of what it began as, because the serpentine holds the stream for nearly two of diffusion's own time constants across the channel. A mixing question therefore needs the limited scheme, a spacing that puts about sixteen sites across the channel, and this kind of check; four sites across answers the split and nothing about the mixing. Transport and the flow solve [visit the fluid sites alone](../architecture/0029-transport-over-fluid-sites.md), so the fine grid costs what its channels cost and not what the chip's whole box does: the study's finest row takes 20 to 25 seconds, flow solve included. The expected values assume the shallow solver's plug flow; a real channel's velocity profile adds dispersion that neither they nor this solver include.
 
 Underneath, `microsimulator.flow.solve_port_flow_field` and `microsimulator.stokes.solve_port_stokes_field` take a grid and a list of `FlowPort`, each a face of the grid, a `GridFacePatch` of its boundary sites, and a speed or a pressure. A fixed boundary's `patches` give parts of one face their own media, and `Simulation.set_signal_boundary_patch_values(face, patch, values)` changes one. A fixed face is a reservoir wherever fluid touches it, port or not, so a model that opens ports by hand keeps the rest of each port's face solid, as `LayoutDevice` does.
 
@@ -262,6 +276,7 @@ The model also does not reproduce an experimentally established separation betwe
   `solve_flow_field` reports `max_speed`, and the trap examples use `dt = 0.02` with a mean
   channel speed of 20.
 - Forward Euler enforces its stability bound from the per-site advective outflow; the trap models select backward Euler for stiff transport and affine losses. Explicit cellular uptake still constrains the timestep.
+- Transport upwinds to first order unless the grid names another scheme. That blends streams wherever flow crosses the grid at an angle, which matters when the question is how far liquids have mixed and seldom otherwise. `grid.advection_scheme = SignalAdvectionKind.VAN_LEER` selects the [limited second-order scheme](../architecture/0028-limited-advection.md), which keeps a front sharp and never overshoots. Its implicit solve settles only while one step carries the fastest fluid across about six sites or fewer; a longer step is refused with a message that says so. Its explicit stability bound is half as long in its advective part.
 - The implicit solve's relative tolerance is the accuracy the step delivers: it asks for
   that reduction of the residual the step starts with, so a model gets what it asked for
   regardless of its concentration scale. These models keep the engine defaults.

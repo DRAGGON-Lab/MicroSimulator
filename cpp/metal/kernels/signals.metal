@@ -88,6 +88,12 @@ TransportPoint transport_point(device const float* levels, device const float* d
       upper_flux = 0.0f;
     }
     rate -= (upper_flux - lower_flux) * inverse_spacing;
+    if (boundary_kinds[12] == 1u) {
+      rate -= van_leer_correction(levels, obstacles, shape, boundary_kinds, signal, uint3(x, y, z),
+                                  axis, current, lower[axis], upper[axis], closed_lower[axis],
+                                  closed_upper[axis], faces.lower[axis], faces.upper[axis]) *
+              inverse_spacing;
+    }
     if (!closed_upper[axis] && faces.upper[axis] > 0.0f) {
       diagonal -= faces.upper[axis] * inverse_spacing;
     }
@@ -98,6 +104,13 @@ TransportPoint transport_point(device const float* levels, device const float* d
   rate += reaction_source[index] - reaction_loss[index] * current;
   diagonal -= reaction_loss[index];
   return {rate, diagonal};
+}
+
+// The level a transport thread works on. Threads number the fluid sites of each
+// signal in turn, so obstacle sites cost nothing and keep the zero they hold.
+uint fluid_level(device const uint* fluid_sites, uint fluid_count, uint sites, uint entry) {
+  uint signal = entry / fluid_count;
+  return signal * sites + fluid_sites[entry - signal * fluid_count];
 }
 
 kernel void advance_signal_grid(
@@ -112,10 +125,12 @@ kernel void advance_signal_grid(
     device const float* reaction_loss [[buffer(14)]], device const uchar* obstacles [[buffer(15)]],
     device const float* x_faces [[buffer(16)]], device const float* y_faces [[buffer(17)]],
     device const float* z_faces [[buffer(18)]], constant uint& has_velocity_field [[buffer(19)]],
-    uint index [[thread_position_in_grid]]) {
-  if (index >= level_count) {
+    device const uint* fluid_sites [[buffer(20)]], constant uint& fluid_count [[buffer(21)]],
+    uint entry [[thread_position_in_grid]]) {
+  if (entry >= signal_count * fluid_count) {
     return;
   }
+  uint index = fluid_level(fluid_sites, fluid_count, shape.sites, entry);
 
   TransportPoint transport =
       transport_point(levels, diffusion, advection, fixed_values, reaction_source, reaction_loss,
@@ -125,7 +140,10 @@ kernel void advance_signal_grid(
   float candidate = levels[index] + scale * transport.rate;
 
   output[index] = candidate;
-  if (!isfinite(candidate) || (crank_nicolson == 0u && candidate < 0.0f)) {
+  // Under the van Leer scheme an explicit level may fall below zero by
+  // rounding; the host judges those when it takes the step's levels.
+  if (!isfinite(candidate) ||
+      (crank_nicolson == 0u && boundary_kinds[12] == 0u && candidate < 0.0f)) {
     atomic_fetch_or_explicit(error, 1u, memory_order_relaxed);
   }
 }
@@ -141,17 +159,21 @@ kernel void crank_nicolson_jacobi(
     device const float* reaction_loss [[buffer(14)]], device const uchar* obstacles [[buffer(15)]],
     device const float* x_faces [[buffer(16)]], device const float* y_faces [[buffer(17)]],
     device const float* z_faces [[buffer(18)]], constant uint& has_velocity_field [[buffer(19)]],
-    uint index [[thread_position_in_grid]]) {
-  if (index >= level_count) {
+    device const uint* fluid_sites [[buffer(20)]], constant uint& fluid_count [[buffer(21)]],
+    uint entry [[thread_position_in_grid]]) {
+  if (entry >= signal_count * fluid_count) {
     return;
   }
+  uint index = fluid_level(fluid_sites, fluid_count, shape.sites, entry);
   TransportPoint transport =
       transport_point(current, diffusion, advection, fixed_values, reaction_source, reaction_loss,
                       obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundary_kinds,
                       shape, spacing, signal_count, index);
   float remainder = transport.rate - transport.diagonal * current[index];
-  float candidate =
+  float update =
       (right_hand_side[index] + half_dt * remainder) / (1.0f - half_dt * transport.diagonal);
+  float relaxation = boundary_kinds[12] == 1u ? van_leer_relaxation : 1.0f;
+  float candidate = current[index] + relaxation * (update - current[index]);
   output[index] = candidate;
   if (!isfinite(candidate)) {
     atomic_fetch_or_explicit(error, 1u, memory_order_relaxed);
@@ -169,26 +191,33 @@ kernel void crank_nicolson_residual_terms(
     device const float* reaction_loss [[buffer(13)]], device const uchar* obstacles [[buffer(14)]],
     device const float* x_faces [[buffer(15)]], device const float* y_faces [[buffer(16)]],
     device const float* z_faces [[buffer(17)]], constant uint& has_velocity_field [[buffer(18)]],
-    uint index [[thread_position_in_grid]]) {
-  if (index >= level_count) {
+    device const uint* fluid_sites [[buffer(19)]], constant uint& fluid_count [[buffer(20)]],
+    uint entry [[thread_position_in_grid]]) {
+  if (entry >= signal_count * fluid_count) {
     return;
   }
+  uint index = fluid_level(fluid_sites, fluid_count, shape.sites, entry);
   TransportPoint transport =
       transport_point(current, diffusion, advection, fixed_values, reaction_source, reaction_loss,
                       obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundary_kinds,
                       shape, spacing, signal_count, index);
   float residual = right_hand_side[index] - current[index] + half_dt * transport.rate;
-  terms[index] = residual * residual;
+  terms[entry] = residual * residual;
 }
 
+// The squares of a field's fluid levels, one term per fluid level.
 kernel void signal_square_terms(device const float* input [[buffer(0)]],
                                 device float* terms [[buffer(1)]],
                                 constant uint& element_count [[buffer(2)]],
-                                uint index [[thread_position_in_grid]]) {
-  if (index >= element_count) {
+                                device const uint* fluid_sites [[buffer(3)]],
+                                constant uint& fluid_count [[buffer(4)]],
+                                constant uint& sites [[buffer(5)]],
+                                uint entry [[thread_position_in_grid]]) {
+  if (entry >= element_count) {
     return;
   }
-  terms[index] = input[index] * input[index];
+  float value = input[fluid_level(fluid_sites, fluid_count, sites, entry)];
+  terms[entry] = value * value;
 }
 
 kernel void reduce_signal_sum_pairs(device const float* input [[buffer(0)]],

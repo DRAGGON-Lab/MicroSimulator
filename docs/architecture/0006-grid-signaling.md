@@ -45,7 +45,7 @@ Diffusion uses the conventional centered second difference independently in each
 D * sum_axis((c[i-1] - 2*c[i] + c[i+1]) / spacing_axis^2)
 ```
 
-Advection uses conservative face fluxes with first-order upwinding for `-velocity dot grad(c)`. A fixed reservoir supplies the exterior upwind value, a periodic face wraps, and a no-flux face has exactly zero advective flux. This is less accurate in smooth fields than a higher-order scheme, but its monotonicity and compact native implementation make it the reference stage. Higher-order transport can be added as a separately named integrator.
+Advection uses conservative face fluxes with first-order upwinding for `-velocity dot grad(c)`. A fixed reservoir supplies the exterior upwind value, a periodic face wraps, and a no-flux face has exactly zero advective flux. This is less accurate in smooth fields than a higher-order scheme, but its monotonicity and compact native implementation make it the reference stage and the default. A grid may name the limited second-order scheme of [ADR 0028](0028-limited-advection.md) instead.
 
 Forward Euler rejects a step before mutation unless, for every signal,
 

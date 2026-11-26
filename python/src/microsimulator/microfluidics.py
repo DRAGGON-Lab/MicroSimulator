@@ -29,6 +29,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 
+import numpy as np
+import numpy.typing as npt
+
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendKind,
     BoxConstraintInit,
@@ -957,3 +960,63 @@ class LayoutDevice(_ChannelDevice):
     def _solid(self, px: float, py: float, pz: float, half: tuple[float, float, float]) -> bool:
         del half
         return pz <= 0.0 or pz >= self.gap_height(px, py)
+
+    def _gap_heights(
+        self, xs: npt.NDArray[np.float64], ys: npt.NDArray[np.float64]
+    ) -> npt.NDArray[np.float64]:
+        """`gap_height` at every point of a lattice of x and y positions."""
+
+        held = _height_map(self.boxes, self.size)
+        openings = self._openings()
+
+        def within(spans: _Spans, positions: npt.NDArray[np.float64]) -> npt.NDArray[np.bool_]:
+            inside = np.zeros(positions.shape, dtype=np.bool_)
+            for low, high in spans:
+                inside |= (low < positions) & (positions < high)
+            return inside
+
+        def cells(
+            edges: tuple[float, ...], positions: npt.NDArray[np.float64]
+        ) -> tuple[
+            npt.NDArray[np.intp], npt.NDArray[np.intp], npt.NDArray[np.bool_], npt.NDArray[np.bool_]
+        ]:
+            """The one or two cells each position lies in, and which lie at or past each end."""
+
+            marks = np.asarray(edges, dtype=np.float64)
+            last = len(edges) - 2
+            before = positions <= marks[0]
+            after = positions >= marks[-1]
+            upper = np.clip(np.searchsorted(marks, positions, side="right") - 1, 0, last)
+            lower = np.where(positions == marks[upper], np.maximum(upper - 1, 0), upper)
+            lower = np.where(before, 0, np.where(after, last, lower))
+            upper = np.where(before, 0, np.where(after, last, upper))
+            return lower, upper, before, after
+
+        heights = np.asarray(held.heights, dtype=np.float64)
+        x_lower, x_upper, x_before, x_after = cells(held.xs, xs)
+        y_lower, y_upper, y_before, y_after = cells(held.ys, ys)
+        found = np.minimum(
+            np.minimum(heights[np.ix_(x_lower, y_lower)], heights[np.ix_(x_lower, y_upper)]),
+            np.minimum(heights[np.ix_(x_upper, y_lower)], heights[np.ix_(x_upper, y_upper)]),
+        )
+        # At or past an edge of the window there is fluid only through an opening.
+        closed = (
+            (x_before[:, None] & ~within(openings[GridFace.X_LOWER], ys)[None, :])
+            | (x_after[:, None] & ~within(openings[GridFace.X_UPPER], ys)[None, :])
+            | (~within(openings[GridFace.Y_LOWER], xs)[:, None] & y_before[None, :])
+            | (~within(openings[GridFace.Y_UPPER], xs)[:, None] & y_after[None, :])
+        )
+        found[closed] = 0.0
+        return found
+
+    def _rasterize(self, spec: SignalGridSpec) -> None:
+        shape = spec.shape
+        origin = spec.origin
+        spacing = spec.spacing
+        xs = origin.x + spacing.x * np.arange(shape.x, dtype=np.float64)
+        ys = origin.y + spacing.y * np.arange(shape.y, dtype=np.float64)
+        zs = origin.z + spacing.z * np.arange(shape.z, dtype=np.float64)
+        heights = self._gap_heights(xs, ys)
+        solid = (zs[None, None, :] <= 0.0) | (zs[None, None, :] >= heights[:, :, None])
+        spec.obstacles = solid.astype(np.uint8).ravel().tolist()
+        spec.advection = [Vec3() for _ in range(spec.signal_count)]

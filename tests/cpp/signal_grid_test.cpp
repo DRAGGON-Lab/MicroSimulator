@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -730,4 +731,188 @@ int main() {
     closed.y_lower.patches = {{.region = {.begin = {0, 0}, .end = {1, 1}}, .values = {1.0F}}};
     assert_throws<std::invalid_argument>([&] { closed.validate(); });
   }
+  {
+    // The van Leer scheme against upwind: a block carried once around a
+    // periodic line by forward Euler keeps far steeper edges, loses nothing,
+    // and never leaves the range it began in.
+    using microsimulator::SignalAdvectionKind;
+    constexpr std::uint32_t count = 80;
+    const auto carried = [&](SignalAdvectionKind scheme) {
+      auto spec = line_spec(count);
+      spec.diffusion = {0.0F};
+      spec.advection = {{1.0F, 0.0F, 0.0F}};
+      spec.advection_scheme = scheme;
+      spec.x_lower.kind = microsimulator::GridBoundaryKind::periodic;
+      spec.x_upper.kind = microsimulator::GridBoundaryKind::periodic;
+      std::vector<float> levels(count, 0.0F);
+      for (std::uint32_t site = 20; site < 40; ++site) {
+        levels[site] = 1.0F;
+      }
+      microsimulator::SignalGrid grid(spec, levels);
+      for (int step = 0; step < 400; ++step) {
+        static_cast<void>(microsimulator::advance_signal_grid_cpu(grid, 0.2F));
+      }
+      return std::vector<float>(grid.levels().begin(), grid.levels().end());
+    };
+    const auto edge_sites = [](const std::vector<float>& levels) {
+      return std::count_if(levels.begin(), levels.end(),
+                           [](float level) { return level > 0.05F && level < 0.95F; });
+    };
+    const auto total = [](const std::vector<float>& levels) {
+      double sum = 0.0;
+      for (const auto level : levels) sum += level;
+      return sum;
+    };
+    const auto upwind = carried(SignalAdvectionKind::upwind);
+    const auto limited = carried(SignalAdvectionKind::van_leer);
+    assert(std::abs(total(upwind) - 20.0) < 1.0e-3);
+    assert(std::abs(total(limited) - 20.0) < 1.0e-3);
+    for (const auto level : limited) {
+      assert(level >= -1.0e-6F && level <= 1.0F + 1.0e-6F);
+    }
+    // Upwind has smeared the block over most of the line; van Leer has not.
+    assert(edge_sites(upwind) > 40);
+    assert(edge_sites(limited) < 20);
+    assert(*std::max_element(upwind.begin(), upwind.end()) < 0.85F);
+    assert(*std::max_element(limited.begin(), limited.end()) > 0.97F);
+
+    // The explicit step that keeps the limited scheme in range is half as
+    // long in its advective part.
+    auto spec = line_spec(count);
+    spec.diffusion = {0.0F};
+    spec.advection = {{1.0F, 0.0F, 0.0F}};
+    microsimulator::SignalGrid first_order(spec, std::vector<float>(count, 0.0F));
+    first_order.validate_step(0.9F);
+    spec.advection_scheme = SignalAdvectionKind::van_leer;
+    microsimulator::SignalGrid second_order(spec, std::vector<float>(count, 0.0F));
+    second_order.validate_step(0.5F);
+    assert_throws<std::invalid_argument>([&] { second_order.validate_step(0.6F); });
+  }
+
+  {
+    // On a smooth field the van Leer rates converge at second order in the
+    // mean, upwind at first.
+    using microsimulator::SignalAdvectionKind;
+    const auto mean_error = [&](SignalAdvectionKind scheme, std::uint32_t count) {
+      auto spec = line_spec(count);
+      const auto spacing = 1.0F / static_cast<float>(count);
+      spec.spacing = {spacing, 1.0F, 1.0F};
+      spec.diffusion = {0.0F};
+      spec.advection = {{1.0F, 0.0F, 0.0F}};
+      spec.advection_scheme = scheme;
+      spec.x_lower.kind = microsimulator::GridBoundaryKind::periodic;
+      spec.x_upper.kind = microsimulator::GridBoundaryKind::periodic;
+      constexpr double two_pi = 6.283185307179586;
+      std::vector<float> levels(count);
+      for (std::uint32_t site = 0; site < count; ++site) {
+        levels[site] = static_cast<float>(2.0 + std::sin(two_pi * (site + 0.5) / count));
+      }
+      microsimulator::SignalGrid grid(spec, levels);
+      const auto rates = microsimulator::signal_grid_transport_rates(grid, grid.levels());
+      double error = 0.0;
+      for (std::uint32_t site = 0; site < count; ++site) {
+        // The exact rate of a site's mean under unit speed.
+        const auto exact = -(std::sin(two_pi * (site + 1.0) / count) -
+                             std::sin(two_pi * static_cast<double>(site) / count)) *
+                           count;
+        error += std::abs(rates[site] - exact);
+      }
+      return error / count;
+    };
+    const auto upwind_order = mean_error(SignalAdvectionKind::upwind, 32) /
+                              mean_error(SignalAdvectionKind::upwind, 64);
+    const auto limited_order = mean_error(SignalAdvectionKind::van_leer, 32) /
+                               mean_error(SignalAdvectionKind::van_leer, 64);
+    assert(upwind_order > 1.8 && upwind_order < 2.2);
+    assert(limited_order > 3.0);
+    assert(mean_error(SignalAdvectionKind::van_leer, 64) <
+           0.15 * mean_error(SignalAdvectionKind::upwind, 64));
+  }
+
+  {
+    // Beside a reservoir or a wall there is no site two upwind, and the van
+    // Leer rates are upwind's exactly; a uniform field has no rate at all.
+    using microsimulator::SignalAdvectionKind;
+    microsimulator::SignalGridSpec spec;
+    spec.signal_count = 1;
+    spec.shape = {.x = 6, .y = 3, .z = 1};
+    spec.diffusion = {0.0F};
+    spec.advection = {{0.0F, 0.0F, 0.0F}};
+    spec.x_lower = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {3.0F}};
+    spec.x_upper = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {0.0F}};
+    // A wall across the middle row leaves two sites of fluid on each side of
+    // it in the outer rows' middle column.
+    spec.obstacles.assign(18, 0);
+    for (std::uint32_t x = 2; x < 4; ++x) {
+      spec.obstacles[x * 3 + 1] = 1;
+    }
+    spec.velocity_field = microsimulator::SignalGridVelocityField{
+        .x_faces = std::vector<float>(spec.x_face_count(), 0.0F),
+        .y_faces = std::vector<float>(spec.y_face_count(), 0.0F),
+        .z_faces = std::vector<float>(spec.z_face_count(), 0.0F),
+    };
+    // Flow along x in the two outer rows only.
+    for (std::uint32_t face = 0; face <= 6; ++face) {
+      spec.velocity_field->x_faces[face * 3 + 0] = 1.0F;
+      spec.velocity_field->x_faces[face * 3 + 2] = -0.5F;
+    }
+    std::vector<float> levels(18);
+    for (std::size_t site = 0; site < levels.size(); ++site) {
+      // Rising along x, so that no site is an extremum of its row.
+      const auto x = static_cast<float>(site / 3);
+      levels[site] = spec.obstacles[site] != 0 ? 0.0F : 1.0F + (0.1F * x * x);
+    }
+    const auto rates_with = [&](SignalAdvectionKind scheme, const std::vector<float>& field) {
+      auto chosen = spec;
+      chosen.advection_scheme = scheme;
+      microsimulator::SignalGrid grid(chosen, field);
+      return microsimulator::signal_grid_transport_rates(grid, grid.levels());
+    };
+    const auto upwind = rates_with(SignalAdvectionKind::upwind, levels);
+    const auto limited = rates_with(SignalAdvectionKind::van_leer, levels);
+    // The first two sites from each reservoir face see only faces without a
+    // site two upwind.
+    assert(limited[0 * 3 + 0] == upwind[0 * 3 + 0]);
+    assert(limited[5 * 3 + 2] == upwind[5 * 3 + 2]);
+    // Farther in, the correction is at work, and it moves nothing in or out
+    // of the grid beyond what upwind does at the boundary faces.
+    assert(limited[3 * 3 + 0] != upwind[3 * 3 + 0]);
+    std::vector<float> uniform(18, 2.5F);
+    for (std::size_t site = 0; site < uniform.size(); ++site) {
+      if (spec.obstacles[site] != 0) uniform[site] = 0.0F;
+    }
+    auto closed = spec;
+    closed.x_lower = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {2.5F}};
+    closed.x_upper = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {2.5F}};
+    closed.advection_scheme = SignalAdvectionKind::van_leer;
+    microsimulator::SignalGrid still(closed, uniform);
+    for (const auto rate : microsimulator::signal_grid_transport_rates(still, still.levels())) {
+      assert(rate == 0.0F);
+    }
+  }
+
+  {
+    // Backward Euler takes the limited scheme at a step several times the
+    // explicit bound: it converges and stays in range.
+    using microsimulator::SignalAdvectionKind;
+    auto spec = line_spec(60);
+    spec.diffusion = {0.0F};
+    spec.advection = {{1.0F, 0.0F, 0.0F}};
+    spec.advection_scheme = SignalAdvectionKind::van_leer;
+    spec.integration = microsimulator::SignalIntegrationKind::backward_euler;
+    spec.x_lower = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {1.0F}};
+    spec.x_upper = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {0.0F}};
+    microsimulator::SignalGrid grid(spec, std::vector<float>(60, 0.0F));
+    for (int step = 0; step < 10; ++step) {
+      const auto report = microsimulator::advance_signal_grid_cpu(grid, 4.0F);
+      assert(report.converged);
+    }
+    for (const auto level : grid.levels()) {
+      assert(level >= -1.0e-4F && level <= 1.0F + 1.0e-4F);
+    }
+    // The front has passed the middle of the line and not yet its end.
+    assert(grid.levels()[10] > 0.99F);
+    assert(grid.levels()[59] < 0.5F);
+  }
+
 }

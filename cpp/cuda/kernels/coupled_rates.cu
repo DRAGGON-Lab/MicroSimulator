@@ -521,6 +521,14 @@ __global__ void advance_coupled_grid(
       upper_flux = 0.0F;
     }
     rate -= (upper_flux - lower_flux) * inverse_spacing;
+    if (boundaries.advection_scheme == 1) {
+      const std::uint32_t periodic_kinds[3]{boundaries.x_lower, boundaries.y_lower,
+                                            boundaries.z_lower};
+      rate -= van_leer_correction(levels, obstacles, shape, periodic_kinds[axis], signal, x, y, z,
+                                  axis, current, lower[axis], upper[axis], closed_lower[axis],
+                                  closed_upper[axis], face_lower[axis], face_upper[axis]) *
+              inverse_spacing;
+    }
   }
   rate += reaction_source[index] - reaction_loss[index] * current;
 
@@ -539,7 +547,10 @@ __global__ void advance_coupled_grid(
   const auto transport_scale = crank_nicolson == 0 ? dt : (crank_nicolson == 1 ? 0.5F * dt : 0.0F);
   const auto candidate = current + transport_scale * rate + dt * source;
   output[index] = candidate;
-  if (!isfinite(candidate) || (!crank_nicolson && candidate < 0.0F)) {
+  // Under the van Leer scheme an explicit level may fall below zero by
+  // rounding; the host judges those when it takes the step's levels.
+  if (!isfinite(candidate) ||
+      (!crank_nicolson && boundaries.advection_scheme == 0 && candidate < 0.0F)) {
     atomicOr(error, 2U);
   }
 }

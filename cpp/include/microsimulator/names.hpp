@@ -28,6 +28,10 @@ namespace microsimulator {
 [[nodiscard]] std::optional<SignalIntegrationKind> parse_signal_integration_kind(
     std::string_view name) noexcept;
 
+[[nodiscard]] std::string_view signal_advection_kind_name(SignalAdvectionKind kind);
+[[nodiscard]] std::optional<SignalAdvectionKind> parse_signal_advection_kind(
+    std::string_view name) noexcept;
+
 [[nodiscard]] std::string_view rate_op_name(RateOp operation);
 [[nodiscard]] std::optional<RateOp> parse_rate_op(std::string_view name) noexcept;
 

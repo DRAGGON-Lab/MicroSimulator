@@ -1,6 +1,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -225,82 +226,113 @@ struct DepthPcgWorkspace {
         transformed(count, "CUDA depth transformed vector"),
         partials((count + flow_reduction_width - 1) / flow_reduction_width,
                  "CUDA depth reduction partials"),
-        host_partials(partials.count()) {
+        folded((partials.count() + depth_fold_width - 1) / depth_fold_width,
+               "CUDA depth folded partials"),
+        scalars(depth_scalar_count, "CUDA depth solve scalars"),
+        counters(depth_counter_count, "CUDA depth solve counters") {
   }
 
-  DeviceBuffer<double> residual, preconditioned, direction, transformed, partials;
-  std::vector<double> host_partials;
+  DeviceBuffer<double> residual, preconditioned, direction, transformed, partials, folded;
+  // The solve's scalars and counters, kept on the device so that the host
+  // waits once for each batch of iterations.
+  DeviceBuffer<double> scalars;
+  DeviceBuffer<std::uint32_t> counters;
 };
 
-double depth_dot(const double* left, const double* right, std::uint32_t count,
-                 DepthPcgWorkspace& workspace, cudaStream_t stream) {
+// Launches the dot product of two vectors, left among the solve's scalars at
+// `place`.
+void launch_depth_dot(const double* left, const double* right, std::uint32_t count,
+                      DepthPcgWorkspace& workspace, std::uint32_t place, cudaStream_t stream) {
   launch_depth_flow_dot_partial(left, right, workspace.partials.data(), count, stream);
   check_launch("failed to launch CUDA depth reduction");
-  check_cuda(cudaMemcpyAsync(workspace.host_partials.data(), workspace.partials.data(),
-                             workspace.host_partials.size() * sizeof(double),
-                             cudaMemcpyDeviceToHost, stream),
-             "failed to download CUDA depth reduction");
-  check_cuda(cudaStreamSynchronize(stream), "CUDA depth reduction failed");
-  double result = 0.0;
-  for (const auto value : workspace.host_partials) result += value;
-  return result;
+  launch_depth_flow_sum(workspace.partials.data(), workspace.folded.data(),
+                        workspace.scalars.data(),
+                        static_cast<std::uint32_t>(workspace.partials.count()), place, stream);
+  check_launch("failed to launch CUDA depth reduction sum");
 }
 
+// Iterations of the depth-averaged solve launched before the host waits.
+constexpr std::uint32_t depth_batch = 64;
+
+// The depth-averaged pressure solve over a system's active sites.
 PcgReport solve_depth_pcg(const double* right_hand_side, const float* diagonal,
-                          const float* mobility, const float* boundary_conductance,
-                          double* solution, DepthPcgWorkspace& workspace,
-                          const FlowGridParameters& grid, float tolerance,
-                          std::uint32_t max_iterations, cudaStream_t stream) {
-  const auto count = grid.site_count;
-  const detail::ConjugateGradientOperations operations{
+                          const std::uint32_t* neighbors, const float* conductance,
+                          const float* boundary_conductance, double* solution,
+                          DepthPcgWorkspace& workspace, DepthFlowScales scales, std::uint32_t count,
+                          float tolerance, std::uint32_t max_iterations, cudaStream_t stream) {
+  auto* scalars = workspace.scalars.data();
+  auto* counters = workspace.counters.data();
+  const auto read_state = [&](const char* operation) {
+    std::array<double, depth_scalar_count> scalar_values{};
+    std::array<std::uint32_t, depth_counter_count> counter_values{};
+    check_cuda(cudaMemcpyAsync(scalar_values.data(), scalars, sizeof(scalar_values),
+                               cudaMemcpyDeviceToHost, stream),
+               "failed to download CUDA depth solve scalars");
+    check_cuda(cudaMemcpyAsync(counter_values.data(), counters, sizeof(counter_values),
+                               cudaMemcpyDeviceToHost, stream),
+               "failed to download CUDA depth solve counters");
+    check_cuda(cudaStreamSynchronize(stream), operation);
+    return std::pair{scalar_values, counter_values};
+  };
+  const detail::BatchedConjugateGradientOperations operations{
       .initialize =
           [&] {
+            check_cuda(cudaMemsetAsync(scalars, 0, depth_scalar_count * sizeof(double), stream),
+                       "failed to clear CUDA depth solve scalars");
+            check_cuda(
+                cudaMemsetAsync(counters, 0, depth_counter_count * sizeof(std::uint32_t), stream),
+                "failed to clear CUDA depth solve counters");
             launch_depth_flow_pcg_initialize(
                 right_hand_side, diagonal, solution, workspace.residual.data(),
                 workspace.preconditioned.data(), workspace.direction.data(), count, stream);
             check_launch("failed to initialize CUDA depth PCG");
+            launch_depth_dot(workspace.residual.data(), workspace.residual.data(), count, workspace,
+                             depth_residual_squared, stream);
+            launch_depth_dot(workspace.residual.data(), workspace.preconditioned.data(), count,
+                             workspace, depth_rho, stream);
+            return read_state("CUDA depth PCG initialization failed").first[depth_residual_squared];
           },
-      .residual_dot_residual =
-          [&] {
-            return depth_dot(workspace.residual.data(), workspace.residual.data(), count, workspace,
-                             stream);
-          },
-      .residual_dot_preconditioned =
-          [&] {
-            return depth_dot(workspace.residual.data(), workspace.preconditioned.data(), count,
-                             workspace, stream);
-          },
-      .apply_direction =
-          [&] {
-            launch_depth_flow_operator_double(workspace.direction.data(), mobility,
-                                              boundary_conductance, workspace.transformed.data(),
-                                              grid, stream);
-            check_launch("failed to launch CUDA depth operator");
-            return depth_dot(workspace.direction.data(), workspace.transformed.data(), count,
-                             workspace, stream);
-          },
-      .update =
-          [&](double alpha) {
-            launch_depth_flow_pcg_update(solution, workspace.residual.data(),
-                                         workspace.direction.data(), workspace.transformed.data(),
-                                         alpha, count, stream);
-            check_launch("failed to update CUDA depth PCG");
-          },
-      .precondition =
-          [&] {
-            launch_depth_flow_pcg_precondition(workspace.residual.data(), diagonal,
-                                               workspace.preconditioned.data(), count, stream);
-            check_launch("failed to precondition CUDA depth residual");
-          },
-      .update_direction =
-          [&](double beta) {
-            launch_depth_flow_pcg_direction(workspace.preconditioned.data(),
-                                            workspace.direction.data(), beta, count, stream);
-            check_launch("failed to update CUDA depth direction");
+      .iterate =
+          [&](std::uint32_t iterations, double threshold) {
+            for (std::uint32_t iteration = 0; iteration < iterations; ++iteration) {
+              launch_depth_flow_operator_double(workspace.direction.data(), neighbors, conductance,
+                                                boundary_conductance, workspace.transformed.data(),
+                                                scales, count, stream);
+              check_launch("failed to launch CUDA depth operator");
+              launch_depth_dot(workspace.direction.data(), workspace.transformed.data(), count,
+                               workspace, depth_curvature, stream);
+              launch_depth_flow_step_length(scalars, counters, stream);
+              check_launch("failed to launch CUDA depth step length");
+              launch_depth_flow_pcg_update(solution, workspace.residual.data(),
+                                           workspace.direction.data(), workspace.transformed.data(),
+                                           scalars, count, stream);
+              check_launch("failed to update CUDA depth PCG");
+              launch_depth_dot(workspace.residual.data(), workspace.residual.data(), count,
+                               workspace, depth_residual_squared, stream);
+              launch_depth_flow_pcg_precondition(workspace.residual.data(), diagonal,
+                                                 workspace.preconditioned.data(), count, stream);
+              check_launch("failed to precondition CUDA depth residual");
+              launch_depth_dot(workspace.residual.data(), workspace.preconditioned.data(), count,
+                               workspace, depth_next_rho, stream);
+              launch_depth_flow_step_weight(scalars, counters, threshold, stream);
+              check_launch("failed to launch CUDA depth step weight");
+              launch_depth_flow_pcg_direction(workspace.preconditioned.data(),
+                                              workspace.direction.data(), scalars, count, stream);
+              check_launch("failed to update CUDA depth direction");
+            }
+            const auto [scalar_values, counter_values] =
+                read_state("CUDA depth PCG iteration failed");
+            return detail::ConjugateGradientProgress{
+                .iterations = counter_values[depth_iterations],
+                .converged = counter_values[depth_converged] != 0,
+                .failure =
+                    static_cast<detail::ConjugateGradientFailure>(counter_values[depth_failure]),
+                .residual_squared = scalar_values[depth_residual_squared],
+            };
           },
   };
-  const auto report = detail::preconditioned_conjugate_gradient(
-      operations, tolerance, max_iterations, "CUDA depth-averaged flow");
+  const auto report = detail::batched_conjugate_gradient(operations, tolerance, max_iterations,
+                                                         depth_batch, "CUDA depth-averaged flow");
   return {.iterations = report.iterations,
           .relative_residual = static_cast<float>(report.relative_residual)};
 }
@@ -311,35 +343,61 @@ std::vector<float> solve_depth_system(const detail::DepthAveragedFlowSystem& sys
                                       float tolerance, std::uint32_t max_iterations,
                                       PcgReport& report, cudaStream_t stream) {
   const auto grid = make_grid_parameters(system.layout());
+  const auto& active = system.active();
+  const auto count = checked_count(active.size(), "depth active site count");
   DeviceBuffer<float> mobility_buffer(grid.site_count, "failed to allocate CUDA depth mobility");
-  DeviceBuffer<float> diagonal_buffer(grid.site_count, "failed to allocate CUDA depth diagonal");
-  DeviceBuffer<float> boundary_buffer(grid.site_count,
-                                      "failed to allocate CUDA depth boundary conductance");
+  DeviceBuffer<float> diagonal_buffer(count, "failed to allocate CUDA depth diagonal");
+  DeviceBuffer<float> boundary_buffer(count, "failed to allocate CUDA depth boundary conductance");
+  DeviceBuffer<std::uint32_t> site_buffer(count, "failed to allocate CUDA depth active sites");
+  DeviceBuffer<std::uint32_t> neighbor_buffer(active.neighbors.size(),
+                                              "failed to allocate CUDA depth neighbors");
+  DeviceBuffer<float> conductance_buffer(active.conductance.size(),
+                                         "failed to allocate CUDA depth conductance");
   DeviceBuffer<float> face_conductance_buffer(grid.total_face_count,
                                               "failed to allocate CUDA depth face conductance");
   DeviceBuffer<float> face_pressure_buffer(grid.total_face_count,
                                            "failed to allocate CUDA depth face pressure");
-  DeviceBuffer<double> rhs_buffer(grid.site_count, "failed to allocate CUDA depth right-hand side");
+  DeviceBuffer<double> rhs_buffer(count, "failed to allocate CUDA depth right-hand side");
+  DeviceBuffer<double> solution_buffer(count, "failed to allocate CUDA depth active pressure");
   DeviceBuffer<double> pressure_buffer(grid.site_count, "failed to allocate CUDA depth pressure");
   DeviceBuffer<float> velocity_buffer(grid.total_face_count,
                                       "failed to allocate CUDA depth velocity");
   upload(mobility_buffer, std::span<const float>(system.mobility()), stream,
          "failed to upload CUDA depth mobility");
-  upload(diagonal_buffer, std::span<const float>(system.diagonal()), stream,
+  upload(diagonal_buffer, std::span<const float>(active.diagonal), stream,
          "failed to upload CUDA depth diagonal");
-  upload(boundary_buffer, std::span<const float>(system.boundary_conductance()), stream,
+  upload(boundary_buffer, std::span<const float>(active.boundary_conductance), stream,
          "failed to upload CUDA depth boundary conductance");
+  upload(site_buffer, std::span<const std::uint32_t>(active.sites), stream,
+         "failed to upload CUDA depth active sites");
+  upload(neighbor_buffer, std::span<const std::uint32_t>(active.neighbors), stream,
+         "failed to upload CUDA depth neighbors");
+  upload(conductance_buffer, std::span<const float>(active.conductance), stream,
+         "failed to upload CUDA depth conductance");
   upload(face_conductance_buffer, std::span<const float>(system.face_conductance()), stream,
          "failed to upload CUDA depth face conductance");
   upload(face_pressure_buffer, std::span<const float>(system.face_pressure()), stream,
          "failed to upload CUDA depth face pressure");
-  const std::vector<double> rhs(system.right_hand_side().begin(), system.right_hand_side().end());
+  const std::vector<double> rhs(active.right_hand_side.begin(), active.right_hand_side.end());
   upload(rhs_buffer, std::span<const double>(rhs), stream,
          "failed to upload CUDA depth right-hand side");
-  DepthPcgWorkspace workspace(grid.site_count);
-  report = solve_depth_pcg(rhs_buffer.data(), diagonal_buffer.data(), mobility_buffer.data(),
-                           boundary_buffer.data(), pressure_buffer.data(), workspace, grid,
-                           tolerance, max_iterations, stream);
+  const auto spacing = system.layout().spacing();
+  DepthFlowScales scales{};
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    scales.inverse_square[axis] = 1.0 / (static_cast<double>(spacing[axis]) * spacing[axis]);
+  }
+  DepthPcgWorkspace workspace(count);
+  report =
+      solve_depth_pcg(rhs_buffer.data(), diagonal_buffer.data(), neighbor_buffer.data(),
+                      conductance_buffer.data(), boundary_buffer.data(), solution_buffer.data(),
+                      workspace, scales, count, tolerance, max_iterations, stream);
+  // The velocity kernel reads a pressure at every site of the grid; it is
+  // zero at a site that is not active.
+  check_cuda(cudaMemsetAsync(pressure_buffer.data(), 0, grid.site_count * sizeof(double), stream),
+             "failed to clear CUDA depth pressure");
+  launch_depth_flow_scatter(solution_buffer.data(), site_buffer.data(), pressure_buffer.data(),
+                            count, stream);
+  check_launch("failed to launch CUDA depth pressure scatter");
   launch_depth_flow_velocity_double(pressure_buffer.data(), mobility_buffer.data(),
                                     face_conductance_buffer.data(), face_pressure_buffer.data(),
                                     velocity_buffer.data(), grid, stream);

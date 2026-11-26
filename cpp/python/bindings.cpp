@@ -67,6 +67,10 @@ NB_MODULE(_core, module) {
       .value("Z_LOWER", microsimulator::GridFace::z_lower)
       .value("Z_UPPER", microsimulator::GridFace::z_upper);
 
+  nb::enum_<microsimulator::SignalAdvectionKind>(module, "SignalAdvectionKind")
+      .value("UPWIND", microsimulator::SignalAdvectionKind::upwind)
+      .value("VAN_LEER", microsimulator::SignalAdvectionKind::van_leer);
+
   nb::enum_<microsimulator::SignalIntegrationKind>(module, "SignalIntegrationKind")
       .value("FORWARD_EULER", microsimulator::SignalIntegrationKind::forward_euler)
       .value("CRANK_NICOLSON", microsimulator::SignalIntegrationKind::crank_nicolson)
@@ -332,6 +336,7 @@ NB_MODULE(_core, module) {
       .def_rw("obstacles", &microsimulator::SignalGridSpec::obstacles)
       .def_rw("velocity_field", &microsimulator::SignalGridSpec::velocity_field)
       .def_rw("integration", &microsimulator::SignalGridSpec::integration)
+      .def_rw("advection_scheme", &microsimulator::SignalGridSpec::advection_scheme)
       .def_rw("solver", &microsimulator::SignalGridSpec::solver)
       .def_rw("x_lower", &microsimulator::SignalGridSpec::x_lower)
       .def_rw("x_upper", &microsimulator::SignalGridSpec::x_upper)

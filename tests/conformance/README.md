@@ -40,7 +40,7 @@ The trajectory scenario composes coupled intracellular/extracellular rates, grow
 
 ## Signal grid
 
-The signal-grid scenario uses two fields on a 9-by-7-by-5 anisotropic lattice, mixed diffusion and vector advection, periodic x boundaries, no-flux y boundaries, and distinct fixed reservoirs on the z faces. One native transport step and an interior trilinear sample are compared with the CPU reference using absolute and relative tolerances of `5e-6`. A further variant makes every face a fixed reservoir, gives three of them patches with their own concentrations, each indexed by a different pair of axes, and sends a velocity field through all six. An available backend is skipped until it advertises native signal-grid support; after that advertisement this executable is its hardware conformance gate.
+The signal-grid scenario uses two fields on a 9-by-7-by-5 anisotropic lattice, mixed diffusion and vector advection, periodic x boundaries, no-flux y boundaries, and distinct fixed reservoirs on the z faces. One native transport step and an interior trilinear sample are compared with the CPU reference using absolute and relative tolerances of `5e-6`. Every variant runs again under the van Leer advection scheme. A further variant makes every face a fixed reservoir, gives three of them patches with their own concentrations, each indexed by a different pair of axes, and sends a velocity field through all six. An available backend is skipped until it advertises native signal-grid support; after that advertisement this executable is its hardware conformance gate.
 
 ## Standalone cell occupancy
 

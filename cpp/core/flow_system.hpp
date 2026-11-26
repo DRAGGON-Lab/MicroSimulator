@@ -465,6 +465,29 @@ class ShallowFlowReduction {
 // The pressure equation of depth-averaged flow: conductance-weighted
 // differences between neighboring sites, with the pressure of a FlowBoundary
 // held half a spacing outside each open exterior face.
+// A depth-averaged pressure system over its active sites alone: those whose
+// pressure the system determines. A device that is mostly wall has few of
+// them, and a solve over this form costs what they cost.
+struct ActiveDepthSystem {
+  // Marks a neighbor that is off the grid or carries no conductance.
+  static constexpr std::uint32_t no_neighbor = std::numeric_limits<std::uint32_t>::max();
+
+  // The active sites, ascending. Every other array is in their order.
+  std::vector<std::uint32_t> sites;
+  // Six per active site, lower then upper along x, y and z: the neighbor's
+  // place among the active sites, and the harmonic mean of the two
+  // mobilities, which the operator scales by the inverse square spacing.
+  std::vector<std::uint32_t> neighbors;
+  std::vector<float> conductance;
+  std::vector<float> diagonal;
+  std::vector<float> right_hand_side;
+  std::vector<float> boundary_conductance;
+
+  [[nodiscard]] std::size_t size() const noexcept {
+    return sites.size();
+  }
+};
+
 class DepthAveragedFlowSystem {
  public:
   DepthAveragedFlowSystem(const SignalGridSpec& spec, std::span<const float> mobility,
@@ -537,10 +560,47 @@ class DepthAveragedFlowSystem {
     if (!open) {
       throw std::invalid_argument("the flow boundary opens onto no fluid");
     }
+
+    std::vector<std::uint32_t> place(layout_.site_count(), ActiveDepthSystem::no_neighbor);
+    for (std::size_t site = 0; site < layout_.site_count(); ++site) {
+      if (diagonal_[site] != 0.0F) {
+        place[site] = static_cast<std::uint32_t>(active_.sites.size());
+        active_.sites.push_back(static_cast<std::uint32_t>(site));
+      }
+    }
+    const auto count = active_.sites.size();
+    active_.neighbors.assign(6 * count, ActiveDepthSystem::no_neighbor);
+    active_.conductance.assign(6 * count, 0.0F);
+    active_.diagonal.resize(count);
+    active_.right_hand_side.resize(count);
+    active_.boundary_conductance.resize(count);
+    parallel_for(count, flow_grain, [&](std::size_t begin, std::size_t end) {
+      for (std::size_t index = begin; index < end; ++index) {
+        const std::size_t site = active_.sites[index];
+        active_.diagonal[index] = diagonal_[site];
+        active_.right_hand_side[index] = right_hand_side_[site];
+        active_.boundary_conductance[index] = boundary_conductance_[site];
+        for (std::size_t component = 0; component < 3; ++component) {
+          for (const auto offset : {-1, 1}) {
+            const auto neighbor = layout_.neighbor_site(site, component, offset);
+            if (!neighbor.has_value() || place[*neighbor] == ActiveDepthSystem::no_neighbor) {
+              continue;
+            }
+            const auto slot = (6 * index) + (2 * component) + (offset < 0 ? 0 : 1);
+            active_.neighbors[slot] = place[*neighbor];
+            active_.conductance[slot] = harmonic_mean(mobility_[site], mobility_[*neighbor]);
+          }
+        }
+      }
+    });
   }
 
   [[nodiscard]] const FlowGridLayout& layout() const noexcept {
     return layout_;
+  }
+  // The system over its active sites, which is the form the solvers iterate.
+  [[nodiscard]] const ActiveDepthSystem& active() const noexcept {
+    return active_;
   }
   [[nodiscard]] const std::vector<float>& mobility() const noexcept {
     return mobility_;
@@ -566,63 +626,79 @@ class DepthAveragedFlowSystem {
     return face_pressure_;
   }
 
+  // The operator on a vector over the active sites.
   void apply(std::span<const double> input, std::vector<double>& output) const {
-    if (input.size() != layout_.site_count()) {
+    if (input.size() != active_.size()) {
       throw std::invalid_argument("depth-averaged flow vector has the wrong size");
     }
-    output.assign(input.size(), 0.0);
+    output.resize(input.size());
+    std::array<double, 3> inverse_square{};
+    for (std::size_t component = 0; component < 3; ++component) {
+      inverse_square[component] =
+          1.0 / (static_cast<double>(layout_.spacing()[component]) * layout_.spacing()[component]);
+    }
     parallel_for(input.size(), flow_grain, [&](std::size_t begin, std::size_t end) {
-      for (std::size_t site = begin; site < end; ++site) {
-        if (diagonal_[site] == 0.0F) {
-          continue;
-        }
-        double result = static_cast<double>(boundary_conductance_[site]) * input[site];
-        for (std::size_t component = 0; component < 3; ++component) {
-          const auto inverse_square = 1.0 / (static_cast<double>(layout_.spacing()[component]) *
-                                             layout_.spacing()[component]);
-          for (const auto offset : {-1, 1}) {
-            const auto neighbor = layout_.neighbor_site(site, component, offset);
-            if (neighbor.has_value()) {
-              const auto conductance =
-                  static_cast<double>(harmonic_mean(mobility_[site], mobility_[*neighbor])) *
-                  inverse_square;
-              result += conductance * (input[site] - input[*neighbor]);
-            }
+      for (std::size_t index = begin; index < end; ++index) {
+        double result = static_cast<double>(active_.boundary_conductance[index]) * input[index];
+        for (std::size_t slot = 0; slot < 6; ++slot) {
+          const auto neighbor = active_.neighbors[(6 * index) + slot];
+          if (neighbor == ActiveDepthSystem::no_neighbor) {
+            continue;
           }
+          const auto conductance = static_cast<double>(active_.conductance[(6 * index) + slot]) *
+                                   inverse_square[slot / 2];
+          result += conductance * (input[index] - input[neighbor]);
         }
-        output[site] = result;
+        output[index] = result;
       }
     });
   }
 
+  // The pressure at every site of the grid, from the pressures of the active
+  // sites; it is zero elsewhere.
+  [[nodiscard]] std::vector<double> scatter(std::span<const double> pressure) const {
+    if (pressure.size() != active_.size()) {
+      throw std::invalid_argument("depth-averaged pressure vector has the wrong size");
+    }
+    std::vector<double> result(layout_.site_count(), 0.0);
+    for (std::size_t index = 0; index < pressure.size(); ++index) {
+      result[active_.sites[index]] = pressure[index];
+    }
+    return result;
+  }
+
+  // The velocity on every face of the grid, from the pressure at every site.
   [[nodiscard]] std::vector<float> velocity(std::span<const double> pressure) const {
     if (pressure.size() != layout_.site_count()) {
       throw std::invalid_argument("depth-averaged pressure vector has the wrong size");
     }
     std::vector<float> result(layout_.total_face_count(), 0.0F);
-    for (std::size_t face_index = 0; face_index < result.size(); ++face_index) {
-      const auto [component, face] = layout_.face_coordinates(face_index);
-      const auto lower = layout_.adjacent_site(component, face, -1);
-      const auto upper = layout_.adjacent_site(component, face, 1);
-      const auto spacing = static_cast<double>(layout_.spacing()[component]);
-      double value = 0.0;
-      if (lower.has_value() && upper.has_value()) {
-        const auto face_mobility = harmonic_mean(mobility_[*lower], mobility_[*upper]);
-        value =
-            -static_cast<double>(face_mobility) * (pressure[*upper] - pressure[*lower]) / spacing;
-      } else {
-        const auto site = upper.has_value() ? *upper : *lower;
-        value = static_cast<double>(face_conductance_[face_index]) *
-                (static_cast<double>(face_pressure_[face_index]) - pressure[site]);
+    parallel_for(result.size(), flow_grain, [&](std::size_t begin, std::size_t end) {
+      for (std::size_t face_index = begin; face_index < end; ++face_index) {
+        const auto [component, face] = layout_.face_coordinates(face_index);
+        const auto lower = layout_.adjacent_site(component, face, -1);
+        const auto upper = layout_.adjacent_site(component, face, 1);
+        const auto spacing = static_cast<double>(layout_.spacing()[component]);
+        double value = 0.0;
+        if (lower.has_value() && upper.has_value()) {
+          const auto face_mobility = harmonic_mean(mobility_[*lower], mobility_[*upper]);
+          value =
+              -static_cast<double>(face_mobility) * (pressure[*upper] - pressure[*lower]) / spacing;
+        } else {
+          const auto site = upper.has_value() ? *upper : *lower;
+          value = static_cast<double>(face_conductance_[face_index]) *
+                  (static_cast<double>(face_pressure_[face_index]) - pressure[site]);
+        }
+        result[face_index] = static_cast<float>(value);
       }
-      result[face_index] = static_cast<float>(value);
-    }
+    });
     return result;
   }
 
  private:
   const SignalGridSpec& spec_;
   FlowGridLayout layout_;
+  ActiveDepthSystem active_;
   std::vector<float> mobility_;
   std::vector<float> diagonal_;
   std::vector<float> right_hand_side_;

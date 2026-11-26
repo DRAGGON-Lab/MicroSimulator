@@ -3,8 +3,11 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "microsimulator/types.hpp"
@@ -31,6 +34,16 @@ enum class SignalIntegrationKind : std::uint8_t {
   forward_euler,
   crank_nicolson,
   backward_euler,
+};
+
+// How a face's advective flux takes its concentration. `upwind` takes the
+// upwind site's: first order, and never outside the range of its neighbours.
+// `van_leer` adds a limited correction from the downwind site and the site
+// two upwind: second order where the field is smooth, upwind at a front, and
+// upwind wherever the site two upwind is a wall, a reservoir, or off the grid.
+enum class SignalAdvectionKind : std::uint8_t {
+  upwind,
+  van_leer,
 };
 
 struct SignalSolveParameters {
@@ -117,6 +130,7 @@ struct SignalGridSpec {
   std::vector<std::uint8_t> obstacles;
   std::optional<SignalGridVelocityField> velocity_field;
   SignalIntegrationKind integration{SignalIntegrationKind::forward_euler};
+  SignalAdvectionKind advection_scheme{SignalAdvectionKind::upwind};
   SignalSolveParameters solver;
   GridBoundary x_lower;
   GridBoundary x_upper;
@@ -171,12 +185,45 @@ enum class GridSampleBound : std::uint8_t { inside, clamped };
 // spacing, outflow, and loss.
 [[nodiscard]] float signal_implicit_operator_scale(const SignalGridSpec& spec, float implicit_dt);
 
+// What transport derives from a grid's specification and reuses from step to
+// step. Transport visits the fluid sites alone, so a step costs what the
+// fluid costs however much of the lattice is obstacle.
+struct SignalGridLayout {
+  // The sites that are not obstacles, in ascending order.
+  std::vector<std::uint32_t> fluid_sites;
+  // The diagonal of the transport and reaction operator at each fluid site,
+  // signal by signal in the order of fluid_sites.
+  std::vector<float> diagonal;
+  // The least of the diagonal and zero.
+  float least_diagonal = 0.0F;
+  // The greatest rate at which a velocity field empties any one site.
+  double greatest_outflow = 0.0;
+
+  // The scale of the implicit operator I - implicit_dt * A, as
+  // signal_implicit_operator_scale gives it.
+  [[nodiscard]] float implicit_operator_scale(float implicit_dt) const noexcept;
+};
+
+namespace detail {
+struct SignalGridCache;
+}
+
 class SignalGrid {
  public:
   explicit SignalGrid(const SignalGridSpec& spec, std::vector<float> levels = {});
   explicit SignalGrid(const SignalGridCheckpoint& checkpoint);
 
   [[nodiscard]] const SignalGridSpec& spec() const noexcept;
+  // A number that names the grid's specification: it differs between two
+  // grids and changes whenever this grid's specification does, and never when
+  // only its levels do. A backend that keeps device copies of the
+  // specification's arrays rewrites them when the number it last saw differs.
+  [[nodiscard]] std::uint64_t revision() const noexcept;
+  // The layout of the present specification. It is derived when first asked
+  // for after the specification changes and held until it changes again.
+  [[nodiscard]] const SignalGridLayout& layout() const;
+  // The layout together with the working arrays the CPU transport reuses.
+  [[nodiscard]] detail::SignalGridCache& transport_cache() const;
   [[nodiscard]] std::span<const float> levels() const& noexcept;
   [[nodiscard]] std::span<const float> levels() && = delete;
   [[nodiscard]] std::vector<float> sample(Vec3 position) const;
@@ -185,6 +232,9 @@ class SignalGrid {
   [[nodiscard]] SignalGridCheckpoint checkpoint() const;
   void set_levels(std::span<const float> levels);
   void replace_levels(std::vector<float> levels);
+  // Takes the levels a transport step produced: settles them with
+  // settle_step_levels, then validates and holds them.
+  void accept_step(std::vector<float> levels);
   void set_velocity_field(std::optional<SignalGridVelocityField> field);
   void set_reaction(std::optional<SignalGridAffineReaction> reaction);
   // Replaces the per-signal values of a fixed boundary, such as the
@@ -198,9 +248,46 @@ class SignalGrid {
   void validate() const;
 
  private:
+  // Holds what is derived from the grid. A copy of a grid derives its own.
+  struct CacheSlot {
+    std::shared_ptr<detail::SignalGridCache> held;
+    CacheSlot() noexcept = default;
+    CacheSlot(const CacheSlot& /*other*/) noexcept {
+    }
+    CacheSlot(CacheSlot&&) noexcept = default;
+    CacheSlot& operator=(const CacheSlot& /*other*/) noexcept {
+      held.reset();
+      return *this;
+    }
+    CacheSlot& operator=(CacheSlot&&) noexcept = default;
+    ~CacheSlot() = default;
+  };
+
   SignalGridSpec spec_;
   std::vector<float> levels_;
+  std::uint64_t revision_;
+  mutable CacheSlot cache_;
 };
+
+// Checks the levels of a grid against its specification, which is taken as
+// valid: one finite, non-negative level per signal and site, and zero at every
+// obstacle site. A step checks its levels with this; nothing in a step changes
+// the specification, which is validated where it is set.
+void validate_signal_levels(const SignalGridSpec& spec, std::span<const float> levels);
+
+// What to report when an implicit signal solve stops short of its tolerance.
+// `solve` names the solve, such as "Implicit signal solve". Under the van
+// Leer scheme the report adds the remedy: the limited flux makes the system
+// nonlinear, and its iteration settles only while a step carries fluid across
+// a few sites.
+[[nodiscard]] std::string signal_solve_failure(std::string_view solve, const SignalGridSpec& spec,
+                                               std::uint32_t iterations);
+
+// Settles the levels a transport step produced before they are validated.
+// Under the van Leer scheme a level may come out below zero by rounding
+// alone, where upwind transport cannot; those within rounding of zero for the
+// field's largest level become zero. Every other level is left as it is.
+void settle_step_levels(const SignalGridSpec& spec, std::vector<float>& levels);
 
 [[nodiscard]] SignalSolveReport advance_signal_grid_cpu(SignalGrid& grid, float dt);
 [[nodiscard]] std::vector<float> signal_grid_forward_euler_candidate(const SignalGrid& grid,
