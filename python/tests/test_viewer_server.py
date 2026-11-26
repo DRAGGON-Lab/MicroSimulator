@@ -17,6 +17,7 @@ from microsimulator import (
     GridBoundaryKind,
     GridShape,
     SignalGridSpec,
+    SignalGridVelocityField,
     Simulation,
     Vec3,
     load_checkpoint,
@@ -264,6 +265,45 @@ def _grid_factory() -> tuple[_TestController, dict[str, JSONValue]]:
     controller = _TestController(simulation)
     controller.channel_metadata = ChannelMetadata(signals=("Nutrient", None))
     return controller, provenance
+
+
+def test_velocity_viewer_and_levels_only_client_share_the_same_step(tmp_path: Path) -> None:
+    def moving() -> tuple[_TestController, dict[str, JSONValue]]:
+        model, provenance = _grid_factory()
+        field = SignalGridVelocityField()
+        field.x_faces = [1.0] * 12 + [0.0] * 4
+        field.y_faces = [0.0] * 18
+        field.z_faces = [0.0] * 18
+        model.simulation.set_velocity_field(field)
+        return model, provenance
+
+    async def exercise() -> None:
+        app, token = create_live_app(LiveSession(moving, dt=0.1), _dist(tmp_path))
+        async with TestClient(TestServer(app)) as client:
+            path = f"/api/v2/session?token={token}"
+            headers = {"Origin": str(client.make_url("/")).rstrip("/")}
+            async with (
+                client.ws_connect(path, headers=headers) as old,
+                client.ws_connect(path + "&velocity=1", headers=headers) as new,
+            ):
+                # Drain initial frames before testing the shared broadcast.
+                for socket in (old, new):
+                    await socket.receive_json()
+                    await socket.receive_bytes()
+                await new.send_json({"type": "step", "steps": 1})
+                legacy = await old.receive_json()
+                levels = await old.receive_bytes()
+                with_flow = await new.receive_json()
+                payload = await new.receive_bytes()
+                block = with_flow["signal_grid"].pop("velocity_faces")
+                assert legacy == with_flow
+                assert payload[:len(levels)] == levels
+                faces = payload[len(levels):]
+                assert len(faces) == block["byte_length"] == 52 * 4
+                assert hashlib.sha256(faces).hexdigest() == block["sha256"]
+                assert struct.unpack("<52f", faces) == (1.0,) * 12 + (0.0,) * 40
+
+    asyncio.run(exercise())
 
 
 def test_live_frames_carry_signal_levels_as_binary(tmp_path: Path) -> None:

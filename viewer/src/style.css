@@ -338,6 +338,52 @@ input[type="range"] {
   background: linear-gradient(90deg, #440154, #31688e, #35b779, #fde725);
 }
 
+.flow-gain,
+.flow-vector-key,
+.flow-vector-key > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.flow-gain,
+.flow-vector-key {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.flow-gain {
+  justify-content: space-between;
+}
+.flow-gain select {
+  width: 76px;
+  height: 28px;
+  padding-inline: 8px;
+}
+.flow-vector-key {
+  flex-wrap: wrap;
+  column-gap: 12px;
+}
+
+#flow-scale {
+  display: grid;
+  font-variant-numeric: tabular-nums;
+}
+.flow-measure {
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.flow-change-ramp {
+  background: linear-gradient(
+    to right,
+    transparent,
+    #ce3f6f98,
+    #ff744aca,
+    #ffab5cd1,
+    #ffdb98dc
+  );
+}
+
 .legend-labels {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -346,6 +392,10 @@ input[type="range"] {
   color: var(--quiet);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 9px;
+}
+
+#flow-change-legend .legend-labels {
+  grid-template-columns: 1fr auto;
 }
 
 .legend-labels span:last-child {

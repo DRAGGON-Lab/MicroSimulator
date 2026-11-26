@@ -25,6 +25,7 @@ from microsimulator import (
 )
 from microsimulator.flow import (
     FlowError,
+    colony_flow_coupling,
     colony_mobility,
     colony_species_density,
     gap_mobility,
@@ -32,6 +33,7 @@ from microsimulator.flow import (
     solve_port_flow_field,
 )
 from microsimulator.microfluidics import TrapChannelDevice
+from numpy.typing import NDArray
 
 
 def _duct(nx: int = 4, ny: int = 8, nz: int = 3) -> SignalGridSpec:
@@ -185,6 +187,57 @@ class _Rod:
     position: Vec3
     length: float = 3.0
     radius: float = 0.5
+
+
+@pytest.mark.parametrize("backend", list(BackendKind))
+def test_relative_drag_in_a_uniform_duct(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip(f"{backend.name} backend is unavailable")
+    spec = _duct(nx=7, ny=9, nz=1)
+    rod = _Rod(Vec3(3, 4, 0))
+
+    def solve(
+        vx: float, vy: float, inlet: float
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        mobility, force = colony_flow_coupling(
+            spec, [(rod, Vec3(vx, vy, 0))], base=1.0,
+            drag_coefficient=2.0, max_volume_fraction=0.5, averaging_radius=1.8,
+        )
+        field, _ = solve_flow_field(
+            spec, mobility=mobility, body_force=force, mean_inlet_speed=inlet, backend=backend
+        )
+        x = np.array(field.x_faces).reshape(8, 9)
+        y = np.array(field.y_faces).reshape(7, 10)
+        np.testing.assert_allclose(y.mean(axis=0), inlet, atol=2e-5)
+        np.testing.assert_allclose(np.diff(x, axis=0) + np.diff(y, axis=1), 0, atol=5e-5)
+        assert np.all(x[[0, -1], :] == 0.0)
+        return x, y
+
+    # A stationary rod diverts flow to its sides. At the plug speed relative
+    # drag vanishes everywhere, even across discontinuities in mobility.
+    _, slow = solve(0, 0, 2)
+    assert slow[3, 4] < 1.5 and slow[1, 4] > 2
+    x, matched = solve(0, 2, 2)
+    np.testing.assert_allclose(matched, 2, atol=4e-5)
+    np.testing.assert_allclose(x, 0, atol=4e-5)
+
+    # Relative motion can accelerate the medium or drive a transverse flow
+    # with zero imposed throughput. Changing its sign reverses the field.
+    _, fast = solve(0, 4, 2)
+    np.testing.assert_allclose(fast - matched, matched - slow, atol=5e-5)
+    x, y = solve(3, 0, 0)
+    assert x[3, 4] > 1
+    reverse_x, reverse_y = solve(-3, 0, 0)
+    np.testing.assert_allclose(reverse_x, -x, atol=1e-5)
+    np.testing.assert_allclose(reverse_y, -y, atol=1e-5)
+
+
+def test_shallow_body_force_requires_a_finite_vector_per_column() -> None:
+    spec = _duct(nx=2, ny=3, nz=2)
+    with pytest.raises(FlowError, match="per column"):
+        solve_flow_field(spec, mean_inlet_speed=1, body_force=[(0, 0)] * 12)
+    with pytest.raises(FlowError, match="must be finite"):
+        solve_flow_field(spec, mean_inlet_speed=1, body_force=[(math.nan, 0)] * 6)
 
 
 def test_colony_mobility_adds_drag_where_cells_pack() -> None:

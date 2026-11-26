@@ -5,10 +5,14 @@ import type { SceneFrame } from "./scene";
 /** Whether the signal slice shows one channel or a blend of several. */
 export type SignalMode = "single" | "composite";
 
+export type FlowMode = "velocity" | "vector" | "change" | "off";
+
 export interface PresentationPreferences {
   colorMode: ColorMode;
   speciesChannel: number;
   signalVisible: boolean;
+  flowMode: FlowMode;
+  vectorGain: number;
   deviceVisible: boolean;
   signalMode: SignalMode;
   signalChannel: number;
@@ -21,6 +25,8 @@ function defaults(): PresentationPreferences {
     colorMode: "cell-type",
     speciesChannel: 0,
     signalVisible: true,
+    flowMode: "change",
+    vectorGain: 1,
     deviceVisible: true,
     signalMode: "single",
     signalChannel: 0,

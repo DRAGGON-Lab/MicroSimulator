@@ -2,8 +2,8 @@
 
 Fresh nutrient enters at the channel inlet, is carried past the trap mouth by
 the numerically solved steady device flow, and reaches the colony by diffusion
-through the open trap face. Only explicitly fixed cells contribute stationary
-flow resistance; this freely moving trap population is not a porous matrix. Cell
+through the open trap face. Cells exchange drag with the medium according to
+their translation relative to it, including when contacts stall or push them. Cell
 growth follows Monod kinetics on the local nutrient level and consumes
 nutrient at a fixed yield, so the colony's growth pattern reflects the balance
 between flow supply, diffusion into the trap, and consumption by the cells
@@ -24,6 +24,7 @@ from dataclasses import replace
 
 from microsimulator import (
     CellInit,
+    CellSnapshot,
     CellUpdate,
     ControllerStep,
     CoupledRatePlan,
@@ -41,11 +42,11 @@ from microsimulator import (
     Vec3,
 )
 from microsimulator.checkpoint import CheckpointBundle, JSONValue
-from microsimulator.flow import colony_mobility, gap_mobility, solve_flow_field
+from microsimulator.flow import colony_flow_coupling, gap_mobility, solve_flow_field
 from microsimulator.microfluidics import TrapChannelDevice
 
 MODEL_ID = "examples.microfluidic-trap"
-MODEL_VERSION = 6
+MODEL_VERSION = 7
 DIVISION = UniformLengthDivision(3.2, 3.8, jitter_z=False)
 
 FLOW_SPEED = 20.0
@@ -77,10 +78,11 @@ NUTRIENT_YIELD = 0.5
 GROWTH_STALL_LOAD = 200.0
 WASHOUT_Y = DEVICE.channel_half_length - 10.0
 
-# Resistance feedback uses only fixed (attached) cells, with a physical
-# smoothing radius independent of the grid. Free cells do not form a matrix.
-RESOLVE_INTERVAL = 100
-DRAG_COEFFICIENT = 100.0
+# At the default dt, medium at the mean channel speed travels one grid spacing
+# between solves. The empirical drag and density cap set the strength of coupling.
+RESOLVE_INTERVAL = 5
+DRAG_COEFFICIENT = 2.0
+MAX_VOLUME_FRACTION = 0.5
 
 
 def _grid(simulation: Simulation | None = None) -> SignalGridSpec:
@@ -131,19 +133,46 @@ def _nutrient_growth(simulation: Simulation, position: Vec3) -> float:
     return BASE_GROWTH_RATE * nutrient / (NUTRIENT_K + nutrient)
 
 
+class TrapController(NativeController):
+    def step(self, dt: float) -> None:
+        super().step(dt)
+        if dt > 0.0 and self.completed_steps % RESOLVE_INTERVAL == 0:
+            # Save only the velocities needed for the next flow solve. Division
+            # and washout have already happened, so IDs refer to the accepted cells.
+            result = self.last_contact_dynamics
+            assert result is not None
+            velocities = result.center_velocities
+            self.state["cell_velocities"] = {
+                str(cell.id): [velocities[cell.slot].x, velocities[cell.slot].y]
+                for cell in self.simulation.cells()
+            }
+
+
 def _regulate(step: ControllerStep) -> StepPlan:
-    if step.completed_steps and step.completed_steps % RESOLVE_INTERVAL == 0:
-        mobility = colony_mobility(
-            GRID, (cell for cell in step.cells if cell.fixed),
-            base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT
+    velocities = step.state.get("cell_velocities")
+    if velocities is not None:
+        if not isinstance(velocities, dict) or len(velocities) != len(step.cells):
+            raise ValueError("trap flow needs one saved velocity per cell")
+        moving_cells: list[tuple[CellSnapshot, Vec3]] = []
+        for cell in step.cells:
+            xy = velocities.get(str(cell.id))
+            if not isinstance(xy, list) or len(xy) != 2:
+                raise ValueError(f"invalid saved flow velocity for cell {cell.id}")
+            x, y = xy
+            if (not isinstance(x, int | float) or isinstance(x, bool)
+                    or not isinstance(y, int | float) or isinstance(y, bool)):
+                raise ValueError(f"invalid saved flow velocity for cell {cell.id}")
+            moving_cells.append((cell, Vec3(x, y, 0.0)))
+        mobility, force = colony_flow_coupling(
+            GRID, moving_cells, base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT,
+            max_volume_fraction=MAX_VOLUME_FRACTION,
         )
         field, _ = solve_flow_field(
-            GRID,
-            mean_inlet_speed=FLOW_SPEED,
-            mobility=mobility,
+            GRID, mean_inlet_speed=FLOW_SPEED, mobility=mobility, body_force=force,
             simulation=step.simulation,
         )
         step.simulation.set_velocity_field(field)
+        del step.state["cell_velocities"]
     divisions = DIVISION.requests(step)
     washed = tuple(cell.id for cell in step.cells if abs(cell.position.y) > WASHOUT_Y)
     if washed:
@@ -178,7 +207,7 @@ def build(context: ModelContext) -> NativeController:
     founder.growth_rate = 1.0
     state: dict[str, JSONValue] = {"scope": "microfluidic-trap"}
     DIVISION.initialize_founders(simulation, state, context.rng, (founder,))
-    return NativeController(
+    return TrapController(
         simulation,
         model_id=MODEL_ID,
         model_version=MODEL_VERSION,
@@ -194,7 +223,7 @@ def build(context: ModelContext) -> NativeController:
 
 def resume(context: ModelContext, checkpoint: CheckpointBundle) -> NativeController:
     del context
-    return NativeController.from_checkpoint(
+    return TrapController.from_checkpoint(
         checkpoint,
         model_id=MODEL_ID,
         model_version=MODEL_VERSION,

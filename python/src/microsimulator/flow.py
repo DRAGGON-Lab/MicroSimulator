@@ -102,6 +102,7 @@ def solve_flow_field(
     mean_inlet_speed: float,
     axis: str = "y",
     mobility: Sequence[float] | None = None,
+    body_force: Sequence[tuple[float, float]] | None = None,
     tolerance: float = 1.0e-6,
     max_iterations: int = 50_000,
     simulation: Simulation | None = None,
@@ -113,15 +114,19 @@ def solve_flow_field(
     Flow runs from the lower to the upper boundary of ``axis``; a negative
     ``mean_inlet_speed`` reverses it. The grid's shape, spacing, obstacles,
     and boundary kinds are read from ``spec``; ``mobility`` optionally gives
-    one relative gap-mean mobility per site (default proportional to gap height squared). If a
-    simulation is supplied, its native backend executes the solve. Otherwise
-    a temporary simulation uses ``backend`` and ``device_index``.
+    one relative gap-mean mobility per site (default proportional to gap height squared).
+    Optional ``body_force`` gives (fx, fy) in pressure-gradient units per x/y
+    column, ordered x-major, y-minor. The solver projects that forcing and
+    adjusts the pressure drop to maintain the requested inlet speed. A simulation
+    selects its native backend; otherwise ``backend`` and ``device_index`` select it.
     """
 
     _flow_axis_index(spec, axis)
     parameters = DepthAveragedFlowParameters()
     parameters.mean_inlet_speed = mean_inlet_speed
     parameters.axis = _NATIVE_AXES[axis]
+    if body_force is not None:
+        parameters.body_force = list(body_force)
     parameters.relative_tolerance = tolerance
     parameters.max_iterations = max_iterations
     selected = (
@@ -209,25 +214,28 @@ def gap_mobility(spec: SignalGridSpec) -> list[float]:
     return [float(value) for value in mobility.ravel()]
 
 
-def _deposit_amount(
-    spec: SignalGridSpec,
-    position: Vec3,
-    amount: float,
-    averaging_radius: float,
-    target: _FloatGrid,
-) -> None:
-    """Integrate a separable tent kernel over voxels, then conserve its amount."""
+def _solid_mask(spec: SignalGridSpec) -> _BoolGrid | None:
+    obstacles = spec.obstacles
+    if not obstacles:
+        return None
+    return np.asarray(obstacles, dtype=bool).reshape(spec.shape.x, spec.shape.y, spec.shape.z)
+
+
+def _deposition_weights(
+    spec: SignalGridSpec, position: Vec3, averaging_radius: float, solid: _BoolGrid | None
+) -> tuple[tuple[slice, ...], _FloatGrid] | None:
+    """Voxel integrals of the normalized tent kernel on one connected fluid region."""
     dims = (spec.shape.x, spec.shape.y, spec.shape.z)
     origin = (spec.origin.x, spec.origin.y, spec.origin.z)
     spacing = (spec.spacing.x, spec.spacing.y, spec.spacing.z)
     centers = (position.x, position.y, position.z)
-    if any(not math.isfinite(v) for v in centers) or not math.isfinite(amount) or amount < 0:
-        raise FlowError("deposited positions and nonnegative amounts must be finite")
+    if any(not math.isfinite(v) for v in centers):
+        raise FlowError("deposited positions must be finite")
     if any(
         p < o - h / 2 or p >= o + (n - 0.5) * h
         for p, o, h, n in zip(centers, origin, spacing, dims, strict=True)
     ):
-        return  # Outside the modeled volume: removal/washout is the caller's responsibility.
+        return None  # Outside the modeled volume: removal/washout is the caller's responsibility.
     slices: list[slice] = []
     weights: list[_FloatGrid] = []
     for p, o, h, n in zip(centers, origin, spacing, dims, strict=True):
@@ -247,9 +255,8 @@ def _deposit_amount(
         weights.append(np.diff(cdf))
     kernel = weights[0][:, None, None] * weights[1][None, :, None] * weights[2][None, None, :]
     region = tuple(slices)
-    if spec.obstacles:
-        solid = np.asarray(spec.obstacles, dtype=np.uint8).reshape(dims)[region] != 0
-        kernel[solid] = 0
+    if solid is not None:
+        kernel[solid[region]] = 0
         # Restrict to one face-connected fluid component of the kernel support.
         connected = np.zeros(kernel.shape, dtype=bool)
         seed = tuple(int(i) for i in np.unravel_index(int(np.argmax(kernel)), kernel.shape))
@@ -269,7 +276,7 @@ def _deposit_amount(
     total = float(kernel.sum())
     if total <= 0:
         raise FlowError("biomass deposition has no connected fluid support")
-    target[region] += (amount / total) * kernel
+    return region, kernel / total
 
 
 def colony_volume_fraction(
@@ -289,10 +296,12 @@ def colony_volume_fraction(
         raise FlowError("averaging radius must be finite and positive")
     dims = (spec.shape.x, spec.shape.y, spec.shape.z)
     volume = np.zeros(dims, dtype=np.float64)
+    solid = _solid_mask(spec)
     for cell in cells:
-        _deposit_amount(
-            spec, cell.position, biomass_volume(cell.length, cell.radius), averaging_radius, volume
-        )
+        stencil = _deposition_weights(spec, cell.position, averaging_radius, solid)
+        if stencil is not None:
+            region, weights = stencil
+            volume[region] += biomass_volume(cell.length, cell.radius) * weights
     return volume / spec.voxel_volume
 
 
@@ -316,11 +325,17 @@ def colony_species_density(
     if not math.isfinite(averaging_radius) or averaging_radius <= 0:
         raise FlowError("averaging radius must be finite and positive")
     totals = np.zeros((spec.shape.x, spec.shape.y, spec.shape.z), dtype=np.float64)
+    solid = _solid_mask(spec)
     for cell in cells:
         if species >= len(cell.species):
             raise FlowError("species index is outside the cell's species")
         amount = cell.species[species] * biomass_volume(cell.length, cell.radius)
-        _deposit_amount(spec, cell.position, amount, averaging_radius, totals)
+        if not math.isfinite(amount) or amount < 0:
+            raise FlowError("deposited amounts must be finite and nonnegative")
+        stencil = _deposition_weights(spec, cell.position, averaging_radius, solid)
+        if stencil is not None:
+            region, weights = stencil
+            totals[region] += amount * weights
     return [float(value) for value in (totals / spec.voxel_volume).ravel()]
 
 
@@ -338,6 +353,15 @@ def colony_mobility(
     The density cap regularizes only the resistance law; deposited biomass is
     never discarded. Both base mobility and returned mobility are gap means.
     """
+    density = colony_volume_fraction(spec, cells, averaging_radius=averaging_radius)
+    mobility, _ = _darcy_coefficients(spec, density, base, drag_coefficient, max_volume_fraction)
+    return mobility.ravel().tolist()
+
+
+def _darcy_coefficients(
+    spec: SignalGridSpec, density: _FloatGrid, base: float | Sequence[float],
+    drag_coefficient: float, max_volume_fraction: float,
+) -> tuple[_FloatGrid, _FloatGrid]:
     if not 0 < max_volume_fraction < 1:
         raise FlowError("maximum volume fraction must lie strictly between zero and one")
     dims = (spec.shape.x, spec.shape.y, spec.shape.z)
@@ -351,20 +375,50 @@ def colony_mobility(
         base_grid = np.asarray(base, dtype=np.float64).reshape(dims)
         if not bool(np.all(np.isfinite(base_grid))) or bool(np.any(base_grid < 0.0)):
             raise FlowError("base mobility values must be finite and non-negative")
-    fraction = colony_volume_fraction(spec, cells, averaging_radius=averaging_radius)
-    fluid = (
-        np.ones(dims, dtype=np.float64)
-        if not spec.obstacles
-        else (np.asarray(spec.obstacles).reshape(dims) == 0).astype(np.float64)
+    solid = _solid_mask(spec)
+    fluid = np.ones(dims, dtype=bool) if solid is None else ~solid
+    depth_count = np.maximum(fluid.sum(axis=2), 1)
+    column_fraction = np.minimum(density.sum(axis=2) / depth_count, max_volume_fraction)
+    drag = _kozeny_carman_drag(column_fraction, drag_coefficient)
+    mobility = base_grid / (1.0 + base_grid * drag[:, :, None])
+    return np.where(fluid, mobility, 0.0), drag
+
+
+def colony_flow_coupling(
+    spec: SignalGridSpec,
+    moving_cells: Iterable[tuple[_RodLike, Vec3]],
+    *,
+    base: float | Sequence[float],
+    drag_coefficient: float = 100.0,
+    max_volume_fraction: float = 0.9,
+    averaging_radius: float = 4.0,
+) -> tuple[list[float], list[tuple[float, float]]]:
+    """Mobility and body force for drag proportional to fluid/biomass relative velocity.
+
+    Deposit biomass and its in-plane velocity with the same conservative kernel.
+    With column biomass velocity V, drag d and empty-device mobility b, the
+    shallow momentum balance is (1/b + d) u = -grad(p) + d V. Pass both return
+    values to ``solve_flow_field`` to enforce continuity and the inlet flux.
+    """
+    if not math.isfinite(averaging_radius) or averaging_radius <= 0:
+        raise FlowError("averaging radius must be finite and positive")
+    dims = (spec.shape.x, spec.shape.y, spec.shape.z)
+    volume = np.zeros(dims, dtype=np.float64)
+    momentum = np.zeros((*dims[:2], 2), dtype=np.float64)
+    solid = _solid_mask(spec)
+    for cell, velocity in moving_cells:
+        if not math.isfinite(velocity.x) or not math.isfinite(velocity.y):
+            raise FlowError("in-plane cell velocity must be finite")
+        stencil = _deposition_weights(spec, cell.position, averaging_radius, solid)
+        if stencil is None:
+            continue
+        region, weights = stencil
+        mass = biomass_volume(cell.length, cell.radius) * weights
+        volume[region] += mass
+        momentum[region[:2]] += mass.sum(axis=2)[:, :, None] * (velocity.x, velocity.y)
+    mobility, drag = _darcy_coefficients(
+        spec, volume / spec.voxel_volume, base, drag_coefficient, max_volume_fraction
     )
-    count = fluid.sum(axis=2, keepdims=True)
-    column_density = fraction.sum(axis=2, keepdims=True) / np.maximum(count, 1)
-    fraction = np.minimum(column_density, max_volume_fraction) * fluid
-    drag = _kozeny_carman_drag(fraction, drag_coefficient)
-    # m = b / (1 + b * drag) is 1 / (1/b + drag) extended continuously to b = 0.
-    mobility = base_grid / (1.0 + base_grid * drag)
-    obstacles = spec.obstacles
-    if obstacles:
-        solid = np.asarray(obstacles, dtype=np.uint8).reshape(dims) != 0
-        mobility[solid] = 0.0
-    return [float(value) for value in mobility.ravel()]
+    mass = volume.sum(axis=2)
+    force = momentum * np.divide(drag, mass, out=np.zeros_like(drag), where=mass > 0)[:, :, None]
+    return mobility.ravel().tolist(), [(float(x), float(y)) for x, y in force.reshape(-1, 2)]

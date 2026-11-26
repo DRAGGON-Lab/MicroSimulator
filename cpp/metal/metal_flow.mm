@@ -842,25 +842,16 @@ FlowSolver::~FlowSolver() = default;
 DepthAveragedFlowResult FlowSolver::solve_depth_averaged(
     const SignalGridSpec& spec, std::span<const float> mobility,
     const DepthAveragedFlowParameters& parameters) {
-  parameters.validate();
-  const auto reduction = detail::reduce_shallow_flow(spec, mobility, parameters.axis);
-  const auto axis = static_cast<std::size_t>(parameters.axis);
-  const detail::DepthAveragedFlowSystem system(
-      reduction.grid(), reduction.conductance(),
-      detail::axis_flow_boundary(reduction.reduced_layout(), axis));
-  PcgReport report;
-  const auto velocity = impl_->solve_depth_system(system, parameters.relative_tolerance,
-                                                  parameters.max_iterations, report);
-  const auto scaled =
-      detail::scale_velocity(spec, reduction.original_layout(), reduction.lift(velocity),
-                             reduction.open_inlet_faces(axis), parameters.mean_inlet_speed);
-  return {
-      .field = scaled.field,
-      .report = {.iterations = report.iterations,
-                 .relative_residual = report.relative_residual,
-                 .mean_inlet_speed = parameters.mean_inlet_speed,
-                 .max_speed = scaled.max_speed},
-  };
+  return detail::solve_shallow_axis_flow(
+      spec, mobility, parameters,
+      [&](const detail::DepthAveragedFlowSystem& system, DepthAveragedFlowReport& report) {
+        PcgReport solve;
+        auto flux = impl_->solve_depth_system(system, parameters.relative_tolerance,
+                                              parameters.max_iterations, solve);
+        report.iterations += solve.iterations;
+        report.relative_residual = std::max(report.relative_residual, solve.relative_residual);
+        return flux;
+      });
 }
 
 DepthAveragedPortFlowResult FlowSolver::solve_depth_averaged_ports(

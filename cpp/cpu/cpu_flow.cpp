@@ -132,8 +132,9 @@ void validate_relative_tolerance(float tolerance, const char* name) {
 }  // namespace
 
 void DepthAveragedFlowParameters::validate() const {
-  if (!std::isfinite(mean_inlet_speed) || mean_inlet_speed == 0.0F) {
-    throw std::invalid_argument("depth-averaged mean inlet speed must be finite and nonzero");
+  if (!std::isfinite(mean_inlet_speed) || (mean_inlet_speed == 0.0F && body_force.empty())) {
+    throw std::invalid_argument(
+        "depth-averaged mean inlet speed must be finite and nonzero without a body force");
   }
   validate_relative_tolerance(relative_tolerance, "depth-averaged relative tolerance");
   if (max_iterations == 0) {
@@ -337,25 +338,16 @@ void validate_flow_grid(const SignalGridSpec& spec, FlowAxis axis) {
 DepthAveragedFlowResult solve_depth_averaged_flow_cpu(
     const SignalGridSpec& spec, std::span<const float> mobility,
     const DepthAveragedFlowParameters& parameters) {
-  parameters.validate();
-  const auto reduction = detail::reduce_shallow_flow(spec, mobility, parameters.axis);
-  const auto axis = static_cast<std::size_t>(parameters.axis);
-  const detail::DepthAveragedFlowSystem system(
-      reduction.grid(), reduction.conductance(),
-      detail::axis_flow_boundary(reduction.reduced_layout(), axis));
-  const auto solve =
-      solve_active_depth_system(system, parameters.relative_tolerance, parameters.max_iterations);
-  const auto unscaled = system.velocity(system.scatter(solve.solution));
-  const auto scaled =
-      detail::scale_velocity(spec, reduction.original_layout(), reduction.lift(unscaled),
-                             reduction.open_inlet_faces(axis), parameters.mean_inlet_speed);
-  return {
-      .field = scaled.field,
-      .report = {.iterations = solve.iterations,
-                 .relative_residual = static_cast<float>(solve.relative_residual),
-                 .mean_inlet_speed = parameters.mean_inlet_speed,
-                 .max_speed = scaled.max_speed},
-  };
+  return detail::solve_shallow_axis_flow(
+      spec, mobility, parameters,
+      [&](const detail::DepthAveragedFlowSystem& system, DepthAveragedFlowReport& report) {
+        const auto solve = solve_active_depth_system(system, parameters.relative_tolerance,
+                                                     parameters.max_iterations);
+        report.iterations += solve.iterations;
+        report.relative_residual =
+            std::max(report.relative_residual, static_cast<float>(solve.relative_residual));
+        return system.velocity(system.scatter(solve.solution));
+      });
 }
 
 DepthAveragedPortFlowResult solve_depth_averaged_port_flow_cpu(

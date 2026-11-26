@@ -98,10 +98,15 @@ export interface SceneSignalGrid {
   }>;
   /** One level per signal and site; a typed array when read from a live frame. */
   readonly levels: ArrayLike<number>;
+  /** Live MAC face velocities in x, y, z order when the simulation declares a field. */
+  readonly velocityFaces?: readonly [Float32Array, Float32Array, Float32Array];
 }
 
 /** A signal grid's description apart from its levels. */
-export type SignalGridLayout = Omit<SceneSignalGrid, "levels">;
+export type SignalGridLayout = Omit<
+  SceneSignalGrid,
+  "levels" | "velocityFaces"
+>;
 
 export type ChannelKind = "species" | "signals";
 export interface ChannelMetadata {

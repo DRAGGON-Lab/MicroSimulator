@@ -279,6 +279,7 @@ NB_MODULE(_core, module) {
       .def(nb::init<>())
       .def_rw("mean_inlet_speed", &microsimulator::DepthAveragedFlowParameters::mean_inlet_speed)
       .def_rw("axis", &microsimulator::DepthAveragedFlowParameters::axis)
+      .def_rw("body_force", &microsimulator::DepthAveragedFlowParameters::body_force)
       .def_rw("relative_tolerance",
               &microsimulator::DepthAveragedFlowParameters::relative_tolerance)
       .def_rw("max_iterations", &microsimulator::DepthAveragedFlowParameters::max_iterations)
@@ -642,6 +643,7 @@ NB_MODULE(_core, module) {
 
   nb::class_<microsimulator::ContactDynamicsResult>(module, "ContactDynamicsResult")
       .def_ro("report", &microsimulator::ContactDynamicsResult::report)
+      .def_ro("center_velocities", &microsimulator::ContactDynamicsResult::center_velocities)
       .def_ro("axial_loads", &microsimulator::ContactDynamicsResult::axial_loads)
       .def_ro("length_increments", &microsimulator::ContactDynamicsResult::length_increments);
 

@@ -2,6 +2,7 @@
 #include <nanobind/stl/array.h>
 #include <nanobind/stl/filesystem.h>
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
@@ -654,6 +655,15 @@ void bind_scenes(nb::module_& module) {
         return microsimulator::capture_scene(simulation, channel_metadata);
       },
       "simulation"_a, nb::kw_only(), "channel_metadata"_a = ChannelMetadata{});
+  module.def(
+      "_capture_scene_with_velocity",
+      [](Simulation& simulation, const ChannelMetadata& channel_metadata) {
+        const microsimulator::python::ReleasedCall call(&simulation);
+        std::optional<microsimulator::SignalGridVelocityField> velocity;
+        auto frame = microsimulator::capture_scene(simulation, channel_metadata, &velocity);
+        return std::pair{std::move(frame), std::move(velocity)};
+      },
+      "simulation"_a, "channel_metadata"_a);
   module.def(
       "dumps_scene",
       [](const SceneFrame& frame) {

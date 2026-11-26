@@ -70,6 +70,8 @@ describe("dataset presentation lifecycle", () => {
       signalVisible: false,
       signalAxis: "x",
       signalSlice: 3,
+      flowMode: "vector",
+      vectorGain: 4,
     });
     for (const time of [1, 100, 0, 20, 2]) {
       expect(state.forFrame({ ...frame, time })).toMatchObject({
@@ -77,6 +79,8 @@ describe("dataset presentation lifecycle", () => {
         signalVisible: false,
         signalAxis: "x",
         signalSlice: 3,
+        flowMode: "vector",
+        vectorGain: 4,
       });
       expect(state.datasetId).toBe(1);
     }
@@ -86,6 +90,8 @@ describe("dataset presentation lifecycle", () => {
       colorMode: "cell-type",
       speciesChannel: 0,
       signalVisible: true,
+      flowMode: "change",
+      vectorGain: 1,
       deviceVisible: true,
       signalMode: "single",
       signalChannel: 0,

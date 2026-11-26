@@ -395,7 +395,7 @@ class NativeController:
     def last_contact_dynamics(self) -> ContactDynamicsResult | None:
         """The result of the last step's contact dynamics solve, if it ran.
 
-        Its ``axial_loads`` and ``length_increments`` are indexed by cell slot.
+        Center velocities, axial loads, and length increments are indexed by cell slot.
         """
 
         return self._last_contact_dynamics

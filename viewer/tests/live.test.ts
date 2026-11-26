@@ -155,6 +155,38 @@ describe("live viewer protocol", () => {
     expect(message.frame.channelMetadata.signals).toEqual(["Nutrient", null]);
   });
 
+  it("verifies and splits staggered face data after the signal levels", async () => {
+    const { header, bytes } = await gridFrame();
+    const faces = Float32Array.from({ length: 9 + 12 + 8 }, (_, i) => i - 5);
+    const hash = await crypto.subtle.digest("SHA-256", faces.buffer);
+    Object.assign(header.signal_grid as object, {
+      velocity_faces: {
+        encoding: "float32-le",
+        byte_length: faces.byteLength,
+        sha256: Array.from(new Uint8Array(hash), (b) =>
+          b.toString(16).padStart(2, "0"),
+        ).join(""),
+      },
+    });
+    const packet = new Uint8Array(bytes.byteLength + faces.byteLength);
+    packet.set(new Uint8Array(bytes));
+    packet.set(new Uint8Array(faces.buffer), bytes.byteLength);
+    const encoded = JSON.stringify(header);
+    const message = await parseLiveMessage(encoded, packet.buffer);
+    if (message.type !== "frame") throw Error("expected frame");
+    const grid = message.frame.signalGrid;
+    expect(Array.from(grid!.levels)).toEqual(LEVELS);
+    expect(grid!.velocityFaces!.map((a) => [a.length, a[0]])).toEqual([
+      [9, -5],
+      [12, 4],
+      [8, 16],
+    ]);
+    packet[packet.byteLength - 1] = 255;
+    await expect(parseLiveMessage(encoded, packet.buffer)).rejects.toThrow(
+      "velocity digest",
+    );
+  });
+
   it("refuses levels that are missing, short, altered or unannounced", async () => {
     const { header, bytes } = await gridFrame();
     const encoded = JSON.stringify(header);

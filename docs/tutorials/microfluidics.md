@@ -192,9 +192,9 @@ def _regulate(step):
 Removal keeps stable identifiers and lineage history, so analysis can count washout events
 and trace removed cells' ancestry from checkpoints.
 
-## Numerical flow and stationary resistance
+## Numerical flow and drag from cells
 
-`microsimulator.flow` solves `div_xy(H*m*grad_xy(p)) = 0` with one pressure per depth column. The default mobility is proportional to H², so integrated flux has the required H³ gap dependence. Harmonic face conductance and conservative lifting provide the face field used by transport. The shallow solver requires contiguous columns above a common floor; full three-dimensional obstructions require `microsimulator.stokes`. Both normalize velocity to a prescribed inlet speed and execute on the selected native backend.
+`microsimulator.flow` solves `div_xy(H*m*grad_xy(p)) = 0` with one pressure per depth column. The default mobility is proportional to H², so integrated flux has the required H³ gap dependence. Harmonic face conductance and conservative lifting provide the face field used by transport. The shallow solver requires contiguous columns above a common floor; full three-dimensional obstructions require `microsimulator.stokes`. Both support a prescribed inlet speed and execute on the selected native backend.
 
 ```python
 from microsimulator.flow import colony_mobility, solve_flow_field
@@ -209,7 +209,7 @@ field, report = solve_flow_field(
 simulation.set_velocity_field(field)
 ```
 
-Stationary resistance uses explicitly attached cells. A trapped but freely moving population is not automatically a stationary porous matrix. The four examples apply that distinction; the pillar model supplies attached founders. Biomass is deposited conservatively over a fixed physical radius, and only the resistance formula caps density. The drag coefficient and smoothing radius require calibration; grid size and refresh interval require numerical sensitivity checks.
+The pillar example uses the stationary closure above for attached founders. The trap uses `colony_flow_coupling` with every cell and its center velocity from contact mechanics. It passes both the returned mobility and body force to `solve_flow_field`. A stalled cell resists passing medium, and a moving cell can also drive flow. At the default timestep of 0.02, the trap refreshes the flow every 0.1 model time units. Biomass is deposited conservatively over a fixed physical radius, and only the resistance formula caps density. The drag coefficient and smoothing radius require calibration; grid size and refresh interval require numerical sensitivity checks.
 
 For resolved wall profiles use `solve_stokes_field`, with the same field interface and adequately resolved gaps. It solves a fixed Stokes-Brinkman block system by flexible GMRES and reports true momentum/block residuals and divergence. `min_gap_voxels` is diagnostic rather than a guarantee. The [flow tutorial](flow-solvers.md) gives the solver assumptions and analytic checks, and [nutrient validation](nutrient-validation.md) measures spatial growth, conservation, and refinement effects.
 

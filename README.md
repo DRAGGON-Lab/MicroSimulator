@@ -11,10 +11,10 @@ Models run on a C++23 engine with native CPU, Apple Metal, and NVIDIA CUDA backe
 - **Device geometry:** describe traps, channels, and pillars with mechanical walls and solid masks that constrain cells and route solutes through the fluid space.
 - **Flow and transport:** solve depth-averaged Hele-Shaw/Darcy flow in shallow devices or resolved Stokes-Brinkman flow on a staggered grid, then use the velocity field for conservative advection, diffusion, and reactions.
 - **Growth and signaling:** combine nutrient uptake with conserved biochemical biomass, rod growth and division, contact mechanics, lineage, intracellular circuits, and diffusible signals.
-- **Cells in flow:** model free-cell drift and rotation, explicitly attached populations, stationary biomass resistance, and model-defined outlet removal.
+- **Cells in flow:** model free-cell drift and rotation, flow feedback from moving or attached populations, and model-defined outlet removal.
 - **Reproducible experiments:** inspect live simulations, resume versioned checkpoints, run parameter sweeps, and export Parquet/Zarr datasets for quantitative analysis.
 
-The [microfluidics modeling guide](docs/microfluidics.md) explains how these pieces fit together. Cell motion uses a kinematic approximation followed by contact relaxation; stationary resistance is an empirical closure. The [flow benchmarks](docs/tutorials/flow-solvers.md#numerical-evidence) and [nutrient study](docs/tutorials/nutrient-validation.md) document numerical checks and refinement studies. Experimental calibration remains specific to each model.
+The [microfluidics modeling guide](docs/microfluidics.md) explains how these pieces fit together. The trap couples cell translation from contact mechanics to the shallow flow through an empirical relative drag law. The [flow benchmarks](docs/tutorials/flow-solvers.md#numerical-evidence) and [nutrient study](docs/tutorials/nutrient-validation.md) document numerical checks and refinement studies. Experimental calibration remains specific to each model.
 
 ## Quick start
 

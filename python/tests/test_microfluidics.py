@@ -25,6 +25,7 @@ from microsimulator import (
     Vec3,
     backend_available,
 )
+from microsimulator.checkpoint import load_checkpoint_bundle, save_checkpoint
 from microsimulator.design import load_design_scene
 from microsimulator.microfluidics import (
     BiopixelTrapDevice,
@@ -195,6 +196,38 @@ def test_trap_example_builds_steps_and_transports_nutrient() -> None:
     with pytest.raises(ValueError, match="inside a grid obstacle"):
         simulation.sample_signals(Vec3(0.0, device.trap_half_y + 20.0, 0.0))
     assert len(simulation.cells()) >= 1
+
+
+def test_trap_flow_changes_with_free_cells_and_resumes_at_refresh(tmp_path: Path) -> None:
+    path = _EXAMPLES / "microfluidic_trap.py"
+    context = ModelContext(BackendKind.CPU, 0, seed=42)
+    model, provenance = build_model(path, context)
+    assert isinstance(model, NativeController)
+
+    def field(controller: NativeController) -> list[float]:
+        grid = controller.simulation._checkpoint().signal_grid
+        assert grid is not None and grid.spec.velocity_field is not None
+        velocity = grid.spec.velocity_field
+        return velocity.x_faces + velocity.y_faces + velocity.z_faces
+
+    initial = field(model)
+    for _ in range(200):
+        model.step(0.02)
+    cells = model.simulation.cells()
+    assert len(cells) > 1 and all(not c.fixed for c in cells)
+    assert np.max(np.abs(np.subtract(field(model), initial))) > 0.01
+    assert "cell_velocities" in model.state
+    archive = tmp_path / "trap.json"
+    save_checkpoint(model.simulation, archive, provenance=provenance,
+                    controller=model.controller_state())
+    resumed, _ = build_model(path, context, checkpoint=load_checkpoint_bundle(archive))
+    assert isinstance(resumed, NativeController)
+    for _ in range(6):
+        model.step(0.02)
+        resumed.step(0.02)
+    assert field(resumed) == field(model)
+    assert resumed.simulation.signal_levels == model.simulation.signal_levels
+    assert resumed.controller_state() == model.controller_state()
 
 
 def test_trap_example_fills_and_settles_at_a_steady_turnover() -> None:

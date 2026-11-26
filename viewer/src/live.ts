@@ -153,6 +153,37 @@ function float32LittleEndian(bytes: ArrayBuffer): Float32Array {
   return values;
 }
 
+/** Each block in the single grid payload has its own shape-derived length and digest. */
+function blockDigest(
+  description: unknown,
+  path: string,
+  byteLength: number,
+): string {
+  const stated = record(description, path);
+  exactKeys(stated, path, ["encoding", "byte_length", "sha256"]);
+  if (stated.encoding !== "float32-le")
+    return fail(path, "unsupported float encoding");
+  if (nonnegativeInteger(stated.byte_length, path) !== byteLength)
+    return fail(path, `expected ${byteLength} bytes for the grid`);
+  return string(stated.sha256, `${path}.sha256`);
+}
+
+async function verifiedFloats(
+  bytes: ArrayBuffer,
+  digest: string,
+  path: string,
+): Promise<Float32Array> {
+  if (hex(await crypto.subtle.digest("SHA-256", bytes)) !== digest)
+    return fail(
+      path,
+      `${path.endsWith("levels") ? "level" : "velocity"} digest does not match`,
+    );
+  const values = float32LittleEndian(bytes);
+  if (!values.every(Number.isFinite))
+    return fail(path, "expected finite values");
+  return values;
+}
+
 /**
  * The frame a header and its levels describe: the header's scene, with the
  * signal grid the header describes holding the levels that came as bytes.
@@ -178,6 +209,7 @@ async function liveFrame(
     "boundaries",
     "labels",
     "levels",
+    ...("velocity_faces" in described ? ["velocity_faces"] : []),
   ]);
   if (scene.signalGrid !== null) {
     return fail(path, "the frame's scene already holds a signal grid");
@@ -188,37 +220,47 @@ async function liveFrame(
     `${path}.labels`,
     layout.signalCount,
   );
-  const stated = record(described.levels, `${path}.levels`);
-  exactKeys(stated, `${path}.levels`, ["encoding", "byte_length", "sha256"]);
-  if (stated.encoding !== "float32-le") {
-    return fail(`${path}.levels.encoding`, "unsupported level encoding");
-  }
-  const byteLength = nonnegativeInteger(
-    stated.byte_length,
-    `${path}.levels.byte_length`,
+  const nLevels = signalGridLevelCount(layout);
+  const levelDigest = blockDigest(
+    described.levels,
+    `${path}.levels`,
+    nLevels * 4,
   );
-  const digest = string(stated.sha256, `${path}.levels.sha256`);
-  if (byteLength !== signalGridLevelCount(layout) * 4) {
-    return fail(
-      `${path}.levels.byte_length`,
-      `expected ${signalGridLevelCount(layout) * 4} bytes for the grid`,
-    );
-  }
-  if (levels === undefined) {
+  const [nx, ny, nz] = layout.shape;
+  const nX = (nx + 1) * ny * nz;
+  const nY = nx * (ny + 1) * nz;
+  const nFaces = nX + nY + nx * ny * (nz + 1);
+  const velocityDigest =
+    "velocity_faces" in described
+      ? blockDigest(
+          described.velocity_faces,
+          `${path}.velocity_faces`,
+          nFaces * 4,
+        )
+      : null;
+  const byteLength = 4 * (nLevels + (velocityDigest === null ? 0 : nFaces));
+  if (levels === undefined)
     return fail(`${path}.levels`, "the frame's levels did not arrive");
-  }
-  if (levels.byteLength !== byteLength) {
-    return fail(
-      `${path}.levels`,
-      `expected ${byteLength} bytes, got ${levels.byteLength}`,
+  if (levels.byteLength !== byteLength)
+    return fail(path, `expected ${byteLength} bytes, got ${levels.byteLength}`);
+  const values = await verifiedFloats(
+    velocityDigest === null ? levels : levels.slice(0, nLevels * 4),
+    levelDigest,
+    `${path}.levels`,
+  );
+  let velocityFaces:
+    readonly [Float32Array, Float32Array, Float32Array] | undefined;
+  if (velocityDigest !== null) {
+    const faces = await verifiedFloats(
+      levels.slice(nLevels * 4),
+      velocityDigest,
+      `${path}.velocity_faces`,
     );
-  }
-  if (hex(await crypto.subtle.digest("SHA-256", levels)) !== digest) {
-    return fail(`${path}.levels`, "level digest does not match");
-  }
-  const values = float32LittleEndian(levels);
-  if (!values.every((value) => Number.isFinite(value))) {
-    return fail(`${path}.levels`, "expected finite levels");
+    velocityFaces = [
+      faces.subarray(0, nX),
+      faces.subarray(nX, nX + nY),
+      faces.subarray(nX + nY),
+    ];
   }
   return {
     ...scene,
@@ -226,7 +268,11 @@ async function liveFrame(
       species: scene.channelMetadata.species,
       signals: labels,
     },
-    signalGrid: { ...layout, levels: values },
+    signalGrid: {
+      ...layout,
+      levels: values,
+      ...(velocityFaces ? { velocityFaces } : {}),
+    },
   };
 }
 
@@ -317,6 +363,7 @@ export class LiveConnection {
     const url = new URL("/api/v2/session", window.location.href);
     url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("token", this.token);
+    url.searchParams.set("velocity", "1");
     this.callbacks.state("connecting");
     const socket = new WebSocket(url);
     socket.binaryType = "arraybuffer";

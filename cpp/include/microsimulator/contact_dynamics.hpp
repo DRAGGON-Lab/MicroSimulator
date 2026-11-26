@@ -164,6 +164,8 @@ struct ContactDynamicsReport {
 
 struct ContactDynamicsResult {
   ContactDynamicsReport report;
+  // Center velocity of each cell, by slot, over the last accepted substep.
+  std::vector<Vec3> center_velocities;
   // Axial compressive load on each cell, by slot, over the last substep.
   std::vector<float> axial_loads;
   // Elongation applied to each cell, by slot, over the whole step.
