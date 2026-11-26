@@ -84,7 +84,7 @@ def test_stop_preempts_same_socket_batch_and_rejects_new_commands(
             await client.start_server()
             origin = str(client.make_url("/")).rstrip("/")
             ws = await client.ws_connect(
-                f"/api/v1/session?token={token}",
+                f"/api/v2/session?token={token}",
                 headers={"Origin": origin},
             )
             await ws.receive_json(timeout=5)
@@ -195,7 +195,7 @@ def test_disconnect_pauses_without_stopping_and_close_is_idempotent(
         origin = str(client.make_url("/")).rstrip("/")
         try:
             ws = await client.ws_connect(
-                f"/api/v1/session?token={token}",
+                f"/api/v2/session?token={token}",
                 headers={"Origin": origin},
             )
             await ws.receive_json(timeout=5)
@@ -203,7 +203,7 @@ def test_disconnect_pauses_without_stopping_and_close_is_idempotent(
             await ws.receive_json(timeout=5)
             await ws.close()
             ws2 = await client.ws_connect(
-                f"/api/v1/session?token={token}",
+                f"/api/v2/session?token={token}",
                 headers={"Origin": origin},
             )
             assert (await ws2.receive_json(timeout=5))["playing"] is False
@@ -233,7 +233,9 @@ def test_reconnect_observes_pause_before_disconnected_command_drains(
         connect = LiveController.connect
         frames, connections = 0, 0
 
-        def blocked_frame(session: LiveSession, *, playing: bool) -> dict[str, JSONValue]:
+        def blocked_frame(
+            session: LiveSession, *, playing: bool
+        ) -> tuple[dict[str, JSONValue], bytes | None]:
             nonlocal frames
             frames += 1
             if frames == 2:
@@ -262,7 +264,7 @@ def test_reconnect_observes_pause_before_disconnected_command_drains(
 
             async def open_socket() -> ClientWebSocketResponse:
                 return await client.ws_connect(
-                    f"/api/v1/session?token={token}",
+                    f"/api/v2/session?token={token}",
                     headers={"Origin": origin},
                 )
 
@@ -315,7 +317,7 @@ def test_stop_is_not_blocked_by_a_stalled_frame_send(
             await client.start_server()
             origin = str(client.make_url("/")).rstrip("/")
             ws = await client.ws_connect(
-                f"/api/v1/session?token={token}",
+                f"/api/v2/session?token={token}",
                 headers={"Origin": origin},
             )
             await ws.receive_json(timeout=5)
@@ -377,7 +379,7 @@ def test_real_tcp_backpressure_releases_connections_and_reuses_port(
         try:
             async with ClientSession() as client:
                 healthy = await client.ws_connect(
-                    f"{origin}/api/v1/session?token={token}",
+                    f"{origin}/api/v2/session?token={token}",
                     headers={"Origin": origin},
                     max_msg_size=128 * 1024 * 1024,
                 )
@@ -411,7 +413,7 @@ def test_real_tcp_backpressure_releases_connections_and_reuses_port(
                 cast(asyncio.Transport, stalled.transport).pause_reading()
                 stalled.write(
                     (
-                        f"GET /api/v1/session?token={token} HTTP/1.1\r\n"
+                        f"GET /api/v2/session?token={token} HTTP/1.1\r\n"
                         f"Host: 127.0.0.1:{port}\r\nOrigin: {origin}\r\n"
                         "Upgrade: websocket\r\nConnection: Upgrade\r\n"
                         "Sec-WebSocket-Key: MTIzNDU2Nzg5MDEyMzQ1Ng==\r\n"
@@ -513,7 +515,7 @@ def test_real_tcp_backpressure_releases_connections_and_reuses_port(
                 await next_server.start_server()
                 try:
                     async with client.ws_connect(
-                        f"{origin}/api/v1/session?token={next_token}",
+                        f"{origin}/api/v2/session?token={next_token}",
                         headers={"Origin": origin},
                     ) as next_ws:
                         frame = cast(dict[str, Any], await next_ws.receive_json(timeout=5))
@@ -593,7 +595,7 @@ def test_cli_process_exits_and_reuses_port_for_another_model(
                 async with (
                     ClientSession() as client,
                     client.ws_connect(
-                        f"http://{url.netloc}/api/v1/session?{url.query}",
+                        f"http://{url.netloc}/api/v2/session?{url.query}",
                         headers={"Origin": f"http://{url.netloc}"},
                     ) as ws,
                 ):

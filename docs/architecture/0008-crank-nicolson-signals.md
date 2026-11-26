@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-15
-- Amended: 2026-09-10
+- Amended: 2026-11-26
 
 ## Context
 
@@ -25,7 +25,7 @@ Fixed reservoir boundaries make `T` affine, and a nonzero field source makes `R`
 
 ## Solver contract
 
-The linear system is solved by matrix-free Jacobi iteration over the local transport stencil. Diffusion and first-order upwind advection give a positive diagonal for `I - dt/2 T`; the update divides by that diagonal and retains the affine boundary contribution in the remainder.
+The linear system is solved by matrix-free Jacobi iteration over the local transport stencil. Diffusion and first-order upwind advection give a positive diagonal for `I - dt/2 T`; the update divides by that diagonal and retains the affine boundary contribution in the remainder. Under the limited advection scheme of [ADR 0028](0028-limited-advection.md) the diagonal is the same, the limited correction is part of the remainder, and each sweep is damped.
 
 Convergence uses the RMS residual of the declared equation:
 

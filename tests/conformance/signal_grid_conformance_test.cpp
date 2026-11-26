@@ -35,13 +35,10 @@ microsimulator::SignalGridSpec make_spec() {
   return spec;
 }
 
-microsimulator::SignalGridSpec make_masked_spec() {
+// The plain grid with the sites `solid` names made obstacles.
+template <typename Solid>
+microsimulator::SignalGridSpec make_spec_with_obstacles(const Solid& solid) {
   auto spec = make_spec();
-  const auto solid = [&](std::uint32_t x, std::uint32_t y, std::uint32_t z) {
-    const auto interior_block = x >= 3 && x <= 5 && y >= 2 && y <= 4 && z == 2;
-    const auto periodic_edge = x == 0 && y == 1 && z == 1;
-    return interior_block || periodic_edge;
-  };
   std::vector<std::uint8_t> obstacles(spec.site_count(), 0);
   for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
     for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
@@ -64,6 +61,14 @@ microsimulator::SignalGridSpec make_masked_spec() {
   return spec;
 }
 
+microsimulator::SignalGridSpec make_masked_spec() {
+  return make_spec_with_obstacles([](std::uint32_t x, std::uint32_t y, std::uint32_t z) {
+    const auto interior_block = x >= 3 && x <= 5 && y >= 2 && y <= 4 && z == 2;
+    const auto periodic_edge = x == 0 && y == 1 && z == 1;
+    return interior_block || periodic_edge;
+  });
+}
+
 microsimulator::SignalGridSpec make_velocity_field_spec() {
   auto spec = make_spec();
   spec.advection = {{0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}};
@@ -81,6 +86,35 @@ microsimulator::SignalGridSpec make_velocity_field_spec() {
       }
     }
   }
+  spec.velocity_field = std::move(field);
+  return spec;
+}
+
+// Every face is a fixed reservoir, three of them with patches, and a velocity
+// field crosses all six. Each of the three patched faces indexes its sites by
+// a different pair of axes.
+microsimulator::SignalGridSpec make_patched_spec() {
+  auto spec = make_spec();
+  spec.advection = {{0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}};
+  for (auto* boundary : {&spec.x_lower, &spec.x_upper, &spec.y_lower, &spec.y_upper}) {
+    boundary->kind = microsimulator::GridBoundaryKind::fixed;
+    boundary->values = {0.4F, 0.6F};
+  }
+  spec.x_lower.patches = {
+      {.region = {.begin = {1, 0}, .end = {4, 3}}, .values = {1.5F, 0.1F}},
+      {.region = {.begin = {3, 2}, .end = {7, 5}}, .values = {0.0F, 2.0F}},
+  };
+  spec.y_upper.patches = {
+      {.region = {.begin = {0, 1}, .end = {5, 4}}, .values = {0.9F, 0.2F}},
+  };
+  spec.z_lower.patches = {
+      {.region = {.begin = {2, 0}, .end = {9, 2}}, .values = {1.2F, 0.3F}},
+      {.region = {.begin = {6, 1}, .end = {8, 7}}, .values = {0.1F, 1.1F}},
+  };
+  microsimulator::SignalGridVelocityField field;
+  field.x_faces.assign(spec.x_face_count(), 0.06F);
+  field.y_faces.assign(spec.y_face_count(), -0.04F);
+  field.z_faces.assign(spec.z_face_count(), 0.05F);
   spec.velocity_field = std::move(field);
   return spec;
 }
@@ -117,14 +151,18 @@ void assert_matches(const microsimulator::Simulation& actual,
   }
 }
 
-enum class SpecKind { plain, masked, velocity_field };
+enum class SpecKind { plain, masked, velocity_field, patched };
 
 void run_case(microsimulator::SignalIntegrationKind integration, float dt,
-              SpecKind kind = SpecKind::plain) {
-  auto spec = kind == SpecKind::masked         ? make_masked_spec()
+              SpecKind kind = SpecKind::plain,
+              microsimulator::SignalAdvectionKind scheme =
+                  microsimulator::SignalAdvectionKind::upwind) {
+  auto spec = kind == SpecKind::masked           ? make_masked_spec()
               : kind == SpecKind::velocity_field ? make_velocity_field_spec()
+              : kind == SpecKind::patched        ? make_patched_spec()
                                                  : make_spec();
   spec.integration = integration;
+  spec.advection_scheme = scheme;
   const auto levels = make_levels(spec);
   microsimulator::Simulation reference;
   reference.configure_signal_grid(spec, levels);
@@ -144,6 +182,87 @@ void run_case(microsimulator::SignalIntegrationKind integration, float dt,
       });
 }
 
+// Steps a simulation and checks the step against one taken by a simulation
+// that has held no other grid.
+void assert_step_matches_fresh(microsimulator::Simulation& candidate,
+                               const microsimulator::SignalGridSpec& spec, float dt) {
+  microsimulator::Simulation reference;
+  reference.configure_signal_grid(spec, candidate.signal_levels());
+  reference.step(dt);
+  candidate.step(dt);
+  assert_matches(candidate, reference);
+}
+
+// A backend keeps what it derives from a grid between steps. Each change to
+// the grid must reach the very next step: its velocity field, its reaction
+// field, its boundary and patch values, and its levels.
+void run_changing_grid_case(microsimulator::SignalIntegrationKind integration, float dt,
+                            microsimulator::SignalAdvectionKind scheme) {
+  microsimulator::test::for_each_backend_device(
+      [&](microsimulator::BackendKind backend, std::uint32_t device_index) {
+        microsimulator::Simulation candidate(backend, 0, 0, device_index);
+        if (!candidate.supports(microsimulator::BackendFeature::signals)) {
+          return;
+        }
+        auto spec = make_patched_spec();
+        spec.integration = integration;
+        spec.advection_scheme = scheme;
+        candidate.configure_signal_grid(spec, make_levels(spec));
+        assert_step_matches_fresh(candidate, spec, dt);
+        assert_step_matches_fresh(candidate, spec, dt);
+
+        auto field = *spec.velocity_field;
+        std::ranges::fill(field.x_faces, -0.03F);
+        std::ranges::fill(field.z_faces, 0.09F);
+        spec.velocity_field = field;
+        candidate.set_velocity_field(field);
+        assert_step_matches_fresh(candidate, spec, dt);
+
+        auto reaction = *spec.reaction;
+        for (std::size_t index = 0; index < reaction.loss_rates.size(); ++index) {
+          reaction.source_rates[index] = 0.02F * static_cast<float>(index % 4);
+          reaction.loss_rates[index] = 0.01F * static_cast<float>(index % 3);
+        }
+        spec.reaction = reaction;
+        candidate.set_signal_reaction(reaction);
+        assert_step_matches_fresh(candidate, spec, dt);
+
+        spec.x_upper.values = {2.5F, 0.0F};
+        candidate.set_signal_boundary_values(microsimulator::GridFace::x_upper,
+                                             spec.x_upper.values);
+        assert_step_matches_fresh(candidate, spec, dt);
+
+        spec.z_lower.patches[1].values = {3.0F, 0.05F};
+        candidate.set_signal_boundary_patch_values(microsimulator::GridFace::z_lower, 1,
+                                                   spec.z_lower.patches[1].values);
+        assert_step_matches_fresh(candidate, spec, dt);
+
+        spec.reaction.reset();
+        candidate.set_signal_reaction(std::nullopt);
+        assert_step_matches_fresh(candidate, spec, dt);
+
+        // A grid with obstacles, whose reaction field and levels change.
+        microsimulator::Simulation masked(backend, 0, 0, device_index);
+        auto masked_spec = make_masked_spec();
+        masked_spec.integration = integration;
+        masked_spec.advection_scheme = scheme;
+        masked.configure_signal_grid(masked_spec, make_levels(masked_spec));
+        assert_step_matches_fresh(masked, masked_spec, dt);
+        masked_spec.reaction.reset();
+        masked.set_signal_reaction(std::nullopt);
+        assert_step_matches_fresh(masked, masked_spec, dt);
+        auto levels = make_levels(masked_spec);
+        std::ranges::reverse(levels);
+        for (std::size_t index = 0; index < levels.size(); ++index) {
+          if (masked_spec.solid_site(index % masked_spec.site_count())) {
+            levels[index] = 0.0F;
+          }
+        }
+        masked.set_signal_levels(levels);
+        assert_step_matches_fresh(masked, masked_spec, dt);
+      });
+}
+
 }  // namespace
 
 int main() {
@@ -154,4 +273,21 @@ int main() {
   run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::masked);
   run_case(microsimulator::SignalIntegrationKind::forward_euler, 0.02F, SpecKind::velocity_field);
   run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::velocity_field);
+  run_case(microsimulator::SignalIntegrationKind::forward_euler, 0.02F, SpecKind::patched);
+  run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::patched);
+  run_case(microsimulator::SignalIntegrationKind::backward_euler, 0.5F, SpecKind::patched);
+  // The van Leer scheme, on every kind of grid: constant and face velocities,
+  // walls, periodic wrap, and patched reservoirs.
+  const auto van_leer = microsimulator::SignalAdvectionKind::van_leer;
+  for (const auto kind :
+       {SpecKind::plain, SpecKind::masked, SpecKind::velocity_field, SpecKind::patched}) {
+    run_case(microsimulator::SignalIntegrationKind::forward_euler, 0.02F, kind, van_leer);
+    run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F, kind, van_leer);
+    run_case(microsimulator::SignalIntegrationKind::backward_euler, 0.5F, kind, van_leer);
+  }
+  for (const auto scheme : {microsimulator::SignalAdvectionKind::upwind, van_leer}) {
+    run_changing_grid_case(microsimulator::SignalIntegrationKind::forward_euler, 0.02F, scheme);
+    run_changing_grid_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F, scheme);
+    run_changing_grid_case(microsimulator::SignalIntegrationKind::backward_euler, 0.5F, scheme);
+  }
 }

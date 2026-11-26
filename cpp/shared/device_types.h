@@ -89,10 +89,10 @@ struct FlowGridParameters {
   float4 inverse_spacing_squared;
   uint4 face_offsets;
   uint4 face_counts;
-  uint flow_axis;
   uint site_count;
   uint total_face_count;
-  uint padding;
+  uint padding0;
+  uint padding1;
 };
 
 // 1 / spacing^2 per axis as a double-word value.

@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/boundary_values.hpp"
 #include "core/contact_solver.hpp"
 #include "core/signal_jacobi.hpp"
 #include "cuda_flow.cuh"
@@ -278,7 +279,6 @@ class CudaBackend final : public ComputeBackend {
 
   SignalSolveReport advance_signal_grid(SignalGrid& grid, float dt) override {
     activate_device();
-    grid.validate();
     grid.validate_step(dt);
     if (dt == 0.0F) {
       return {};
@@ -289,83 +289,19 @@ class CudaBackend final : public ComputeBackend {
     const auto signal_count = spec.signal_count;
     const auto level_count = static_cast<std::uint32_t>(levels.size());
 
+    const auto& statics = sync_grid(grid);
+    const auto& boundaries = statics.boundaries;
+    const auto& shape = statics.shape;
+    const auto has_velocity_field = statics.has_velocity_field;
+    const auto fluid = statics.fluid;
     signal_levels_.reserve(levels.size(), "signal-grid levels");
     signal_output_.reserve(levels.size(), "signal-grid output");
-    signal_diffusion_.reserve(signal_count, "signal-grid diffusion");
-    signal_advection_.reserve(signal_count, "signal-grid advection");
-    signal_fixed_values_.reserve(static_cast<std::size_t>(6) * signal_count,
-                                 "signal-grid boundary values");
-    signal_reaction_source_.reserve(levels.size(), "signal-grid affine sources");
-    signal_reaction_loss_.reserve(levels.size(), "signal-grid affine losses");
-    signal_obstacles_.reserve(spec.site_count(), "signal-grid obstacles");
-    signal_x_faces_.reserve(std::max<std::size_t>(spec.x_face_count(), 1), "signal x faces");
-    signal_y_faces_.reserve(std::max<std::size_t>(spec.y_face_count(), 1), "signal y faces");
-    signal_z_faces_.reserve(std::max<std::size_t>(spec.z_face_count(), 1), "signal z faces");
     signal_error_.reserve(1, "signal-grid error flag");
-
-    std::vector<float4> advection;
-    advection.reserve(signal_count);
-    for (const auto velocity : spec.advection) {
-      advection.push_back(make_float4(velocity.x, velocity.y, velocity.z, 0.0F));
-    }
-    const std::array<const GridBoundary*, 6> boundary_records{
-        &spec.x_lower, &spec.x_upper, &spec.y_lower, &spec.y_upper, &spec.z_lower, &spec.z_upper,
-    };
-    std::vector<float> fixed_values(static_cast<std::size_t>(6) * signal_count, 0.0F);
-    for (std::size_t face = 0; face < boundary_records.size(); ++face) {
-      if (boundary_records[face]->kind == GridBoundaryKind::fixed) {
-        std::copy(boundary_records[face]->values.begin(), boundary_records[face]->values.end(),
-                  fixed_values.begin() + static_cast<std::ptrdiff_t>(face * signal_count));
-      }
-    }
-    std::vector<float> reaction_source(levels.size(), 0.0F);
-    std::vector<float> reaction_loss(levels.size(), 0.0F);
-    if (spec.reaction.has_value()) {
-      reaction_source = spec.reaction->source_rates;
-      reaction_loss = spec.reaction->loss_rates;
-    }
-    std::vector<std::uint8_t> obstacles(spec.site_count(), 0);
-    if (spec.has_obstacles()) {
-      obstacles = spec.obstacles;
-    }
-
+    clear_obstacle_levels(signal_output_, signal_output_cleared_, levels.size());
     copy_to_device(signal_levels_, levels, "failed to upload CUDA signal-grid levels");
-    copy_to_device(signal_diffusion_, spec.diffusion,
-                   "failed to upload CUDA signal-grid diffusion");
-    copy_to_device(signal_advection_, advection, "failed to upload CUDA signal-grid advection");
-    copy_to_device(signal_fixed_values_, fixed_values,
-                   "failed to upload CUDA signal-grid boundary values");
-    copy_to_device(signal_reaction_source_, reaction_source,
-                   "failed to upload CUDA signal-grid affine sources");
-    copy_to_device(signal_reaction_loss_, reaction_loss,
-                   "failed to upload CUDA signal-grid affine losses");
-    copy_to_device(signal_obstacles_, obstacles, "failed to upload CUDA signal-grid obstacles");
-    if (spec.velocity_field.has_value()) {
-      copy_to_device(signal_x_faces_, spec.velocity_field->x_faces,
-                     "failed to upload CUDA signal x faces");
-      copy_to_device(signal_y_faces_, spec.velocity_field->y_faces,
-                     "failed to upload CUDA signal y faces");
-      copy_to_device(signal_z_faces_, spec.velocity_field->z_faces,
-                     "failed to upload CUDA signal z faces");
-    }
-    const auto has_velocity_field = static_cast<std::uint32_t>(spec.velocity_field.has_value());
     check_cuda(cudaMemsetAsync(signal_error_.data(), 0, sizeof(std::uint32_t), stream_),
                "failed to clear the CUDA signal-grid error flag");
 
-    const cuda::SignalGridBoundariesGpu boundaries{
-        .x_lower = static_cast<std::uint32_t>(spec.x_lower.kind),
-        .x_upper = static_cast<std::uint32_t>(spec.x_upper.kind),
-        .y_lower = static_cast<std::uint32_t>(spec.y_lower.kind),
-        .y_upper = static_cast<std::uint32_t>(spec.y_upper.kind),
-        .z_lower = static_cast<std::uint32_t>(spec.z_lower.kind),
-        .z_upper = static_cast<std::uint32_t>(spec.z_upper.kind),
-    };
-    const cuda::SignalGridShapeGpu shape{
-        .x = spec.shape.x,
-        .y = spec.shape.y,
-        .z = spec.shape.z,
-        .sites = static_cast<std::uint32_t>(spec.site_count()),
-    };
     const auto crank_nicolson = static_cast<std::uint32_t>(spec.integration);
     cuda::launch_advance_signal_grid(
         signal_levels_.data(), signal_output_.data(), signal_diffusion_.data(),
@@ -373,7 +309,7 @@ class CudaBackend final : public ComputeBackend {
         signal_reaction_loss_.data(), signal_obstacles_.data(), signal_x_faces_.data(),
         signal_y_faces_.data(), signal_z_faces_.data(), has_velocity_field, signal_error_.data(),
         boundaries, shape, make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F), dt,
-        signal_count, level_count, crank_nicolson, stream_);
+        signal_count, fluid, crank_nicolson, stream_);
     check_cuda(cudaGetLastError(), "failed to launch the CUDA signal-grid kernel");
 
     std::uint32_t error = 0;
@@ -395,12 +331,12 @@ class CudaBackend final : public ComputeBackend {
           signal_y_faces_.data(), signal_z_faces_.data(), has_velocity_field, signal_error_.data(),
           boundaries, shape, make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F),
           (crank_nicolson == 2 ? dt : 0.5F * dt), signal_count, level_count, spec.solver,
-          signal_implicit_operator_scale(spec, crank_nicolson == 2 ? dt : 0.5F * dt));
+          grid.layout().implicit_operator_scale(crank_nicolson == 2 ? dt : 0.5F * dt));
       result_device = solve.first;
       report = solve.second;
       if (!report.converged) {
-        throw std::runtime_error("CUDA Implicit signal solve did not converge after " +
-                                 std::to_string(report.iterations) + " iterations");
+        throw std::runtime_error(
+            signal_solve_failure("CUDA Implicit signal solve", spec, report.iterations));
       }
     }
     std::vector<float> output(levels.size());
@@ -408,7 +344,7 @@ class CudaBackend final : public ComputeBackend {
                                cudaMemcpyDeviceToHost, stream_),
                "failed to download CUDA signal-grid levels");
     check_cuda(cudaStreamSynchronize(stream_), "CUDA signal-grid download failed");
-    grid.replace_levels(std::move(output));
+    grid.accept_step(std::move(output));
     return report;
   }
 
@@ -458,15 +394,6 @@ class CudaBackend final : public ComputeBackend {
     coupled_cell_signal_rates_.reserve(cell_signal_count, "coupled cell signal rates");
     coupled_grid_levels_.reserve(grid_level_count, "coupled grid levels");
     coupled_grid_output_.reserve(grid_level_count, "coupled grid output");
-    coupled_diffusion_.reserve(signal_count_size, "coupled diffusion");
-    coupled_advection_.reserve(signal_count_size, "coupled advection");
-    coupled_fixed_values_.reserve(6 * signal_count_size, "coupled boundary values");
-    coupled_reaction_source_.reserve(grid_level_count, "coupled affine sources");
-    coupled_reaction_loss_.reserve(grid_level_count, "coupled affine losses");
-    coupled_obstacles_.reserve(spec.site_count(), "coupled grid obstacles");
-    coupled_x_faces_.reserve(std::max<std::size_t>(spec.x_face_count(), 1), "coupled x faces");
-    coupled_y_faces_.reserve(std::max<std::size_t>(spec.y_face_count(), 1), "coupled y faces");
-    coupled_z_faces_.reserve(std::max<std::size_t>(spec.z_face_count(), 1), "coupled z faces");
     coupled_error_.reserve(1, "coupled error flag");
 
     const auto geometry = state.geometry_state();
@@ -490,27 +417,10 @@ class CudaBackend final : public ComputeBackend {
           .value = instruction.value,
       });
     }
-    std::vector<float4> advection;
-    advection.reserve(signal_count_size);
-    for (const auto velocity : spec.advection) {
-      advection.push_back(make_float4(velocity.x, velocity.y, velocity.z, 0.0F));
-    }
-    const std::array<const GridBoundary*, 6> boundary_records{
-        &spec.x_lower, &spec.x_upper, &spec.y_lower, &spec.y_upper, &spec.z_lower, &spec.z_upper,
-    };
-    std::vector<float> fixed_values(6 * signal_count_size, 0.0F);
-    for (std::size_t face = 0; face < boundary_records.size(); ++face) {
-      if (boundary_records[face]->kind == GridBoundaryKind::fixed) {
-        std::copy(boundary_records[face]->values.begin(), boundary_records[face]->values.end(),
-                  fixed_values.begin() + static_cast<std::ptrdiff_t>(face * signal_count_size));
-      }
-    }
-    std::vector<float> reaction_source(grid_level_count, 0.0F);
-    std::vector<float> reaction_loss(grid_level_count, 0.0F);
-    if (spec.reaction.has_value()) {
-      reaction_source = spec.reaction->source_rates;
-      reaction_loss = spec.reaction->loss_rates;
-    }
+    const auto& statics = sync_grid(grid);
+    const auto& boundaries = statics.boundaries;
+    const auto& shape = statics.shape;
+    const auto has_velocity_field = statics.has_velocity_field;
     const std::vector<float> species_levels(species_state.levels.begin(),
                                             species_state.levels.end());
     const std::vector<float> previous_values(previous_lengths.begin(), previous_lengths.end());
@@ -547,47 +457,9 @@ class CudaBackend final : public ComputeBackend {
     copy_to_device(coupled_signal_outputs_, signal_outputs,
                    "failed to upload CUDA coupled signal outputs");
     copy_to_device(coupled_grid_levels_, grid_levels, "failed to upload CUDA coupled grid levels");
-    copy_to_device(coupled_diffusion_, spec.diffusion, "failed to upload CUDA coupled diffusion");
-    copy_to_device(coupled_advection_, advection, "failed to upload CUDA coupled advection");
-    copy_to_device(coupled_fixed_values_, fixed_values,
-                   "failed to upload CUDA coupled boundary values");
-    copy_to_device(coupled_reaction_source_, reaction_source,
-                   "failed to upload CUDA coupled affine sources");
-    copy_to_device(coupled_reaction_loss_, reaction_loss,
-                   "failed to upload CUDA coupled affine losses");
-    {
-      std::vector<std::uint8_t> obstacles(spec.site_count(), 0);
-      if (spec.has_obstacles()) {
-        obstacles = spec.obstacles;
-      }
-      copy_to_device(coupled_obstacles_, obstacles, "failed to upload CUDA coupled obstacles");
-    }
-    if (spec.velocity_field.has_value()) {
-      copy_to_device(coupled_x_faces_, spec.velocity_field->x_faces,
-                     "failed to upload CUDA coupled x faces");
-      copy_to_device(coupled_y_faces_, spec.velocity_field->y_faces,
-                     "failed to upload CUDA coupled y faces");
-      copy_to_device(coupled_z_faces_, spec.velocity_field->z_faces,
-                     "failed to upload CUDA coupled z faces");
-    }
-    const auto has_velocity_field = static_cast<std::uint32_t>(spec.velocity_field.has_value());
     check_cuda(cudaMemsetAsync(coupled_error_.data(), 0, sizeof(std::uint32_t), stream_),
                "failed to clear the CUDA coupled error flag");
 
-    const cuda::SignalGridBoundariesGpu boundaries{
-        .x_lower = static_cast<std::uint32_t>(spec.x_lower.kind),
-        .x_upper = static_cast<std::uint32_t>(spec.x_upper.kind),
-        .y_lower = static_cast<std::uint32_t>(spec.y_lower.kind),
-        .y_upper = static_cast<std::uint32_t>(spec.y_upper.kind),
-        .z_lower = static_cast<std::uint32_t>(spec.z_lower.kind),
-        .z_upper = static_cast<std::uint32_t>(spec.z_upper.kind),
-    };
-    const cuda::SignalGridShapeGpu shape{
-        .x = spec.shape.x,
-        .y = spec.shape.y,
-        .z = spec.shape.z,
-        .sites = static_cast<std::uint32_t>(spec.site_count()),
-    };
     const auto crank_nicolson = static_cast<std::uint32_t>(spec.integration);
     const auto origin = make_float4(spec.origin.x, spec.origin.y, spec.origin.z, 0.0F);
     const auto spacing = make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F);
@@ -614,12 +486,11 @@ class CudaBackend final : public ComputeBackend {
             coupled_cell_types_.data(), coupled_instructions_.data(),
             coupled_species_outputs_.data(), coupled_signal_outputs_.data(),
             coupled_workspace_.data(), coupled_grid_levels_.data(), coupled_grid_output_.data(),
-            coupled_diffusion_.data(), coupled_advection_.data(), coupled_fixed_values_.data(),
-            coupled_reaction_source_.data(), coupled_reaction_loss_.data(),
-            coupled_obstacles_.data(), coupled_x_faces_.data(), coupled_y_faces_.data(),
-            coupled_z_faces_.data(), has_velocity_field, coupled_cell_signal_rates_.data(),
-            coupled_error_.data(), boundaries, shape, origin, spacing, dt,
-            static_cast<std::uint32_t>(species_count_size),
+            signal_diffusion_.data(), signal_advection_.data(), signal_fixed_values_.data(),
+            signal_reaction_source_.data(), signal_reaction_loss_.data(), signal_obstacles_.data(),
+            signal_x_faces_.data(), signal_y_faces_.data(), signal_z_faces_.data(),
+            has_velocity_field, coupled_cell_signal_rates_.data(), coupled_error_.data(),
+            boundaries, shape, origin, spacing, dt, static_cast<std::uint32_t>(species_count_size),
             static_cast<std::uint32_t>(signal_count_size),
             static_cast<std::uint32_t>(instruction_count_size),
             static_cast<std::uint32_t>(cell_count_size),
@@ -640,20 +511,19 @@ class CudaBackend final : public ComputeBackend {
     SignalSolveReport report;
     if (crank_nicolson) {
       const auto solve = solve_signal_crank_nicolson(
-          coupled_grid_levels_.data(), coupled_grid_output_.data(), coupled_diffusion_.data(),
-          coupled_advection_.data(), coupled_fixed_values_.data(), coupled_reaction_source_.data(),
-          coupled_reaction_loss_.data(), coupled_obstacles_.data(), coupled_x_faces_.data(),
-          coupled_y_faces_.data(), coupled_z_faces_.data(), has_velocity_field,
-          coupled_error_.data(), boundaries, shape,
-          make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F),
+          coupled_grid_levels_.data(), coupled_grid_output_.data(), signal_diffusion_.data(),
+          signal_advection_.data(), signal_fixed_values_.data(), signal_reaction_source_.data(),
+          signal_reaction_loss_.data(), signal_obstacles_.data(), signal_x_faces_.data(),
+          signal_y_faces_.data(), signal_z_faces_.data(), has_velocity_field, coupled_error_.data(),
+          boundaries, shape, make_float4(spec.spacing.x, spec.spacing.y, spec.spacing.z, 0.0F),
           (crank_nicolson == 2 ? dt : 0.5F * dt), static_cast<std::uint32_t>(signal_count_size),
           static_cast<std::uint32_t>(grid_level_count), spec.solver,
-          signal_implicit_operator_scale(spec, crank_nicolson == 2 ? dt : 0.5F * dt));
+          grid.layout().implicit_operator_scale(crank_nicolson == 2 ? dt : 0.5F * dt));
       result_device = solve.first;
       report = solve.second;
       if (!report.converged) {
-        throw std::runtime_error("CUDA Implicit coupled signal solve did not converge after " +
-                                 std::to_string(report.iterations) + " iterations");
+        throw std::runtime_error(
+            signal_solve_failure("CUDA Implicit coupled signal solve", spec, report.iterations));
       }
     }
 
@@ -667,9 +537,10 @@ class CudaBackend final : public ComputeBackend {
                                cudaMemcpyDeviceToHost, stream_),
                "failed to download CUDA coupled grid levels");
     check_cuda(cudaStreamSynchronize(stream_), "CUDA coupled download failed");
-    SignalGridCheckpoint{.spec = spec, .levels = next_grid}.validate();
+    // The grid refuses levels it cannot hold, so it takes its own before the
+    // species take theirs: a refused step changes neither.
+    grid.accept_step(std::move(next_grid));
     std::ranges::copy(next_species, species_state.levels.begin());
-    grid.replace_levels(std::move(next_grid));
     return report;
   }
 
@@ -833,11 +704,25 @@ class CudaBackend final : public ComputeBackend {
     return cuda::solve_depth_averaged_flow(spec, mobility, parameters, stream_);
   }
 
+  [[nodiscard]] DepthAveragedPortFlowResult solve_depth_averaged_port_flow(
+      const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> mobility,
+      const DepthAveragedPortFlowParameters& parameters) override {
+    activate_device();
+    return cuda::solve_depth_averaged_port_flow(spec, ports, mobility, parameters, stream_);
+  }
+
   [[nodiscard]] ResolvedFlowResult solve_resolved_flow(
       const SignalGridSpec& spec, std::span<const float> drag,
       const ResolvedFlowParameters& parameters) override {
     activate_device();
     return cuda::solve_resolved_flow(spec, drag, parameters, stream_);
+  }
+
+  [[nodiscard]] ResolvedPortFlowResult solve_resolved_port_flow(
+      const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> drag,
+      const ResolvedPortFlowParameters& parameters) override {
+    activate_device();
+    return cuda::solve_resolved_port_flow(spec, ports, drag, parameters, stream_);
   }
 
  private:
@@ -1169,18 +1054,147 @@ class CudaBackend final : public ComputeBackend {
     return ExternalContactGraph(cell_count, std::move(contacts));
   }
 
+  // What the transport kernels are told of the grid on the device.
+  struct GridStatics {
+    cuda::SignalGridBoundariesGpu boundaries{};
+    cuda::SignalGridShapeGpu shape{};
+    std::uint32_t has_velocity_field{0};
+    cuda::SignalFluidGpu fluid{};
+  };
+
+  // Which allocation a buffer was last cleared in, and for which obstacles.
+  struct ObstacleClearance {
+    const float* data{nullptr};
+    std::uint64_t stamp{0};
+  };
+
+  // The transport kernels write fluid levels only, so a buffer they write
+  // must hold zero wherever the grid has an obstacle. A buffer does once it
+  // has been cleared for the obstacles the device holds.
+  void clear_obstacle_levels(CudaBuffer<float>& buffer, ObstacleClearance& cleared,
+                             std::size_t level_count) {
+    if (cleared.data == buffer.data() && cleared.stamp == obstacle_stamp_) {
+      return;
+    }
+    check_cuda(cudaMemsetAsync(buffer.data(), 0, level_count * sizeof(float), stream_),
+               "failed to clear a CUDA signal-grid buffer");
+    cleared = {.data = buffer.data(), .stamp = obstacle_stamp_};
+  }
+
+  // Puts on the device everything transport reads of a grid besides its
+  // levels: coefficients, reaction field, obstacles, face velocities,
+  // boundary values and the list of fluid sites. They change only with the
+  // grid's specification, so a step whose grid the device already holds
+  // uploads nothing.
+  const GridStatics& sync_grid(const SignalGrid& grid) {
+    if (grid.revision() == grid_revision_) {
+      return grid_statics_;
+    }
+    grid_revision_ = 0;
+    const auto& spec = grid.spec();
+    const auto level_count = spec.level_count();
+    const auto signal_count = spec.signal_count;
+    signal_diffusion_.reserve(signal_count, "signal-grid diffusion");
+    signal_advection_.reserve(signal_count, "signal-grid advection");
+    signal_reaction_source_.reserve(level_count, "signal-grid affine sources");
+    signal_reaction_loss_.reserve(level_count, "signal-grid affine losses");
+    signal_obstacles_.reserve(spec.site_count(), "signal-grid obstacles");
+    signal_x_faces_.reserve(std::max<std::size_t>(spec.x_face_count(), 1), "signal x faces");
+    signal_y_faces_.reserve(std::max<std::size_t>(spec.y_face_count(), 1), "signal y faces");
+    signal_z_faces_.reserve(std::max<std::size_t>(spec.z_face_count(), 1), "signal z faces");
+
+    std::vector<float4> advection;
+    advection.reserve(signal_count);
+    for (const auto velocity : spec.advection) {
+      advection.push_back(make_float4(velocity.x, velocity.y, velocity.z, 0.0F));
+    }
+    const auto boundary_table = detail::fixed_boundary_table(spec);
+    signal_fixed_values_.reserve(boundary_table.values.size(), "signal-grid boundary values");
+    std::vector<float> reaction_source(level_count, 0.0F);
+    std::vector<float> reaction_loss(level_count, 0.0F);
+    if (spec.reaction.has_value()) {
+      reaction_source = spec.reaction->source_rates;
+      reaction_loss = spec.reaction->loss_rates;
+    }
+    std::vector<std::uint8_t> obstacles(spec.site_count(), 0);
+    if (spec.has_obstacles()) {
+      obstacles = spec.obstacles;
+    }
+    const auto& fluid = grid.layout().fluid_sites;
+    signal_fluid_sites_.reserve(std::max<std::size_t>(fluid.size(), 1), "signal-grid fluid sites");
+
+    copy_to_device(signal_diffusion_, spec.diffusion,
+                   "failed to upload CUDA signal-grid diffusion");
+    copy_to_device(signal_advection_, advection, "failed to upload CUDA signal-grid advection");
+    copy_to_device(signal_fixed_values_, boundary_table.values,
+                   "failed to upload CUDA signal-grid boundary values");
+    copy_to_device(signal_reaction_source_, reaction_source,
+                   "failed to upload CUDA signal-grid affine sources");
+    copy_to_device(signal_reaction_loss_, reaction_loss,
+                   "failed to upload CUDA signal-grid affine losses");
+    copy_to_device(signal_obstacles_, obstacles, "failed to upload CUDA signal-grid obstacles");
+    if (spec.velocity_field.has_value()) {
+      copy_to_device(signal_x_faces_, spec.velocity_field->x_faces,
+                     "failed to upload CUDA signal x faces");
+      copy_to_device(signal_y_faces_, spec.velocity_field->y_faces,
+                     "failed to upload CUDA signal y faces");
+      copy_to_device(signal_z_faces_, spec.velocity_field->z_faces,
+                     "failed to upload CUDA signal z faces");
+    }
+    if (!fluid.empty()) {
+      copy_to_device(signal_fluid_sites_, fluid, "failed to upload CUDA signal-grid fluid sites");
+    }
+    // The uploads read host arrays that end with this call.
+    check_cuda(cudaStreamSynchronize(stream_), "CUDA signal-grid upload failed");
+    if (obstacles != grid_obstacles_) {
+      grid_obstacles_ = std::move(obstacles);
+      ++obstacle_stamp_;
+    }
+
+    grid_statics_.boundaries = {
+        .x_lower = static_cast<std::uint32_t>(spec.x_lower.kind),
+        .x_upper = static_cast<std::uint32_t>(spec.x_upper.kind),
+        .y_lower = static_cast<std::uint32_t>(spec.y_lower.kind),
+        .y_upper = static_cast<std::uint32_t>(spec.y_upper.kind),
+        .z_lower = static_cast<std::uint32_t>(spec.z_lower.kind),
+        .z_upper = static_cast<std::uint32_t>(spec.z_upper.kind),
+        .offsets = {},
+        .advection_scheme = static_cast<std::uint32_t>(spec.advection_scheme),
+    };
+    std::copy(boundary_table.offsets.begin(), boundary_table.offsets.end(),
+              grid_statics_.boundaries.offsets);
+    grid_statics_.shape = {
+        .x = spec.shape.x,
+        .y = spec.shape.y,
+        .z = spec.shape.z,
+        .sites = static_cast<std::uint32_t>(spec.site_count()),
+    };
+    grid_statics_.has_velocity_field = static_cast<std::uint32_t>(spec.velocity_field.has_value());
+    grid_statics_.fluid = {.sites = signal_fluid_sites_.data(),
+                           .count = static_cast<std::uint32_t>(fluid.size())};
+    grid_revision_ = grid.revision();
+    return grid_statics_;
+  }
+
   void ensure_signal_solve_capacity(std::uint32_t level_count) {
     signal_cn_a_.reserve(level_count, "signal Jacobi field A");
     signal_cn_b_.reserve(level_count, "signal Jacobi field B");
+    clear_obstacle_levels(signal_cn_a_, signal_cn_a_cleared_, level_count);
+    clear_obstacle_levels(signal_cn_b_, signal_cn_b_cleared_, level_count);
     signal_cn_terms_.reserve(level_count, "signal residual terms");
     signal_cn_reduce_a_.reserve(level_count, "signal reduction A");
     signal_cn_reduce_b_.reserve(level_count, "signal reduction B");
   }
 
-  [[nodiscard]] float reduce_signal_terms(std::uint32_t level_count, const char* operation) {
+  // Sums the terms the last residual or norm kernel wrote, one per fluid level.
+  [[nodiscard]] float reduce_signal_terms(std::uint32_t term_count, const char* operation) {
+    if (term_count == 0) {
+      check_cuda(cudaStreamSynchronize(stream_), operation);
+      return 0.0F;
+    }
     const float* input = signal_cn_terms_.data();
     float* output = signal_cn_reduce_a_.data();
-    auto element_count = level_count;
+    auto element_count = term_count;
     while (element_count > 1) {
       cuda::launch_reduce_sum_pairs(input, output, element_count, stream_);
       check_cuda(cudaGetLastError(), "failed to launch the CUDA signal-reduction kernel");
@@ -1206,18 +1220,21 @@ class CudaBackend final : public ComputeBackend {
     cuda::launch_signal_crank_nicolson_residual_terms(
         current, right_hand_side, signal_cn_terms_.data(), diffusion, advection, fixed_values,
         reaction_source, reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field,
-        boundaries, shape, spacing, half_dt, signal_count, level_count, stream_);
+        boundaries, shape, spacing, half_dt, signal_count, grid_statics_.fluid, stream_);
     check_cuda(cudaGetLastError(), "failed to launch the CUDA signal-residual kernel");
-    return std::sqrt(reduce_signal_terms(level_count, "CUDA signal residual failed") /
+    return std::sqrt(reduce_signal_terms(signal_count * grid_statics_.fluid.count,
+                                         "CUDA signal residual failed") /
                      static_cast<float>(level_count));
   }
 
-  [[nodiscard]] float signal_rhs_rms(const float* right_hand_side, std::uint32_t level_count) {
-    cuda::launch_signal_square_terms(right_hand_side, signal_cn_terms_.data(), level_count,
-                                     stream_);
+  [[nodiscard]] float signal_rhs_rms(const float* right_hand_side, std::uint32_t signal_count,
+                                     std::uint32_t level_count) {
+    cuda::launch_signal_square_terms(right_hand_side, signal_cn_terms_.data(), signal_count,
+                                     grid_statics_.shape.sites, grid_statics_.fluid, stream_);
     check_cuda(cudaGetLastError(), "failed to launch the CUDA signal-norm kernel");
-    return std::sqrt(reduce_signal_terms(level_count, "CUDA signal norm failed") /
-                     static_cast<float>(level_count));
+    return std::sqrt(
+        reduce_signal_terms(signal_count * grid_statics_.fluid.count, "CUDA signal norm failed") /
+        static_cast<float>(level_count));
   }
 
   [[nodiscard]] std::pair<const float*, SignalSolveReport> solve_signal_crank_nicolson(
@@ -1239,7 +1256,8 @@ class CudaBackend final : public ComputeBackend {
                                          x_faces, y_faces, z_faces, has_velocity_field, boundaries,
                                          shape, spacing, half_dt, signal_count, level_count);
             },
-        .right_hand_side_rms = [&] { return signal_rhs_rms(right_hand_side, level_count); },
+        .right_hand_side_rms =
+            [&] { return signal_rhs_rms(right_hand_side, signal_count, level_count); },
         .operator_scale = operator_scale,
         .begin_sweeps =
             [&] {
@@ -1254,7 +1272,7 @@ class CudaBackend final : public ComputeBackend {
                   current, output, right_hand_side, diffusion, advection, fixed_values,
                   reaction_source, reaction_loss, obstacles, x_faces, y_faces, z_faces,
                   has_velocity_field, error, boundaries, shape, spacing, half_dt, signal_count,
-                  level_count, stream_);
+                  grid_statics_.fluid, stream_);
               check_cuda(cudaGetLastError(), "failed to launch the CUDA signal Jacobi kernel");
               detail::SignalSweepResult result;
               result.residual_rms = signal_residual_rms(
@@ -1434,7 +1452,18 @@ class CudaBackend final : public ComputeBackend {
   CudaBuffer<float> signal_x_faces_;
   CudaBuffer<float> signal_y_faces_;
   CudaBuffer<float> signal_z_faces_;
+  CudaBuffer<std::uint32_t> signal_fluid_sites_;
   CudaBuffer<std::uint32_t> signal_error_;
+  // The grid specification the transport buffers hold, zero for none, and
+  // what the kernels are told of it.
+  std::uint64_t grid_revision_{0};
+  GridStatics grid_statics_;
+  // The obstacle mask on the device, and a number that changes with it.
+  std::vector<std::uint8_t> grid_obstacles_;
+  std::uint64_t obstacle_stamp_{0};
+  ObstacleClearance signal_output_cleared_;
+  ObstacleClearance signal_cn_a_cleared_;
+  ObstacleClearance signal_cn_b_cleared_;
   CudaBuffer<float> signal_cn_a_;
   CudaBuffer<float> signal_cn_b_;
   CudaBuffer<float> signal_cn_terms_;
@@ -1460,15 +1489,6 @@ class CudaBackend final : public ComputeBackend {
   CudaBuffer<std::uint32_t> coupled_scatter_scan_b_;
   CudaBuffer<float> coupled_grid_levels_;
   CudaBuffer<float> coupled_grid_output_;
-  CudaBuffer<float> coupled_diffusion_;
-  CudaBuffer<float4> coupled_advection_;
-  CudaBuffer<float> coupled_fixed_values_;
-  CudaBuffer<float> coupled_reaction_source_;
-  CudaBuffer<float> coupled_reaction_loss_;
-  CudaBuffer<std::uint8_t> coupled_obstacles_;
-  CudaBuffer<float> coupled_x_faces_;
-  CudaBuffer<float> coupled_y_faces_;
-  CudaBuffer<float> coupled_z_faces_;
   CudaBuffer<std::uint32_t> coupled_error_;
 
   CudaBuffer<std::uint64_t> contact_ids_;

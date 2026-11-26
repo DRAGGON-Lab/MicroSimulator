@@ -44,9 +44,15 @@ class ComputeBackend {
   [[nodiscard]] virtual DepthAveragedFlowResult solve_depth_averaged_flow(
       const SignalGridSpec& spec, std::span<const float> mobility,
       const DepthAveragedFlowParameters& parameters) = 0;
+  [[nodiscard]] virtual DepthAveragedPortFlowResult solve_depth_averaged_port_flow(
+      const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> mobility,
+      const DepthAveragedPortFlowParameters& parameters) = 0;
   [[nodiscard]] virtual ResolvedFlowResult solve_resolved_flow(
       const SignalGridSpec& spec, std::span<const float> drag,
       const ResolvedFlowParameters& parameters) = 0;
+  [[nodiscard]] virtual ResolvedPortFlowResult solve_resolved_port_flow(
+      const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> drag,
+      const ResolvedPortFlowParameters& parameters) = 0;
 };
 
 [[nodiscard]] std::unique_ptr<ComputeBackend> make_cpu_backend(std::uint32_t device_index = 0);

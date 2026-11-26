@@ -108,9 +108,17 @@
               </label>
             </div>
             <label class="field">
+              <span>Show</span>
+              <select id="signal-mode">
+                <option value="single">One channel</option>
+                <option value="composite">Signal composite</option>
+              </select>
+            </label>
+            <label id="signal-channel-field" class="field">
               <span>Signal channel</span>
               <select id="signal-channel"></select>
             </label>
+            <div id="composite-signals" hidden></div>
             <label class="field">
               <span>Slice axis</span>
               <select id="signal-axis">

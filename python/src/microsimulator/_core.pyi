@@ -115,6 +115,10 @@ class GridFace(Enum):
     Z_LOWER: GridFace
     Z_UPPER: GridFace
 
+class SignalAdvectionKind(Enum):
+    UPWIND: SignalAdvectionKind
+    VAN_LEER: SignalAdvectionKind
+
 class SignalIntegrationKind(Enum):
     FORWARD_EULER: SignalIntegrationKind
     CRANK_NICOLSON: SignalIntegrationKind
@@ -194,9 +198,28 @@ class BackendInfo:
     @property
     def native(self) -> bool: ...
 
+class GridFacePatch:
+    begin: list[int]
+    end: list[int]
+
+    @overload
+    def __init__(self) -> None: ...
+    @overload
+    def __init__(self, begin: Sequence[int], end: Sequence[int]) -> None: ...
+
+class GridBoundaryPatch:
+    region: GridFacePatch
+    values: list[float]
+
+    @overload
+    def __init__(self) -> None: ...
+    @overload
+    def __init__(self, region: GridFacePatch, values: Sequence[float]) -> None: ...
+
 class GridBoundary:
     kind: GridBoundaryKind
     values: list[float]
+    patches: list[GridBoundaryPatch]
 
     def __init__(self) -> None: ...
     def validate(self, signal_count: int) -> None: ...
@@ -265,6 +288,91 @@ class DepthAveragedFlowResult:
     @property
     def report(self) -> DepthAveragedFlowReport: ...
 
+class FlowPortKind(Enum):
+    SPEED: FlowPortKind
+    PRESSURE: FlowPortKind
+
+class FlowPort:
+    face: GridFace
+    patch: GridFacePatch
+    kind: FlowPortKind
+    value: float
+
+    @overload
+    def __init__(self) -> None: ...
+    @overload
+    def __init__(
+        self, face: GridFace, patch: GridFacePatch, kind: FlowPortKind, value: float
+    ) -> None: ...
+
+class FlowPortState:
+    @property
+    def pressure(self) -> float: ...
+    @property
+    def flux(self) -> float: ...
+    @property
+    def mean_speed(self) -> float: ...
+
+class DepthAveragedPortFlowParameters:
+    relative_tolerance: float
+    max_iterations: int
+
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+
+class DepthAveragedPortFlowReport:
+    @property
+    def solves(self) -> int: ...
+    @property
+    def iterations(self) -> int: ...
+    @property
+    def relative_residual(self) -> float: ...
+    @property
+    def max_speed(self) -> float: ...
+
+class DepthAveragedPortFlowResult:
+    @property
+    def field(self) -> SignalGridVelocityField: ...
+    @property
+    def report(self) -> DepthAveragedPortFlowReport: ...
+    @property
+    def ports(self) -> list[FlowPortState]: ...
+
+class ResolvedPortFlowParameters:
+    relative_tolerance: float
+    max_outer_iterations: int
+    inner_relative_tolerance: float
+    max_inner_iterations: int
+
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+
+class ResolvedPortFlowReport:
+    @property
+    def solves(self) -> int: ...
+    @property
+    def outer_iterations(self) -> int: ...
+    @property
+    def inner_iterations(self) -> int: ...
+    @property
+    def relative_residual(self) -> float: ...
+    @property
+    def momentum_relative_residual(self) -> float: ...
+    @property
+    def divergence_rms(self) -> float: ...
+    @property
+    def max_speed(self) -> float: ...
+    @property
+    def min_gap_voxels(self) -> int: ...
+
+class ResolvedPortFlowResult:
+    @property
+    def field(self) -> SignalGridVelocityField: ...
+    @property
+    def report(self) -> ResolvedPortFlowReport: ...
+    @property
+    def ports(self) -> list[FlowPortState]: ...
+
 class ResolvedFlowParameters:
     mean_inlet_speed: float
     axis: FlowAxis
@@ -311,6 +419,7 @@ class SignalGridSpec:
     obstacles: list[int]
     velocity_field: SignalGridVelocityField | None
     integration: SignalIntegrationKind
+    advection_scheme: SignalAdvectionKind
     solver: SignalSolveParameters
     x_lower: GridBoundary
     x_upper: GridBoundary
@@ -700,6 +809,9 @@ class Simulation:
     def set_velocity_field(self, field: SignalGridVelocityField | None) -> None: ...
     def set_signal_reaction(self, reaction: SignalGridAffineReaction | None) -> None: ...
     def set_signal_boundary_values(self, face: GridFace, values: list[float]) -> None: ...
+    def set_signal_boundary_patch_values(
+        self, face: GridFace, patch: int, values: list[float]
+    ) -> None: ...
     def divide(self, parent_id: int, first_fraction: float) -> tuple[int, int]: ...
     def divide_equal(self, parent_id: int) -> tuple[int, int]: ...
     @overload
@@ -728,6 +840,20 @@ class Simulation:
         drag: list[float] = ...,
         parameters: ResolvedFlowParameters = ...,
     ) -> ResolvedFlowResult: ...
+    def solve_depth_averaged_port_flow(
+        self,
+        spec: SignalGridSpec,
+        ports: Sequence[FlowPort],
+        mobility: list[float] = ...,
+        parameters: DepthAveragedPortFlowParameters = ...,
+    ) -> DepthAveragedPortFlowResult: ...
+    def solve_resolved_port_flow(
+        self,
+        spec: SignalGridSpec,
+        ports: Sequence[FlowPort],
+        drag: list[float] = ...,
+        parameters: ResolvedPortFlowParameters = ...,
+    ) -> ResolvedPortFlowResult: ...
     def cell(self, id: int) -> CellSnapshot: ...
     def cells(self) -> list[CellSnapshot]: ...
     def lineage_parent(self, id: int) -> int | None: ...

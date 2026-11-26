@@ -33,6 +33,11 @@ constexpr NameTable<SignalIntegrationKind, 3> signal_integration_kinds{{
     {SignalIntegrationKind::backward_euler, "backward_euler"},
 }};
 
+constexpr NameTable<SignalAdvectionKind, 2> signal_advection_kinds{{
+    {SignalAdvectionKind::upwind, "upwind"},
+    {SignalAdvectionKind::van_leer, "van_leer"},
+}};
+
 constexpr auto rate_ops = std::to_array<std::pair<RateOp, std::string_view>>({
 #define MICROSIMULATOR_RATE_OP(name, code) {RateOp::name, #name},
 #include "microsimulator/rate_ops.def"
@@ -88,6 +93,13 @@ std::string_view signal_integration_kind_name(SignalIntegrationKind kind) {
 }
 std::optional<SignalIntegrationKind> parse_signal_integration_kind(std::string_view name) noexcept {
   return parse(signal_integration_kinds, name);
+}
+
+std::string_view signal_advection_kind_name(SignalAdvectionKind kind) {
+  return name_of(signal_advection_kinds, kind);
+}
+std::optional<SignalAdvectionKind> parse_signal_advection_kind(std::string_view name) noexcept {
+  return parse(signal_advection_kinds, name);
 }
 
 std::string_view rate_op_name(RateOp operation) {

@@ -156,10 +156,10 @@ MetalFlowGridParameters make_grid_parameters(const detail::FlowGridLayout& layou
                        static_cast<std::uint32_t>(offsets[2]), face_count},
       .face_counts = {static_cast<std::uint32_t>(counts[0]), static_cast<std::uint32_t>(counts[1]),
                       static_cast<std::uint32_t>(counts[2]), face_count},
-      .flow_axis = static_cast<std::uint32_t>(layout.flow_axis()),
       .site_count = site_count,
       .total_face_count = face_count,
-      .padding = 0,
+      .padding0 = 0,
+      .padding1 = 0,
   };
 }
 
@@ -189,6 +189,10 @@ struct FlowSolver::Impl {
       depth_precondition = make_pipeline(device, depth_library, @"depth_pair_precondition");
       depth_direction = make_pipeline(device, depth_library, @"depth_pair_direction");
       depth_dot = make_pipeline(device, depth_library, @"depth_pair_dot");
+      depth_sum = make_pipeline(device, depth_library, @"depth_pair_sum");
+      depth_fold = make_pipeline(device, depth_library, @"depth_pair_fold");
+      depth_step_length = make_pipeline(device, depth_library, @"depth_pair_step_length");
+      depth_step_weight = make_pipeline(device, depth_library, @"depth_pair_step_weight");
       momentum = make_pipeline(device, library, @"resolved_flow_momentum");
       gradient = make_pipeline(device, library, @"resolved_flow_gradient");
       divergence = make_pipeline(device, library, @"resolved_flow_divergence");
@@ -372,34 +376,140 @@ struct FlowSolver::Impl {
     return allocate(count * sizeof(MetalFloatPair), description);
   }
 
-  double depth_dot_product(id<MTLBuffer> left, id<MTLBuffer> right, std::uint32_t count,
-                           id<MTLBuffer> partials) const {
-    const auto block_width = reduction_width;
-    const auto block_count = (count + block_width - 1) / block_width;
-    dispatch(depth_dot, block_count, "Metal depth-averaged reduction failed",
-             [&](id<MTLComputeCommandEncoder> encoder) {
-               [encoder setBuffer:left offset:0 atIndex:0];
-               [encoder setBuffer:right offset:0 atIndex:1];
-               [encoder setBuffer:partials offset:0 atIndex:2];
-               [encoder setBytes:&count length:sizeof(count) atIndex:3];
-               [encoder setBytes:&block_width length:sizeof(block_width) atIndex:4];
-             });
-    const auto* values = static_cast<const MetalFloatPair*>(partials.contents);
-    double result = 0.0;
-    for (std::uint32_t index = 0; index < block_count; ++index) {
-      result += static_cast<double>(values[index].high) + static_cast<double>(values[index].low);
-    }
-    return result;
+  // Where the depth-averaged kernels keep a solve's scalars and counters.
+  enum DepthScalar : std::uint32_t {
+    depth_rho = 0,
+    depth_curvature = 1,
+    depth_residual_squared = 2,
+    depth_next_rho = 3,
+    depth_scalar_count = 6,
+  };
+  enum DepthCounter : std::uint32_t {
+    depth_iterations = 0,
+    depth_stopped = 1,
+    depth_converged = 2,
+    depth_failure = 3,
+    depth_counter_count = 4,
+  };
+
+  // Encodes one kernel over `count` threads into a command that other
+  // dispatches share. Dispatches of one encoder run in the order encoded.
+  template <typename Bind>
+  static void encode(id<MTLComputeCommandEncoder> encoder, id<MTLComputePipelineState> pipeline,
+                     std::uint32_t count, Bind&& bind) {
+    [encoder setComputePipelineState:pipeline];
+    bind(encoder);
+    const auto width = std::min<NSUInteger>(pipeline.maxTotalThreadsPerThreadgroup, 256);
+    [encoder dispatchThreads:MTLSizeMake(count, 1, 1)
+        threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
   }
 
-  // The depth-averaged pressure solve on double-word vectors, which follow the
-  // double-precision vectors of the CPU and CUDA backends.
+  // Encodes the dot product of two double-word vectors, left among the
+  // solve's scalars at `place`.
+  void encode_depth_dot(id<MTLComputeCommandEncoder> encoder, id<MTLBuffer> left,
+                        id<MTLBuffer> right, std::uint32_t count, id<MTLBuffer> partials,
+                        id<MTLBuffer> folded, id<MTLBuffer> scalars, std::uint32_t place) const {
+    const auto block_width = reduction_width;
+    auto block_count = (count + block_width - 1) / block_width;
+    encode(encoder, depth_dot, block_count, [&](id<MTLComputeCommandEncoder> bound) {
+      [bound setBuffer:left offset:0 atIndex:0];
+      [bound setBuffer:right offset:0 atIndex:1];
+      [bound setBuffer:partials offset:0 atIndex:2];
+      [bound setBytes:&count length:sizeof(count) atIndex:3];
+      [bound setBytes:&block_width length:sizeof(block_width) atIndex:4];
+    });
+    // The partials are added in groups, and the groups by one thread, so
+    // that no thread adds more than a few hundred values.
+    id<MTLBuffer> terms = partials;
+    if (block_count > 2 * depth_fold_width) {
+      const auto group_width = depth_fold_width;
+      const auto group_count = (block_count + group_width - 1) / group_width;
+      encode(encoder, depth_fold, group_count, [&](id<MTLComputeCommandEncoder> bound) {
+        [bound setBuffer:partials offset:0 atIndex:0];
+        [bound setBuffer:folded offset:0 atIndex:1];
+        [bound setBytes:&block_count length:sizeof(block_count) atIndex:2];
+        [bound setBytes:&group_width length:sizeof(group_width) atIndex:3];
+      });
+      terms = folded;
+      block_count = group_count;
+    }
+    encode(encoder, depth_sum, 1, [&](id<MTLComputeCommandEncoder> bound) {
+      [bound setBuffer:terms offset:0 atIndex:0];
+      [bound setBuffer:scalars offset:0 atIndex:1];
+      [bound setBytes:&block_count length:sizeof(block_count) atIndex:2];
+      [bound setBytes:&place length:sizeof(place) atIndex:3];
+    });
+  }
+
+  // Runs what `body` encodes as one command and waits for it.
+  template <typename Body>
+  void run_command(const char* operation, Body&& body) const {
+    @autoreleasepool {
+      id<MTLCommandBuffer> command = [queue commandBuffer];
+      id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+      if (command == nil || encoder == nil) {
+        throw std::runtime_error(std::string(operation) + ": failed to create a command");
+      }
+      body(encoder);
+      [encoder endEncoding];
+      wait_for_command(command, operation);
+    }
+  }
+
+  // Solves one depth-averaged pressure system and returns the velocity on
+  // every face of its grid.
+  std::vector<float> solve_depth_system(const detail::DepthAveragedFlowSystem& system,
+                                        float tolerance, std::uint32_t max_iterations,
+                                        PcgReport& report) const {
+    const auto grid = make_grid_parameters(system.layout());
+    const auto& active = system.active();
+    const auto count = static_cast<std::uint32_t>(active.size());
+    const auto mobility_buffer = upload<float>(system.mobility(), "depth mobility");
+    const auto diagonal_buffer = upload<float>(active.diagonal, "depth diagonal");
+    const auto rhs_buffer = upload<float>(active.right_hand_side, "depth right-hand side");
+    const auto boundary_buffer =
+        upload<float>(active.boundary_conductance, "depth boundary conductance");
+    const auto neighbor_buffer = upload<std::uint32_t>(active.neighbors, "depth neighbors");
+    const auto conductance_buffer = upload<float>(active.conductance, "depth conductance");
+    const auto face_conductance_buffer =
+        upload<float>(system.face_conductance(), "depth face conductance");
+    const auto face_pressure_buffer = upload<float>(system.face_pressure(), "depth face pressure");
+    const auto solution_buffer = pair_buffer(count, "depth active pressure");
+    const auto velocity_buffer = float_buffer(grid.total_face_count, "depth velocity");
+    report = solve_depth_pcg(rhs_buffer, diagonal_buffer, neighbor_buffer, conductance_buffer,
+                             boundary_buffer, solution_buffer, count, grid.spacing, tolerance,
+                             max_iterations);
+    // The velocity kernel reads a pressure at every site of the grid; a new
+    // buffer is zero, which is the pressure of a site that is not active.
+    const auto pressure_buffer = pair_buffer(grid.site_count, "depth pressure");
+    const auto* solved = static_cast<const MetalFloatPair*>(solution_buffer.contents);
+    auto* pressure = static_cast<MetalFloatPair*>(pressure_buffer.contents);
+    for (std::uint32_t index = 0; index < count; ++index) {
+      pressure[active.sites[index]] = solved[index];
+    }
+    dispatch(depth_velocity, grid.total_face_count,
+             "Metal depth-averaged velocity reconstruction failed",
+             [&](id<MTLComputeCommandEncoder> encoder) {
+               [encoder setBuffer:pressure_buffer offset:0 atIndex:0];
+               [encoder setBuffer:mobility_buffer offset:0 atIndex:1];
+               [encoder setBuffer:velocity_buffer offset:0 atIndex:2];
+               [encoder setBytes:&grid length:sizeof(grid) atIndex:3];
+               [encoder setBuffer:face_conductance_buffer offset:0 atIndex:4];
+               [encoder setBuffer:face_pressure_buffer offset:0 atIndex:5];
+             });
+    const auto* values = static_cast<const float*>(velocity_buffer.contents);
+    return {values, values + grid.total_face_count};
+  }
+
+  // The depth-averaged pressure solve over a system's active sites, on
+  // double-word vectors, which follow the double-precision vectors of the CPU
+  // and CUDA backends. The solve's scalars stay on the device, so the host
+  // waits once for each batch of iterations.
   PcgReport solve_depth_pcg(id<MTLBuffer> right_hand_side, id<MTLBuffer> diagonal,
-                            id<MTLBuffer> mobility, id<MTLBuffer> solution,
-                            const MetalFlowGridParameters& grid, float tolerance,
+                            id<MTLBuffer> neighbors, id<MTLBuffer> conductance,
+                            id<MTLBuffer> boundary_conductance, id<MTLBuffer> solution,
+                            std::uint32_t count, const MetalFloat4& spacing, float tolerance,
                             std::uint32_t max_iterations) const {
-    const auto count = grid.site_count;
-    const auto spacing = grid.spacing;
     const std::array inverse_square{
         split(1.0 / (static_cast<double>(spacing.x) * spacing.x)),
         split(1.0 / (static_cast<double>(spacing.y) * spacing.y)),
@@ -415,77 +525,112 @@ struct FlowSolver::Impl {
     const auto preconditioned = pair_buffer(count, "depth preconditioned residual");
     const auto direction = pair_buffer(count, "depth direction");
     const auto transformed = pair_buffer(count, "depth transformed vector");
-    const auto partials =
-        pair_buffer((count + reduction_width - 1) / reduction_width, "depth reduction partials");
-    const detail::ConjugateGradientOperations operations{
+    const auto partial_count = (count + reduction_width - 1) / reduction_width;
+    const auto partials = pair_buffer(partial_count, "depth reduction partials");
+    const auto folded = pair_buffer((partial_count + depth_fold_width - 1) / depth_fold_width,
+                                    "depth folded partials");
+    const auto scalars = pair_buffer(depth_scalar_count, "depth solve scalars");
+    const auto counters =
+        allocate(depth_counter_count * sizeof(std::uint32_t), "depth solve counters");
+    const auto scalar = [&](std::uint32_t place) {
+      const auto value = static_cast<const MetalFloatPair*>(scalars.contents)[place];
+      return static_cast<double>(value.high) + static_cast<double>(value.low);
+    };
+    const auto counter = [&](std::uint32_t place) {
+      return static_cast<const std::uint32_t*>(counters.contents)[place];
+    };
+    const detail::BatchedConjugateGradientOperations operations{
         .initialize =
             [&] {
-              dispatch(depth_initialize, count, "Metal depth-averaged PCG initialization failed",
-                       [&](id<MTLComputeCommandEncoder> encoder) {
-                         [encoder setBuffer:right_hand_side offset:0 atIndex:0];
-                         [encoder setBuffer:diagonal offset:0 atIndex:1];
-                         [encoder setBuffer:solution offset:0 atIndex:2];
-                         [encoder setBuffer:residual offset:0 atIndex:3];
-                         [encoder setBuffer:preconditioned offset:0 atIndex:4];
-                         [encoder setBuffer:direction offset:0 atIndex:5];
-                         [encoder setBytes:&count length:sizeof(count) atIndex:6];
-                       });
+              std::memset(scalars.contents, 0, scalars.length);
+              std::memset(counters.contents, 0, counters.length);
+              run_command("Metal depth-averaged PCG initialization failed",
+                          [&](id<MTLComputeCommandEncoder> encoder) {
+                            encode(encoder, depth_initialize, count,
+                                   [&](id<MTLComputeCommandEncoder> bound) {
+                                     [bound setBuffer:right_hand_side offset:0 atIndex:0];
+                                     [bound setBuffer:diagonal offset:0 atIndex:1];
+                                     [bound setBuffer:solution offset:0 atIndex:2];
+                                     [bound setBuffer:residual offset:0 atIndex:3];
+                                     [bound setBuffer:preconditioned offset:0 atIndex:4];
+                                     [bound setBuffer:direction offset:0 atIndex:5];
+                                     [bound setBytes:&count length:sizeof(count) atIndex:6];
+                                   });
+                            encode_depth_dot(encoder, residual, residual, count, partials, folded,
+                                             scalars, depth_residual_squared);
+                            encode_depth_dot(encoder, residual, preconditioned, count, partials,
+                                             folded, scalars, depth_rho);
+                          });
+              return scalar(depth_residual_squared);
             },
-        .residual_dot_residual =
-            [&] { return depth_dot_product(residual, residual, count, partials); },
-        .residual_dot_preconditioned =
-            [&] { return depth_dot_product(residual, preconditioned, count, partials); },
-        .apply_direction =
-            [&] {
-              dispatch(depth_operator, count, "Metal depth-averaged operator failed",
-                       [&](id<MTLComputeCommandEncoder> encoder) {
-                         [encoder setBuffer:direction offset:0 atIndex:0];
-                         [encoder setBuffer:mobility offset:0 atIndex:1];
-                         [encoder setBuffer:diagonal offset:0 atIndex:2];
-                         [encoder setBuffer:transformed offset:0 atIndex:3];
-                         [encoder setBytes:&grid length:sizeof(grid) atIndex:4];
-                         [encoder setBytes:&scales length:sizeof(scales) atIndex:5];
-                       });
-              return depth_dot_product(direction, transformed, count, partials);
+        .iterate =
+            [&](std::uint32_t iterations, double threshold) {
+              const auto bound_squared = split(threshold);
+              run_command(
+                  "Metal depth-averaged PCG iteration failed",
+                  [&](id<MTLComputeCommandEncoder> encoder) {
+                    for (std::uint32_t iteration = 0; iteration < iterations; ++iteration) {
+                      encode(encoder, depth_operator, count,
+                             [&](id<MTLComputeCommandEncoder> bound) {
+                               [bound setBuffer:direction offset:0 atIndex:0];
+                               [bound setBuffer:neighbors offset:0 atIndex:1];
+                               [bound setBuffer:conductance offset:0 atIndex:2];
+                               [bound setBuffer:transformed offset:0 atIndex:3];
+                               [bound setBytes:&count length:sizeof(count) atIndex:4];
+                               [bound setBytes:&scales length:sizeof(scales) atIndex:5];
+                               [bound setBuffer:boundary_conductance offset:0 atIndex:6];
+                             });
+                      encode_depth_dot(encoder, direction, transformed, count, partials, folded,
+                                       scalars, depth_curvature);
+                      encode(encoder, depth_step_length, 1,
+                             [&](id<MTLComputeCommandEncoder> bound) {
+                               [bound setBuffer:scalars offset:0 atIndex:0];
+                               [bound setBuffer:counters offset:0 atIndex:1];
+                             });
+                      encode(encoder, depth_update, count, [&](id<MTLComputeCommandEncoder> bound) {
+                        [bound setBuffer:solution offset:0 atIndex:0];
+                        [bound setBuffer:residual offset:0 atIndex:1];
+                        [bound setBuffer:direction offset:0 atIndex:2];
+                        [bound setBuffer:transformed offset:0 atIndex:3];
+                        [bound setBuffer:scalars offset:0 atIndex:4];
+                        [bound setBytes:&count length:sizeof(count) atIndex:5];
+                      });
+                      encode_depth_dot(encoder, residual, residual, count, partials, folded,
+                                       scalars, depth_residual_squared);
+                      encode(encoder, depth_precondition, count,
+                             [&](id<MTLComputeCommandEncoder> bound) {
+                               [bound setBuffer:residual offset:0 atIndex:0];
+                               [bound setBuffer:diagonal offset:0 atIndex:1];
+                               [bound setBuffer:preconditioned offset:0 atIndex:2];
+                               [bound setBytes:&count length:sizeof(count) atIndex:3];
+                             });
+                      encode_depth_dot(encoder, residual, preconditioned, count, partials, folded,
+                                       scalars, depth_next_rho);
+                      encode(
+                          encoder, depth_step_weight, 1, [&](id<MTLComputeCommandEncoder> bound) {
+                            [bound setBuffer:scalars offset:0 atIndex:0];
+                            [bound setBuffer:counters offset:0 atIndex:1];
+                            [bound setBytes:&bound_squared length:sizeof(bound_squared) atIndex:2];
+                          });
+                      encode(encoder, depth_direction, count,
+                             [&](id<MTLComputeCommandEncoder> bound) {
+                               [bound setBuffer:preconditioned offset:0 atIndex:0];
+                               [bound setBuffer:direction offset:0 atIndex:1];
+                               [bound setBuffer:scalars offset:0 atIndex:2];
+                               [bound setBytes:&count length:sizeof(count) atIndex:3];
+                             });
+                    }
+                  });
+              return detail::ConjugateGradientProgress{
+                  .iterations = counter(depth_iterations),
+                  .converged = counter(depth_converged) != 0,
+                  .failure = static_cast<detail::ConjugateGradientFailure>(counter(depth_failure)),
+                  .residual_squared = scalar(depth_residual_squared),
+              };
             },
-        .update =
-            [&](double step) {
-              const auto alpha = split(step);
-              dispatch(depth_update, count, "Metal depth-averaged PCG update failed",
-                       [&](id<MTLComputeCommandEncoder> encoder) {
-                         [encoder setBuffer:solution offset:0 atIndex:0];
-                         [encoder setBuffer:residual offset:0 atIndex:1];
-                         [encoder setBuffer:direction offset:0 atIndex:2];
-                         [encoder setBuffer:transformed offset:0 atIndex:3];
-                         [encoder setBytes:&alpha length:sizeof(alpha) atIndex:4];
-                         [encoder setBytes:&count length:sizeof(count) atIndex:5];
-                       });
-            },
-        .precondition =
-            [&] {
-              dispatch(depth_precondition, count, "Metal depth-averaged PCG preconditioner failed",
-                       [&](id<MTLComputeCommandEncoder> encoder) {
-                         [encoder setBuffer:residual offset:0 atIndex:0];
-                         [encoder setBuffer:diagonal offset:0 atIndex:1];
-                         [encoder setBuffer:preconditioned offset:0 atIndex:2];
-                         [encoder setBytes:&count length:sizeof(count) atIndex:3];
-                       });
-            },
-        .update_direction =
-            [&](double step) {
-              const auto beta = split(step);
-              dispatch(depth_direction, count, "Metal depth-averaged PCG direction update failed",
-                       [&](id<MTLComputeCommandEncoder> encoder) {
-                         [encoder setBuffer:preconditioned offset:0 atIndex:0];
-                         [encoder setBuffer:direction offset:0 atIndex:1];
-                         [encoder setBytes:&beta length:sizeof(beta) atIndex:2];
-                         [encoder setBytes:&count length:sizeof(count) atIndex:3];
-                       });
-            },
-        .step_limit = std::numeric_limits<float>::max(),
     };
-    const auto report = detail::preconditioned_conjugate_gradient(
-        operations, tolerance, max_iterations, "Metal depth-averaged flow");
+    const auto report = detail::batched_conjugate_gradient(
+        operations, tolerance, max_iterations, depth_batch, "Metal depth-averaged flow");
     return {.iterations = report.iterations,
             .relative_residual = static_cast<float>(report.relative_residual)};
   }
@@ -561,6 +706,103 @@ struct FlowSolver::Impl {
              });
   }
 
+  // Solves one resolved block system and returns its velocity on every face.
+  detail::ResolvedSystemSolve solve_resolved_system(
+      const detail::ResolvedFlowSystem& system,
+      const detail::ResolvedSolveControls& parameters) const {
+    const auto grid = make_grid_parameters(system.layout());
+    const auto fluid_buffer = upload<std::uint8_t>(system.fluid(), "fluid mask");
+    const auto active_buffer = upload<std::uint8_t>(system.active(), "active face mask");
+    const auto exists_buffer = upload<std::uint8_t>(system.exists(), "face existence mask");
+    const auto face_drag_buffer = upload<float>(system.face_drag(), "face drag");
+    const auto face_diagonal_buffer = upload<float>(system.diagonal(), "momentum diagonal");
+    const auto force_buffer = upload<float>(system.force(), "momentum force");
+    const auto pressure_diagonal = system.pressure_diagonal();
+    const auto pressure_diagonal_buffer = upload<float>(pressure_diagonal, "pressure diagonal");
+
+    const auto gradient = float_buffer(grid.total_face_count, "block gradient");
+    auto inner_workspace = make_workspace(grid.total_face_count, "momentum");
+    auto outer_workspace = make_workspace(grid.site_count, "pressure");
+    struct Vector {
+      id<MTLBuffer> u;
+      id<MTLBuffer> p;
+    };
+    const double continuity_scale =
+        1.0 / *std::min_element(system.layout().spacing().begin(), system.layout().spacing().end());
+    detail::FlexibleKrylovOperations<Vector> ops;
+    ops.make_zero = [&] {
+      Vector v{float_buffer(grid.total_face_count, "Krylov velocity"),
+               float_buffer(grid.site_count, "Krylov pressure")};
+      std::memset(v.u.contents, 0, grid.total_face_count * sizeof(float));
+      std::memset(v.p.contents, 0, grid.site_count * sizeof(float));
+      return v;
+    };
+    ops.copy = [&](const Vector& source, Vector& target) {
+      combine(source.u, target.u, 1, 0, grid.total_face_count);
+      combine(source.p, target.p, 1, 0, grid.site_count);
+    };
+    ops.axpy = [&](Vector& target, double alpha, const Vector& source) {
+      combine(source.u, target.u, static_cast<float>(alpha), 1, grid.total_face_count);
+      combine(source.p, target.p, static_cast<float>(alpha), 1, grid.site_count);
+    };
+    ops.dot = [&](const Vector& a, const Vector& b) {
+      return dot(a.u, b.u, grid.total_face_count, inner_workspace.partials) +
+             dot(a.p, b.p, grid.site_count, outer_workspace.partials);
+    };
+    ops.apply = [&](const Vector& input, Vector& output) {
+      apply_momentum(input.u, active_buffer, exists_buffer, face_drag_buffer, output.u, grid);
+      apply_gradient(input.p, fluid_buffer, active_buffer, gradient, grid);
+      combine(gradient, output.u, 1, 1, grid.total_face_count);
+      apply_divergence(input.u, fluid_buffer, output.p, grid);
+      combine(output.p, output.p, static_cast<float>(continuity_scale), 0, grid.site_count);
+    };
+    std::uint64_t inner_iterations = 0;
+    ops.precondition = [&](const Vector& input, Vector& output) {
+      const auto report =
+          solve_pcg(input.u, face_diagonal_buffer, output.u, inner_workspace, grid.total_face_count,
+                    parameters.inner_relative_tolerance, parameters.max_inner_iterations,
+                    "Metal momentum preconditioner", [&](id<MTLBuffer> x, id<MTLBuffer> y) {
+                      apply_momentum(x, active_buffer, exists_buffer, face_drag_buffer, y, grid);
+                    });
+      inner_iterations += report.iterations;
+      dispatch(pcg_precondition, grid.site_count, "Metal pressure preconditioner",
+               [&](id<MTLComputeCommandEncoder> encoder) {
+                 [encoder setBuffer:input.p offset:0 atIndex:0];
+                 [encoder setBuffer:pressure_diagonal_buffer offset:0 atIndex:1];
+                 [encoder setBuffer:output.p offset:0 atIndex:2];
+                 [encoder setBytes:&grid.site_count length:sizeof(grid.site_count) atIndex:3];
+               });
+      combine(output.p, output.p, static_cast<float>(-1 / continuity_scale), 0, grid.site_count);
+    };
+    auto rhs = ops.make_zero();
+    combine(force_buffer, rhs.u, 1, 0, grid.total_face_count);
+    const auto solution = detail::flexible_gmres(ops, rhs, parameters.relative_tolerance,
+                                                 parameters.max_outer_iterations);
+    auto residual = ops.make_zero();
+    ops.apply(solution.solution, residual);
+    ops.axpy(residual, -1, rhs);
+    const auto momentum_square =
+        dot(residual.u, residual.u, grid.total_face_count, inner_workspace.partials);
+    const auto force_square = dot(rhs.u, rhs.u, grid.total_face_count, inner_workspace.partials);
+    const auto divergence_square =
+        dot(residual.p, residual.p, grid.site_count, outer_workspace.partials);
+    const auto fluid_count =
+        std::count(system.fluid().begin(), system.fluid().end(), std::uint8_t{1});
+    const double divergence_rms =
+        fluid_count == 0
+            ? 0.0
+            : std::sqrt(divergence_square / static_cast<double>(fluid_count)) / continuity_scale;
+    const auto* values = static_cast<const float*>(solution.solution.u.contents);
+    return {
+        .velocity = {values, values + grid.total_face_count},
+        .outer_iterations = solution.iterations,
+        .inner_iterations = inner_iterations,
+        .relative_residual = static_cast<float>(solution.relative_residual),
+        .momentum_relative_residual = static_cast<float>(std::sqrt(momentum_square / force_square)),
+        .divergence_rms = divergence_rms,
+    };
+  }
+
   id<MTLDevice> device;
   id<MTLCommandQueue> queue;
   id<MTLComputePipelineState> depth_operator;
@@ -570,6 +812,10 @@ struct FlowSolver::Impl {
   id<MTLComputePipelineState> depth_precondition;
   id<MTLComputePipelineState> depth_direction;
   id<MTLComputePipelineState> depth_dot;
+  id<MTLComputePipelineState> depth_sum;
+  id<MTLComputePipelineState> depth_fold;
+  id<MTLComputePipelineState> depth_step_length;
+  id<MTLComputePipelineState> depth_step_weight;
   id<MTLComputePipelineState> momentum;
   id<MTLComputePipelineState> gradient;
   id<MTLComputePipelineState> divergence;
@@ -582,6 +828,10 @@ struct FlowSolver::Impl {
   id<MTLComputePipelineState> vector_combine;
   id<MTLComputePipelineState> dot_partial;
   static constexpr std::uint32_t reduction_width = shared::flow_reduction_width;
+  // Iterations of the depth-averaged solve encoded into one command.
+  static constexpr std::uint32_t depth_batch = 64;
+  // Block partials one thread adds when a dot product is folded.
+  static constexpr std::uint32_t depth_fold_width = 64;
 };
 
 FlowSolver::FlowSolver(std::uint32_t device_index) : impl_(std::make_unique<Impl>(device_index)) {
@@ -593,31 +843,17 @@ DepthAveragedFlowResult FlowSolver::solve_depth_averaged(
     const SignalGridSpec& spec, std::span<const float> mobility,
     const DepthAveragedFlowParameters& parameters) {
   parameters.validate();
-  const detail::ShallowFlowReduction reduction(spec, mobility, parameters.axis);
-  const detail::DepthAveragedFlowSystem system(reduction.grid(), reduction.conductance(),
-                                               parameters.axis);
-  const auto grid = make_grid_parameters(system.layout());
-  const auto mobility_buffer = impl_->upload<float>(system.mobility(), "depth mobility");
-  const auto diagonal_buffer = impl_->upload<float>(system.diagonal(), "depth diagonal");
-  const auto rhs_buffer = impl_->upload<float>(system.right_hand_side(), "depth right-hand side");
-  const auto pressure_buffer = impl_->pair_buffer(grid.site_count, "depth pressure");
-  const auto velocity_buffer = impl_->float_buffer(grid.total_face_count, "depth velocity");
-  const auto report =
-      impl_->solve_depth_pcg(rhs_buffer, diagonal_buffer, mobility_buffer, pressure_buffer, grid,
-                             parameters.relative_tolerance, parameters.max_iterations);
-  impl_->dispatch(impl_->depth_velocity, grid.total_face_count,
-                  "Metal depth-averaged velocity reconstruction failed",
-                  [&](id<MTLComputeCommandEncoder> encoder) {
-                    [encoder setBuffer:pressure_buffer offset:0 atIndex:0];
-                    [encoder setBuffer:mobility_buffer offset:0 atIndex:1];
-                    [encoder setBuffer:velocity_buffer offset:0 atIndex:2];
-                    [encoder setBytes:&grid length:sizeof(grid) atIndex:3];
-                  });
-  const auto* velocity_values = static_cast<const float*>(velocity_buffer.contents);
-  const std::span<const float> velocity(velocity_values, grid.total_face_count);
+  const auto reduction = detail::reduce_shallow_flow(spec, mobility, parameters.axis);
+  const auto axis = static_cast<std::size_t>(parameters.axis);
+  const detail::DepthAveragedFlowSystem system(
+      reduction.grid(), reduction.conductance(),
+      detail::axis_flow_boundary(reduction.reduced_layout(), axis));
+  PcgReport report;
+  const auto velocity = impl_->solve_depth_system(system, parameters.relative_tolerance,
+                                                  parameters.max_iterations, report);
   const auto scaled =
       detail::scale_velocity(spec, reduction.original_layout(), reduction.lift(velocity),
-                             reduction.open_inlet_faces(), parameters.mean_inlet_speed);
+                             reduction.open_inlet_faces(axis), parameters.mean_inlet_speed);
   return {
       .field = scaled.field,
       .report = {.iterations = report.iterations,
@@ -627,112 +863,48 @@ DepthAveragedFlowResult FlowSolver::solve_depth_averaged(
   };
 }
 
+DepthAveragedPortFlowResult FlowSolver::solve_depth_averaged_ports(
+    const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> mobility,
+    const DepthAveragedPortFlowParameters& parameters) {
+  parameters.validate();
+  const detail::ShallowPortFlow flow(spec, ports, mobility);
+  DepthAveragedPortFlowReport report;
+  const auto solution = flow.solve([&](const detail::DepthAveragedFlowSystem& system) {
+    PcgReport solve;
+    auto velocity = impl_->solve_depth_system(system, parameters.relative_tolerance,
+                                              parameters.max_iterations, solve);
+    report.iterations += solve.iterations;
+    report.relative_residual = std::max(report.relative_residual, solve.relative_residual);
+    return velocity;
+  });
+  report.solves = solution.solves;
+  report.max_speed = solution.max_speed;
+  return {
+      .field =
+          detail::make_velocity_field(spec, flow.reduction().original_layout(), solution.velocity),
+      .report = report,
+      .ports = solution.ports,
+  };
+}
+
 ResolvedFlowResult FlowSolver::solve_resolved(const SignalGridSpec& spec,
                                               std::span<const float> drag,
                                               const ResolvedFlowParameters& parameters) {
-  parameters.validate();
-  const detail::ResolvedFlowSystem system(spec, drag, parameters.axis);
-  const auto grid = make_grid_parameters(system.layout());
-  const auto fluid_buffer = impl_->upload<std::uint8_t>(system.fluid(), "fluid mask");
-  const auto active_buffer = impl_->upload<std::uint8_t>(system.active(), "active face mask");
-  const auto exists_buffer = impl_->upload<std::uint8_t>(system.exists(), "face existence mask");
-  const auto face_drag_buffer = impl_->upload<float>(system.face_drag(), "face drag");
-  const auto face_diagonal_buffer = impl_->upload<float>(system.diagonal(), "momentum diagonal");
-  const auto force_buffer = impl_->upload<float>(system.force(), "momentum force");
-  const auto pressure_diagonal = system.pressure_diagonal();
-  const auto pressure_diagonal_buffer =
-      impl_->upload<float>(pressure_diagonal, "pressure diagonal");
+  return detail::solve_resolved_axis_flow(
+      spec, drag, parameters,
+      [&](const detail::ResolvedFlowSystem& system, const detail::ResolvedSolveControls& controls) {
+        return impl_->solve_resolved_system(system, controls);
+      });
+}
 
-  const auto gradient = impl_->float_buffer(grid.total_face_count, "block gradient");
-  auto inner_workspace = impl_->make_workspace(grid.total_face_count, "momentum");
-  auto outer_workspace = impl_->make_workspace(grid.site_count, "pressure");
-  struct Vector {
-    id<MTLBuffer> u;
-    id<MTLBuffer> p;
-  };
-  const double continuity_scale =
-      1.0 / *std::min_element(system.layout().spacing().begin(), system.layout().spacing().end());
-  detail::FlexibleKrylovOperations<Vector> ops;
-  ops.make_zero = [&] {
-    Vector v{impl_->float_buffer(grid.total_face_count, "Krylov velocity"),
-             impl_->float_buffer(grid.site_count, "Krylov pressure")};
-    std::memset(v.u.contents, 0, grid.total_face_count * sizeof(float));
-    std::memset(v.p.contents, 0, grid.site_count * sizeof(float));
-    return v;
-  };
-  ops.copy = [&](const Vector& source, Vector& target) {
-    impl_->combine(source.u, target.u, 1, 0, grid.total_face_count);
-    impl_->combine(source.p, target.p, 1, 0, grid.site_count);
-  };
-  ops.axpy = [&](Vector& target, double alpha, const Vector& source) {
-    impl_->combine(source.u, target.u, static_cast<float>(alpha), 1, grid.total_face_count);
-    impl_->combine(source.p, target.p, static_cast<float>(alpha), 1, grid.site_count);
-  };
-  ops.dot = [&](const Vector& a, const Vector& b) {
-    return impl_->dot(a.u, b.u, grid.total_face_count, inner_workspace.partials) +
-           impl_->dot(a.p, b.p, grid.site_count, outer_workspace.partials);
-  };
-  ops.apply = [&](const Vector& input, Vector& output) {
-    impl_->apply_momentum(input.u, active_buffer, exists_buffer, face_drag_buffer, output.u, grid);
-    impl_->apply_gradient(input.p, fluid_buffer, active_buffer, gradient, grid);
-    impl_->combine(gradient, output.u, 1, 1, grid.total_face_count);
-    impl_->apply_divergence(input.u, fluid_buffer, output.p, grid);
-    impl_->combine(output.p, output.p, static_cast<float>(continuity_scale), 0, grid.site_count);
-  };
-  std::uint64_t inner_iterations = 0;
-  ops.precondition = [&](const Vector& input, Vector& output) {
-    const auto report = impl_->solve_pcg(
-        input.u, face_diagonal_buffer, output.u, inner_workspace, grid.total_face_count,
-        parameters.inner_relative_tolerance, parameters.max_inner_iterations,
-        "Metal momentum preconditioner", [&](id<MTLBuffer> x, id<MTLBuffer> y) {
-          impl_->apply_momentum(x, active_buffer, exists_buffer, face_drag_buffer, y, grid);
-        });
-    inner_iterations += report.iterations;
-    impl_->dispatch(impl_->pcg_precondition, grid.site_count, "Metal pressure preconditioner",
-                    [&](id<MTLComputeCommandEncoder> encoder) {
-                      [encoder setBuffer:input.p offset:0 atIndex:0];
-                      [encoder setBuffer:pressure_diagonal_buffer offset:0 atIndex:1];
-                      [encoder setBuffer:output.p offset:0 atIndex:2];
-                      [encoder setBytes:&grid.site_count length:sizeof(grid.site_count) atIndex:3];
-                    });
-    impl_->combine(output.p, output.p, static_cast<float>(-1 / continuity_scale), 0,
-                   grid.site_count);
-  };
-  auto rhs = ops.make_zero();
-  impl_->combine(force_buffer, rhs.u, 1, 0, grid.total_face_count);
-  const auto solution = detail::flexible_gmres(ops, rhs, parameters.relative_tolerance,
-                                               parameters.max_outer_iterations);
-  auto residual = ops.make_zero();
-  ops.apply(solution.solution, residual);
-  ops.axpy(residual, -1, rhs);
-  const auto momentum_square =
-      impl_->dot(residual.u, residual.u, grid.total_face_count, inner_workspace.partials);
-  const auto force_square =
-      impl_->dot(rhs.u, rhs.u, grid.total_face_count, inner_workspace.partials);
-  const auto divergence_square =
-      impl_->dot(residual.p, residual.p, grid.site_count, outer_workspace.partials);
-  const auto fluid_count =
-      std::count(system.fluid().begin(), system.fluid().end(), std::uint8_t{1});
-  const double divergence_rms =
-      fluid_count == 0
-          ? 0.0
-          : std::sqrt(divergence_square / static_cast<double>(fluid_count)) / continuity_scale;
-  const auto* values = static_cast<const float*>(solution.solution.u.contents);
-  const auto scaled = detail::scale_velocity(
-      spec, system.layout(), std::span<const float>(values, grid.total_face_count),
-      system.open_inlet_faces(), parameters.mean_inlet_speed);
-  return {
-      .field = scaled.field,
-      .report = {.outer_iterations = solution.iterations,
-                 .inner_iterations = inner_iterations,
-                 .relative_residual = static_cast<float>(solution.relative_residual),
-                 .momentum_relative_residual =
-                     static_cast<float>(std::sqrt(momentum_square / force_square)),
-                 .divergence_rms = static_cast<float>(divergence_rms * std::abs(scaled.factor)),
-                 .mean_inlet_speed = parameters.mean_inlet_speed,
-                 .max_speed = scaled.max_speed,
-                 .min_gap_voxels = system.minimum_gap_voxels()},
-  };
+ResolvedPortFlowResult FlowSolver::solve_resolved_ports(
+    const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> drag,
+    const ResolvedPortFlowParameters& parameters) {
+  return detail::solve_resolved_port_flow(
+      spec, ports, drag, parameters,
+      [&](const detail::ResolvedFlowSystem& system, const detail::ResolvedSolveControls& controls) {
+        return impl_->solve_resolved_system(system, controls);
+      });
 }
 
 }  // namespace microsimulator::metal

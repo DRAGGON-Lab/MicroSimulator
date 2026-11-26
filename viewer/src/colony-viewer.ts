@@ -334,9 +334,32 @@ export class ColonyViewer {
     if (slice === null) {
       return;
     }
-    const mapping = mapScalarColors(slice.values, range);
+    this.drawSignalSlice(slice, mapScalarColors(slice.values, range).colors);
+  }
+
+  /**
+   * Show a signal slice in the given sRGB display colors, one per pixel of the
+   * slice, as when several channels are blended into one picture.
+   */
+  public setSignalComposite(
+    slice: SignalSlice | null,
+    colors: readonly RGB[],
+  ): void {
+    this.signalTexture?.dispose();
+    this.signalTexture = null;
+    disposeGroup(this.signal);
+    if (slice === null) {
+      return;
+    }
+    if (colors.length !== slice.width * slice.height) {
+      throw new RangeError("signal composite needs one color per slice pixel");
+    }
+    this.drawSignalSlice(slice, colors);
+  }
+
+  private drawSignalSlice(slice: SignalSlice, colors: readonly RGB[]): void {
     const pixels = new Uint8Array(slice.width * slice.height * 4);
-    for (const [index, value] of mapping.colors.entries()) {
+    for (const [index, value] of colors.entries()) {
       const color = rgbBytes(value);
       const offset = index * 4;
       pixels[offset] = color[0];

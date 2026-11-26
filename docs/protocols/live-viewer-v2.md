@@ -1,16 +1,16 @@
-# Live viewer protocol v1
+# Live viewer protocol v2
 
 The live viewer protocol connects the independent browser renderer to one Python-owned simulation session. It does not expose simulation objects, Python evaluation, model loading, or client-selected filesystem paths.
 
 ## Authority boundary
 
-The server binds to loopback by default and creates a random bearer token for each process. A WebSocket upgrade at `/api/v1/session` succeeds only when its `token` query value matches that bearer token and its `Origin` exactly matches the HTTP server origin. Commands are limited to 4096 UTF-8 bytes. The server does not enable CORS.
+The server binds to loopback by default and creates a random bearer token for each process. A WebSocket upgrade at `/api/v2/session` succeeds only when its `token` query value matches that bearer token and its `Origin` exactly matches the HTTP server origin. Commands are limited to 4096 UTF-8 bytes. The server does not enable CORS.
 
 Static viewer assets have no engine authority. Possession of the per-process token grants control of that process, so callers must not publish or persist the live URL.
 
 ## Server messages
 
-Every new connection receives a `frame` message. The server also broadcasts a frame after a state-changing command and after every configured playback batch:
+Every new connection receives a frame. The server also broadcasts a frame after a state-changing command and after every configured playback batch. A frame is a text message, its header, followed by one binary message when the model has a signal grid:
 
 ```json
 {
@@ -19,11 +19,26 @@ Every new connection receives a `frame` message. The server also broadcasts a fr
   "completed_steps": 12,
   "playing": false,
   "checkpoint_enabled": true,
-  "scene": {}
+  "scene": {},
+  "signal_grid": {
+    "signal_count": 2,
+    "shape": [64, 48, 3],
+    "origin": [0.0, 0.0, 0.0],
+    "spacing": [1.0, 1.0, 1.0],
+    "boundaries": {},
+    "labels": ["Nutrient", null],
+    "levels": { "encoding": "float32-le", "byte_length": 73728, "sha256": "…" }
+  }
 }
 ```
 
-`scene` is a complete scene document at the current scene format version, including its RFC 8785 SHA-256 integrity value. `revision` changes once per step batch or reset. The browser must verify and validate each document as it would a scene file.
+`scene` is a complete scene document at the current scene format version, including its RFC 8785 SHA-256 integrity value, whose own `signal_grid` is null and whose signal labels are empty. `revision` changes once per step batch or reset. The browser must verify and validate the document as it would a scene file.
+
+The header's `signal_grid` describes the model's signal grid, or is null when the model has none. Its `signal_count`, `shape`, `origin`, `spacing` and `boundaries` are as a scene states them, and `labels` holds one string or null per signal. The grid's levels are not in the header. They are the binary message that follows it: `byte_length` bytes of little-endian IEEE 754 binary32, one value per signal and site in the scene's order, channel-major with `z` varying fastest, then `y`, then `x`. These are the engine's own values, so a level reads the same as in a scene file. `sha256` is the lowercase hexadecimal SHA-256 of those bytes; the browser must check the length against the grid and the digest against the bytes, and reject non-finite values, before showing the frame. A frame whose `signal_grid` is null has no binary message.
+
+Levels travel as bytes because they are most of a frame: a grid of a quarter of a million sites and four signals is 3 MB of binary32 and about 13 MB as decimal text, which the server would encode and the browser parse, canonicalize and hash for every frame.
+
+No other frame's messages come between a header and its levels on one connection, but a `checkpoint`, `error` or `session` message may. A client pairs a binary message with the latest header that announced levels, and treats a binary message that no header announced as a protocol error. A header whose levels never arrive, because delivery to a slow receiver timed out, is superseded by the next header.
 
 A successful checkpoint command returns the server-configured absolute path:
 
@@ -44,7 +59,7 @@ Intentional shutdown sends lifecycle notifications before closing the WebSocket 
 {"type":"session","state":"stopped"}
 ```
 
-`stopping` means admission of new work has ended. `stopped` means the active operation has finished and the simulation worker has terminated. Clients should process previously received messages (including asynchronous scene verification) before interpreting the subsequent socket close. A close without `stopped` is still an unexpected disconnect. These messages extend the v1 vocabulary; use a viewer built from the same release as the server.
+`stopping` means admission of new work has ended. `stopped` means the active operation has finished and the simulation worker has terminated. Clients should process previously received messages (including asynchronous scene verification) before interpreting the subsequent socket close. A close without `stopped` is still an unexpected disconnect. Use a viewer built from the same release as the server.
 
 ## Client commands
 

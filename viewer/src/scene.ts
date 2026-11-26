@@ -96,8 +96,12 @@ export interface SceneSignalGrid {
     zLower: SceneGridBoundary;
     zUpper: SceneGridBoundary;
   }>;
-  readonly levels: readonly number[];
+  /** One level per signal and site; a typed array when read from a live frame. */
+  readonly levels: ArrayLike<number>;
 }
+
+/** A signal grid's description apart from its levels. */
+export type SignalGridLayout = Omit<SceneSignalGrid, "levels">;
 
 export type ChannelKind = "species" | "signals";
 export interface ChannelMetadata {
@@ -527,6 +531,34 @@ function parseSignalGrid(value: unknown, path: string): SceneSignalGrid | null {
     "boundaries",
     "levels",
   ]);
+  const layout = parseSignalGridLayout(data, path);
+  const levels = floatArray(data.levels, `${path}.levels`);
+  const expectedLevels = signalGridLevelCount(layout);
+  if (levels.length !== expectedLevels) {
+    return fail(`${path}.levels`, `expected ${expectedLevels} values`);
+  }
+  return { ...layout, levels };
+}
+
+/** How many levels a grid of this layout holds: one per signal and site. */
+export function signalGridLevelCount(layout: SignalGridLayout): number {
+  const count =
+    layout.signalCount * layout.shape[0] * layout.shape[1] * layout.shape[2];
+  if (!Number.isSafeInteger(count)) {
+    throw new SceneFormatError("signal grid level count is not representable");
+  }
+  return count;
+}
+
+/**
+ * Validate the `signal_count`, `shape`, `origin`, `spacing` and `boundaries`
+ * of a signal grid, as a scene states them. The caller checks which keys the
+ * object holds and reads the levels.
+ */
+export function parseSignalGridLayout(
+  data: Record<string, unknown>,
+  path: string,
+): SignalGridLayout {
   const signalCount = sceneChannelCount(
     data.signal_count,
     `${path}.signal_count`,
@@ -550,14 +582,6 @@ function parseSignalGrid(value: unknown, path: string): SceneSignalGrid | null {
     "z_lower",
     "z_upper",
   ]);
-  const levels = floatArray(data.levels, `${path}.levels`);
-  const expectedLevels = signalCount * shape[0] * shape[1] * shape[2];
-  if (
-    !Number.isSafeInteger(expectedLevels) ||
-    levels.length !== expectedLevels
-  ) {
-    return fail(`${path}.levels`, `expected ${expectedLevels} values`);
-  }
   return {
     signalCount,
     shape,
@@ -595,8 +619,26 @@ function parseSignalGrid(value: unknown, path: string): SceneSignalGrid | null {
         signalCount,
       ),
     },
-    levels,
   };
+}
+
+/** Validate one group's channel labels: `count` entries, each a string or null. */
+export function parseChannelLabels(
+  value: unknown,
+  path: string,
+  count: number,
+): readonly (string | null)[] {
+  const values = array(value, path);
+  if (values.length !== count) {
+    return fail(path, `expected ${count} labels, got ${values.length}`);
+  }
+  return values.map((entry, index) => {
+    if (entry === null) return null;
+    const label = string(entry, `${path}[${index}]`);
+    if (/[\uD800-\uDFFF]/u.test(label))
+      return fail(`${path}[${index}]`, "invalid Unicode scalar value");
+    return label;
+  });
 }
 
 function parseChannelMetadata(
@@ -607,31 +649,9 @@ function parseChannelMetadata(
 ): ChannelMetadata {
   const data = record(value, path);
   exactKeys(data, path, ["species", "signals"]);
-  function labels(
-    kind: ChannelKind,
-    count: number,
-  ): readonly (string | null)[] {
-    const values = array(data[kind], `${path}.${kind}`);
-    if (values.length !== count) {
-      return fail(
-        `${path}.${kind}`,
-        `expected ${count} labels, got ${values.length}`,
-      );
-    }
-    return values.map((value, index) => {
-      if (value === null) return null;
-      const label = string(value, `${path}.${kind}[${index}]`);
-      if (/[\uD800-\uDFFF]/u.test(label))
-        return fail(
-          `${path}.${kind}[${index}]`,
-          "invalid Unicode scalar value",
-        );
-      return label;
-    });
-  }
   return {
-    species: labels("species", speciesCount),
-    signals: labels("signals", signalCount),
+    species: parseChannelLabels(data.species, `${path}.species`, speciesCount),
+    signals: parseChannelLabels(data.signals, `${path}.signals`, signalCount),
   };
 }
 

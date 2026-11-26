@@ -11,15 +11,84 @@ float grid_level(device const float* levels, GridShape shape, uint signal, uint 
   return levels[signal * shape.sites + site_index(shape, x, y, z)];
 }
 
-float exterior_value(uint kind, device const float* fixed_values, uint face, uint signal,
-                     uint signal_count, float current, float periodic) {
+float exterior_value(constant uint* boundary_kinds, device const float* fixed_values, uint face,
+                     uint plane, uint signal, uint signal_count, float current, float periodic) {
+  uint kind = boundary_kinds[face];
   if (kind == 0u) {
     return current;
   }
   if (kind == 1u) {
     return periodic;
   }
-  return fixed_values[face * signal_count + signal];
+  uint offset = boundary_kinds[6u + face];
+  if (offset == 0u) {
+    return fixed_values[face * signal_count + signal];
+  }
+  return fixed_values[offset + plane * signal_count + signal];
+}
+
+// What the van Leer scheme adds to the upwind site's concentration at a face:
+// half the limited slope, 0.5 * psi(r) * (downwind - upwind) with
+// r = (upwind - far) / (downwind - upwind) and psi(r) = (r + |r|) / (1 + |r|).
+// It is zero at an extremum, where the two differences disagree in sign.
+float van_leer_increment(float upwind, float downwind, float far) {
+  float behind = upwind - far;
+  float ahead = downwind - upwind;
+  return behind * ahead > 0.0f ? behind * ahead / (behind + ahead) : 0.0f;
+}
+
+// The limited corrections to the advective fluxes through a site's two faces
+// on one axis, as the upper face's less the lower face's. A face takes a
+// correction only when its upwind site, its downwind site and the site two
+// upwind are all fluid sites of the grid joined by open faces; otherwise it
+// keeps the upwind flux. `lower` and `upper` are the site's neighbors on the
+// axis as transport reads them, and `boundary_kinds[12]` holds the scheme.
+float van_leer_correction(device const float* levels, device const uchar* obstacles,
+                          GridShape shape, constant uint* boundary_kinds, uint signal,
+                          uint3 coordinate, uint axis, float current, float lower, float upper,
+                          bool closed_lower, bool closed_upper, float lower_velocity,
+                          float upper_velocity) {
+  uint3 dimensions = uint3(shape.x, shape.y, shape.z);
+  uint count = dimensions[axis];
+  bool periodic = boundary_kinds[2u * axis] == 1u && count >= 3u;
+  bool lower_site = !closed_lower && (coordinate[axis] > 0u || periodic);
+  bool upper_site = !closed_upper && (coordinate[axis] + 1u < count || periodic);
+  float lower_correction = 0.0f;
+  float upper_correction = 0.0f;
+  if (lower_site) {
+    if (lower_velocity >= 0.0f) {
+      // The site two below, where it is fluid in the grid.
+      if (coordinate[axis] >= 2u || periodic) {
+        uint3 beyond = coordinate;
+        beyond[axis] = (coordinate[axis] + count - 2u) % count;
+        if (obstacles[site_index(shape, beyond.x, beyond.y, beyond.z)] == 0u) {
+          lower_correction =
+              lower_velocity *
+              van_leer_increment(lower, current,
+                                 grid_level(levels, shape, signal, beyond.x, beyond.y, beyond.z));
+        }
+      }
+    } else if (upper_site) {
+      lower_correction = lower_velocity * van_leer_increment(current, lower, upper);
+    }
+  }
+  if (upper_site) {
+    if (upper_velocity >= 0.0f) {
+      if (lower_site) {
+        upper_correction = upper_velocity * van_leer_increment(current, upper, lower);
+      }
+    } else if (coordinate[axis] + 2u < count || periodic) {
+      uint3 beyond = coordinate;
+      beyond[axis] = (coordinate[axis] + 2u) % count;
+      if (obstacles[site_index(shape, beyond.x, beyond.y, beyond.z)] == 0u) {
+        upper_correction =
+            upper_velocity *
+            van_leer_increment(upper, current,
+                               grid_level(levels, shape, signal, beyond.x, beyond.y, beyond.z));
+      }
+    }
+  }
+  return upper_correction - lower_correction;
 }
 
 // Whether each of a site's six faces is closed to transport, and the velocity

@@ -1,0 +1,480 @@
+{
+  "version": "0.6.0",
+  "design": "trap_chamber_chip",
+  "passes": false,
+  "problems": 8,
+  "size_um": [
+    10000.0,
+    10000.0
+  ],
+  "thickness_um": 4000.0,
+  "glass_um": [
+    24000.0,
+    50000.0,
+    170.0
+  ],
+  "punch_um": 750.0,
+  "layers": [
+    {
+      "name": "trench",
+      "height_um": 1.65,
+      "gds": 1,
+      "colour": "#e0a030"
+    },
+    {
+      "name": "flow",
+      "height_um": 10.0,
+      "gds": 2,
+      "colour": "#4c9be8"
+    }
+  ],
+  "outlines": {},
+  "shapes": [
+    {
+      "path": "inlet.pad",
+      "layer": "flow",
+      "rect": [
+        4550.0,
+        2000.0,
+        5450.0,
+        2900.0
+      ]
+    },
+    {
+      "path": "trap.channel",
+      "layer": "flow",
+      "rect": [
+        4950.0,
+        2900.0,
+        5050.0,
+        3200.0
+      ]
+    },
+    {
+      "path": "trap.trap",
+      "layer": "trench",
+      "rect": [
+        5050.0,
+        3000.0,
+        5135.0,
+        3100.0
+      ]
+    },
+    {
+      "path": "outlet.pad",
+      "layer": "flow",
+      "rect": [
+        4550.0,
+        3200.0,
+        5450.0,
+        4100.0
+      ]
+    }
+  ],
+  "translates": [],
+  "ports": [
+    {
+      "path": "inlet.opening",
+      "at": [
+        5000.0,
+        2900.0
+      ],
+      "width_um": 100.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "path": "trap.inlet",
+      "at": [
+        5000.0,
+        2900.0
+      ],
+      "width_um": 100.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "path": "trap.outlet",
+      "at": [
+        5000.0,
+        3200.0
+      ],
+      "width_um": 100.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "path": "outlet.opening",
+      "at": [
+        5000.0,
+        3200.0
+      ],
+      "width_um": 100.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        -1.0
+      ]
+    }
+  ],
+  "access": [
+    [
+      5000.0,
+      2450.0
+    ],
+    [
+      5000.0,
+      3650.0
+    ]
+  ],
+  "flows": [
+    {
+      "element": "inlet",
+      "start": "inlet.opening",
+      "end": "inlet.access",
+      "flow_ul_min": -0.01,
+      "velocity_mm_s": 0.01851851851851852,
+      "shear_pa": 0.00783262782942655,
+      "reynolds": 0.0005232862375719519
+    },
+    {
+      "element": "trap",
+      "start": "inlet.opening",
+      "end": "outlet.opening",
+      "flow_ul_min": 0.010000000000000002,
+      "velocity_mm_s": 0.1666666666666667,
+      "shear_pa": 0.07470849422502156,
+      "reynolds": 0.004329004329004331
+    },
+    {
+      "element": "outlet",
+      "start": "outlet.opening",
+      "end": "outlet.access",
+      "flow_ul_min": 0.01,
+      "velocity_mm_s": 0.01851851851851852,
+      "shear_pa": 0.00783262782942655,
+      "reynolds": 0.0005232862375719519
+    }
+  ],
+  "pressures_mbar": {
+    "inlet.access": 0.05892382662798072,
+    "inlet.opening": 0.05187446158149682,
+    "outlet.access": 0.0,
+    "outlet.opening": 0.007049365046483898
+  },
+  "viscosity_mpa_s": 0.7,
+  "fractions": {
+    "nutrient": {
+      "inlet.access": 1.0,
+      "inlet.opening": 0.9999999999999999,
+      "outlet.access": 0.9999999999999999,
+      "outlet.opening": 0.9999999999999999
+    }
+  },
+  "tunables": [],
+  "requirements": [],
+  "instances": [
+    {
+      "path": "inlet",
+      "region": "access_pad",
+      "rect": [
+        4550.0,
+        2000.0,
+        5450.0,
+        2900.0
+      ],
+      "parameters": [
+        [
+          "pad_size",
+          "900um"
+        ],
+        [
+          "channel_width",
+          "100um"
+        ]
+      ]
+    },
+    {
+      "path": "trap",
+      "region": "trap_chamber",
+      "rect": [
+        4950.0,
+        2900.0,
+        5135.0,
+        3200.0
+      ],
+      "parameters": [
+        [
+          "channel_length",
+          "300um"
+        ],
+        [
+          "channel_width",
+          "100um"
+        ],
+        [
+          "trap_width",
+          "100um"
+        ],
+        [
+          "trap_length",
+          "85um"
+        ]
+      ]
+    },
+    {
+      "path": "outlet",
+      "region": "access_pad",
+      "rect": [
+        4550.0,
+        3200.0,
+        5450.0,
+        4100.0
+      ],
+      "parameters": [
+        [
+          "pad_size",
+          "900um"
+        ],
+        [
+          "channel_width",
+          "100um"
+        ]
+      ]
+    }
+  ],
+  "drives": [
+    {
+      "instance": "inlet",
+      "vertex": "inlet.access",
+      "at": [
+        5000.0,
+        2450.0
+      ],
+      "pressure_mbar": null,
+      "flow_ul_min": 0.01
+    },
+    {
+      "instance": "outlet",
+      "vertex": "outlet.access",
+      "at": [
+        5000.0,
+        3650.0
+      ],
+      "pressure_mbar": 0.0,
+      "flow_ul_min": null
+    }
+  ],
+  "checks": [
+    {
+      "id": "deterministic",
+      "title": "Reproducible build",
+      "group": "integrity",
+      "status": "satisfied",
+      "note": null,
+      "metrics": {},
+      "process": null
+    },
+    {
+      "id": "connectivity",
+      "title": "Connections",
+      "group": "function",
+      "status": "satisfied",
+      "note": null,
+      "metrics": {
+        "components": 1.0,
+        "edges": 3.0,
+        "nets": 2.0,
+        "open_to_flow": 1.0,
+        "ports": 4.0
+      },
+      "process": null
+    },
+    {
+      "id": "graph",
+      "title": "Flow",
+      "group": "function",
+      "status": "satisfied",
+      "note": null,
+      "metrics": {
+        "conservation_residual": 1.5146129380243424e-16,
+        "edges": 3.0,
+        "edges_without_flow": 0.0,
+        "inertial_loss_percent": 0.00023570921448427424,
+        "max_reynolds": 0.004329004329004331,
+        "vertices": 4.0
+      },
+      "process": null
+    },
+    {
+      "id": "rules",
+      "title": "Design rules",
+      "group": "fabrication",
+      "status": "violated",
+      "note": "10 of 10 limits are assumed, not published by COSINC: feature.width, feature.space, layer.overlap, resist.aspect, roof.span, port.pitch, port.edge, chip.size, layer.height, layer.count; also assumed, not published by COSINC: its tolerances and print model",
+      "metrics": {
+        "chip.size": 10.0,
+        "feature.space": 299.99999999999994,
+        "feature.width": 85.0,
+        "layer.count": 2.0,
+        "layer.height": 1.65,
+        "port.edge": 2450.0,
+        "port.pitch": 1200.0000000000005,
+        "resist.aspect": 0.1000000000000006,
+        "roof.span": 51.51515151515152
+      },
+      "process": "cosinc-su8-pdms"
+    },
+    {
+      "id": "mask-rules",
+      "title": "Design rules after mask preparation",
+      "group": "fabrication",
+      "status": "violated",
+      "note": "10 of 10 limits are assumed, not published by COSINC: feature.width, feature.space, layer.overlap, resist.aspect, roof.span, port.pitch, port.edge, chip.size, layer.height, layer.count; also assumed, not published by COSINC: its tolerances and print model",
+      "metrics": {
+        "chip.size": 10.0,
+        "feature.space": 299.99999999999994,
+        "feature.width": 88.0000000000004,
+        "layer.count": 2.0,
+        "layer.height": 1.65,
+        "layer.overlap": 3.0000000000003983,
+        "port.edge": 2450.0,
+        "port.pitch": 1200.0000000000005,
+        "resist.aspect": 0.1000000000000006,
+        "roof.span": 53.333333333333584
+      },
+      "process": "cosinc-su8-pdms"
+    },
+    {
+      "id": "gds-readback",
+      "title": "Mask file round trip",
+      "group": "integrity",
+      "status": "satisfied",
+      "note": null,
+      "metrics": {
+        "bytes": 372.0,
+        "flow.outlines": 3.0,
+        "structures": 1.0,
+        "trench.outlines": 1.0
+      },
+      "process": "cosinc-su8-pdms"
+    },
+    {
+      "id": "print",
+      "title": "Printable features",
+      "group": "fabrication",
+      "status": "satisfied",
+      "note": "features narrower than 3.2 um, by an uncalibrated model: its blur and threshold are not measurements of this process; each layer names its 20 worst",
+      "metrics": {
+        "flow.checked": 0.0,
+        "flow.failing": 0.0,
+        "flow.worst_error_um": 0.0,
+        "trench.checked": 0.0,
+        "trench.failing": 0.0,
+        "trench.worst_error_um": 0.0
+      },
+      "process": "cosinc-su8-pdms"
+    }
+  ],
+  "findings": [
+    {
+      "check": "rules",
+      "process": "cosinc-su8-pdms",
+      "group": "fabrication",
+      "rule": "roof.span",
+      "message": "the roof of trap.trap spans 51.5 times its height; past 12 it sags shut",
+      "waived": null,
+      "paths": [
+        "trap.trap"
+      ]
+    },
+    {
+      "check": "rules",
+      "process": "cosinc-su8-pdms",
+      "group": "fabrication",
+      "rule": "roof.span",
+      "message": "the roof of inlet.pad spans 15.0 times its height; past 12 it sags shut",
+      "waived": null,
+      "paths": [
+        "inlet.pad"
+      ]
+    },
+    {
+      "check": "rules",
+      "process": "cosinc-su8-pdms",
+      "group": "fabrication",
+      "rule": "roof.span",
+      "message": "the roof of outlet.pad spans 15.0 times its height; past 12 it sags shut",
+      "waived": null,
+      "paths": [
+        "outlet.pad"
+      ]
+    },
+    {
+      "check": "rules",
+      "process": "cosinc-su8-pdms",
+      "group": "fabrication",
+      "rule": "port.pitch",
+      "message": "the access point in inlet.pad and the access point in outlet.pad are 1200 um apart; tubing needs 2500 um",
+      "waived": null,
+      "paths": [
+        "inlet.pad",
+        "outlet.pad"
+      ]
+    },
+    {
+      "check": "mask-rules",
+      "process": "cosinc-su8-pdms",
+      "group": "fabrication",
+      "rule": "roof.span",
+      "message": "the roof of trap.trap spans 53.3 times its height; past 12 it sags shut",
+      "waived": null,
+      "paths": [
+        "trap.trap"
+      ]
+    },
+    {
+      "check": "mask-rules",
+      "process": "cosinc-su8-pdms",
+      "group": "fabrication",
+      "rule": "roof.span",
+      "message": "the roof of inlet.pad spans 15.0 times its height; past 12 it sags shut",
+      "waived": null,
+      "paths": [
+        "inlet.pad"
+      ]
+    },
+    {
+      "check": "mask-rules",
+      "process": "cosinc-su8-pdms",
+      "group": "fabrication",
+      "rule": "roof.span",
+      "message": "the roof of outlet.pad spans 15.0 times its height; past 12 it sags shut",
+      "waived": null,
+      "paths": [
+        "outlet.pad"
+      ]
+    },
+    {
+      "check": "mask-rules",
+      "process": "cosinc-su8-pdms",
+      "group": "fabrication",
+      "rule": "port.pitch",
+      "message": "the access point in inlet.pad and the access point in outlet.pad are 1200 um apart; tubing needs 2500 um",
+      "waived": null,
+      "paths": [
+        "inlet.pad",
+        "outlet.pad"
+      ]
+    }
+  ]
+}

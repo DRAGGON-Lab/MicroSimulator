@@ -52,7 +52,7 @@ Start with these documents when extending the engine:
 - [Species and signal labels](models/channel-labels.md) describes native and SBML channel metadata.
 - [Viewer guide](../viewer/README.md) covers static scenes, interactive sessions, controls, development, and tests.
 - [Scene format v3](formats/scene-v3.md) defines the data exchanged with visualization clients.
-- [Live viewer protocol v1](protocols/live-viewer-v1.md) defines the authenticated loopback protocol for interactive sessions.
+- [Live viewer protocol v2](protocols/live-viewer-v2.md) defines the authenticated loopback protocol for interactive sessions.
 
 ## Execution environments
 
@@ -67,7 +67,7 @@ The [testing and validation guide](development/validation.md) distinguishes comp
 
 - [Run manifest v1](formats/run-manifest-v1.md) defines reproducible batch jobs and parameter sweeps.
 - [Scene format v3](formats/scene-v3.md) defines data-only visualization frames.
-- [Live viewer protocol v1](protocols/live-viewer-v1.md) defines interactive viewer messages and authority boundaries.
+- [Live viewer protocol v2](protocols/live-viewer-v2.md) defines interactive viewer messages and authority boundaries.
 - [Checkpoint design](architecture/0004-checkpoints.md) defines restart state and the checkpoint file format.
 - [Analysis dataset design](architecture/0013-analysis-datasets.md) defines Parquet/Zarr schemas and provenance.
 

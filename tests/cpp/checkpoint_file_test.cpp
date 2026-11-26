@@ -81,7 +81,11 @@ void assert_parse_rejected(std::string_view text, std::string_view fragment) {
   spec.spacing = {1.0F, 1.0F, 1.0F};
   spec.diffusion = {0.05F, 0.02F};
   spec.advection = {{0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}};
-  spec.x_lower = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {1.0F, 0.5F}};
+  spec.x_lower = {
+      .kind = microsimulator::GridBoundaryKind::fixed,
+      .values = {1.0F, 0.5F},
+      .patches = {{.region = {.begin = {0, 1}, .end = {2, 2}}, .values = {0.25F, 2.0F}}},
+  };
   spec.reaction = microsimulator::SignalGridAffineReaction{
       .source_rates = std::vector<float>(24, 0.01F),
       .loss_rates = std::vector<float>(24, 0.02F),
@@ -173,6 +177,13 @@ int main() {
   assert(decoded.channel_metadata == document.channel_metadata.resolved(2, 2));
   assert(microsimulator::encode_checkpoint(decoded) == text);
 
+  // A fixed boundary's patches are part of the saved grid.
+  const auto& saved_patches = decoded.simulation.signal_grid->spec.x_lower.patches;
+  assert(saved_patches.size() == 1);
+  assert((saved_patches[0].region.begin == std::array<std::uint32_t, 2>{0, 1}));
+  assert((saved_patches[0].region.end == std::array<std::uint32_t, 2>{2, 2}));
+  assert((saved_patches[0].values == std::vector<float>{0.25F, 2.0F}));
+
   // A restored simulation continues exactly as the original does.
   microsimulator::Simulation restored(microsimulator::BackendKind::cpu, decoded.simulation);
   original.step(0.0625F);
@@ -205,10 +216,10 @@ int main() {
   assert_parse_rejected("{", "not valid JSON");
   assert_parse_rejected("[]", "$: expected an object");
   assert_parse_rejected("{}", "$: missing keys ['version']");
-  assert_parse_rejected(replaced(text, "\"version\": 10", "\"version\": 9"),
-                        "$.version: unsupported checkpoint version 9");
-  assert_parse_rejected(replaced(text, "\"version\": 10", "\"version\": 11"),
-                        "$.version: unsupported checkpoint version 11");
+  assert_parse_rejected(replaced(text, "\"version\": 11", "\"version\": 10"),
+                        "$.version: unsupported checkpoint version 10");
+  assert_parse_rejected(replaced(text, "\"version\": 11", "\"version\": 12"),
+                        "$.version: unsupported checkpoint version 12");
   assert_parse_rejected(replaced(text, "{\n", "{\n  \"extra\": 1,\n"), "$: unknown keys ['extra']");
   assert_parse_rejected(replaced(text, "microsimulator-checkpoint", "other-format"),
                         "$.format: not a MicroSimulator checkpoint");

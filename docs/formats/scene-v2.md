@@ -52,7 +52,7 @@ chambers from them but attaches no mechanical semantics.
 
 ## Signal grid
 
-A grid records `signal_count`, three-dimensional `shape`, `origin`, `spacing`, six typed boundaries, and flattened `levels`. Fixed boundaries carry one value per signal; no-flux and periodic boundaries carry an empty value array.
+A grid records `signal_count`, three-dimensional `shape`, `origin`, `spacing`, six typed boundaries, and flattened `levels`. Fixed boundaries carry one value per signal; no-flux and periodic boundaries carry an empty value array. A scene carries each fixed face's own values only: the patches a simulation may hold on a fixed face, which give parts of it other values, are checkpoint state and are not presented.
 
 Levels are channel-major. Within a channel, `z` varies fastest, then `y`, then `x`. For shape `(X, Y, Z)`, the offset is:
 

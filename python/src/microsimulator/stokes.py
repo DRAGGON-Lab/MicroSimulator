@@ -44,8 +44,11 @@ import numpy as np
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendKind,
     FlowAxis,
+    FlowPort,
     ResolvedFlowParameters,
     ResolvedFlowReport,
+    ResolvedPortFlowParameters,
+    ResolvedPortFlowResult,
     SignalGridSpec,
     SignalGridVelocityField,
     Simulation,
@@ -137,3 +140,55 @@ def solve_stokes_field(
     except (OverflowError, RuntimeError, ValueError) as error:
         raise FlowError(str(error)) from error
     return result.field, result.report
+
+
+def solve_port_stokes_field(
+    spec: SignalGridSpec,
+    ports: Sequence[FlowPort],
+    *,
+    drag: Sequence[float] | None = None,
+    tolerance: float = 1.0e-6,
+    max_outer_iterations: int = 5000,
+    inner_tolerance: float = 1.0e-6,
+    max_inner_iterations: int = 50_000,
+    simulation: Simulation | None = None,
+    backend: BackendKind = BackendKind.CPU,
+    device_index: int = 0,
+) -> ResolvedPortFlowResult:
+    """Solve the staggered Stokes-Brinkman flow driven through ports.
+
+    Each port is a rectangle of boundary sites on any face of the grid. A
+    ``SPEED`` port carries its value as the mean speed over its open area,
+    positive into the grid and negative out of it, with the profile the
+    geometry behind it gives; a ``PRESSURE`` port holds its value one spacing
+    outside the face. At least one port must hold a pressure, and every port's
+    face must be a ``FIXED`` boundary. Faces outside every port are no-slip
+    walls. The field is the combination of one block solve per speed port.
+    Where the geometry is one shallow flow describes, each solves for the
+    correction to the depth-averaged pressure; otherwise it solves for the
+    whole pressure field. Either way a long channel takes more outer
+    iterations than `solve_stokes_field` does, and the report's residuals and
+    the ports' fluxes show how closely the field conserves volume.
+
+    The result holds the velocity field, the solve report, and for each port
+    its pressure, flux and mean speed. Pressures are divided by viscosity.
+    ``drag`` is as for `solve_stokes_field`.
+    """
+
+    parameters = ResolvedPortFlowParameters()
+    parameters.relative_tolerance = tolerance
+    parameters.max_outer_iterations = max_outer_iterations
+    parameters.inner_relative_tolerance = inner_tolerance
+    parameters.max_inner_iterations = max_inner_iterations
+    selected = (
+        simulation if simulation is not None else Simulation(backend, device_index=device_index)
+    )
+    try:
+        return selected.solve_resolved_port_flow(
+            spec,
+            list(ports),
+            [] if drag is None else [float(value) for value in drag],
+            parameters,
+        )
+    except (OverflowError, RuntimeError, ValueError) as error:
+        raise FlowError(str(error)) from error

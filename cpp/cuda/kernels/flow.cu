@@ -68,48 +68,34 @@ __device__ float harmonic_mean(float first, float second) {
   return sum > 0.0F ? 2.0F * first * second / sum : 0.0F;
 }
 
-__global__ void depth_flow_operator_double(const double* input, const float* mobility,
-                                           double* output, FlowGridParameters grid) {
+__global__ void depth_flow_operator_double(const double* input, const std::uint32_t* neighbors,
+                                           const float* conductance,
+                                           const float* boundary_conductance, double* output,
+                                           DepthFlowScales scales, std::uint32_t count) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (index >= grid.site_count) return;
-  if (mobility[index] == 0.0F) {
-    output[index] = 0.0;
-    return;
-  }
-  const auto coordinate = site_coordinate(index, grid);
-  const auto axis = grid.flow_axis;
-  const auto flow_spacing = static_cast<double>(grid.spacing[axis]);
-  const auto boundary = 2.0 * mobility[index] / (flow_spacing * flow_spacing);
-  double result = 0.0;
-  if (coordinate.values[axis] == 0) result += boundary * input[index];
-  if (coordinate.values[axis] + 1 == grid.dimensions[axis]) result += boundary * input[index];
-  for (std::uint32_t component = 0; component < 3; ++component) {
-    const auto spacing = static_cast<double>(grid.spacing[component]);
-    const auto inverse_square = 1.0 / (spacing * spacing);
-    if (coordinate.values[component] > 0) {
-      auto neighbor = coordinate;
-      --neighbor.values[component];
-      const auto neighbor_index = site_index(neighbor, grid);
-      const auto conductance =
-          static_cast<double>(harmonic_mean(mobility[index], mobility[neighbor_index])) *
-          inverse_square;
-      result += conductance * (input[index] - input[neighbor_index]);
-    }
-    if (coordinate.values[component] + 1 < grid.dimensions[component]) {
-      auto neighbor = coordinate;
-      ++neighbor.values[component];
-      const auto neighbor_index = site_index(neighbor, grid);
-      const auto conductance =
-          static_cast<double>(harmonic_mean(mobility[index], mobility[neighbor_index])) *
-          inverse_square;
-      result += conductance * (input[index] - input[neighbor_index]);
-    }
+  if (index >= count) return;
+  // The site's coupling to the pressures held beyond its open exterior faces.
+  double result = static_cast<double>(boundary_conductance[index]) * input[index];
+  for (std::uint32_t slot = 0; slot < 6; ++slot) {
+    const auto neighbor = neighbors[6 * index + slot];
+    if (neighbor == 0xffffffffU) continue;
+    const auto scaled =
+        static_cast<double>(conductance[6 * index + slot]) * scales.inverse_square[slot / 2];
+    result += scaled * (input[index] - input[neighbor]);
   }
   output[index] = result;
 }
 
+__global__ void depth_flow_scatter(const double* active, const std::uint32_t* sites,
+                                   double* pressure, std::uint32_t count) {
+  const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index < count) pressure[sites[index]] = active[index];
+}
+
 __global__ void depth_flow_velocity_double(const double* pressure, const float* mobility,
-                                           float* velocity, FlowGridParameters grid) {
+                                           const float* face_conductance,
+                                           const float* face_pressure, float* velocity,
+                                           FlowGridParameters grid) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index >= grid.total_face_count) return;
   const auto face = face_coordinate(index, grid);
@@ -125,10 +111,12 @@ __global__ void depth_flow_velocity_double(const double* pressure, const float* 
   if (has_lower && has_upper) {
     value = -static_cast<double>(harmonic_mean(mobility[lower], mobility[upper])) *
             (pressure[upper] - pressure[lower]) / spacing;
-  } else if (component == grid.flow_axis && has_upper) {
-    value = 2.0 * mobility[upper] * (1.0 - pressure[upper]) / spacing;
-  } else if (component == grid.flow_axis && has_lower) {
-    value = 2.0 * mobility[lower] * pressure[lower] / spacing;
+  } else {
+    // An exterior face: closed unless it carries a conductance to the
+    // pressure held beyond it.
+    const auto site = has_upper ? upper : lower;
+    value = static_cast<double>(face_conductance[index]) *
+            (static_cast<double>(face_pressure[index]) - pressure[site]);
   }
   velocity[index] = static_cast<float>(value);
 }
@@ -281,10 +269,11 @@ __global__ void depth_flow_pcg_initialize(const double* right_hand_side, const f
 }
 
 __global__ void depth_flow_pcg_update(double* solution, double* residual, const double* direction,
-                                      const double* transformed, double alpha,
+                                      const double* transformed, const double* scalars,
                                       std::uint32_t count) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index < count) {
+    const auto alpha = scalars[depth_alpha];
     solution[index] += alpha * direction[index];
     residual[index] -= alpha * transformed[index];
   }
@@ -299,9 +288,86 @@ __global__ void depth_flow_pcg_precondition(const double* residual, const float*
 }
 
 __global__ void depth_flow_pcg_direction(const double* preconditioned, double* direction,
-                                         double beta, std::uint32_t count) {
+                                         const double* scalars, std::uint32_t count) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (index < count) direction[index] = preconditioned[index] + beta * direction[index];
+  if (index < count) {
+    direction[index] = preconditioned[index] + scalars[depth_beta] * direction[index];
+  }
+}
+
+// One thread adds one fixed-width group of block partials, in order.
+__global__ void depth_flow_fold(const double* partials, double* folded,
+                                std::uint32_t partial_count) {
+  const auto group = blockIdx.x * blockDim.x + threadIdx.x;
+  const auto first = group * depth_fold_width;
+  if (first >= partial_count) return;
+  const auto last =
+      first + depth_fold_width < partial_count ? first + depth_fold_width : partial_count;
+  double sum = 0.0;
+  for (auto block = first; block < last; ++block) sum += partials[block];
+  folded[group] = sum;
+}
+
+// One thread adds the terms of a dot product and keeps the sum among the
+// solve's scalars.
+__global__ void depth_flow_total(const double* terms, double* scalars, std::uint32_t term_count,
+                                 std::uint32_t place) {
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  double sum = 0.0;
+  for (std::uint32_t term = 0; term < term_count; ++term) sum += terms[term];
+  scalars[place] = sum;
+}
+
+__global__ void depth_flow_step_length(double* scalars, std::uint32_t* counters) {
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  scalars[depth_alpha] = 0.0;
+  if (counters[depth_stopped] != 0) return;
+  counters[depth_iterations] += 1;
+  const auto curvature = scalars[depth_curvature];
+  if (!isfinite(curvature) || !(curvature > 0.0)) {
+    counters[depth_failure] = 1;
+    counters[depth_stopped] = 1;
+    return;
+  }
+  const auto alpha = scalars[depth_rho] / curvature;
+  if (!isfinite(alpha)) {
+    counters[depth_failure] = 2;
+    counters[depth_stopped] = 1;
+    return;
+  }
+  scalars[depth_alpha] = alpha;
+}
+
+__global__ void depth_flow_step_weight(double* scalars, std::uint32_t* counters, double threshold) {
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  scalars[depth_beta] = 0.0;
+  if (counters[depth_stopped] != 0) return;
+  const auto residual_squared = scalars[depth_residual_squared];
+  if (!isfinite(residual_squared)) {
+    counters[depth_failure] = 3;
+    counters[depth_stopped] = 1;
+    return;
+  }
+  if (residual_squared <= threshold) {
+    counters[depth_converged] = 1;
+    counters[depth_stopped] = 1;
+    return;
+  }
+  const auto rho = scalars[depth_rho];
+  const auto next_rho = scalars[depth_next_rho];
+  if (!isfinite(next_rho) || rho == 0.0) {
+    counters[depth_failure] = 4;
+    counters[depth_stopped] = 1;
+    return;
+  }
+  const auto beta = next_rho / rho;
+  if (!isfinite(beta)) {
+    counters[depth_failure] = 5;
+    counters[depth_stopped] = 1;
+    return;
+  }
+  scalars[depth_beta] = beta;
+  scalars[depth_rho] = next_rho;
 }
 
 __global__ void flow_vector_negate(const float* input, float* output, std::uint32_t count) {
@@ -361,17 +427,26 @@ std::uint32_t block_count(std::uint32_t count, std::uint32_t width = threads_per
 
 }  // namespace
 
-void launch_depth_flow_operator_double(const double* input, const float* mobility, double* output,
-                                       const FlowGridParameters& grid, cudaStream_t stream) {
-  depth_flow_operator_double<<<block_count(grid.site_count), threads_per_block, 0, stream>>>(
-      input, mobility, output, grid);
+void launch_depth_flow_operator_double(const double* input, const std::uint32_t* neighbors,
+                                       const float* conductance, const float* boundary_conductance,
+                                       double* output, DepthFlowScales scales, std::uint32_t count,
+                                       cudaStream_t stream) {
+  depth_flow_operator_double<<<block_count(count), threads_per_block, 0, stream>>>(
+      input, neighbors, conductance, boundary_conductance, output, scales, count);
+}
+
+void launch_depth_flow_scatter(const double* active, const std::uint32_t* sites, double* pressure,
+                               std::uint32_t count, cudaStream_t stream) {
+  depth_flow_scatter<<<block_count(count), threads_per_block, 0, stream>>>(active, sites, pressure,
+                                                                           count);
 }
 
 void launch_depth_flow_velocity_double(const double* pressure, const float* mobility,
+                                       const float* face_conductance, const float* face_pressure,
                                        float* velocity, const FlowGridParameters& grid,
                                        cudaStream_t stream) {
   depth_flow_velocity_double<<<block_count(grid.total_face_count), threads_per_block, 0, stream>>>(
-      pressure, mobility, velocity, grid);
+      pressure, mobility, face_conductance, face_pressure, velocity, grid);
 }
 
 void launch_depth_flow_pcg_initialize(const double* right_hand_side, const float* diagonal,
@@ -382,10 +457,10 @@ void launch_depth_flow_pcg_initialize(const double* right_hand_side, const float
 }
 
 void launch_depth_flow_pcg_update(double* solution, double* residual, const double* direction,
-                                  const double* transformed, double alpha, std::uint32_t count,
-                                  cudaStream_t stream) {
+                                  const double* transformed, const double* scalars,
+                                  std::uint32_t count, cudaStream_t stream) {
   depth_flow_pcg_update<<<block_count(count), threads_per_block, 0, stream>>>(
-      solution, residual, direction, transformed, alpha, count);
+      solution, residual, direction, transformed, scalars, count);
 }
 
 void launch_depth_flow_pcg_precondition(const double* residual, const float* diagonal,
@@ -395,10 +470,36 @@ void launch_depth_flow_pcg_precondition(const double* residual, const float* dia
       residual, diagonal, preconditioned, count);
 }
 
-void launch_depth_flow_pcg_direction(const double* preconditioned, double* direction, double beta,
-                                     std::uint32_t count, cudaStream_t stream) {
+void launch_depth_flow_pcg_direction(const double* preconditioned, double* direction,
+                                     const double* scalars, std::uint32_t count,
+                                     cudaStream_t stream) {
   depth_flow_pcg_direction<<<block_count(count), threads_per_block, 0, stream>>>(
-      preconditioned, direction, beta, count);
+      preconditioned, direction, scalars, count);
+}
+
+void launch_depth_flow_sum(const double* partials, double* folded, double* scalars,
+                           std::uint32_t partial_count, std::uint32_t place, cudaStream_t stream) {
+  // The partials are added in groups, and the groups by one thread, so that
+  // no thread adds more than a few hundred values.
+  const double* terms = partials;
+  auto term_count = partial_count;
+  if (partial_count > 2 * depth_fold_width) {
+    const auto group_count = ((partial_count - 1) / depth_fold_width) + 1;
+    depth_flow_fold<<<block_count(group_count), threads_per_block, 0, stream>>>(partials, folded,
+                                                                                partial_count);
+    terms = folded;
+    term_count = group_count;
+  }
+  depth_flow_total<<<1, 1, 0, stream>>>(terms, scalars, term_count, place);
+}
+
+void launch_depth_flow_step_length(double* scalars, std::uint32_t* counters, cudaStream_t stream) {
+  depth_flow_step_length<<<1, 1, 0, stream>>>(scalars, counters);
+}
+
+void launch_depth_flow_step_weight(double* scalars, std::uint32_t* counters, double threshold,
+                                   cudaStream_t stream) {
+  depth_flow_step_weight<<<1, 1, 0, stream>>>(scalars, counters, threshold);
 }
 
 void launch_depth_flow_dot_partial(const double* left, const double* right, double* partials,

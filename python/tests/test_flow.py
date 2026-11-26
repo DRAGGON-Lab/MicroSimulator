@@ -3,11 +3,17 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import numpy as np
 import pytest
 from microsimulator import (
     BackendFeature,
     BackendKind,
+    FlowPort,
+    FlowPortKind,
     GridBoundaryKind,
+    GridBoundaryPatch,
+    GridFace,
+    GridFacePatch,
     GridShape,
     SignalGridAffineReaction,
     SignalGridSpec,
@@ -23,6 +29,7 @@ from microsimulator.flow import (
     colony_species_density,
     gap_mobility,
     solve_flow_field,
+    solve_port_flow_field,
 )
 from microsimulator.microfluidics import TrapChannelDevice
 
@@ -457,3 +464,148 @@ def test_a_running_simulation_swaps_its_signal_reaction() -> None:
     before = simulation.signal_levels
     simulation.step(0.5)
     assert simulation.signal_levels == before
+
+
+def _open_box(nx: int, ny: int, nz: int = 1) -> SignalGridSpec:
+    """A box of fluid whose four side faces are fixed boundaries a port may open."""
+
+    spec = _duct(nx, ny, nz)
+    for name in ("x_lower", "x_upper"):
+        boundary = getattr(spec, name)
+        boundary.kind = GridBoundaryKind.FIXED
+        boundary.values = [0.0]
+        setattr(spec, name, boundary)
+    return spec
+
+
+def _port(
+    face: GridFace, begin: int, end: int, depth: int, kind: FlowPortKind, value: float
+) -> FlowPort:
+    return FlowPort(face, GridFacePatch((begin, 0), (end, depth)), kind, value)
+
+
+@pytest.mark.parametrize("backend", list(BackendKind))
+def test_ports_carry_their_stated_speeds_on_the_selected_backend(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip(f"{backend.name} backend is unavailable")
+    spec = _open_box(8, 10, 2)
+    ports = [
+        _port(GridFace.Y_LOWER, 0, 3, 2, FlowPortKind.SPEED, 3.0),
+        _port(GridFace.Y_LOWER, 5, 8, 2, FlowPortKind.SPEED, 1.0),
+        _port(GridFace.X_UPPER, 6, 9, 2, FlowPortKind.SPEED, -0.5),
+        _port(GridFace.Y_UPPER, 0, 8, 2, FlowPortKind.PRESSURE, 0.0),
+    ]
+    expected = solve_port_flow_field(spec, ports)
+    simulation = Simulation(backend)
+    result = solve_port_flow_field(spec, ports, simulation=simulation)
+
+    assert result.report.solves == 3 and result.report.relative_residual <= 1.1e-6
+    for port, state in zip(ports[:3], result.ports[:3], strict=True):
+        assert math.isclose(state.mean_speed, port.value, rel_tol=1.0e-4)
+    # What enters by the three driven ports leaves by the outlet.
+    assert math.isclose(sum(state.flux for state in result.ports), 0.0, abs_tol=1.0e-4)
+    assert result.ports[3].pressure == 0.0 and result.ports[0].pressure > result.ports[1].pressure
+    for name in ("x_faces", "y_faces", "z_faces"):
+        assert all(
+            math.isclose(observed, reference, abs_tol=5.0e-4, rel_tol=5.0e-4)
+            for observed, reference in zip(
+                getattr(result.field, name), getattr(expected.field, name), strict=True
+            )
+        )
+    # The lower face is closed between the two inlets.
+    assert result.field.y_faces[_y_face(spec, 3, 0, 0)] == 0.0
+    assert result.field.y_faces[_y_face(spec, 4, 0, 1)] == 0.0
+
+
+@pytest.mark.parametrize("backend", list(BackendKind))
+def test_two_inlets_on_one_face_meet_in_their_flow_shares(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip(f"{backend.name} backend is unavailable")
+    # Two inlets on the lower face carry different media at different speeds
+    # into one channel. Signal 0 marks the first medium and signal 1 the second.
+    # A fixed face is a reservoir wherever fluid touches it, port or not, so a
+    # wall stands on the lower face between the inlets.
+    spec = _duct(8, 24, 1)
+    spec.signal_count = 2
+    spec.diffusion = [0.1, 0.1]
+    spec.advection = [Vec3(), Vec3()]
+    spec.integration = SignalIntegrationKind.BACKWARD_EULER
+    obstacles = [0] * (8 * 24)
+    obstacles[_site(spec, 3, 0, 0)] = obstacles[_site(spec, 4, 0, 0)] = 1
+    spec.obstacles = obstacles
+    upper = spec.y_upper
+    upper.values = [0.0, 0.0]
+    spec.y_upper = upper
+    lower = spec.y_lower
+    lower.values = [0.0, 0.0]
+    lower.patches = [
+        GridBoundaryPatch(GridFacePatch((0, 0), (3, 1)), [1.0, 0.0]),
+        GridBoundaryPatch(GridFacePatch((5, 0), (8, 1)), [0.0, 1.0]),
+    ]
+    spec.y_lower = lower
+    ports = [
+        _port(GridFace.Y_LOWER, 0, 3, 1, FlowPortKind.SPEED, 3.0),
+        _port(GridFace.Y_LOWER, 5, 8, 1, FlowPortKind.SPEED, 1.0),
+        _port(GridFace.Y_UPPER, 0, 8, 1, FlowPortKind.PRESSURE, 0.0),
+    ]
+    simulation = Simulation(backend)
+    spec.velocity_field = solve_port_flow_field(spec, ports, simulation=simulation).field
+    simulation.configure_signal_grid(spec, [0.0] * (2 * 8 * 24))
+    for _ in range(400):
+        simulation.step(0.25)
+    levels = np.asarray(simulation.signal_levels).reshape(2, 8, 24)
+
+    # Each inlet's first sites hold that inlet's medium.
+    assert levels[0, 1, 0] > 0.9 and levels[1, 1, 0] < 0.05
+    assert levels[1, 6, 0] > 0.9 and levels[0, 6, 0] < 0.05
+    # The media are carried, not made: everywhere they sum to no more than one.
+    assert np.all(levels.sum(axis=0) <= 1.0 + 1.0e-4)
+    # At the outlet the flow carries the media in the shares of the inlets'
+    # fluxes, three to one, up to what diffuses back in from the outlet's
+    # empty reservoir.
+    field = np.asarray(spec.velocity_field.y_faces).reshape(8, 25)
+    outflow = field[:, 23]
+    carried = [float((levels[signal, :, 22] * outflow).sum() / outflow.sum()) for signal in (0, 1)]
+    assert math.isclose(carried[0], 0.75, abs_tol=0.02)
+    assert math.isclose(carried[1], 0.25, abs_tol=0.02)
+
+
+def test_ill_posed_port_problems_are_rejected() -> None:
+    spec = _open_box(4, 6, 2)
+    inlet = _port(GridFace.Y_LOWER, 0, 2, 2, FlowPortKind.SPEED, 1.0)
+    outlet = _port(GridFace.Y_UPPER, 0, 4, 2, FlowPortKind.PRESSURE, 0.0)
+    solve_port_flow_field(spec, [inlet, outlet])
+
+    with pytest.raises(FlowError, match="at least one port"):
+        solve_port_flow_field(spec, [])
+    with pytest.raises(FlowError, match="at least one pressure port"):
+        solve_port_flow_field(spec, [inlet])
+    with pytest.raises(FlowError, match="nothing flows"):
+        solve_port_flow_field(spec, [outlet])
+    with pytest.raises(FlowError, match="must not overlap"):
+        overlapping = _port(GridFace.Y_LOWER, 1, 3, 2, FlowPortKind.SPEED, 1.0)
+        solve_port_flow_field(spec, [inlet, overlapping, outlet])
+    with pytest.raises(FlowError, match="at least one site of its face"):
+        solve_port_flow_field(
+            spec, [_port(GridFace.Y_LOWER, 0, 5, 2, FlowPortKind.SPEED, 1.0), outlet]
+        )
+    with pytest.raises(FlowError, match="full depth of its columns"):
+        solve_port_flow_field(
+            spec, [_port(GridFace.Y_LOWER, 0, 2, 1, FlowPortKind.SPEED, 1.0), outlet]
+        )
+    with pytest.raises(FlowError, match="must open a fixed boundary"):
+        solve_port_flow_field(
+            _duct(4, 6, 2), [_port(GridFace.X_LOWER, 0, 2, 2, FlowPortKind.SPEED, 1.0), outlet]
+        )
+    with pytest.raises(FlowError, match="finite"):
+        solve_port_flow_field(
+            spec, [_port(GridFace.Y_LOWER, 0, 2, 2, FlowPortKind.SPEED, math.inf), outlet]
+        )
+    walled = _open_box(4, 6, 2)
+    obstacles = [0] * (4 * 6 * 2)
+    for x in range(4):
+        for z in range(2):
+            obstacles[_site(walled, x, 3, z)] = 1
+    walled.obstacles = obstacles
+    with pytest.raises(FlowError, match="no pressure port is reachable"):
+        solve_port_flow_field(walled, [inlet, outlet])

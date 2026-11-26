@@ -9,13 +9,18 @@ from microsimulator import (
     BackendKind,
     CellInit,
     CoupledRatePlan,
+    FlowPort,
+    FlowPortKind,
     GridBoundary,
     GridBoundaryKind,
+    GridBoundaryPatch,
     GridFace,
+    GridFacePatch,
     GridShape,
     RateInstruction,
     RateOp,
     RatePlanBuilder,
+    SignalAdvectionKind,
     SignalGridSpec,
     SignalIntegrationKind,
     Simulation,
@@ -23,6 +28,7 @@ from microsimulator import (
     backend_available,
 )
 from microsimulator.checkpoint import load_checkpoint, save_checkpoint
+from microsimulator.flow import solve_port_flow_field
 
 
 def _line_spec(length: int = 3) -> SignalGridSpec:
@@ -269,6 +275,101 @@ def test_boundary_values_set_during_a_run_survive_a_checkpoint(tmp_path: Path) -
     assert restored.signal_levels[0] > 1.0
 
 
+def _patched_sheet(
+    patch_values: tuple[float, float], backend: BackendKind = BackendKind.CPU
+) -> Simulation:
+    """A sheet fed through its lower x face, which holds two patches of its own media.
+
+    The face spans y and z. Its sites at y = 1 and y = 2 are one patch and its
+    site at y = 4 another; the sites between and beside them carry the face's
+    own value. The far end is closed.
+    """
+
+    shape = GridShape()
+    shape.x, shape.y, shape.z = 3, 6, 1
+    spec = SignalGridSpec()
+    spec.signal_count = 1
+    spec.shape = shape
+    spec.diffusion = [1.0]
+    spec.advection = [Vec3()]
+    spec.integration = SignalIntegrationKind.BACKWARD_EULER
+    lower = GridBoundary()
+    lower.kind = GridBoundaryKind.FIXED
+    lower.values = [1.0]
+    lower.patches = [
+        GridBoundaryPatch(GridFacePatch((1, 0), (3, 1)), [patch_values[0]]),
+        GridBoundaryPatch(GridFacePatch((4, 0), (5, 1)), [patch_values[1]]),
+    ]
+    spec.x_lower = lower
+    simulation = Simulation(backend)
+    simulation.configure_signal_grid(spec, [0.0] * 18)
+    return simulation
+
+
+@pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.METAL, BackendKind.CUDA])
+def test_patches_of_a_fixed_boundary_hold_their_own_media(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip(f"{backend.name} backend is unavailable")
+    simulation = _patched_sheet((8.0, 0.0), backend)
+    reference = _patched_sheet((8.0, 0.0))
+    for _ in range(3):
+        simulation.step(0.05)
+        reference.step(0.05)
+    levels = simulation.signal_levels
+    assert all(
+        math.isclose(level, expected, rel_tol=1.0e-5, abs_tol=1.0e-6)
+        for level, expected in zip(levels, reference.signal_levels, strict=True)
+    )
+    # The first column of sites, one per y, faces the boundary: richest opposite
+    # the first patch and poorest opposite the second, with the face's own
+    # value between.
+    facing = levels[0:6]
+    assert facing[1] > facing[0] > facing[4]
+    assert facing[2] > facing[3] > facing[4]
+
+    # Changing one patch during a run is the run a grid configured that way makes.
+    switched = _patched_sheet((8.0, 0.0), backend)
+    switched.set_signal_boundary_patch_values(GridFace.X_LOWER, 1, [5.0])
+    configured = _patched_sheet((8.0, 5.0), backend)
+    for _ in range(3):
+        switched.step(0.05)
+        configured.step(0.05)
+    assert switched.signal_levels == configured.signal_levels
+    assert switched.signal_levels[4] > levels[4]
+
+
+def test_boundary_patches_are_validated_and_survive_a_checkpoint(tmp_path: Path) -> None:
+    simulation = _patched_sheet((8.0, 0.0))
+    with pytest.raises(IndexError, match="no such patch"):
+        simulation.set_signal_boundary_patch_values(GridFace.X_LOWER, 2, [1.0])
+    with pytest.raises(RuntimeError, match="only a fixed signal grid boundary"):
+        simulation.set_signal_boundary_patch_values(GridFace.X_UPPER, 0, [1.0])
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        simulation.set_signal_boundary_patch_values(GridFace.X_LOWER, 0, [-1.0])
+
+    spec = SignalGridSpec()
+    spec.signal_count = 1
+    lower = GridBoundary()
+    lower.kind = GridBoundaryKind.FIXED
+    lower.values = [1.0]
+    lower.patches = [GridBoundaryPatch(GridFacePatch((0, 0), (2, 1)), [1.0])]
+    spec.x_lower = lower
+    spec.diffusion = [1.0]
+    spec.advection = [Vec3()]
+    with pytest.raises(ValueError, match="must lie on their face"):
+        spec.validate()
+
+    simulation.set_signal_boundary_patch_values(GridFace.X_LOWER, 0, [3.0])
+    simulation.step(0.05)
+    path = tmp_path / "patched.msim"
+    save_checkpoint(simulation, path)
+    restored = load_checkpoint(path)
+    for _ in range(4):
+        simulation.step(0.05)
+        restored.step(0.05)
+    assert restored.signal_levels == simulation.signal_levels
+
+
 @pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.METAL, BackendKind.CUDA])
 def test_an_inlet_pulse_is_carried_downstream_by_the_flow(backend: BackendKind) -> None:
     if not backend_available(backend):
@@ -407,3 +508,176 @@ def test_native_coupling_handles_empty_grids_and_atomic_failure() -> None:
         assert failing.cell(cell_id).species == [2.0]
         assert failing.signal_levels == [0.0, 0.0, 0.0]
         assert failing.time == 0.0
+
+
+def _two_streams_through_a_bend(
+    scheme: SignalAdvectionKind, backend: BackendKind = BackendKind.CPU
+) -> tuple[Simulation, SignalGridSpec]:
+    """Two streams side by side, turned through a right angle.
+
+    A channel eight sites wide runs along x and then along y. The lower half
+    of its inlet carries the signal at 1 and the upper half at 0, with almost
+    no diffusion, so what blurs the boundary between them is the scheme.
+    """
+
+    count, width = 24, 8
+    shape = GridShape()
+    shape.x, shape.y, shape.z = count, count, 1
+    spec = SignalGridSpec()
+    spec.signal_count = 1
+    spec.shape = shape
+    spec.diffusion = [0.002]
+    spec.advection = [Vec3()]
+    spec.integration = SignalIntegrationKind.BACKWARD_EULER
+    spec.advection_scheme = scheme
+    spec.obstacles = [
+        0 if y < width or x >= count - width else 1 for x in range(count) for y in range(count)
+    ]
+    inlet = spec.x_lower
+    inlet.kind = GridBoundaryKind.FIXED
+    inlet.values = [0.0]
+    inlet.patches = [GridBoundaryPatch(GridFacePatch((0, 0), (width // 2, 1)), [1.0])]
+    spec.x_lower = inlet
+    outlet = spec.y_upper
+    outlet.kind = GridBoundaryKind.FIXED
+    outlet.values = [0.0]
+    spec.y_upper = outlet
+    ports = [
+        FlowPort(GridFace.X_LOWER, GridFacePatch((0, 0), (width, 1)), FlowPortKind.SPEED, 1.0),
+        FlowPort(
+            GridFace.Y_UPPER,
+            GridFacePatch((count - width, 0), (count, 1)),
+            FlowPortKind.PRESSURE,
+            0.0,
+        ),
+    ]
+    simulation = Simulation(backend)
+    spec.velocity_field = solve_port_flow_field(spec, ports, simulation=simulation).field
+    simulation.configure_signal_grid(spec, [0.0] * (count * count))
+    return simulation, spec
+
+
+def _segregation_leaving_the_bend(simulation: Simulation, spec: SignalGridSpec) -> float:
+    """How unmixed the two streams leave: one when side by side, zero when blended."""
+
+    count, width = spec.shape.x, 8
+    assert spec.velocity_field is not None
+    levels = simulation.signal_levels
+    shares: list[tuple[float, float]] = []
+    for x in range(count - width, count):
+        speed = spec.velocity_field.y_faces[x * (count + 1) + count - 1]
+        shares.append((speed, levels[x * count + count - 2]))
+    total = sum(speed for speed, _ in shares)
+    mean = sum(speed * level for speed, level in shares) / total
+    variance = sum(speed * (level - mean) ** 2 for speed, level in shares) / total
+    return variance / (mean * (1.0 - mean))
+
+
+@pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.METAL, BackendKind.CUDA])
+def test_van_leer_keeps_streams_apart_where_upwind_blends_them(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip(f"{backend.name} backend is unavailable")
+    kept: dict[SignalAdvectionKind, float] = {}
+    for scheme in (SignalAdvectionKind.UPWIND, SignalAdvectionKind.VAN_LEER):
+        simulation, spec = _two_streams_through_a_bend(scheme, backend)
+        for _ in range(80):
+            simulation.step(2.0)
+        levels = simulation.signal_levels
+        # Half of what enters is the signal, and no level leaves its range.
+        assert min(levels) >= 0.0 and max(levels) <= 1.0 + 1.0e-4
+        kept[scheme] = _segregation_leaving_the_bend(simulation, spec)
+    # Upwind has blended most of the boundary away in one bend; van Leer keeps
+    # the streams largely apart.
+    assert kept[SignalAdvectionKind.UPWIND] < 0.45
+    assert kept[SignalAdvectionKind.VAN_LEER] > 0.6
+
+    reference, _ = _two_streams_through_a_bend(SignalAdvectionKind.VAN_LEER)
+    candidate, _ = _two_streams_through_a_bend(SignalAdvectionKind.VAN_LEER, backend)
+    for _ in range(10):
+        reference.step(2.0)
+        candidate.step(2.0)
+    assert all(
+        math.isclose(level, expected, rel_tol=1.0e-4, abs_tol=1.0e-4)
+        for level, expected in zip(candidate.signal_levels, reference.signal_levels, strict=True)
+    )
+
+
+def test_the_advection_scheme_is_checked_saved_and_explains_a_step_too_long(
+    tmp_path: Path,
+) -> None:
+    simulation, _ = _two_streams_through_a_bend(SignalAdvectionKind.VAN_LEER)
+    for _ in range(5):
+        simulation.step(2.0)
+    path = tmp_path / "bend.msim"
+    save_checkpoint(simulation, path)
+    restored = load_checkpoint(path)
+    assert '"advection_scheme": "van_leer"' in path.read_text(encoding="utf-8")
+    for _ in range(5):
+        simulation.step(2.0)
+        restored.step(2.0)
+    assert restored.signal_levels == simulation.signal_levels
+
+    # A step that carries fluid across many sites does not settle under the
+    # limited scheme, and the failure says what to do about it.
+    hasty, _ = _two_streams_through_a_bend(SignalAdvectionKind.VAN_LEER)
+    with pytest.raises(RuntimeError, match="under the van Leer scheme, shorten the step"):
+        for _ in range(40):
+            hasty.step(200.0)
+    patient, _ = _two_streams_through_a_bend(SignalAdvectionKind.UPWIND)
+    for _ in range(3):
+        patient.step(200.0)
+
+
+@pytest.mark.parametrize("scheme", list(SignalAdvectionKind))
+def test_streams_in_a_straight_channel_mix_at_the_rate_diffusion_sets(
+    scheme: SignalAdvectionKind,
+) -> None:
+    # Two streams enter side by side and run along a channel aligned with the
+    # grid. Across the flow only diffusion acts, so the slowest mode of the
+    # difference between them, half a cosine across the width, decays along
+    # the channel at a known rate: pi^2 D / (U W^2) per unit length for speed
+    # U and width W, or with the lattice's own diffusion operator
+    # 2 D (1 - cos(pi h / W)) / (U h^2).
+    width, length, diffusivity, speed = 8, 80, 0.12, 1.0
+    shape = GridShape()
+    shape.x, shape.y, shape.z = width, length, 1
+    spec = SignalGridSpec()
+    spec.signal_count = 1
+    spec.shape = shape
+    spec.diffusion = [diffusivity]
+    spec.advection = [Vec3()]
+    spec.integration = SignalIntegrationKind.BACKWARD_EULER
+    spec.advection_scheme = scheme
+    inlet = spec.y_lower
+    inlet.kind = GridBoundaryKind.FIXED
+    inlet.values = [0.0]
+    inlet.patches = [GridBoundaryPatch(GridFacePatch((0, 0), (width // 2, 1)), [1.0])]
+    spec.y_lower = inlet
+    outlet = spec.y_upper
+    outlet.kind = GridBoundaryKind.FIXED
+    outlet.values = [0.5]
+    spec.y_upper = outlet
+    ports = [
+        FlowPort(GridFace.Y_LOWER, GridFacePatch((0, 0), (width, 1)), FlowPortKind.SPEED, speed),
+        FlowPort(GridFace.Y_UPPER, GridFacePatch((0, 0), (width, 1)), FlowPortKind.PRESSURE, 0.0),
+    ]
+    simulation = Simulation()
+    spec.velocity_field = solve_port_flow_field(spec, ports, simulation=simulation).field
+    simulation.configure_signal_grid(spec, [0.5] * (width * length))
+    for _ in range(150):
+        simulation.step(2.0)
+    levels = simulation.signal_levels
+
+    def amplitude(along: int) -> float:
+        return sum(
+            levels[x * length + along] * math.cos(math.pi * (x + 0.5) / width)
+            for x in range(width)
+        )
+
+    measured = math.log(amplitude(10) / amplitude(60)) / 50.0
+    lattice = 2.0 * diffusivity * (1.0 - math.cos(math.pi / width)) / speed
+    continuum = math.pi**2 * diffusivity / (speed * width**2)
+    assert math.isclose(measured, lattice, rel_tol=0.02)
+    assert math.isclose(measured, continuum, rel_tol=0.04)
+    # The streams are still far from blended where the rate is measured.
+    assert amplitude(60) > 0.5

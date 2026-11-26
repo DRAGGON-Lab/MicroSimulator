@@ -460,26 +460,32 @@ __global__ void advance_coupled_grid(
 
   float lower[3];
   float upper[3];
-  lower[0] = x == 0 ? exterior_value(boundaries.x_lower, fixed_values, 0, signal, signal_count,
-                                     current, grid_level(levels, shape, signal, shape.x - 1, y, z))
+  lower[0] = x == 0 ? exterior_value(boundaries.x_lower, fixed_values, 0, boundaries.offsets[0],
+                                     y * shape.z + z, signal, signal_count, current,
+                                     grid_level(levels, shape, signal, shape.x - 1, y, z))
                     : grid_level(levels, shape, signal, x - 1, y, z);
   upper[0] = x + 1 == shape.x
-                 ? exterior_value(boundaries.x_upper, fixed_values, 1, signal, signal_count,
-                                  current, grid_level(levels, shape, signal, 0, y, z))
+                 ? exterior_value(boundaries.x_upper, fixed_values, 1, boundaries.offsets[1],
+                                  y * shape.z + z, signal, signal_count, current,
+                                  grid_level(levels, shape, signal, 0, y, z))
                  : grid_level(levels, shape, signal, x + 1, y, z);
-  lower[1] = y == 0 ? exterior_value(boundaries.y_lower, fixed_values, 2, signal, signal_count,
-                                     current, grid_level(levels, shape, signal, x, shape.y - 1, z))
+  lower[1] = y == 0 ? exterior_value(boundaries.y_lower, fixed_values, 2, boundaries.offsets[2],
+                                     x * shape.z + z, signal, signal_count, current,
+                                     grid_level(levels, shape, signal, x, shape.y - 1, z))
                     : grid_level(levels, shape, signal, x, y - 1, z);
   upper[1] = y + 1 == shape.y
-                 ? exterior_value(boundaries.y_upper, fixed_values, 3, signal, signal_count,
-                                  current, grid_level(levels, shape, signal, x, 0, z))
+                 ? exterior_value(boundaries.y_upper, fixed_values, 3, boundaries.offsets[3],
+                                  x * shape.z + z, signal, signal_count, current,
+                                  grid_level(levels, shape, signal, x, 0, z))
                  : grid_level(levels, shape, signal, x, y + 1, z);
-  lower[2] = z == 0 ? exterior_value(boundaries.z_lower, fixed_values, 4, signal, signal_count,
-                                     current, grid_level(levels, shape, signal, x, y, shape.z - 1))
+  lower[2] = z == 0 ? exterior_value(boundaries.z_lower, fixed_values, 4, boundaries.offsets[4],
+                                     x * shape.y + y, signal, signal_count, current,
+                                     grid_level(levels, shape, signal, x, y, shape.z - 1))
                     : grid_level(levels, shape, signal, x, y, z - 1);
   upper[2] = z + 1 == shape.z
-                 ? exterior_value(boundaries.z_upper, fixed_values, 5, signal, signal_count,
-                                  current, grid_level(levels, shape, signal, x, y, 0))
+                 ? exterior_value(boundaries.z_upper, fixed_values, 5, boundaries.offsets[5],
+                                  x * shape.y + y, signal, signal_count, current,
+                                  grid_level(levels, shape, signal, x, y, 0))
                  : grid_level(levels, shape, signal, x, y, z + 1);
 
   const std::uint32_t dimensions[3]{shape.x, shape.y, shape.z};
@@ -515,6 +521,14 @@ __global__ void advance_coupled_grid(
       upper_flux = 0.0F;
     }
     rate -= (upper_flux - lower_flux) * inverse_spacing;
+    if (boundaries.advection_scheme == 1) {
+      const std::uint32_t periodic_kinds[3]{boundaries.x_lower, boundaries.y_lower,
+                                            boundaries.z_lower};
+      rate -= van_leer_correction(levels, obstacles, shape, periodic_kinds[axis], signal, x, y, z,
+                                  axis, current, lower[axis], upper[axis], closed_lower[axis],
+                                  closed_upper[axis], face_lower[axis], face_upper[axis]) *
+              inverse_spacing;
+    }
   }
   rate += reaction_source[index] - reaction_loss[index] * current;
 
@@ -533,7 +547,10 @@ __global__ void advance_coupled_grid(
   const auto transport_scale = crank_nicolson == 0 ? dt : (crank_nicolson == 1 ? 0.5F * dt : 0.0F);
   const auto candidate = current + transport_scale * rate + dt * source;
   output[index] = candidate;
-  if (!isfinite(candidate) || (!crank_nicolson && candidate < 0.0F)) {
+  // Under the van Leer scheme an explicit level may fall below zero by
+  // rounding; the host judges those when it takes the step's levels.
+  if (!isfinite(candidate) ||
+      (!crank_nicolson && boundaries.advection_scheme == 0 && candidate < 0.0F)) {
     atomicOr(error, 2U);
   }
 }

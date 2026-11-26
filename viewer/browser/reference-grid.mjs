@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import canonicalize from "canonicalize";
+import { sendLiveFrame } from "./live-frame.mjs";
 
 const { chromium, expect } = await import(
   process.env.MICROSIMULATOR_PLAYWRIGHT_MODULE ?? "@playwright/test"
@@ -28,7 +29,7 @@ await page.route("**/src/colony-viewer.ts*", async (route) => {
   });
 });
 let socket;
-await page.routeWebSocket("**/api/v1/session?*", (connection) => {
+await page.routeWebSocket("**/api/v2/session?*", (connection) => {
   socket = connection;
 });
 const boundary = { kind: "no_flux", values: [] };
@@ -90,15 +91,16 @@ function scene(frame) {
 }
 let revision = 0;
 async function send(frame) {
-  socket.send(
-    JSON.stringify({
-      type: "frame",
+  sendLiveFrame(
+    socket,
+    {
       revision: revision++,
       completed_steps: revision,
       playing: false,
       checkpoint_enabled: false,
-      scene: scene(frame),
-    }),
+    },
+    frame,
+    scene,
   );
   await expect(page.locator("#time-chip")).toHaveText(`t = ${frame.time}`);
   await page.evaluate(

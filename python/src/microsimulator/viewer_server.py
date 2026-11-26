@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import secrets
@@ -17,11 +18,13 @@ from threading import Event
 from typing import Any, Literal, cast
 from urllib.parse import urlencode
 
+import numpy as np
 from aiohttp import WSMsgType, web
 
+from .channels import ChannelMetadata
 from .checkpoint import JSONValue, save_checkpoint
 from .runner import RunnableModel, controller_state, model_channel_metadata, native_simulation
-from .scene import capture_scene, dumps_scene
+from .scene import SceneGridBoundary, capture_scene, dumps_scene
 
 MAX_COMMAND_BYTES = 4096
 MAX_STEP_BATCH = 10_000
@@ -173,24 +176,67 @@ class LiveSession:
         )
         return destination
 
-    def frame_message(self, *, playing: bool) -> dict[str, JSONValue]:
+    def frame_message(self, *, playing: bool) -> tuple[dict[str, JSONValue], bytes | None]:
+        """The current frame as a JSON header and the signal levels that follow it.
+
+        The header's scene is a complete scene document without its signal
+        grid. The grid is described beside it, and its levels travel as the
+        second value: little-endian float32 in the scene's order, which are the
+        engine's own values. A model without a signal grid has no levels.
+        """
+
         native = native_simulation(self._model)
-        scene = cast(
-            dict[str, JSONValue],
-            json.loads(
-                dumps_scene(
-                    capture_scene(native, channel_metadata=model_channel_metadata(self._model))
-                )
-            ),
-        )
-        return {
+        frame = capture_scene(native, channel_metadata=model_channel_metadata(self._model))
+        grid = frame.signal_grid
+        levels: bytes | None = None
+        described: dict[str, JSONValue] | None = None
+        if grid is not None:
+            levels = np.asarray(grid.levels, dtype="<f4").tobytes()
+
+            def boundary(held: SceneGridBoundary) -> JSONValue:
+                values: list[JSONValue] = list(held.values)
+                return {"kind": held.kind, "values": values}
+
+            def numbers(held: tuple[float, ...] | tuple[int, ...]) -> list[JSONValue]:
+                return list(held)
+
+            labels: list[JSONValue] = list(frame.channel_metadata.signals or ())
+
+            described = {
+                "signal_count": grid.signal_count,
+                "shape": numbers(grid.shape),
+                "origin": numbers(grid.origin),
+                "spacing": numbers(grid.spacing),
+                "boundaries": {
+                    "x_lower": boundary(grid.x_lower),
+                    "x_upper": boundary(grid.x_upper),
+                    "y_lower": boundary(grid.y_lower),
+                    "y_upper": boundary(grid.y_upper),
+                    "z_lower": boundary(grid.z_lower),
+                    "z_upper": boundary(grid.z_upper),
+                },
+                "labels": labels,
+                "levels": {
+                    "encoding": "float32-le",
+                    "byte_length": len(levels),
+                    "sha256": hashlib.sha256(levels).hexdigest(),
+                },
+            }
+            frame = frame.replace(
+                signal_grid=None,
+                channel_metadata=ChannelMetadata(species=frame.channel_metadata.species),
+            )
+        scene = cast(dict[str, JSONValue], json.loads(dumps_scene(frame)))
+        header: dict[str, JSONValue] = {
             "type": "frame",
             "revision": self._revision,
             "completed_steps": self._completed_steps,
             "playing": playing,
             "checkpoint_enabled": self.checkpoint_enabled,
             "scene": scene,
+            "signal_grid": described,
         }
+        return header, levels
 
 
 class LiveController:
@@ -207,6 +253,7 @@ class LiveController:
         self.playing = False
         self._sockets: set[web.WebSocketResponse] = set()
         self._transports: dict[web.WebSocketResponse, asyncio.Transport | None] = {}
+        self._frame_locks: dict[web.WebSocketResponse, asyncio.Lock] = {}
         self._play_task: asyncio.Task[None] | None = None
         self._play_wakeup = asyncio.Event()
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="microsimulator-live")
@@ -236,21 +283,35 @@ class LiveController:
                     await asyncio.shield(work)
                 raise
 
-    async def _message(self) -> dict[str, JSONValue]:
-        return cast(
-            dict[str, JSONValue],
+    async def _message(self) -> tuple[str, bytes | None]:
+        """The current frame encoded for the wire: its header text and its signal levels."""
+
+        header, levels = cast(
+            tuple[dict[str, JSONValue], bytes | None],
             await self._run(partial(self.session.frame_message, playing=self.playing)),
         )
+        return json.dumps(header, separators=(",", ":")), levels
+
+    async def _deliver_frame(
+        self, socket: web.WebSocketResponse, header: str, levels: bytes | None
+    ) -> None:
+        """Send one frame's header and levels to a client with no other frame between them."""
+
+        lock = self._frame_locks.setdefault(socket, asyncio.Lock())
+        async with lock:
+            await asyncio.wait_for(socket.send_str(header), timeout=SOCKET_SEND_TIMEOUT)
+            if levels is not None:
+                await asyncio.wait_for(socket.send_bytes(levels), timeout=SOCKET_SEND_TIMEOUT)
 
     async def _send_frame(self, socket: web.WebSocketResponse) -> None:
-        encoded = json.dumps(await self._message(), separators=(",", ":"))
-        await asyncio.wait_for(socket.send_str(encoded), timeout=SOCKET_SEND_TIMEOUT)
+        header, levels = await self._message()
+        await self._deliver_frame(socket, header, levels)
 
     async def broadcast_frame(self) -> None:
         sockets = tuple(self._sockets)
         if not sockets:
             return
-        encoded = json.dumps(await self._message(), separators=(",", ":"))
+        header, levels = await self._message()
         stale: list[web.WebSocketResponse] = []
         # A frame captured for earlier clients must not arrive ahead of a newly
         # connected client's initial frame (or carry its stale playing flag).
@@ -261,7 +322,7 @@ class LiveController:
                 stale.append(socket)
                 continue
             try:
-                await asyncio.wait_for(socket.send_str(encoded), timeout=SOCKET_SEND_TIMEOUT)
+                await self._deliver_frame(socket, header, levels)
             except TimeoutError:
                 # Retain this socket for shutdown even if it cannot drain a
                 # frame; Stop must not wait indefinitely on frame delivery.
@@ -363,6 +424,7 @@ class LiveController:
     async def disconnect(self, socket: web.WebSocketResponse) -> None:
         self._sockets.discard(socket)
         self._transports.pop(socket, None)
+        self._frame_locks.pop(socket, None)
         if not self._sockets and not self.stopping:
             await self.pause(broadcast=False)
 
@@ -555,7 +617,7 @@ def create_live_app(
         await controller.close()
 
     application.router.add_get("/", index_response)
-    application.router.add_get("/api/v1/session", _websocket)
+    application.router.add_get("/api/v2/session", _websocket)
     application.router.add_static("/assets", assets, show_index=False)
     # Stop before aiohttp waits for active WebSocket request handlers.
     application.on_shutdown.append(cleanup)

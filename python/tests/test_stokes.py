@@ -7,7 +7,11 @@ import pytest
 from microsimulator import (
     BackendFeature,
     BackendKind,
+    FlowPort,
+    FlowPortKind,
     GridBoundaryKind,
+    GridFace,
+    GridFacePatch,
     Simulation,
     Vec3,
     backend_available,
@@ -21,7 +25,7 @@ from microsimulator.flow_reference import (
     site_index,
     two_layer_brinkman,
 )
-from microsimulator.stokes import colony_drag, solve_stokes_field
+from microsimulator.stokes import colony_drag, solve_port_stokes_field, solve_stokes_field
 
 
 def _plane_poiseuille_error(nx: int) -> float:
@@ -289,3 +293,58 @@ def test_partly_blocked_inlets_and_walled_off_pockets_solve() -> None:
     pocket.validate()
     assert sealed_report.divergence_rms < 2.0e-5
     assert sealed_field.y_faces[(3 * 7) + 3] == 0.0
+
+
+@pytest.mark.parametrize("backend", list(BackendKind))
+def test_stokes_ports_join_a_side_inlet_to_a_channel(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip(f"{backend.name} backend is unavailable")
+    # A channel along y, eight voxels across, with an inlet in its lower x wall.
+    spec = duct_grid(8, 12, 1, (0.25, 0.25, 1.0))
+    for name in ("x_lower", "x_upper"):
+        boundary = getattr(spec, name)
+        boundary.kind = GridBoundaryKind.FIXED
+        boundary.values = [0.0]
+        setattr(spec, name, boundary)
+    ports = [
+        FlowPort(GridFace.Y_LOWER, GridFacePatch((0, 0), (8, 1)), FlowPortKind.SPEED, 1.0),
+        FlowPort(GridFace.X_LOWER, GridFacePatch((2, 0), (5, 1)), FlowPortKind.SPEED, 0.4),
+        FlowPort(GridFace.Y_UPPER, GridFacePatch((0, 0), (8, 1)), FlowPortKind.PRESSURE, 0.0),
+    ]
+    expected = solve_port_stokes_field(spec, ports)
+    result = solve_port_stokes_field(spec, ports, simulation=Simulation(backend))
+
+    assert result.report.solves == 2 and result.report.divergence_rms < 1.0e-4
+    assert math.isclose(result.ports[0].mean_speed, 1.0, rel_tol=1.0e-3)
+    assert math.isclose(result.ports[1].mean_speed, 0.4, rel_tol=1.0e-3)
+    assert math.isclose(sum(state.flux for state in result.ports), 0.0, abs_tol=2.0e-3)
+    # The channel's eight voxels are the narrowest gap between walls.
+    assert result.report.min_gap_voxels == expected.report.min_gap_voxels == 8
+    for name in ("x_faces", "y_faces"):
+        assert all(
+            math.isclose(observed, reference, abs_tol=8.0e-4, rel_tol=8.0e-4)
+            for observed, reference in zip(
+                getattr(result.field, name), getattr(expected.field, name), strict=True
+            )
+        )
+    # Walls hold: the profile leaving the channel falls to zero toward each
+    # side and peaks between them, carrying more than entered at the inlet.
+    profile = np.asarray(result.field.y_faces).reshape(8, 13)[:, 12]
+    assert profile[0] < profile[3] and profile[7] < profile[4]
+    assert math.isclose(float(profile.mean()), 1.0 + 0.4 * 3 / 8, rel_tol=2.0e-3)
+
+
+def test_stokes_ports_recover_the_single_axis_profile() -> None:
+    spec = duct_grid(8, 6, 1, (1.0 / 8, 0.25, 1.0))
+    ports = [
+        FlowPort(GridFace.Y_LOWER, GridFacePatch((0, 0), (8, 1)), FlowPortKind.SPEED, 1.0),
+        FlowPort(GridFace.Y_UPPER, GridFacePatch((0, 0), (8, 1)), FlowPortKind.PRESSURE, 0.0),
+    ]
+    through = solve_port_stokes_field(spec, ports)
+    stated, _ = solve_stokes_field(spec, mean_inlet_speed=1.0)
+    assert all(
+        math.isclose(observed, reference, abs_tol=2.0e-4)
+        for observed, reference in zip(through.field.y_faces, stated.y_faces, strict=True)
+    )
+    with pytest.raises(FlowError, match="at least one pressure port"):
+        solve_port_stokes_field(spec, ports[:1])

@@ -8,11 +8,23 @@ import {
 } from "./scalar-range";
 import { ScalarRangeControls } from "./scalar-range-controls";
 import { ColonyViewer } from "./colony-viewer";
-import { CompositeSpeciesState } from "./composite-state";
-import { CompositeSpeciesControls } from "./composite-controls";
-import { signalSlice, sliceDimension, type SliceAxis } from "./grid";
+import { mapCompositeSignals } from "./composite-color";
+import { CompositeChannelState } from "./composite-state";
+import {
+  CompositeChannelControls,
+  type CompositeChannelSource,
+} from "./composite-controls";
+import {
+  signalSlice,
+  sliceDimension,
+  type SignalSlice,
+  type SliceAxis,
+} from "./grid";
 import { ReplayControls } from "./replay-controls";
-import { DatasetPresentationState } from "./presentation-state";
+import {
+  DatasetPresentationState,
+  type SignalMode,
+} from "./presentation-state";
 import {
   LiveConnection,
   type LiveConnectionState,
@@ -58,6 +70,8 @@ const legendTitle = required<HTMLElement>("legend-title");
 const signalSection = required<HTMLElement>("signal-section");
 const signalVisible = required<HTMLInputElement>("signal-visible");
 const deviceVisible = required<HTMLInputElement>("device-visible");
+const signalMode = required<HTMLSelectElement>("signal-mode");
+const signalChannelField = required<HTMLElement>("signal-channel-field");
 const signalChannel = required<HTMLSelectElement>("signal-channel");
 const signalAxis = required<HTMLSelectElement>("signal-axis");
 const signalRange = required<HTMLInputElement>("signal-slice");
@@ -90,14 +104,35 @@ let liveCheckpointEnabled = false;
 let liveConnection: LiveConnection | null = null;
 const presentation = new DatasetPresentationState();
 const scalarRanges = new DatasetScalarRanges();
-const compositeState = new CompositeSpeciesState();
+const compositeState = new CompositeChannelState();
 const compositeRoot = required<HTMLElement>("composite-species");
-const compositeControls = new CompositeSpeciesControls(
+const compositeControls = new CompositeChannelControls(
   compositeRoot,
   compositeState,
   scalarRanges,
   updateColors,
   formatNumber,
+);
+// A signal composite blends channels over the slice on display: red, green
+// and blue for the first three, which start enabled.
+const signalCompositeState = new CompositeChannelState("signals", 3);
+const signalCompositeRoot = required<HTMLElement>("composite-signals");
+const signalCompositeSource: CompositeChannelSource = {
+  group: "signals",
+  legendId: "composite-signal-legend",
+  rangeIdPrefix: "composite-signal-range",
+  emptyText: "No channels active. The slice uses neutral gray.",
+  count: (current) => current.signalGrid?.signalCount ?? 0,
+  values: (current, index) =>
+    current.signalGrid === null ? [] : displayedSlice(current, index).values,
+};
+const signalCompositeControls = new CompositeChannelControls(
+  signalCompositeRoot,
+  signalCompositeState,
+  scalarRanges,
+  updateSignal,
+  formatNumber,
+  signalCompositeSource,
 );
 const speciesRangeRoot = required<HTMLElement>("species-range");
 const speciesRangeControls = new ScalarRangeControls(
@@ -228,21 +263,60 @@ function updateSignalRange(): void {
   sliceValue.value = signalRange.value;
 }
 
+/** One signal channel over the slice the controls select. */
+function displayedSlice(current: SceneFrame, channel: number): SignalSlice {
+  if (current.signalGrid === null) {
+    throw new RangeError("the scene has no signal grid");
+  }
+  return signalSlice(
+    current.signalGrid,
+    channel,
+    signalAxis.value as SliceAxis,
+    selectedInteger(signalRange),
+  );
+}
+
 function updateSignal(): void {
   const legend = required<HTMLElement>("signal-legend");
+  const rangeRoot = required<HTMLElement>("signal-color-range");
   if (frame?.signalGrid === null || frame === null) {
     viewer.setSignalSlice(null);
     legend.hidden = true;
     return;
   }
-  const axis = signalAxis.value as SliceAxis;
+  const grid = frame.signalGrid;
+  const composite = signalMode.value === "composite";
+  signalChannelField.hidden = composite;
+  rangeRoot.hidden = composite;
+  signalCompositeRoot.hidden = !composite;
+  if (composite) {
+    const current = frame;
+    const slices = new Map<number, SignalSlice>();
+    const sliceOf = (channel: number): SignalSlice => {
+      let slice = slices.get(channel);
+      if (slice === undefined) {
+        slice = displayedSlice(current, channel);
+        slices.set(channel, slice);
+      }
+      return slice;
+    };
+    const outline = sliceOf(0);
+    const mapping = mapCompositeSignals(
+      current,
+      outline.values.length,
+      (channel) => sliceOf(channel).values,
+      signalCompositeState.configuration(grid.signalCount, scalarRanges),
+    );
+    viewer.setSignalComposite(
+      signalVisible.checked ? outline : null,
+      mapping.colors,
+    );
+    signalCompositeControls.update(current, mapping.channels);
+    legend.hidden = true;
+    return;
+  }
   const index = selectedInteger(signalChannel);
-  const value = signalSlice(
-    frame.signalGrid,
-    index,
-    axis,
-    selectedInteger(signalRange),
-  );
+  const value = displayedSlice(frame, index);
   const config = scalarRanges.get("signals", index);
   const range = resolveScalarRange(value.values, config);
   signalRangeControls.bind(index, range);
@@ -324,6 +398,8 @@ function presentScene(
     scalarRanges.beginDataset();
     compositeState.beginDataset();
     compositeControls.beginDataset();
+    signalCompositeState.beginDataset();
+    signalCompositeControls.beginDataset();
     speciesRangeControls.beginDataset();
     signalRangeControls.beginDataset();
     viewer.beginDataset();
@@ -365,6 +441,7 @@ function presentScene(
 
   signalSection.hidden = next.signalGrid === null;
   signalVisible.checked = display.signalVisible;
+  signalMode.value = display.signalMode;
   signalAxis.value = display.signalAxis;
   if (next.signalGrid !== null) {
     options(
@@ -439,6 +516,10 @@ deviceVisible.addEventListener("change", () => {
 });
 signalVisible.addEventListener("change", () => {
   presentation.preferences.signalVisible = signalVisible.checked;
+  updateSignal();
+});
+signalMode.addEventListener("change", () => {
+  presentation.preferences.signalMode = signalMode.value as SignalMode;
   updateSignal();
 });
 signalChannel.addEventListener("change", () => {

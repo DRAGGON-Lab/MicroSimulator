@@ -15,6 +15,8 @@ The microfluidic-trap, Danino, biopixel, and pillar tutorial founders request ce
 | [`examples/tutorials/danino_clock.py`](../../examples/tutorials/danino_clock.py) | trap + channel | the full quorum clock in a device |
 | [`examples/tutorials/biopixel_trap.py`](../../examples/tutorials/biopixel_trap.py) | biopixel array trap | reported cavity, CAD layout, monolayer model |
 
+A device can also be read from a chip design; see [a device from a chip design](#a-device-from-a-chip-design).
+
 Run any of them live:
 
 ```console
@@ -62,6 +64,83 @@ DEVICE.apply_to_grid(
 ```
 
 The constructor's keyword arguments set the trap, channel, and wall dimensions; the trap example passes its own, and the Danino clock uses the defaults. `apply_to_grid` materializes the solid mask, fixed inlet and outlet boundaries on the y axis, and the numerically solved steady device flow on the grid's face-staggered velocity field (see the next section). Passing the model's `Simulation` makes the solve execute through the backend selected by the runner. Flow runs through the channel, circulates weakly at the open trap face, and the dead-end trap exchanges with the channel chiefly by diffusion in this model.
+
+## A device from a chip design
+
+A chip drawn in the [`microfluidics` design tool](https://github.com/marpaia/microfluidics) need not be stated again here. That tool writes each design as a scene, one JSON document holding the chip's rectangles by layer, each layer's height, and the flow it solved. `microsimulator.design` reads the scene as plain data, and `LayoutDevice` projects a window of it into the same engine inputs as the devices above:
+
+```python
+from microsimulator.design import load_design_scene
+from microsimulator.microfluidics import LayoutDevice
+
+scene = load_design_scene("trap_chamber.scene.json")
+trap = scene.instance("trap")                    # one placed region, by its path in the design
+window = scene.window(trap.low, trap.high)       # its fluid, in coordinates local to the window
+DEVICE = LayoutDevice(window.boxes, window.size, mean_flow_speed=20.0)
+
+origin, shape = DEVICE.lattice((5.0, 5.0, 0.825))
+DEVICE.add_constraints(simulation)
+DEVICE.apply_to_grid(grid, inlet_values=[10.0], outlet_values=[0.0], simulation=simulation)
+```
+
+`python -c "import json; from microfluidics.project import Project; print(json.dumps(Project('trap_chamber.py').scene()))"` writes a design's scene with the design tool installed; MicroSimulator needs only the file.
+
+A window is any rectangle of the chip, in the design's micrometers. Its low corner becomes the device's origin and the glass its floor at `z = 0`, so positions stay small beside the chip's own millimeter coordinates; `window.local(x, y)` maps a point of the design, and `window.origin` is the low corner. Every rectangle is clipped to the window and rises from the floor to its layer's height. Of a row of repeated features, such as the trenches of a mother machine, only those that reach the window are placed.
+
+Without ports, `LayoutDevice` takes media in through the window face named by `inlet` (the lower y face unless stated; any of the four sides) and out through the face opposite. Both must cut fluid, and the channel continues past them as it meets them. The other two sides are walls: fluid the window cuts there ends there, so a window is drawn wide enough to hold what matters across the flow. [Ports](#several-inlets-ports-and-mixers) state several inlets and outlets on any sides. `lattice(spacing)` gives a grid origin and shape whose site centers cover the window with a voxel of wall beyond each side, and `gap_height(x, y)` gives the fluid's height above a point of the floor.
+
+Walls follow the drawn edges exactly, with the half-voxel staircase of any mask. For the window above, which draws the biopixel cavity and channel, the solid mask and solved flow match `BiopixelTrapDevice` site for site on the same lattice.
+
+The scene also carries what the design says of how the chip is run. `scene.flows_of("trap")` gives the flow through a region with its mean speed in millimeters per second, `scene.viscosity_mpa_s` the viscosity, and `scene.fraction(species, vertex)` the share of a fed species arriving at a vertex of the flow graph, from 0 to 1, which scales a reservoir concentration into an inlet value. These are physical quantities, and `mean_flow_speed` is in model units: converting needs the model's choice of seconds per model time unit. A chip flushed at microliters per minute moves its medium at millimeters to hundreds of millimeters per second, many orders above the speeds these tutorials use, and the limit on drift per step under [numerical guidance](#numerical-guidance) then binds for cells loose in the channel. `scene.passes` reports whether the design passed the design tool's own checks; the reader does not refuse one that did not.
+
+The reader takes scenes of format `0.6`, at patch `0.6.0` or later, and refuses any other version, since a field of another version may mean something else. It reads the fields it names, passes over every other, and executes nothing.
+
+## Several inlets: ports and mixers
+
+Where channels meet, as at the junction of a mixer, each inlet carries its own liquid at its own flow rate. A device states that with ports: openings in the window's sides, each with a speed or a pressure and with the media outside it. A design window lists the channels it cuts as `crossings`, which give each port's side and span:
+
+```python
+from microsimulator.microfluidics import LayoutDevice, LayoutPort
+
+meet = scene.instance("meet")                    # the junction of a three-liquid mixer
+window = scene.window(meet.low, meet.high)
+inlets = sorted((c for c in window.crossings if c.side == GridFace.Y_LOWER), key=lambda c: c.low)
+(outlet,) = (c for c in window.crossings if c.side == GridFace.X_UPPER)
+
+ports = [
+    LayoutPort(c.side, c.low, c.high, speed=speed, values=media)
+    for c, speed, media in zip(inlets, speeds, compositions)
+]
+ports.append(LayoutPort(outlet.side, outlet.low, outlet.high))      # holds pressure zero
+DEVICE = LayoutDevice(window.boxes, window.size, ports=tuple(ports))
+
+origin, shape = DEVICE.lattice((50.0, 50.0, 50.0))
+DEVICE.apply_to_grid(grid, inlet_values, outlet_values, simulation=simulation)
+```
+
+A port with a `speed` carries that mean speed over its open area, positive into the device and negative out of it. A port without one holds a `pressure`, zero unless stated, and carries whatever flow that draws; a device needs at least one, usually its outlet. `values` is the media just outside the port, which enters where the port's flow runs inward. The geometry continues past the window through each port, and the rest of every side is wall. `lattice` puts one layer of sites outside each side, so that each port opens through it.
+
+`apply_to_grid` makes every side that holds a port a fixed boundary with a patch at each port carrying that port's media, and solves the flow through the ports. `DEVICE.solve_flow(grid, simulation=simulation)` solves it again and returns each port's pressure, flux and mean speed; `resolved=True` there, or in `apply_to_grid`, uses the resolved Stokes solver in place of the shallow one. `DEVICE.set_port_values(simulation, port, values)` changes one port's media during a run.
+
+Which crossing is an inlet, at what speed and with what media is the model's to state. The scene supplies what a design knows: `scene.flows_of(channel)` gives each feeding channel's mean speed, and `scene.fraction(species, vertex)` what arrives at a junction. For a mixer whose liquids are carried through in seconds, the natural model time unit is the second, and a speed in millimeters per second is a thousand model units of micrometers per second. The test of the design tool's own mixer builds its junction this way: three inlets at the design's speeds, each with one pure liquid, and at a steady state the stream leaving holds the liquids in the shares the design's flow solution states, to within a percent.
+
+The design tool takes liquids as fully mixed at every vertex. A simulated junction does not: beside each other in one channel, liquids mix only as fast as they diffuse, and the whole chip can be simulated to see how far. [`examples/mixer_device.py`](../../examples/mixer_device.py) builds the mixer's whole chip, with its three inlets held at one pressure so that the split among the liquids is the flow solver's own: 19.7, 29.8 and 50.5 percent against the design's 20, 30 and 50.
+
+How far the liquids have mixed is a harder question than how they split, and the answer depends on the grid and the advection scheme. [`scripts/run_mixer_study.py`](../../scripts/run_mixer_study.py) measures the segregation of the half-share liquid across the mixing channel, 1 for streams side by side and 0 for a blend, at three sections, and compares it with what diffusion alone gives a plug flow in a channel of that width:
+
+| Spacing | Sites across | Scheme | Just joined | After one bend | Serpentine end |
+| --- | --- | --- | --- | --- | --- |
+| 50 | 4 | upwind | 0.323 | 0.013 | 0.000 |
+| 50 | 4 | van Leer | 0.493 | 0.116 | 0.000 |
+| 25 | 8 | upwind | 0.449 | 0.059 | 0.000 |
+| 25 | 8 | van Leer | 0.586 | 0.252 | 0.009 |
+| 12.5 | 16 | upwind | 0.529 | 0.131 | 0.000 |
+| 12.5 | 16 | van Leer | 0.621 | 0.296 | 0.018 |
+| | | expected | 0.646 | 0.303 | 0.019 |
+
+Three things follow. First-order upwinding blends the streams at each bend, and refinement alone recovers that slowly: at 16 sites across it is still worse than the limited scheme at 8. The limited scheme at 16 sites across reproduces the expected values to within a few percent, and at 8 it is close where the streams are still distinct. And for this mixer the answer itself is that the liquids leave mostly but not wholly mixed: the difference between the streams has fallen to about 15 percent of what it began as, because the serpentine holds the stream for nearly two of diffusion's own time constants across the channel. A mixing question therefore needs the limited scheme, a spacing that puts about sixteen sites across the channel, and this kind of check; four sites across answers the split and nothing about the mixing. Transport and the flow solve [visit the fluid sites alone](../architecture/0029-transport-over-fluid-sites.md), so the fine grid costs what its channels cost and not what the chip's whole box does: the study's finest row takes 20 to 25 seconds, flow solve included. The expected values assume the shallow solver's plug flow; a real channel's velocity profile adds dispersion that neither they nor this solver include.
+
+Underneath, `microsimulator.flow.solve_port_flow_field` and `microsimulator.stokes.solve_port_stokes_field` take a grid and a list of `FlowPort`, each a face of the grid, a `GridFacePatch` of its boundary sites, and a speed or a pressure. A fixed boundary's `patches` give parts of one face their own media, and `Simulation.set_signal_boundary_patch_values(face, patch, values)` changes one. A fixed face is a reservoir wherever fluid touches it, port or not, so a model that opens ports by hand keeps the rest of each port's face solid, as `LayoutDevice` does.
 
 ## Changing the inlet media
 
@@ -197,6 +276,7 @@ The model also does not reproduce an experimentally established separation betwe
   `solve_flow_field` reports `max_speed`, and the trap examples use `dt = 0.02` with a mean
   channel speed of 20.
 - Forward Euler enforces its stability bound from the per-site advective outflow; the trap models select backward Euler for stiff transport and affine losses. Explicit cellular uptake still constrains the timestep.
+- Transport upwinds to first order unless the grid names another scheme. That blends streams wherever flow crosses the grid at an angle, which matters when the question is how far liquids have mixed and seldom otherwise. `grid.advection_scheme = SignalAdvectionKind.VAN_LEER` selects the [limited second-order scheme](../architecture/0028-limited-advection.md), which keeps a front sharp and never overshoots. Its implicit solve settles only while one step carries the fastest fluid across about six sites or fewer; a longer step is refused with a message that says so. Its explicit stability bound is half as long in its advective part.
 - The implicit solve's relative tolerance is the accuracy the step delivers: it asks for
   that reduction of the residual the step starts with, so a model gets what it asked for
   regardless of its concentration scale. These models keep the engine defaults.

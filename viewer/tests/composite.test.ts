@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { mapCellColors } from "../src/color";
 import {
   COMPOSITE_NEUTRAL,
+  mapCompositeSignals,
   mapCompositeSpecies,
   type CompositeChannelConfig,
 } from "../src/composite-color";
-import { CompositeSpeciesState } from "../src/composite-state";
+import { CompositeChannelState } from "../src/composite-state";
+import { signalSlice } from "../src/grid";
 import { DatasetScalarRanges } from "../src/scalar-range";
 import type { SceneFrame } from "../src/scene";
 
@@ -182,7 +184,7 @@ describe("composite species blending", () => {
 
 describe("composite channel settings", () => {
   it("preserves tint/range/enabled identity through reordering and temporarily missing channels", () => {
-    const state = new CompositeSpeciesState();
+    const state = new CompositeChannelState();
     const ranges = new DatasetScalarRanges();
     ranges.set("species", 0, { mode: "fixed", minimum: -2, maximum: 10 });
     ranges.set("species", 1, { mode: "fixed", minimum: 1, maximum: 8 });
@@ -217,6 +219,116 @@ describe("composite channel settings", () => {
     expect(state.get(1)).toEqual({ enabled: true, tint: "#00ff00" });
     expect(state.configuration(2, ranges)[0]?.range).toEqual({
       mode: "automatic",
+    });
+  });
+});
+
+describe("signal composite", () => {
+  // Three signals on a 2 by 2 by 1 grid. Levels are channel-major with z
+  // fastest, then y, then x; a z slice lists pixels with x fastest.
+  const grid = {
+    signalCount: 3,
+    shape: [2, 2, 1] as [number, number, number],
+    origin: [0, 0, 0] as [number, number, number],
+    spacing: [1, 1, 1] as [number, number, number],
+    levels: [
+      // channel 0 over (x, y): (0,0) (0,1) (1,0) (1,1)
+      1, 0, 0, 1,
+      // channel 1
+      0, 1, 0, 1,
+      // channel 2
+      0, 0, 2, 2,
+    ],
+  };
+  const sliced: SceneFrame = {
+    ...frame,
+    cells: [],
+    channelMetadata: {
+      species: [null, null],
+      signals: ["First liquid", "Second liquid", null],
+    },
+    signalGrid: { ...frame.signalGrid, ...grid } as SceneFrame["signalGrid"],
+  };
+  const valuesOf = (channel: number): readonly number[] =>
+    signalSlice(sliced.signalGrid!, channel, "z", 0).values;
+  const tints: readonly CompositeChannelConfig[] = [
+    ...channels,
+    {
+      index: 2,
+      enabled: true,
+      tint: "#0000ff",
+      range: { mode: "fixed", minimum: 0, maximum: 2 },
+    },
+  ];
+
+  it("blends each enabled signal into one color per slice pixel", () => {
+    const mapping = mapCompositeSignals(sliced, 4, valuesOf, tints);
+    // Pixels run (x0,y0) (x1,y0) (x0,y1) (x1,y1).
+    expectColor(mapping.colors[0], [1, 0, 0]);
+    expectColor(mapping.colors[1], [0, 0, 1]);
+    expectColor(mapping.colors[2], [0, 1, 0]);
+    expectColor(mapping.colors[3], [1, 1, 1]);
+    expect(mapping.channels.map((channel) => channel.label)).toEqual([
+      "First liquid",
+      "Second liquid",
+      "Channel 2",
+    ]);
+  });
+
+  it("resolves automatic ranges over the slice and honors disabled channels", () => {
+    const automatic = tints.map((channel) => ({
+      ...channel,
+      enabled: channel.index === 2,
+      range: { mode: "automatic" as const },
+    }));
+    const mapping = mapCompositeSignals(sliced, 4, valuesOf, automatic);
+    expect(mapping.channels).toHaveLength(1);
+    expect(mapping.channels[0]?.range).toMatchObject({
+      minimum: 0,
+      maximum: 2,
+    });
+    expectColor(mapping.colors[0], [0, 0, 0]);
+    expectColor(mapping.colors[1], [0, 0, 1]);
+    expect(
+      mapCompositeSignals(
+        sliced,
+        4,
+        valuesOf,
+        tints.map((channel) => ({ ...channel, enabled: false })),
+      ).colors,
+    ).toEqual(Array(4).fill(COMPOSITE_NEUTRAL));
+  });
+
+  it("rejects channels the grid does not have", () => {
+    expect(() =>
+      mapCompositeSignals(sliced, 4, valuesOf, [{ ...tints[0]!, index: 3 }]),
+    ).toThrow("signal channel 3 is out of range");
+    expect(() => mapCompositeSignals(frame, 0, () => [], [tints[0]!])).toThrow(
+      "signal channel 0 is out of range",
+    );
+  });
+
+  it("starts with the first three signals enabled, in red, green and blue", () => {
+    const state = new CompositeChannelState("signals", 3);
+    const ranges = new DatasetScalarRanges();
+    ranges.set("signals", 2, { mode: "fixed", minimum: 0, maximum: 2 });
+    ranges.set("species", 2, { mode: "fixed", minimum: 5, maximum: 6 });
+    const configuration = state.configuration(4, ranges);
+    expect(configuration.map((channel) => channel.enabled)).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
+    expect(configuration.slice(0, 3).map((channel) => channel.tint)).toEqual([
+      "#ff0000",
+      "#00ff00",
+      "#0080ff",
+    ]);
+    expect(configuration[2]?.range).toEqual({
+      mode: "fixed",
+      minimum: 0,
+      maximum: 2,
     });
   });
 });

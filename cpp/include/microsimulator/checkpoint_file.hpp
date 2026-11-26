@@ -15,7 +15,7 @@
 namespace microsimulator {
 
 inline constexpr std::string_view checkpoint_format = "microsimulator-checkpoint";
-inline constexpr std::uint32_t checkpoint_format_version = 10;
+inline constexpr std::uint32_t checkpoint_format_version = 11;
 inline constexpr std::size_t max_checkpoint_bytes = std::size_t{1} << 30U;
 
 // Raised when a checkpoint document cannot be encoded, decoded, or validated.

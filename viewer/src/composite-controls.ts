@@ -1,5 +1,5 @@
 import type { CompositeChannelLegend } from "./composite-color";
-import { CompositeSpeciesState } from "./composite-state";
+import { CompositeChannelState } from "./composite-state";
 import { ScalarRangeControls } from "./scalar-range-controls";
 import { DatasetScalarRanges, resolveScalarRange } from "./scalar-range";
 import { channelLabel, type SceneFrame } from "./scene";
@@ -16,7 +16,29 @@ interface ChannelRow {
   down: HTMLButtonElement;
 }
 
-export class CompositeSpeciesControls {
+/** The channels of one group that a composite draws from, and how to read them. */
+export interface CompositeChannelSource {
+  readonly group: "species" | "signals";
+  /** The id of the legend element; range controls take ids that begin with `rangeIdPrefix`. */
+  readonly legendId: string;
+  readonly rangeIdPrefix: string;
+  /** What the legend says when no channel is enabled. */
+  readonly emptyText: string;
+  count(frame: SceneFrame): number;
+  /** One channel's values over what is displayed: every cell, or the pixels of a slice. */
+  values(frame: SceneFrame, index: number): readonly number[];
+}
+
+export const SPECIES_COMPOSITE_SOURCE: CompositeChannelSource = {
+  group: "species",
+  legendId: "composite-legend",
+  rangeIdPrefix: "composite-range",
+  emptyText: "No channels active. Cells use neutral gray.",
+  count: (frame) => frame.speciesCount,
+  values: (frame, index) => frame.cells.map((cell) => cell.species[index] ?? 0),
+};
+
+export class CompositeChannelControls {
   private readonly rows = new Map<number, ChannelRow>();
   private readonly list = document.createElement("div");
   private readonly legend = document.createElement("div");
@@ -25,12 +47,13 @@ export class CompositeSpeciesControls {
 
   public constructor(
     root: HTMLElement,
-    private readonly state: CompositeSpeciesState,
+    private readonly state: CompositeChannelState,
     private readonly ranges: DatasetScalarRanges,
     private readonly onChange: () => void,
     private readonly formatNumber: (value: number) => string,
+    private readonly source: CompositeChannelSource = SPECIES_COMPOSITE_SOURCE,
   ) {
-    this.legend.id = "composite-legend";
+    this.legend.id = source.legendId;
     this.legend.className = "composite-legend";
     this.legend.setAttribute("aria-label", "Composite channel legend");
     root.append(this.list, this.legend);
@@ -47,7 +70,7 @@ export class CompositeSpeciesControls {
     frame: SceneFrame,
     channels: readonly CompositeChannelLegend[],
   ): void {
-    this.count = frame.speciesCount;
+    this.count = this.source.count(frame);
     const indices = this.state.indices(this.count);
     for (const [position, index] of indices.entries()) {
       let row = this.rows.get(index);
@@ -55,7 +78,7 @@ export class CompositeSpeciesControls {
         row = this.createRow(index);
         this.rows.set(index, row);
       }
-      const name = channelLabel(frame, "species", index);
+      const name = channelLabel(frame, this.source.group, index);
       row.label.textContent = name;
       row.root.setAttribute("aria-label", `${name} composite channel`);
       row.enabled.setAttribute("aria-label", `Enable ${name}`);
@@ -69,8 +92,8 @@ export class CompositeSpeciesControls {
       row.range.bind(
         index,
         resolveScalarRange(
-          frame.cells.map((cell) => cell.species[index] ?? 0),
-          this.ranges.get("species", index),
+          this.source.values(frame, index),
+          this.ranges.get(this.source.group, index),
         ),
       );
     }
@@ -83,7 +106,7 @@ export class CompositeSpeciesControls {
     }
     this.legend.replaceChildren();
     if (channels.length === 0) {
-      this.legend.textContent = "No channels active. Cells use neutral gray.";
+      this.legend.textContent = this.source.emptyText;
       return;
     }
     for (const channel of channels) {
@@ -141,11 +164,11 @@ export class CompositeSpeciesControls {
     tintError.setAttribute("role", "status");
     tintForm.append(tintLabel, tintApply, tintError);
     const rangeRoot = document.createElement("div");
-    rangeRoot.id = `composite-range-${index}`;
+    rangeRoot.id = `${this.source.rangeIdPrefix}-${index}`;
     const range = new ScalarRangeControls(
       rangeRoot,
       this.ranges,
-      "species",
+      this.source.group,
       this.onChange,
     );
     const order = document.createElement("div");

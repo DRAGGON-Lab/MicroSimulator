@@ -15,8 +15,9 @@ microsimulator::RateInstruction operation(microsimulator::RateOp op, std::uint32
   return {.operation = op, .first = first, .second = second, .value = value};
 }
 
-microsimulator::Simulation make_reference(microsimulator::SignalIntegrationKind integration,
-                                          bool masked = false) {
+microsimulator::Simulation make_reference(
+    microsimulator::SignalIntegrationKind integration, bool masked = false,
+    microsimulator::SignalAdvectionKind scheme = microsimulator::SignalAdvectionKind::upwind) {
   microsimulator::Simulation simulation(microsimulator::BackendKind::cpu, 513, 3);
   microsimulator::SignalGridSpec grid;
   grid.signal_count = 2;
@@ -26,12 +27,16 @@ microsimulator::Simulation make_reference(microsimulator::SignalIntegrationKind 
   grid.diffusion = {0.08F, 0.03F};
   grid.advection = {{0.05F, -0.02F, 0.01F}, {-0.03F, 0.04F, -0.01F}};
   grid.integration = integration;
+  grid.advection_scheme = scheme;
   grid.x_lower.kind = microsimulator::GridBoundaryKind::periodic;
   grid.x_upper.kind = microsimulator::GridBoundaryKind::periodic;
   grid.z_lower.kind = microsimulator::GridBoundaryKind::fixed;
   grid.z_lower.values = {0.9F, 1.1F};
   grid.z_upper.kind = microsimulator::GridBoundaryKind::fixed;
   grid.z_upper.values = {1.2F, 1.0F};
+  // Part of each fixed face holds a reservoir of its own.
+  grid.z_lower.patches = {{.region = {.begin = {2, 1}, .end = {6, 5}}, .values = {0.2F, 1.6F}}};
+  grid.z_upper.patches = {{.region = {.begin = {0, 3}, .end = {9, 7}}, .values = {1.5F, 0.4F}}};
   microsimulator::SignalGridAffineReaction reaction;
   reaction.source_rates.resize(grid.level_count());
   reaction.loss_rates.resize(grid.level_count());
@@ -226,5 +231,11 @@ int main() {
   run_case(microsimulator::SignalIntegrationKind::forward_euler, 0.01F, true);
   run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F, true);
   run_case(make_crowded_reference(), 0.01F);
+  // The van Leer scheme with cells exchanging on the grid.
+  const auto van_leer = microsimulator::SignalAdvectionKind::van_leer;
+  run_case(make_reference(microsimulator::SignalIntegrationKind::forward_euler, false, van_leer),
+           0.01F);
+  run_case(make_reference(microsimulator::SignalIntegrationKind::backward_euler, true, van_leer),
+           0.5F);
   return 0;
 }

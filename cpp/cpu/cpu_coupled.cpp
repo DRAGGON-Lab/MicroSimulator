@@ -94,7 +94,6 @@ void validate_coupled_step(const WorldState& state, const SignalGrid& grid,
     throw std::invalid_argument("coupled time step must be finite and non-negative");
   }
   state.validate();
-  grid.validate();
   grid.validate_step(dt);
   plan.validate();
   if (plan.species_count() != state.species_count()) {
@@ -212,8 +211,8 @@ SignalSolveReport advance_coupled_cpu(WorldState& state, SignalGrid& grid,
     auto result = signal_grid_crank_nicolson_candidate(grid, dt, signal_sources);
     signal_report = result.report;
     if (!signal_report.converged) {
-      throw std::runtime_error("Implicit coupled signal solve did not converge after " +
-                               std::to_string(signal_report.iterations) + " iterations");
+      throw std::runtime_error(signal_solve_failure("Implicit coupled signal solve", grid_spec,
+                                                    signal_report.iterations));
     }
     next_grid = std::move(result.levels);
   } else {
@@ -224,9 +223,10 @@ SignalSolveReport advance_coupled_cpu(WorldState& state, SignalGrid& grid,
       }
     });
   }
-  SignalGridCheckpoint{.spec = grid_spec, .levels = next_grid}.validate();
+  // The grid refuses levels it cannot hold, so it takes its own before the
+  // species take theirs: a refused step changes neither.
+  grid.accept_step(std::move(next_grid));
   std::ranges::copy(next_species, species_state.levels.begin());
-  grid.replace_levels(std::move(next_grid));
   return signal_report;
 }
 

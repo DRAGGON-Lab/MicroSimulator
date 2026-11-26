@@ -14,9 +14,17 @@ export interface CompositeChannelPreference {
   readonly tint: string;
 }
 
-export class CompositeSpeciesState {
+/**
+ * Which channels of one group, species or signals, a composite shows, in what
+ * tints and in what order. The first `initiallyEnabled` channels start on.
+ */
+export class CompositeChannelState {
   private readonly channels = new Map<number, CompositeChannelPreference>();
   private order: number[] = [];
+  public constructor(
+    private readonly group: "species" | "signals" = "species",
+    private readonly initiallyEnabled = 2,
+  ) {}
   public beginDataset(): void {
     this.channels.clear();
     this.order = [];
@@ -28,7 +36,7 @@ export class CompositeSpeciesState {
       );
     return (
       this.channels.get(index) ?? {
-        enabled: index < 2,
+        enabled: index < this.initiallyEnabled,
         tint: TINTS[index % TINTS.length]!,
       }
     );
@@ -60,7 +68,7 @@ export class CompositeSpeciesState {
     return this.indices(count).map((index) => ({
       index,
       ...this.get(index),
-      range: ranges.get("species", index),
+      range: ranges.get(this.group, index),
     }));
   }
 }

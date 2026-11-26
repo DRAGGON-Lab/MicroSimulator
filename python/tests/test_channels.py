@@ -5,7 +5,7 @@ import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import rfc8785
@@ -78,9 +78,15 @@ def test_live_labels_survive_step_reset_and_checkpoint(tmp_path: Path) -> None:
     session = LiveSession(_build, dt=0.01, checkpoint_output=tmp_path / "live.json")
     for operation in (lambda: None, session.step, session.reset):
         operation()
-        message = session.frame_message(playing=False)
+        message, levels = session.frame_message(playing=False)
+        # A live frame's scene holds the cells and their labels; the signal
+        # grid and its labels travel beside it.
         frame = parse_scene(json.dumps(message["scene"]))
-        assert frame.channel_metadata == LABELS
+        assert frame.channel_metadata.species == LABELS.species
+        assert frame.signal_grid is None
+        grid = cast(dict[str, Any], message["signal_grid"])
+        assert tuple(grid["labels"]) == LABELS.signals
+        assert levels is not None and len(levels) == grid["levels"]["byte_length"]
     assert load_checkpoint_bundle(session.checkpoint()).channel_metadata == LABELS
 
 

@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-15
+- Amended: 2026-11-26
 
 ## Context
 
@@ -24,6 +25,8 @@ Each signal declares a non-negative diffusion coefficient and a finite 3D advect
 - `periodic`: the stencil wraps to the opposite face; or
 - `fixed`: the exterior stencil value is the declared non-negative reservoir concentration for that signal. The reservoir concentrations of a fixed boundary may be replaced between steps with `SignalGrid::set_boundary_values`; the boundary kind of each face is set when the grid is configured and does not change.
 
+A fixed face may also declare patches. A patch is a rectangle of the face's boundary sites, stated in the face's two in-plane axes in x, y, z order, with its own reservoir concentration per signal. A boundary site reads the last patch that holds it and otherwise the face's own concentrations, so several inlets on one face can carry different media. A patch changes only which reservoir a site reads: face closure, the operator diagonal, and the stability bound depend on the boundary kind alone. `SignalGrid::set_boundary_patch_values` replaces one patch's concentrations between steps; the patches' rectangles are set when the grid is configured. Devices read patched faces from one dense block of concentrations per boundary site, built from the patches at each step.
+
 Periodic faces must occur in opposing pairs on an axis. For diffusion, a no-flux exterior stencil value equals the boundary lattice value. Fixed values are defined at the exterior stencil location one grid spacing beyond the boundary, which removes half-cell ambiguity.
 
 The grid may also carry an immutable affine reaction field with non-negative finite source `b[i]` and first-order loss `lambda[i]` for every flattened level:
@@ -42,7 +45,7 @@ Diffusion uses the conventional centered second difference independently in each
 D * sum_axis((c[i-1] - 2*c[i] + c[i+1]) / spacing_axis^2)
 ```
 
-Advection uses conservative face fluxes with first-order upwinding for `-velocity dot grad(c)`. A fixed reservoir supplies the exterior upwind value, a periodic face wraps, and a no-flux face has exactly zero advective flux. This is less accurate in smooth fields than a higher-order scheme, but its monotonicity and compact native implementation make it the reference stage. Higher-order transport can be added as a separately named integrator.
+Advection uses conservative face fluxes with first-order upwinding for `-velocity dot grad(c)`. A fixed reservoir supplies the exterior upwind value, a periodic face wraps, and a no-flux face has exactly zero advective flux. This is less accurate in smooth fields than a higher-order scheme, but its monotonicity and compact native implementation make it the reference stage and the default. A grid may name the limited second-order scheme of [ADR 0028](0028-limited-advection.md) instead.
 
 Forward Euler rejects a step before mutation unless, for every signal,
 

@@ -466,26 +466,29 @@ kernel void advance_coupled_grid(
 
   float3 lower;
   float3 upper;
-  lower.x = x == 0u ? exterior_value(boundary_kinds[0], fixed_values, 0u, signal, signal_count,
-                                     current, grid_level(levels, shape, signal, shape.x - 1u, y, z))
+  lower.x = x == 0u ? exterior_value(boundary_kinds, fixed_values, 0u, y * shape.z + z, signal,
+                                     signal_count, current,
+                                     grid_level(levels, shape, signal, shape.x - 1u, y, z))
                     : grid_level(levels, shape, signal, x - 1u, y, z);
   upper.x = x + 1u == shape.x
-                ? exterior_value(boundary_kinds[1], fixed_values, 1u, signal, signal_count, current,
-                                 grid_level(levels, shape, signal, 0u, y, z))
+                ? exterior_value(boundary_kinds, fixed_values, 1u, y * shape.z + z, signal,
+                                 signal_count, current, grid_level(levels, shape, signal, 0u, y, z))
                 : grid_level(levels, shape, signal, x + 1u, y, z);
-  lower.y = y == 0u ? exterior_value(boundary_kinds[2], fixed_values, 2u, signal, signal_count,
-                                     current, grid_level(levels, shape, signal, x, shape.y - 1u, z))
+  lower.y = y == 0u ? exterior_value(boundary_kinds, fixed_values, 2u, x * shape.z + z, signal,
+                                     signal_count, current,
+                                     grid_level(levels, shape, signal, x, shape.y - 1u, z))
                     : grid_level(levels, shape, signal, x, y - 1u, z);
   upper.y = y + 1u == shape.y
-                ? exterior_value(boundary_kinds[3], fixed_values, 3u, signal, signal_count, current,
-                                 grid_level(levels, shape, signal, x, 0u, z))
+                ? exterior_value(boundary_kinds, fixed_values, 3u, x * shape.z + z, signal,
+                                 signal_count, current, grid_level(levels, shape, signal, x, 0u, z))
                 : grid_level(levels, shape, signal, x, y + 1u, z);
-  lower.z = z == 0u ? exterior_value(boundary_kinds[4], fixed_values, 4u, signal, signal_count,
-                                     current, grid_level(levels, shape, signal, x, y, shape.z - 1u))
+  lower.z = z == 0u ? exterior_value(boundary_kinds, fixed_values, 4u, x * shape.y + y, signal,
+                                     signal_count, current,
+                                     grid_level(levels, shape, signal, x, y, shape.z - 1u))
                     : grid_level(levels, shape, signal, x, y, z - 1u);
   upper.z = z + 1u == shape.z
-                ? exterior_value(boundary_kinds[5], fixed_values, 5u, signal, signal_count, current,
-                                 grid_level(levels, shape, signal, x, y, 0u))
+                ? exterior_value(boundary_kinds, fixed_values, 5u, x * shape.y + y, signal,
+                                 signal_count, current, grid_level(levels, shape, signal, x, y, 0u))
                 : grid_level(levels, shape, signal, x, y, z + 1u);
 
   uint3 dimensions = uint3(shape.x, shape.y, shape.z);
@@ -519,6 +522,12 @@ kernel void advance_coupled_grid(
       upper_flux = 0.0f;
     }
     rate -= (upper_flux - lower_flux) * inverse_spacing;
+    if (boundary_kinds[12] == 1u) {
+      rate -= van_leer_correction(levels, obstacles, shape, boundary_kinds, signal, uint3(x, y, z),
+                                  axis, current, lower[axis], upper[axis], closed_lower[axis],
+                                  closed_upper[axis], faces.lower[axis], faces.upper[axis]) *
+              inverse_spacing;
+    }
   }
   rate += reaction_source[index] - reaction_loss[index] * current;
 
@@ -536,7 +545,10 @@ kernel void advance_coupled_grid(
   float transport_scale = crank_nicolson == 0u ? dt : (crank_nicolson == 1u ? 0.5f * dt : 0.0f);
   float candidate = current + transport_scale * rate + dt * source;
   output[index] = candidate;
-  if (!isfinite(candidate) || (crank_nicolson == 0u && candidate < 0.0f)) {
+  // Under the van Leer scheme an explicit level may fall below zero by
+  // rounding; the host judges those when it takes the step's levels.
+  if (!isfinite(candidate) ||
+      (crank_nicolson == 0u && boundary_kinds[12] == 0u && candidate < 0.0f)) {
     atomic_fetch_or_explicit(error, 2u, memory_order_relaxed);
   }
 }

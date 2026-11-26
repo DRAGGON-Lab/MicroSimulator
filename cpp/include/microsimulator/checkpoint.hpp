@@ -11,7 +11,7 @@
 
 namespace microsimulator {
 
-inline constexpr std::uint32_t checkpoint_schema_version = 4;
+inline constexpr std::uint32_t checkpoint_schema_version = 5;
 
 struct SimulationCheckpoint {
   std::uint32_t schema_version{checkpoint_schema_version};
