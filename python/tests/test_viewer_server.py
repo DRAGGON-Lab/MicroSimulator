@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import struct
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,9 +13,15 @@ from aiohttp.test_utils import TestClient, TestServer
 from microsimulator import (
     BackendKind,
     CellInit,
+    ChannelMetadata,
+    GridBoundaryKind,
+    GridShape,
+    SignalGridSpec,
     Simulation,
+    Vec3,
     load_checkpoint,
     load_checkpoint_bundle,
+    parse_scene,
     viewer_server,
 )
 from microsimulator.checkpoint import JSONValue
@@ -36,6 +44,8 @@ def _factory() -> tuple[Simulation, dict[str, JSONValue]]:
 
 
 class _TestController:
+    channel_metadata = ChannelMetadata()
+
     def __init__(self, simulation: Simulation) -> None:
         self.simulation = simulation
         self.completed_steps = 0
@@ -71,19 +81,19 @@ def test_live_session_steps_resets_and_writes_only_configured_checkpoint(
 ) -> None:
     output = tmp_path / "live.json"
     session = LiveSession(_factory, dt=0.25, checkpoint_output=output)
-    initial = session.frame_message(playing=False)
+    initial, _ = session.frame_message(playing=False)
     assert initial["revision"] == 0
     assert cast(dict[str, Any], initial["scene"])["frame"]["time"] == 0.0
 
     session.step(2)
-    stepped = session.frame_message(playing=False)
+    stepped, _ = session.frame_message(playing=False)
     assert stepped["completed_steps"] == 2
     assert cast(dict[str, Any], stepped["scene"])["frame"]["time"] == 0.5
     assert session.checkpoint() == output.resolve()
     assert load_checkpoint(output).time == 0.5
 
     session.reset()
-    reset = session.frame_message(playing=False)
+    reset, _ = session.frame_message(playing=False)
     assert reset["revision"] == 2
     assert reset["completed_steps"] == 0
     assert cast(dict[str, Any], reset["scene"])["frame"]["time"] == 0.0
@@ -188,19 +198,19 @@ def test_live_websocket_requires_same_origin_token_and_controls_session(tmp_path
         try:
             with pytest.raises(WSServerHandshakeError) as wrong_token:
                 await client.ws_connect(
-                    "/api/v1/session?token=wrong",
+                    "/api/v2/session?token=wrong",
                     headers={"Origin": origin},
                 )
             assert wrong_token.value.status == 403
             with pytest.raises(WSServerHandshakeError) as wrong_origin:
                 await client.ws_connect(
-                    f"/api/v1/session?token={token}",
+                    f"/api/v2/session?token={token}",
                     headers={"Origin": "https://attacker.invalid"},
                 )
             assert wrong_origin.value.status == 403
 
             socket = await client.ws_connect(
-                f"/api/v1/session?token={token}",
+                f"/api/v2/session?token={token}",
                 headers={"Origin": origin},
             )
             initial = cast(dict[str, Any], await socket.receive_json())
@@ -226,6 +236,90 @@ def test_live_websocket_requires_same_origin_token_and_controls_session(tmp_path
             error = cast(dict[str, Any], await socket.receive_json())
             assert error["type"] == "error"
             assert "unknown command" in error["message"]
+            await socket.close()
+        finally:
+            await client.close()
+
+    asyncio.run(exercise())
+
+
+def _grid_factory() -> tuple[_TestController, dict[str, JSONValue]]:
+    """A model with a signal grid: two signals on a 3 by 2 by 2 lattice, one of them named."""
+
+    simulation = Simulation(BackendKind.CPU)
+    provenance: dict[str, JSONValue] = {"model": {"name": "viewer-grid-test"}}
+    shape = GridShape()
+    shape.x, shape.y, shape.z = 3, 2, 2
+    grid = SignalGridSpec()
+    grid.signal_count = 2
+    grid.shape = shape
+    grid.origin = Vec3(-1.0, 0.5, 0.0)
+    grid.spacing = Vec3(1.0, 2.0, 0.5)
+    grid.diffusion = [0.05, 0.0]
+    grid.advection = [Vec3(), Vec3()]
+    lower = grid.x_lower
+    lower.kind = GridBoundaryKind.FIXED
+    lower.values = [1.5, 0.25]
+    simulation.configure_signal_grid(grid, [0.125 * index for index in range(24)])
+    controller = _TestController(simulation)
+    controller.channel_metadata = ChannelMetadata(signals=("Nutrient", None))
+    return controller, provenance
+
+
+def test_live_frames_carry_signal_levels_as_binary(tmp_path: Path) -> None:
+    session = LiveSession(_grid_factory, dt=0.1)
+    header, levels = session.frame_message(playing=False)
+    assert levels is not None
+    scene = cast(dict[str, Any], header["scene"])
+    assert scene["frame"]["signal_grid"] is None
+    assert scene["frame"]["channel_metadata"]["signals"] == []
+    assert parse_scene(json.dumps(scene)).signal_grid is None
+    described = cast(dict[str, Any], header["signal_grid"])
+    assert (described["signal_count"], described["shape"]) == (2, [3, 2, 2])
+    assert (described["origin"], described["spacing"]) == ([-1.0, 0.5, 0.0], [1.0, 2.0, 0.5])
+    assert described["boundaries"]["x_lower"] == {"kind": "fixed", "values": [1.5, 0.25]}
+    assert described["boundaries"]["z_upper"] == {"kind": "no_flux", "values": []}
+    assert described["labels"] == ["Nutrient", None]
+    assert described["levels"] == {
+        "encoding": "float32-le",
+        "byte_length": 24 * 4,
+        "sha256": hashlib.sha256(levels).hexdigest(),
+    }
+    # The bytes are the engine's own float32 levels, in the scene's order.
+    assert list(struct.unpack("<24f", levels)) == [0.125 * index for index in range(24)]
+
+    # A model without a grid describes none and sends no levels.
+    plain, nothing = LiveSession(_factory, dt=0.1).frame_message(playing=False)
+    assert plain["signal_grid"] is None and nothing is None
+
+    async def exercise() -> None:
+        application, token = create_live_app(
+            LiveSession(_grid_factory, dt=0.1), _dist(tmp_path), token="b" * 32, fps=60.0
+        )
+        client = TestClient(TestServer(application))
+        await client.start_server()
+        origin = str(client.make_url("/")).rstrip("/")
+        try:
+            # The protocol's earlier path is gone.
+            with pytest.raises(WSServerHandshakeError):
+                await client.ws_connect(
+                    f"/api/v1/session?token={token}", headers={"Origin": origin}
+                )
+            socket = await client.ws_connect(
+                f"/api/v2/session?token={token}", headers={"Origin": origin}
+            )
+            # Every frame is its header and then its levels.
+            first = cast(dict[str, Any], await socket.receive_json())
+            payload = await socket.receive_bytes()
+            assert first["type"] == "frame"
+            assert hashlib.sha256(payload).hexdigest() == first["signal_grid"]["levels"]["sha256"]
+            await socket.send_json({"type": "step", "steps": 3})
+            stepped = cast(dict[str, Any], await socket.receive_json())
+            moved = await socket.receive_bytes()
+            assert stepped["completed_steps"] == 3
+            assert len(moved) == stepped["signal_grid"]["levels"]["byte_length"] == 96
+            assert hashlib.sha256(moved).hexdigest() == stepped["signal_grid"]["levels"]["sha256"]
+            assert moved != payload
             await socket.close()
         finally:
             await client.close()
@@ -259,9 +353,9 @@ def build(context):
         **options: object,
     ) -> None:
         session.step()
-        captured["stepped"] = session.frame_message(playing=False)
+        captured["stepped"] = session.frame_message(playing=False)[0]
         session.reset()
-        captured["reset"] = session.frame_message(playing=False)
+        captured["reset"] = session.frame_message(playing=False)[0]
         captured["dist"] = Path(viewer_dist)
         captured["options"] = options
 

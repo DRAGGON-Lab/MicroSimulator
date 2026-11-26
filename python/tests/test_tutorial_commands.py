@@ -316,11 +316,15 @@ def test_documented_live_commands(shell: CommandShell) -> None:
                 async with (
                     ClientSession() as client,
                     client.ws_connect(
-                        f"http://{url.netloc}/api/v1/session?{url.query}",
+                        f"http://{url.netloc}/api/v2/session?{url.query}",
                         headers={"Origin": f"http://{url.netloc}"},
                     ) as ws,
                 ):
                     frame = await ws.receive_json(timeout=10)
+                    if frame["signal_grid"] is not None:
+                        # A frame's signal levels follow its header as bytes.
+                        levels = await ws.receive_bytes(timeout=10)
+                        assert len(levels) == frame["signal_grid"]["levels"]["byte_length"]
                     assert frame["playing"] is False
                     assert _same_time(
                         frame["scene"]["frame"]["time"],

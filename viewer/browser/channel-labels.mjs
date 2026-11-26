@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import canonicalize from "canonicalize";
+import { sendLiveFrame } from "./live-frame.mjs";
 
 const { chromium, expect } = await import(
   process.env.MICROSIMULATOR_PLAYWRIGHT_MODULE ?? "@playwright/test"
@@ -32,7 +33,7 @@ try {
     });
   });
   let socket;
-  await page.routeWebSocket("**/api/v1/session?*", (connection) => {
+  await page.routeWebSocket("**/api/v2/session?*", (connection) => {
     socket = connection;
   });
   await page.goto(`${url}/?token=fixture`);
@@ -45,17 +46,22 @@ try {
   );
   let revision = 0;
   async function send() {
-    document.integrity.frame = createHash("sha256")
-      .update(canonicalize(document.frame))
-      .digest("hex");
-    socket.send(
-      JSON.stringify({
-        type: "frame",
+    sendLiveFrame(
+      socket,
+      {
         revision: revision++,
         completed_steps: revision,
         playing: false,
         checkpoint_enabled: false,
-        scene: document,
+      },
+      document.frame,
+      (frame) => ({
+        ...document,
+        integrity: {
+          ...document.integrity,
+          frame: createHash("sha256").update(canonicalize(frame)).digest("hex"),
+        },
+        frame,
       }),
     );
   }
