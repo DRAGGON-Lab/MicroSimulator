@@ -1,4 +1,5 @@
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/array.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
@@ -137,10 +138,36 @@ NB_MODULE(_core, module) {
       .def_ro("device_index", &microsimulator::BackendInfo::device_index)
       .def_ro("native", &microsimulator::BackendInfo::native);
 
+  nb::class_<microsimulator::GridFacePatch>(module, "GridFacePatch")
+      .def(nb::init<>())
+      .def(
+          "__init__",
+          [](microsimulator::GridFacePatch* patch, std::array<std::uint32_t, 2> begin,
+             std::array<std::uint32_t, 2> end) {
+            new (patch) microsimulator::GridFacePatch{.begin = begin, .end = end};
+          },
+          "begin"_a, "end"_a)
+      .def_rw("begin", &microsimulator::GridFacePatch::begin)
+      .def_rw("end", &microsimulator::GridFacePatch::end);
+
+  nb::class_<microsimulator::GridBoundaryPatch>(module, "GridBoundaryPatch")
+      .def(nb::init<>())
+      .def(
+          "__init__",
+          [](microsimulator::GridBoundaryPatch* patch, const microsimulator::GridFacePatch& region,
+             std::vector<float> values) {
+            new (patch)
+                microsimulator::GridBoundaryPatch{.region = region, .values = std::move(values)};
+          },
+          "region"_a, "values"_a)
+      .def_rw("region", &microsimulator::GridBoundaryPatch::region)
+      .def_rw("values", &microsimulator::GridBoundaryPatch::values);
+
   nb::class_<microsimulator::GridBoundary>(module, "GridBoundary")
       .def(nb::init<>())
       .def_rw("kind", &microsimulator::GridBoundary::kind)
       .def_rw("values", &microsimulator::GridBoundary::values)
+      .def_rw("patches", &microsimulator::GridBoundary::patches)
       .def("validate", &microsimulator::GridBoundary::validate, "signal_count"_a);
 
   nb::class_<microsimulator::GridShape>(module, "GridShape")
@@ -172,6 +199,77 @@ NB_MODULE(_core, module) {
       .def_rw("x_faces", &microsimulator::SignalGridVelocityField::x_faces)
       .def_rw("y_faces", &microsimulator::SignalGridVelocityField::y_faces)
       .def_rw("z_faces", &microsimulator::SignalGridVelocityField::z_faces);
+
+  nb::enum_<microsimulator::FlowPortKind>(module, "FlowPortKind")
+      .value("SPEED", microsimulator::FlowPortKind::speed)
+      .value("PRESSURE", microsimulator::FlowPortKind::pressure);
+
+  nb::class_<microsimulator::FlowPort>(module, "FlowPort")
+      .def(nb::init<>())
+      .def(
+          "__init__",
+          [](microsimulator::FlowPort* port, microsimulator::GridFace face,
+             const microsimulator::GridFacePatch& patch, microsimulator::FlowPortKind kind,
+             float value) {
+            new (port) microsimulator::FlowPort{
+                .face = face, .patch = patch, .kind = kind, .value = value};
+          },
+          "face"_a, "patch"_a, "kind"_a, "value"_a)
+      .def_rw("face", &microsimulator::FlowPort::face)
+      .def_rw("patch", &microsimulator::FlowPort::patch)
+      .def_rw("kind", &microsimulator::FlowPort::kind)
+      .def_rw("value", &microsimulator::FlowPort::value);
+
+  nb::class_<microsimulator::FlowPortState>(module, "FlowPortState")
+      .def_ro("pressure", &microsimulator::FlowPortState::pressure)
+      .def_ro("flux", &microsimulator::FlowPortState::flux)
+      .def_ro("mean_speed", &microsimulator::FlowPortState::mean_speed);
+
+  nb::class_<microsimulator::DepthAveragedPortFlowParameters>(module,
+                                                              "DepthAveragedPortFlowParameters")
+      .def(nb::init<>())
+      .def_rw("relative_tolerance",
+              &microsimulator::DepthAveragedPortFlowParameters::relative_tolerance)
+      .def_rw("max_iterations", &microsimulator::DepthAveragedPortFlowParameters::max_iterations)
+      .def("validate", &microsimulator::DepthAveragedPortFlowParameters::validate);
+
+  nb::class_<microsimulator::DepthAveragedPortFlowReport>(module, "DepthAveragedPortFlowReport")
+      .def_ro("solves", &microsimulator::DepthAveragedPortFlowReport::solves)
+      .def_ro("iterations", &microsimulator::DepthAveragedPortFlowReport::iterations)
+      .def_ro("relative_residual", &microsimulator::DepthAveragedPortFlowReport::relative_residual)
+      .def_ro("max_speed", &microsimulator::DepthAveragedPortFlowReport::max_speed);
+
+  nb::class_<microsimulator::DepthAveragedPortFlowResult>(module, "DepthAveragedPortFlowResult")
+      .def_ro("field", &microsimulator::DepthAveragedPortFlowResult::field)
+      .def_ro("report", &microsimulator::DepthAveragedPortFlowResult::report)
+      .def_ro("ports", &microsimulator::DepthAveragedPortFlowResult::ports);
+
+  nb::class_<microsimulator::ResolvedPortFlowParameters>(module, "ResolvedPortFlowParameters")
+      .def(nb::init<>())
+      .def_rw("relative_tolerance", &microsimulator::ResolvedPortFlowParameters::relative_tolerance)
+      .def_rw("max_outer_iterations",
+              &microsimulator::ResolvedPortFlowParameters::max_outer_iterations)
+      .def_rw("inner_relative_tolerance",
+              &microsimulator::ResolvedPortFlowParameters::inner_relative_tolerance)
+      .def_rw("max_inner_iterations",
+              &microsimulator::ResolvedPortFlowParameters::max_inner_iterations)
+      .def("validate", &microsimulator::ResolvedPortFlowParameters::validate);
+
+  nb::class_<microsimulator::ResolvedPortFlowReport>(module, "ResolvedPortFlowReport")
+      .def_ro("solves", &microsimulator::ResolvedPortFlowReport::solves)
+      .def_ro("outer_iterations", &microsimulator::ResolvedPortFlowReport::outer_iterations)
+      .def_ro("inner_iterations", &microsimulator::ResolvedPortFlowReport::inner_iterations)
+      .def_ro("relative_residual", &microsimulator::ResolvedPortFlowReport::relative_residual)
+      .def_ro("momentum_relative_residual",
+              &microsimulator::ResolvedPortFlowReport::momentum_relative_residual)
+      .def_ro("divergence_rms", &microsimulator::ResolvedPortFlowReport::divergence_rms)
+      .def_ro("max_speed", &microsimulator::ResolvedPortFlowReport::max_speed)
+      .def_ro("min_gap_voxels", &microsimulator::ResolvedPortFlowReport::min_gap_voxels);
+
+  nb::class_<microsimulator::ResolvedPortFlowResult>(module, "ResolvedPortFlowResult")
+      .def_ro("field", &microsimulator::ResolvedPortFlowResult::field)
+      .def_ro("report", &microsimulator::ResolvedPortFlowResult::report)
+      .def_ro("ports", &microsimulator::ResolvedPortFlowResult::ports);
 
   nb::class_<microsimulator::DepthAveragedFlowParameters>(module, "DepthAveragedFlowParameters")
       .def(nb::init<>())
@@ -635,6 +733,14 @@ NB_MODULE(_core, module) {
             simulation.set_signal_boundary_values(face, values);
           },
           "face"_a, "values"_a)
+      .def(
+          "set_signal_boundary_patch_values",
+          [](microsimulator::Simulation& simulation, microsimulator::GridFace face,
+             std::size_t patch, const std::vector<float>& values) {
+            microsimulator::python::BusyObjects::require_idle(&simulation);
+            simulation.set_signal_boundary_patch_values(face, patch, values);
+          },
+          "face"_a, "patch"_a, "values"_a)
       .def("divide", microsimulator::python::exclusive(&microsimulator::Simulation::divide),
            "parent_id"_a, "first_fraction"_a)
       .def("divide_equal",
@@ -681,6 +787,26 @@ NB_MODULE(_core, module) {
           },
           "spec"_a, "drag"_a = std::vector<float>{},
           "parameters"_a = microsimulator::ResolvedFlowParameters{})
+      .def(
+          "solve_depth_averaged_port_flow",
+          [](microsimulator::Simulation& simulation, const microsimulator::SignalGridSpec& spec,
+             const std::vector<microsimulator::FlowPort>& ports, const std::vector<float>& mobility,
+             const microsimulator::DepthAveragedPortFlowParameters& parameters) {
+            const microsimulator::python::ReleasedCall call(&simulation);
+            return simulation.solve_depth_averaged_port_flow(spec, ports, mobility, parameters);
+          },
+          "spec"_a, "ports"_a, "mobility"_a = std::vector<float>{},
+          "parameters"_a = microsimulator::DepthAveragedPortFlowParameters{})
+      .def(
+          "solve_resolved_port_flow",
+          [](microsimulator::Simulation& simulation, const microsimulator::SignalGridSpec& spec,
+             const std::vector<microsimulator::FlowPort>& ports, const std::vector<float>& drag,
+             const microsimulator::ResolvedPortFlowParameters& parameters) {
+            const microsimulator::python::ReleasedCall call(&simulation);
+            return simulation.solve_resolved_port_flow(spec, ports, drag, parameters);
+          },
+          "spec"_a, "ports"_a, "drag"_a = std::vector<float>{},
+          "parameters"_a = microsimulator::ResolvedPortFlowParameters{})
       .def("cell", microsimulator::python::exclusive(&microsimulator::Simulation::cell), "id"_a)
       .def("cells", microsimulator::python::exclusive(&microsimulator::Simulation::cells))
       .def("lineage_parent",

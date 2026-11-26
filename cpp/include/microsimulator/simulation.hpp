@@ -49,6 +49,8 @@ class Simulation {
   void set_velocity_field(std::optional<SignalGridVelocityField> field);
   void set_signal_reaction(std::optional<SignalGridAffineReaction> reaction);
   void set_signal_boundary_values(GridFace face, std::span<const float> values);
+  void set_signal_boundary_patch_values(GridFace face, std::size_t patch,
+                                        std::span<const float> values);
   std::pair<CellId, CellId> divide(CellId parent_id, float first_fraction);
   std::pair<CellId, CellId> divide_equal(CellId parent_id);
   void step(float dt);
@@ -73,9 +75,19 @@ class Simulation {
   [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(
       const SignalGridSpec& spec, std::span<const float> mobility = {},
       const DepthAveragedFlowParameters& parameters = DepthAveragedFlowParameters{});
+  // Solves the depth-averaged flow driven through ports: openings in the
+  // grid's faces that each carry a stated mean speed or hold a pressure.
+  [[nodiscard]] DepthAveragedPortFlowResult solve_depth_averaged_port_flow(
+      const SignalGridSpec& spec, std::span<const FlowPort> ports,
+      std::span<const float> mobility = {},
+      const DepthAveragedPortFlowParameters& parameters = DepthAveragedPortFlowParameters{});
   [[nodiscard]] ResolvedFlowResult solve_resolved_flow(
       const SignalGridSpec& spec, std::span<const float> drag = {},
       const ResolvedFlowParameters& parameters = ResolvedFlowParameters{});
+  // Solves the resolved Stokes-Brinkman flow driven through ports.
+  [[nodiscard]] ResolvedPortFlowResult solve_resolved_port_flow(
+      const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> drag = {},
+      const ResolvedPortFlowParameters& parameters = ResolvedPortFlowParameters{});
 
   [[nodiscard]] CellSnapshot cell(CellId id) const;
   [[nodiscard]] std::vector<CellSnapshot> cells() const;

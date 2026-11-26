@@ -642,4 +642,92 @@ int main() {
       without_grid.set_signal_boundary_values(microsimulator::GridFace::x_lower, richer);
     });
   }
+
+  {
+    // Patches give parts of one fixed face their own reservoir. The lower x
+    // face spans y and z; its sites at y = 1 and y = 2 hold patches, and the
+    // second patch overlaps the first at y = 2.
+    microsimulator::SignalGridSpec spec;
+    spec.signal_count = 1;
+    spec.shape = {.x = 2, .y = 4, .z = 1};
+    spec.diffusion = {1.0F};
+    spec.advection = {{0.0F, 0.0F, 0.0F}};
+    spec.x_lower.kind = microsimulator::GridBoundaryKind::fixed;
+    spec.x_lower.values = {2.0F};
+    spec.x_lower.patches = {
+        {.region = {.begin = {1, 0}, .end = {3, 1}}, .values = {6.0F}},
+        {.region = {.begin = {2, 0}, .end = {3, 1}}, .values = {10.0F}},
+    };
+    spec.validate();
+    assert_close(spec.x_lower.values_at(0, 0)[0], 2.0F);
+    assert_close(spec.x_lower.values_at(1, 0)[0], 6.0F);
+    assert_close(spec.x_lower.values_at(2, 0)[0], 10.0F);
+    assert_close(spec.x_lower.values_at(3, 0)[0], 2.0F);
+    const auto extent = spec.face_extent(microsimulator::GridFace::x_lower);
+    assert(extent[0] == 4 && extent[1] == 1);
+    assert(spec.face_extent(microsimulator::GridFace::y_upper)[0] == 2);
+    assert(spec.face_extent(microsimulator::GridFace::z_lower)[1] == 4);
+
+    // From an empty grid, diffusion draws each boundary site toward the
+    // reservoir beyond it and leaves the far column untouched.
+    microsimulator::SignalGrid grid(spec, std::vector<float>(8, 0.0F));
+    const auto rates = microsimulator::signal_grid_transport_rates(grid, grid.levels());
+    assert_close(rates[0], 2.0F);
+    assert_close(rates[1], 6.0F);
+    assert_close(rates[2], 10.0F);
+    assert_close(rates[3], 2.0F);
+    for (std::size_t site = 4; site < 8; ++site) {
+      assert_close(rates[site], 0.0F);
+    }
+
+    // Inflow through a patch carries the patch's reservoir.
+    auto flowing = spec;
+    flowing.diffusion = {0.0F};
+    flowing.x_upper.kind = microsimulator::GridBoundaryKind::fixed;
+    flowing.x_upper.values = {0.0F};
+    flowing.velocity_field = microsimulator::SignalGridVelocityField{
+        .x_faces = std::vector<float>(flowing.x_face_count(), 0.5F),
+        .y_faces = std::vector<float>(flowing.y_face_count(), 0.0F),
+        .z_faces = std::vector<float>(flowing.z_face_count(), 0.0F),
+    };
+    microsimulator::SignalGrid carried(flowing, std::vector<float>(8, 0.0F));
+    const auto inflow = microsimulator::signal_grid_transport_rates(carried, carried.levels());
+    assert_close(inflow[0], 1.0F);
+    assert_close(inflow[1], 3.0F);
+    assert_close(inflow[2], 5.0F);
+    assert_close(inflow[3], 1.0F);
+
+    // One patch's values are replaceable; the face's own values and the other
+    // patches stay, and replacing the face's values keeps the patches.
+    const float weaker[] = {4.0F};
+    grid.set_boundary_patch_values(microsimulator::GridFace::x_lower, 1, weaker);
+    assert_close(grid.spec().x_lower.values_at(2, 0)[0], 4.0F);
+    assert_close(grid.spec().x_lower.values_at(1, 0)[0], 6.0F);
+    const float base[] = {1.0F};
+    grid.set_boundary_values(microsimulator::GridFace::x_lower, base);
+    assert(grid.spec().x_lower.patches.size() == 2);
+    assert_close(grid.spec().x_lower.values_at(0, 0)[0], 1.0F);
+    assert_close(grid.checkpoint().spec.x_lower.patches[1].values[0], 4.0F);
+    assert_throws<std::out_of_range>(
+        [&] { grid.set_boundary_patch_values(microsimulator::GridFace::x_lower, 2, weaker); });
+    assert_throws<std::logic_error>(
+        [&] { grid.set_boundary_patch_values(microsimulator::GridFace::x_upper, 0, weaker); });
+    const float negative[] = {-1.0F};
+    assert_throws<std::invalid_argument>(
+        [&] { grid.set_boundary_patch_values(microsimulator::GridFace::x_lower, 0, negative); });
+    assert_close(grid.spec().x_lower.values_at(1, 0)[0], 6.0F);
+
+    auto beyond = spec;
+    beyond.x_lower.patches[0].region.end = {5, 1};
+    assert_throws<std::invalid_argument>([&] { beyond.validate(); });
+    auto empty = spec;
+    empty.x_lower.patches[0].region.end = {1, 1};
+    assert_throws<std::invalid_argument>([&] { empty.validate(); });
+    auto miscounted = spec;
+    miscounted.x_lower.patches[0].values = {1.0F, 1.0F};
+    assert_throws<std::invalid_argument>([&] { miscounted.validate(); });
+    auto closed = spec;
+    closed.y_lower.patches = {{.region = {.begin = {0, 0}, .end = {1, 1}}, .values = {1.0F}}};
+    assert_throws<std::invalid_argument>([&] { closed.validate(); });
+  }
 }

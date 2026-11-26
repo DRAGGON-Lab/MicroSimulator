@@ -32,6 +32,9 @@ microsimulator::Simulation make_reference(microsimulator::SignalIntegrationKind 
   grid.z_lower.values = {0.9F, 1.1F};
   grid.z_upper.kind = microsimulator::GridBoundaryKind::fixed;
   grid.z_upper.values = {1.2F, 1.0F};
+  // Part of each fixed face holds a reservoir of its own.
+  grid.z_lower.patches = {{.region = {.begin = {2, 1}, .end = {6, 5}}, .values = {0.2F, 1.6F}}};
+  grid.z_upper.patches = {{.region = {.begin = {0, 3}, .end = {9, 7}}, .values = {1.5F, 0.4F}}};
   microsimulator::SignalGridAffineReaction reaction;
   reaction.source_rates.resize(grid.level_count());
   reaction.loss_rates.resize(grid.level_count());

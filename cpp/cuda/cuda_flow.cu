@@ -61,7 +61,6 @@ FlowGridParameters make_grid_parameters(const detail::FlowGridLayout& layout) {
   }
   result.face_offsets[3] = face_count;
   result.face_counts[3] = face_count;
-  result.flow_axis = static_cast<std::uint32_t>(layout.flow_axis());
   result.site_count = site_count;
   result.total_face_count = face_count;
   return result;
@@ -248,7 +247,8 @@ double depth_dot(const double* left, const double* right, std::uint32_t count,
 }
 
 PcgReport solve_depth_pcg(const double* right_hand_side, const float* diagonal,
-                          const float* mobility, double* solution, DepthPcgWorkspace& workspace,
+                          const float* mobility, const float* boundary_conductance,
+                          double* solution, DepthPcgWorkspace& workspace,
                           const FlowGridParameters& grid, float tolerance,
                           std::uint32_t max_iterations, cudaStream_t stream) {
   const auto count = grid.site_count;
@@ -273,7 +273,8 @@ PcgReport solve_depth_pcg(const double* right_hand_side, const float* diagonal,
       .apply_direction =
           [&] {
             launch_depth_flow_operator_double(workspace.direction.data(), mobility,
-                                              workspace.transformed.data(), grid, stream);
+                                              boundary_conductance, workspace.transformed.data(),
+                                              grid, stream);
             check_launch("failed to launch CUDA depth operator");
             return depth_dot(workspace.direction.data(), workspace.transformed.data(), count,
                              workspace, stream);
@@ -304,19 +305,20 @@ PcgReport solve_depth_pcg(const double* right_hand_side, const float* diagonal,
           .relative_residual = static_cast<float>(report.relative_residual)};
 }
 
-}  // namespace
-
-DepthAveragedFlowResult solve_depth_averaged_flow(const SignalGridSpec& spec,
-                                                  std::span<const float> mobility,
-                                                  const DepthAveragedFlowParameters& parameters,
-                                                  cudaStream_t stream) {
-  parameters.validate();
-  const detail::ShallowFlowReduction reduction(spec, mobility, parameters.axis);
-  const detail::DepthAveragedFlowSystem system(reduction.grid(), reduction.conductance(),
-                                               parameters.axis);
+// Solves one depth-averaged pressure system and returns the velocity on every
+// face of its grid.
+std::vector<float> solve_depth_system(const detail::DepthAveragedFlowSystem& system,
+                                      float tolerance, std::uint32_t max_iterations,
+                                      PcgReport& report, cudaStream_t stream) {
   const auto grid = make_grid_parameters(system.layout());
   DeviceBuffer<float> mobility_buffer(grid.site_count, "failed to allocate CUDA depth mobility");
   DeviceBuffer<float> diagonal_buffer(grid.site_count, "failed to allocate CUDA depth diagonal");
+  DeviceBuffer<float> boundary_buffer(grid.site_count,
+                                      "failed to allocate CUDA depth boundary conductance");
+  DeviceBuffer<float> face_conductance_buffer(grid.total_face_count,
+                                              "failed to allocate CUDA depth face conductance");
+  DeviceBuffer<float> face_pressure_buffer(grid.total_face_count,
+                                           "failed to allocate CUDA depth face pressure");
   DeviceBuffer<double> rhs_buffer(grid.site_count, "failed to allocate CUDA depth right-hand side");
   DeviceBuffer<double> pressure_buffer(grid.site_count, "failed to allocate CUDA depth pressure");
   DeviceBuffer<float> velocity_buffer(grid.total_face_count,
@@ -325,20 +327,68 @@ DepthAveragedFlowResult solve_depth_averaged_flow(const SignalGridSpec& spec,
          "failed to upload CUDA depth mobility");
   upload(diagonal_buffer, std::span<const float>(system.diagonal()), stream,
          "failed to upload CUDA depth diagonal");
+  upload(boundary_buffer, std::span<const float>(system.boundary_conductance()), stream,
+         "failed to upload CUDA depth boundary conductance");
+  upload(face_conductance_buffer, std::span<const float>(system.face_conductance()), stream,
+         "failed to upload CUDA depth face conductance");
+  upload(face_pressure_buffer, std::span<const float>(system.face_pressure()), stream,
+         "failed to upload CUDA depth face pressure");
   const std::vector<double> rhs(system.right_hand_side().begin(), system.right_hand_side().end());
   upload(rhs_buffer, std::span<const double>(rhs), stream,
          "failed to upload CUDA depth right-hand side");
   DepthPcgWorkspace workspace(grid.site_count);
-  const auto report = solve_depth_pcg(
-      rhs_buffer.data(), diagonal_buffer.data(), mobility_buffer.data(), pressure_buffer.data(),
-      workspace, grid, parameters.relative_tolerance, parameters.max_iterations, stream);
+  report = solve_depth_pcg(rhs_buffer.data(), diagonal_buffer.data(), mobility_buffer.data(),
+                           boundary_buffer.data(), pressure_buffer.data(), workspace, grid,
+                           tolerance, max_iterations, stream);
   launch_depth_flow_velocity_double(pressure_buffer.data(), mobility_buffer.data(),
+                                    face_conductance_buffer.data(), face_pressure_buffer.data(),
                                     velocity_buffer.data(), grid, stream);
   check_launch("failed to launch CUDA depth-averaged velocity reconstruction");
-  const auto velocity = download(velocity_buffer, stream, "failed to download CUDA depth velocity");
+  return download(velocity_buffer, stream, "failed to download CUDA depth velocity");
+}
+
+}  // namespace
+
+DepthAveragedPortFlowResult solve_depth_averaged_port_flow(
+    const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> mobility,
+    const DepthAveragedPortFlowParameters& parameters, cudaStream_t stream) {
+  parameters.validate();
+  const detail::ShallowPortFlow flow(spec, ports, mobility);
+  DepthAveragedPortFlowReport report;
+  const auto solution = flow.solve([&](const detail::DepthAveragedFlowSystem& system) {
+    PcgReport solve;
+    auto velocity = solve_depth_system(system, parameters.relative_tolerance,
+                                       parameters.max_iterations, solve, stream);
+    report.iterations += solve.iterations;
+    report.relative_residual = std::max(report.relative_residual, solve.relative_residual);
+    return velocity;
+  });
+  report.solves = solution.solves;
+  report.max_speed = solution.max_speed;
+  return {
+      .field =
+          detail::make_velocity_field(spec, flow.reduction().original_layout(), solution.velocity),
+      .report = report,
+      .ports = solution.ports,
+  };
+}
+
+DepthAveragedFlowResult solve_depth_averaged_flow(const SignalGridSpec& spec,
+                                                  std::span<const float> mobility,
+                                                  const DepthAveragedFlowParameters& parameters,
+                                                  cudaStream_t stream) {
+  parameters.validate();
+  const auto reduction = detail::reduce_shallow_flow(spec, mobility, parameters.axis);
+  const auto axis = static_cast<std::size_t>(parameters.axis);
+  const detail::DepthAveragedFlowSystem system(
+      reduction.grid(), reduction.conductance(),
+      detail::axis_flow_boundary(reduction.reduced_layout(), axis));
+  PcgReport report;
+  const auto velocity = solve_depth_system(system, parameters.relative_tolerance,
+                                           parameters.max_iterations, report, stream);
   const auto scaled =
       detail::scale_velocity(spec, reduction.original_layout(), reduction.lift(velocity),
-                             reduction.open_inlet_faces(), parameters.mean_inlet_speed);
+                             reduction.open_inlet_faces(axis), parameters.mean_inlet_speed);
   return {
       .field = scaled.field,
       .report = {.iterations = report.iterations,
@@ -348,11 +398,12 @@ DepthAveragedFlowResult solve_depth_averaged_flow(const SignalGridSpec& spec,
   };
 }
 
-ResolvedFlowResult solve_resolved_flow(const SignalGridSpec& spec, std::span<const float> drag,
-                                       const ResolvedFlowParameters& parameters,
-                                       cudaStream_t stream) {
-  parameters.validate();
-  const detail::ResolvedFlowSystem system(spec, drag, parameters.axis);
+namespace {
+
+// Solves one resolved block system and returns its velocity on every face.
+detail::ResolvedSystemSolve solve_resolved_system(const detail::ResolvedFlowSystem& system,
+                                                  const detail::ResolvedSolveControls& parameters,
+                                                  cudaStream_t stream) {
   const auto grid = make_grid_parameters(system.layout());
   DeviceBuffer<std::uint8_t> fluid_buffer(grid.site_count, "failed to allocate CUDA fluid mask");
   DeviceBuffer<std::uint8_t> active_buffer(grid.total_face_count,
@@ -464,21 +515,38 @@ ResolvedFlowResult solve_resolved_flow(const SignalGridSpec& spec, std::span<con
       fluid_count == 0
           ? 0.0
           : std::sqrt(divergence_square / static_cast<double>(fluid_count)) / continuity_scale;
-  const auto velocity = download(solution.solution->u, stream, "download CUDA velocity");
-  const auto scaled = detail::scale_velocity(
-      spec, system.layout(), velocity, system.open_inlet_faces(), parameters.mean_inlet_speed);
   return {
-      .field = scaled.field,
-      .report = {.outer_iterations = solution.iterations,
-                 .inner_iterations = inner_iterations,
-                 .relative_residual = static_cast<float>(solution.relative_residual),
-                 .momentum_relative_residual =
-                     static_cast<float>(std::sqrt(momentum_square / force_square)),
-                 .divergence_rms = static_cast<float>(divergence_rms * std::abs(scaled.factor)),
-                 .mean_inlet_speed = parameters.mean_inlet_speed,
-                 .max_speed = scaled.max_speed,
-                 .min_gap_voxels = system.minimum_gap_voxels()},
+      .velocity = download(solution.solution->u, stream, "download CUDA velocity"),
+      .outer_iterations = solution.iterations,
+      .inner_iterations = inner_iterations,
+      .relative_residual = static_cast<float>(solution.relative_residual),
+      .momentum_relative_residual = static_cast<float>(std::sqrt(momentum_square / force_square)),
+      .divergence_rms = divergence_rms,
   };
+}
+
+}  // namespace
+
+ResolvedFlowResult solve_resolved_flow(const SignalGridSpec& spec, std::span<const float> drag,
+                                       const ResolvedFlowParameters& parameters,
+                                       cudaStream_t stream) {
+  return detail::solve_resolved_axis_flow(
+      spec, drag, parameters,
+      [&](const detail::ResolvedFlowSystem& system, const detail::ResolvedSolveControls& controls) {
+        return solve_resolved_system(system, controls, stream);
+      });
+}
+
+ResolvedPortFlowResult solve_resolved_port_flow(const SignalGridSpec& spec,
+                                                std::span<const FlowPort> ports,
+                                                std::span<const float> drag,
+                                                const ResolvedPortFlowParameters& parameters,
+                                                cudaStream_t stream) {
+  return detail::solve_resolved_port_flow(
+      spec, ports, drag, parameters,
+      [&](const detail::ResolvedFlowSystem& system, const detail::ResolvedSolveControls& controls) {
+        return solve_resolved_system(system, controls, stream);
+      });
 }
 
 }  // namespace microsimulator::cuda

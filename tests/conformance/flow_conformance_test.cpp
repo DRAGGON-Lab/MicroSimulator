@@ -164,6 +164,113 @@ void run_resolved_case(microsimulator::BackendKind backend, std::uint32_t device
   compare_fields(actual.field, expected.field, "resolved flow");
 }
 
+// Two inlets on one face, a third on a perpendicular face that draws fluid
+// out, and one outlet, around an obstacle and across varying mobility.
+void run_depth_port_case(microsimulator::BackendKind backend, std::uint32_t device_index) {
+  auto spec = duct(12, 10, 2, {0.8F, 1.25F, 0.6F});
+  spec.x_lower = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {0.0F}};
+  spec.x_upper = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {0.0F}};
+  spec.obstacles.assign(spec.site_count(), 0);
+  std::vector<float> mobility(spec.site_count(), 1.0F);
+  for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
+    for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
+      for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
+        const auto site = site_index(spec, x, y, z);
+        spec.obstacles[site] = (x >= 5 && x <= 6 && y >= 3 && y <= 5) ? 1 : 0;
+        mobility[site] = 0.4F + (0.07F * static_cast<float>((x * 3 + y * 5) % 9));
+      }
+    }
+  }
+  using microsimulator::FlowPortKind;
+  using microsimulator::GridFace;
+  const std::vector<microsimulator::FlowPort> ports{
+      {.face = GridFace::y_lower,
+       .patch = {.begin = {0, 0}, .end = {3, 2}},
+       .kind = FlowPortKind::speed,
+       .value = 3.0F},
+      {.face = GridFace::y_lower,
+       .patch = {.begin = {8, 0}, .end = {12, 2}},
+       .kind = FlowPortKind::speed,
+       .value = 1.25F},
+      {.face = GridFace::x_upper,
+       .patch = {.begin = {6, 0}, .end = {9, 2}},
+       .kind = FlowPortKind::speed,
+       .value = -0.5F},
+      {.face = GridFace::y_upper,
+       .patch = {.begin = {2, 0}, .end = {10, 2}},
+       .kind = FlowPortKind::pressure,
+       .value = 0.0F},
+  };
+  microsimulator::Simulation reference;
+  microsimulator::Simulation candidate(backend, 0, 0, device_index);
+  const auto expected = reference.solve_depth_averaged_port_flow(spec, ports, mobility);
+  const auto actual = candidate.solve_depth_averaged_port_flow(spec, ports, mobility);
+  assert(actual.report.solves == 3 && expected.report.solves == 3);
+  assert(actual.report.relative_residual <= 1.1e-6F);
+  compare_fields(actual.field, expected.field, "depth-averaged port flow");
+  assert(actual.ports.size() == ports.size());
+  for (std::size_t index = 0; index < ports.size(); ++index) {
+    assert(close(actual.ports[index].flux, expected.ports[index].flux));
+    assert(close(actual.ports[index].mean_speed, expected.ports[index].mean_speed));
+    assert(std::abs(actual.ports[index].pressure - expected.ports[index].pressure) <=
+           8.0e-4F * std::abs(expected.ports[0].pressure));
+  }
+  for (std::size_t index = 0; index < 3; ++index) {
+    assert(close(actual.ports[index].mean_speed, ports[index].value));
+  }
+}
+
+// A main inlet, a side inlet on a perpendicular face, and one outlet, around
+// an obstacle and through a layer of drag.
+void run_resolved_port_case(microsimulator::BackendKind backend, std::uint32_t device_index) {
+  auto spec = duct(8, 9, 2, {0.25F, 0.3F, 0.5F});
+  spec.x_lower = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {0.0F}};
+  spec.x_upper = {.kind = microsimulator::GridBoundaryKind::fixed, .values = {0.0F}};
+  spec.obstacles.assign(spec.site_count(), 0);
+  std::vector<float> drag(spec.site_count(), 0.0F);
+  for (std::uint32_t x = 0; x < spec.shape.x; ++x) {
+    for (std::uint32_t y = 0; y < spec.shape.y; ++y) {
+      for (std::uint32_t z = 0; z < spec.shape.z; ++z) {
+        const auto site = site_index(spec, x, y, z);
+        spec.obstacles[site] = (x >= 5 && x <= 6 && y >= 3 && y <= 4) ? 1 : 0;
+        drag[site] = y >= 6 ? 8.0F : 0.0F;
+      }
+    }
+  }
+  using microsimulator::FlowPortKind;
+  using microsimulator::GridFace;
+  const std::vector<microsimulator::FlowPort> ports{
+      {.face = GridFace::y_lower,
+       .patch = {.begin = {0, 0}, .end = {8, 2}},
+       .kind = FlowPortKind::speed,
+       .value = 1.0F},
+      {.face = GridFace::x_lower,
+       .patch = {.begin = {1, 0}, .end = {4, 2}},
+       .kind = FlowPortKind::speed,
+       .value = 0.6F},
+      {.face = GridFace::y_upper,
+       .patch = {.begin = {0, 0}, .end = {8, 2}},
+       .kind = FlowPortKind::pressure,
+       .value = 0.0F},
+  };
+  microsimulator::Simulation reference;
+  microsimulator::Simulation candidate(backend, 0, 0, device_index);
+  const auto expected = reference.solve_resolved_port_flow(spec, ports, drag);
+  const auto actual = candidate.solve_resolved_port_flow(spec, ports, drag);
+  assert(actual.report.solves == 2 && expected.report.solves == 2);
+  assert(actual.report.divergence_rms < 1.0e-4F);
+  assert(actual.report.min_gap_voxels == expected.report.min_gap_voxels);
+  compare_fields(actual.field, expected.field, "resolved port flow");
+  assert(actual.ports.size() == ports.size());
+  for (std::size_t index = 0; index < ports.size(); ++index) {
+    assert(close(actual.ports[index].flux, expected.ports[index].flux));
+    assert(std::abs(actual.ports[index].pressure - expected.ports[index].pressure) <=
+           8.0e-4F * std::abs(expected.ports[0].pressure));
+  }
+  assert(close(actual.ports[0].mean_speed, 1.0F));
+  assert(close(actual.ports[1].mean_speed, 0.6F));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -176,7 +283,11 @@ int main(int argc, char** argv) {
         if (!resolved_only) {
           run_depth_case(backend, device_index);
           run_ill_conditioned_depth_case(backend, device_index);
+          run_depth_port_case(backend, device_index);
         }
-        if (resolved_only) run_resolved_case(backend, device_index);
+        if (resolved_only) {
+          run_resolved_case(backend, device_index);
+          run_resolved_port_case(backend, device_index);
+        }
       });
 }

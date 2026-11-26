@@ -14,17 +14,19 @@ struct alignas(16) FlowGridParameters {
   float inverse_spacing_squared[4];
   std::uint32_t face_offsets[4];
   std::uint32_t face_counts[4];
-  std::uint32_t flow_axis;
   std::uint32_t site_count;
   std::uint32_t total_face_count;
-  std::uint32_t padding;
+  std::uint32_t padding0;
+  std::uint32_t padding1;
 };
 
 static_assert(sizeof(FlowGridParameters) == 96);
 
-void launch_depth_flow_operator_double(const double* input, const float* mobility, double* output,
+void launch_depth_flow_operator_double(const double* input, const float* mobility,
+                                       const float* boundary_conductance, double* output,
                                        const FlowGridParameters& grid, cudaStream_t stream);
 void launch_depth_flow_velocity_double(const double* pressure, const float* mobility,
+                                       const float* face_conductance, const float* face_pressure,
                                        float* velocity, const FlowGridParameters& grid,
                                        cudaStream_t stream);
 void launch_depth_flow_pcg_initialize(const double* right_hand_side, const float* diagonal,

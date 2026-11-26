@@ -358,6 +358,14 @@ void Simulation::set_signal_boundary_values(GridFace face, std::span<const float
   signal_grid_->set_boundary_values(face, values);
 }
 
+void Simulation::set_signal_boundary_patch_values(GridFace face, std::size_t patch,
+                                                  std::span<const float> values) {
+  if (!signal_grid_.has_value()) {
+    throw std::logic_error("simulation does not have a signal grid");
+  }
+  signal_grid_->set_boundary_patch_values(face, patch, values);
+}
+
 std::pair<CellId, CellId> Simulation::divide(CellId parent_id, float first_fraction) {
   return state_.divide(parent_id, first_fraction);
 }
@@ -509,6 +517,15 @@ DepthAveragedFlowResult Simulation::solve_depth_averaged_flow(
   return backend_->solve_depth_averaged_flow(spec, mobility, parameters);
 }
 
+DepthAveragedPortFlowResult Simulation::solve_depth_averaged_port_flow(
+    const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> mobility,
+    const DepthAveragedPortFlowParameters& parameters) {
+  if (!backend_->supports(BackendFeature::depth_averaged_flow)) {
+    throw std::runtime_error("selected backend does not implement depth-averaged flow");
+  }
+  return backend_->solve_depth_averaged_port_flow(spec, ports, mobility, parameters);
+}
+
 ResolvedFlowResult Simulation::solve_resolved_flow(const SignalGridSpec& spec,
                                                    std::span<const float> drag,
                                                    const ResolvedFlowParameters& parameters) {
@@ -516,6 +533,15 @@ ResolvedFlowResult Simulation::solve_resolved_flow(const SignalGridSpec& spec,
     throw std::runtime_error("selected backend does not implement resolved flow");
   }
   return backend_->solve_resolved_flow(spec, drag, parameters);
+}
+
+ResolvedPortFlowResult Simulation::solve_resolved_port_flow(
+    const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> drag,
+    const ResolvedPortFlowParameters& parameters) {
+  if (!backend_->supports(BackendFeature::resolved_flow)) {
+    throw std::runtime_error("selected backend does not implement resolved flow");
+  }
+  return backend_->solve_resolved_port_flow(spec, ports, drag, parameters);
 }
 
 CellSnapshot Simulation::cell(CellId id) const {

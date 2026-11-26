@@ -69,10 +69,22 @@ class CpuBackend final : public ComputeBackend {
     return solve_depth_averaged_flow_cpu(spec, mobility, parameters);
   }
 
+  [[nodiscard]] DepthAveragedPortFlowResult solve_depth_averaged_port_flow(
+      const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> mobility,
+      const DepthAveragedPortFlowParameters& parameters) override {
+    return solve_depth_averaged_port_flow_cpu(spec, ports, mobility, parameters);
+  }
+
   [[nodiscard]] ResolvedFlowResult solve_resolved_flow(
       const SignalGridSpec& spec, std::span<const float> drag,
       const ResolvedFlowParameters& parameters) override {
     return solve_resolved_flow_cpu(spec, drag, parameters);
+  }
+
+  [[nodiscard]] ResolvedPortFlowResult solve_resolved_port_flow(
+      const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> drag,
+      const ResolvedPortFlowParameters& parameters) override {
+    return solve_resolved_port_flow_cpu(spec, ports, drag, parameters);
   }
 };
 

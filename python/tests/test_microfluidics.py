@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import math
 import runpy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 from microsimulator import (
     BackendKind,
     CellInit,
+    GridBoundaryKind,
     GridFace,
     GridShape,
     ModelContext,
@@ -27,12 +30,14 @@ from microsimulator.microfluidics import (
     BiopixelTrapDevice,
     InletSchedule,
     LayoutDevice,
+    LayoutPort,
     TrapChannelDevice,
 )
 from microsimulator.runner import build_model
 
 _EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 _TRAP_CHAMBER = Path(__file__).resolve().parent / "fixtures" / "design" / "trap_chamber.scene.json"
+_MIXER = Path(__file__).resolve().parent / "fixtures" / "design" / "mixer.scene.json"
 
 
 def _grid() -> SignalGridSpec:
@@ -590,3 +595,173 @@ def test_layout_device_walls_stand_between_the_trenches_of_a_comb() -> None:
     for y in (5.0, 14.0, 20.0, 30.0):
         assert device.gap_height(30.0, y) == 0.0
         assert _deepest_wall_contact(device, (30.0, y, 0.6)) < -0.5
+
+
+def _mixer_junction() -> tuple[LayoutDevice, dict[str, int]]:
+    """The junction of the design tool's mixer, where three metered liquids meet.
+
+    The device is the window on the design's ``meet`` region, with a port at
+    each of the four channels the window cuts. Each inlet carries the speed the
+    design's flow solution gives its feed channel, in micrometers per second,
+    and the outlet holds a pressure. The second value maps each of the design's
+    three species to the port that feeds it.
+    """
+
+    scene = load_design_scene(_MIXER)
+    meet = scene.instance("meet")
+    assert meet.low is not None and meet.high is not None
+    window = scene.window(meet.low, meet.high)
+    inlets = sorted(
+        (crossing for crossing in window.crossings if crossing.side == GridFace.Y_LOWER),
+        key=lambda crossing: crossing.low,
+    )
+    (outlet,) = (crossing for crossing in window.crossings if crossing.side == GridFace.X_UPPER)
+    assert len(inlets) == 3 and len(window.crossings) == 4
+    # The junction's inputs run from the collector's far end toward its outlet,
+    # and the design feeds its third, second and first liquids into them.
+    feeds = ("third_feed", "second_feed", "first_feed")
+    ports: list[LayoutPort] = []
+    for at, (crossing, feed) in enumerate(zip(inlets, feeds, strict=True)):
+        (flow,) = scene.flows_of(feed)
+        composition = tuple(1.0 if signal == at else 0.0 for signal in range(3))
+        ports.append(
+            LayoutPort(
+                crossing.side,
+                crossing.low,
+                crossing.high,
+                speed=flow.velocity_mm_s * 1000.0,
+                values=composition,
+            )
+        )
+    ports.append(LayoutPort(outlet.side, outlet.low, outlet.high))
+    device = LayoutDevice(window.boxes, window.size, ports=tuple(ports), wall_thickness=50.0)
+    return device, {"third": 0, "second": 1, "first": 2}
+
+
+@pytest.mark.parametrize("resolved", [False, True])
+def test_a_mixer_junction_delivers_the_shares_its_design_states(resolved: bool) -> None:
+    device, species = _mixer_junction()
+    scene = load_design_scene(_MIXER)
+    spacing = (50.0, 50.0, 50.0)
+    origin, shape = device.lattice(spacing)
+    grid = SignalGridSpec()
+    grid.signal_count = 3
+    grid.shape, grid.origin, grid.spacing = shape, origin, Vec3(*spacing)
+    # A small molecule in water, in square micrometers per second.
+    grid.diffusion = [500.0] * 3
+    grid.integration = SignalIntegrationKind.BACKWARD_EULER
+    grid.solver.absolute_tolerance = 1.0e-6
+    simulation = Simulation()
+    device.apply_to_grid(grid, [0.0] * 3, [0.0] * 3, simulation=simulation)
+    result = device.solve_flow(grid, simulation=simulation, resolved=resolved)
+    grid.validate()
+
+    # Each inlet carries its feed's speed, and the outlet their sum.
+    for port, state in zip(device.ports[:3], result.ports[:3], strict=True):
+        assert port.speed is not None
+        assert math.isclose(state.mean_speed, port.speed, rel_tol=2.0e-3)
+    entering = sum(state.flux for state in result.ports[:3])
+    assert math.isclose(-result.ports[3].flux, entering, rel_tol=1.0e-3)
+    (through,) = scene.flows_of("mixer")
+    assert math.isclose(-result.ports[3].mean_speed, through.velocity_mm_s * 1000.0, rel_tol=5.0e-3)
+    # The liquid with the farthest to go needs the highest pressure.
+    pressures = [state.pressure for state in result.ports]
+    assert pressures[0] > pressures[1] > pressures[2] > pressures[3] == 0.0
+
+    # Carried to a steady state, the stream leaving the junction holds the
+    # three liquids in the shares the design's flow solution states for it.
+    simulation.configure_signal_grid(grid, [0.0] * (3 * shape.x * shape.y * shape.z))
+    for _ in range(120):
+        simulation.step(0.5)
+    levels = simulation.signal_levels
+    sites = shape.x * shape.y * shape.z
+    assert grid.velocity_field is not None
+    carried = [0.0, 0.0, 0.0]
+    leaving = 0.0
+    for y in range(shape.y):
+        for z in range(shape.z):
+            site = ((shape.x - 2) * shape.y + y) * shape.z + z
+            speed = grid.velocity_field.x_faces[((shape.x - 1) * shape.y + y) * shape.z + z]
+            leaving += speed
+            for signal in range(3):
+                carried[signal] += speed * levels[signal * sites + site]
+    assert leaving > 0.0
+    for name, signal in species.items():
+        stated = scene.fraction(name, "meet.outlet")
+        assert math.isclose(carried[signal] / leaving, stated, abs_tol=0.01), name
+
+
+def test_layout_ports_open_the_window_only_where_they_are() -> None:
+    device, _ = _mixer_junction()
+    # Past the lower side, the geometry continues through each inlet and is
+    # wall between them; past the upper x side it continues through the outlet.
+    assert device.gap_height(100.0, -30.0) == 50.0
+    assert device.gap_height(4100.0, -30.0) == 50.0
+    assert device.gap_height(2000.0, -30.0) == 0.0
+    assert device.gap_height(10130.0, 300.0) == 50.0
+    assert device.gap_height(10130.0, 100.0) == 0.0
+    assert device.gap_height(-30.0, 300.0) == 0.0
+    assert device.gap_height(5000.0, 430.0) == 0.0
+
+    origin, shape = device.lattice((50.0, 50.0, 50.0))
+    assert (origin.x, origin.y, origin.z) == (-25.0, -25.0, -25.0)
+    assert (shape.x, shape.y, shape.z) == (204, 10, 3)
+    grid = SignalGridSpec()
+    grid.signal_count = 1
+    grid.shape, grid.origin, grid.spacing = shape, origin, Vec3(50.0, 50.0, 50.0)
+    grid.diffusion = [1.0]
+    ports = device.flow_ports(grid)
+    # Sites 1 to 4 along x lie in the first inlet, 200 wide; the outlet's four
+    # sites along y are the collector's.
+    assert (ports[0].patch.begin, ports[0].patch.end) == ([1, 0], [5, 3])
+    assert (ports[3].patch.begin, ports[3].patch.end) == ([5, 0], [9, 3])
+    assert [port.kind.name for port in ports] == ["SPEED", "SPEED", "SPEED", "PRESSURE"]
+
+    # With one signal and no flow, each inward port takes the inlet value, and
+    # one port's media can be changed during a run.
+    still = replace(
+        device,
+        ports=tuple(
+            replace(port, speed=None if port.speed is None else 0.0, values=None)
+            for port in device.ports
+        ),
+    )
+    grid.diffusion = [1000.0]
+    grid.integration = SignalIntegrationKind.BACKWARD_EULER
+    still.apply_to_grid(grid, [1.0], [0.0])
+    assert grid.velocity_field is None
+    assert [patch.values for patch in grid.y_lower.patches] == [[0.0]] * 3
+    assert grid.x_upper.values == [0.0] and len(grid.x_upper.patches) == 1
+    assert grid.x_lower.kind == GridBoundaryKind.NO_FLUX
+    simulation = Simulation()
+    simulation.configure_signal_grid(grid, [0.0] * (shape.x * shape.y * shape.z))
+    still.set_port_values(simulation, 0, [1.0])
+    still.set_port_values(simulation, 1, [4.0])
+    simulation.step(1.0)
+    levels = np.asarray(simulation.signal_levels).reshape(shape.x, shape.y, shape.z)
+    # The second inlet's stub, 4000 along the window, is richer than the first's.
+    assert levels[82, 0, 1] > levels[2, 0, 1] > 0.0
+
+
+@pytest.mark.parametrize(
+    ("ports", "message"),
+    [
+        ((LayoutPort(GridFace.Y_LOWER, 0.0, 200.0, speed=1.0),), "holds a pressure"),
+        ((LayoutPort(GridFace.Z_LOWER, 0.0, 200.0),), "lower or upper x or y face"),
+        ((LayoutPort(GridFace.Y_LOWER, 200.0, 100.0),), "along its side"),
+        ((LayoutPort(GridFace.X_UPPER, 200.0, 500.0),), "along its side"),
+        ((LayoutPort(GridFace.Y_LOWER, 1000.0, 1200.0),), "open onto fluid"),
+        ((LayoutPort(GridFace.Y_LOWER, 0.0, 200.0, speed=math.inf),), "speed must be finite"),
+        ((LayoutPort(GridFace.Y_LOWER, 0.0, 200.0, values=(-1.0,)),), "finite and non-negative"),
+        (
+            (LayoutPort(GridFace.Y_LOWER, 0.0, 200.0), LayoutPort(GridFace.Y_LOWER, 100.0, 300.0)),
+            "must not overlap",
+        ),
+    ],
+)
+def test_layout_device_rejects_invalid_ports(ports: tuple[LayoutPort, ...], message: str) -> None:
+    device, _ = _mixer_junction()
+    with pytest.raises(ValueError, match=message):
+        LayoutDevice(device.boxes, device.size, ports=ports)
+    with pytest.raises(ValueError, match="through ports or along one axis"):
+        LayoutDevice(device.boxes, device.size, ports=device.ports, mean_flow_speed=1.0)

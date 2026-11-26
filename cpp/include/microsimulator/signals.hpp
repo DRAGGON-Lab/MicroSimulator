@@ -52,10 +52,38 @@ struct SignalSolveResult {
   SignalSolveReport report;
 };
 
+// A rectangle of boundary sites on one face of the lattice. The two entries
+// index the face's in-plane axes in x, y, z order, so on an x face they are y
+// and z, on a y face x and z, and on a z face x and y. Sites from `begin` up
+// to but not including `end` belong to the rectangle.
+struct GridFacePatch {
+  std::array<std::uint32_t, 2> begin{};
+  std::array<std::uint32_t, 2> end{};
+
+  [[nodiscard]] bool contains(std::uint32_t first, std::uint32_t second) const noexcept {
+    return first >= begin[0] && first < end[0] && second >= begin[1] && second < end[1];
+  }
+};
+
+// Part of a fixed boundary that holds its own reservoir concentrations.
+struct GridBoundaryPatch {
+  GridFacePatch region;
+  std::vector<float> values;
+};
+
+// One face of the lattice's bounding box. A fixed boundary holds one reservoir
+// concentration per signal in `values`. Each of its `patches` replaces those
+// concentrations over a rectangle of the face, so that several inlets on one
+// face can carry different media; where patches overlap, the later one holds.
 struct GridBoundary {
   GridBoundaryKind kind{GridBoundaryKind::no_flux};
   std::vector<float> values;
+  std::vector<GridBoundaryPatch> patches;
 
+  // The reservoir concentrations at one boundary site of a fixed boundary,
+  // given the site's two in-plane indices.
+  [[nodiscard]] std::span<const float> values_at(std::uint32_t first,
+                                                 std::uint32_t second) const noexcept;
   void validate(std::size_t signal_count) const;
 };
 
@@ -107,6 +135,8 @@ struct SignalGridSpec {
   [[nodiscard]] std::size_t z_face_count() const;
   [[nodiscard]] const GridBoundary& boundary(GridFace face) const;
   [[nodiscard]] GridBoundary& boundary(GridFace face);
+  // The site counts of a face along its two in-plane axes, in x, y, z order.
+  [[nodiscard]] std::array<std::uint32_t, 2> face_extent(GridFace face) const noexcept;
   void validate_lattice() const;
   void validate() const;
 };
@@ -161,6 +191,9 @@ class SignalGrid {
   // composition of the media entering at an inlet. The boundary kind does not
   // change, so only a boundary configured as fixed has values to replace.
   void set_boundary_values(GridFace face, std::span<const float> values);
+  // Replaces the per-signal values of one patch of a fixed boundary, such as
+  // the composition of the media entering at one of several inlets on a face.
+  void set_boundary_patch_values(GridFace face, std::size_t patch, std::span<const float> values);
   void validate_step(float dt) const;
   void validate() const;
 

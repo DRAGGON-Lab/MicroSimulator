@@ -156,6 +156,128 @@ void ResolvedFlowParameters::validate() const {
   throw std::invalid_argument("unknown resolved-flow axis");
 }
 
+namespace detail {
+
+std::vector<double> solve_depth_averaged_pressure(const DepthAveragedFlowSystem& system,
+                                                  float tolerance, std::uint32_t max_iterations) {
+  return conjugate_gradient([&](std::span<const double> input,
+                                std::vector<double>& output) { system.apply(input, output); },
+                            system.right_hand_side(), system.diagonal(), tolerance, max_iterations,
+                            "depth-averaged flow")
+      .solution;
+}
+
+}  // namespace detail
+
+void ResolvedPortFlowParameters::validate() const {
+  validate_relative_tolerance(relative_tolerance, "resolved-flow outer relative tolerance");
+  validate_relative_tolerance(inner_relative_tolerance, "resolved-flow inner relative tolerance");
+  if (max_outer_iterations == 0 || max_inner_iterations == 0) {
+    throw std::invalid_argument("resolved-flow iteration limits must be positive");
+  }
+}
+
+void DepthAveragedPortFlowParameters::validate() const {
+  validate_relative_tolerance(relative_tolerance, "depth-averaged relative tolerance");
+  if (max_iterations == 0) {
+    throw std::invalid_argument("depth-averaged iteration limit must be positive");
+  }
+}
+
+void validate_flow_ports(const SignalGridSpec& spec, std::span<const FlowPort> ports) {
+  spec.validate();
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    const auto boundaries = axis_boundaries(spec, axis);
+    if (boundaries[0]->kind == GridBoundaryKind::periodic ||
+        boundaries[1]->kind == GridBoundaryKind::periodic) {
+      throw std::invalid_argument("native flow solvers do not support periodic boundaries");
+    }
+  }
+  if (ports.empty()) {
+    throw std::invalid_argument("flow needs at least one port");
+  }
+  const detail::FlowGridLayout layout(spec);
+  std::vector<std::uint8_t> claimed(layout.total_face_count(), 0);
+  std::vector<std::uint8_t> visited(layout.site_count(), 0);
+  std::vector<std::size_t> pending;
+  bool holds_pressure = false;
+  for (const auto& port : ports) {
+    if (port.kind != FlowPortKind::speed && port.kind != FlowPortKind::pressure) {
+      throw std::invalid_argument("unknown flow port kind");
+    }
+    if (!std::isfinite(port.value)) {
+      throw std::invalid_argument("flow port values must be finite");
+    }
+    static_cast<void>(detail::port_face_geometry(port.face));
+    if (spec.boundary(port.face).kind != GridBoundaryKind::fixed) {
+      throw std::invalid_argument("a flow port must open a fixed boundary");
+    }
+    const auto extent = spec.face_extent(port.face);
+    if (port.patch.end[0] <= port.patch.begin[0] || port.patch.end[1] <= port.patch.begin[1] ||
+        port.patch.end[0] > extent[0] || port.patch.end[1] > extent[1]) {
+      throw std::invalid_argument("a flow port must span at least one site of its face");
+    }
+    bool open = false;
+    detail::for_each_port_face(layout, port, [&](std::size_t face, std::size_t site) {
+      if (claimed[face] != 0) {
+        throw std::invalid_argument("flow ports must not overlap");
+      }
+      claimed[face] = 1;
+      if (spec.solid_site(site)) {
+        return;
+      }
+      open = true;
+      if (port.kind == FlowPortKind::pressure && visited[site] == 0) {
+        visited[site] = 1;
+        pending.push_back(site);
+      }
+    });
+    if (!open) {
+      throw std::invalid_argument("a flow port is entirely blocked");
+    }
+    holds_pressure = holds_pressure || port.kind == FlowPortKind::pressure;
+  }
+  if (!holds_pressure) {
+    throw std::invalid_argument("flow needs at least one pressure port");
+  }
+  const auto drives = [&](const FlowPort& port) {
+    return port.kind == FlowPortKind::speed ||
+           port.value != std::find_if(ports.begin(), ports.end(), [](const FlowPort& other) {
+                           return other.kind == FlowPortKind::pressure;
+                         })->value;
+  };
+  if (std::none_of(ports.begin(), ports.end(), drives)) {
+    throw std::invalid_argument(
+        "flow ports state no speed and hold one pressure, so nothing flows");
+  }
+  // A speed port's flow has to leave, or arrive, through a pressure port.
+  while (!pending.empty()) {
+    const auto site = pending.back();
+    pending.pop_back();
+    for (std::size_t component = 0; component < 3; ++component) {
+      for (const auto offset : {-1, 1}) {
+        const auto neighbor = layout.neighbor_site(site, component, offset);
+        if (neighbor && visited[*neighbor] == 0 && !spec.solid_site(*neighbor)) {
+          visited[*neighbor] = 1;
+          pending.push_back(*neighbor);
+        }
+      }
+    }
+  }
+  for (const auto& port : ports) {
+    if (port.kind != FlowPortKind::speed) {
+      continue;
+    }
+    bool reached = false;
+    detail::for_each_port_face(layout, port, [&](std::size_t, std::size_t site) {
+      reached = reached || visited[site] != 0;
+    });
+    if (!reached) {
+      throw std::runtime_error("a speed port carries no flow: no pressure port is reachable");
+    }
+  }
+}
+
 void validate_flow_grid(const SignalGridSpec& spec, FlowAxis axis) {
   spec.validate();
   const auto axis_index = static_cast<std::size_t>(axis);
@@ -175,7 +297,7 @@ void validate_flow_grid(const SignalGridSpec& spec, FlowAxis axis) {
           "native flow-axis boundaries must be fixed to identify inlet and outlet");
     }
   }
-  const detail::FlowGridLayout layout(spec, axis);
+  const detail::FlowGridLayout layout(spec);
   std::vector<std::uint8_t> visited(layout.site_count(), 0);
   std::vector<std::size_t> pending;
   for (std::size_t i = 0; i < layout.site_count(); ++i) {
@@ -210,9 +332,11 @@ DepthAveragedFlowResult solve_depth_averaged_flow_cpu(
     const SignalGridSpec& spec, std::span<const float> mobility,
     const DepthAveragedFlowParameters& parameters) {
   parameters.validate();
-  const detail::ShallowFlowReduction reduction(spec, mobility, parameters.axis);
-  const detail::DepthAveragedFlowSystem system(reduction.grid(), reduction.conductance(),
-                                               parameters.axis);
+  const auto reduction = detail::reduce_shallow_flow(spec, mobility, parameters.axis);
+  const auto axis = static_cast<std::size_t>(parameters.axis);
+  const detail::DepthAveragedFlowSystem system(
+      reduction.grid(), reduction.conductance(),
+      detail::axis_flow_boundary(reduction.reduced_layout(), axis));
   const auto solve =
       conjugate_gradient([&](std::span<const double> input,
                              std::vector<double>& output) { system.apply(input, output); },
@@ -221,7 +345,7 @@ DepthAveragedFlowResult solve_depth_averaged_flow_cpu(
   const auto unscaled = system.velocity(solve.solution);
   const auto scaled =
       detail::scale_velocity(spec, reduction.original_layout(), reduction.lift(unscaled),
-                             reduction.open_inlet_faces(), parameters.mean_inlet_speed);
+                             reduction.open_inlet_faces(axis), parameters.mean_inlet_speed);
   return {
       .field = scaled.field,
       .report = {.iterations = solve.iterations,
@@ -231,10 +355,38 @@ DepthAveragedFlowResult solve_depth_averaged_flow_cpu(
   };
 }
 
-ResolvedFlowResult solve_resolved_flow_cpu(const SignalGridSpec& spec, std::span<const float> drag,
-                                           const ResolvedFlowParameters& parameters) {
+DepthAveragedPortFlowResult solve_depth_averaged_port_flow_cpu(
+    const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> mobility,
+    const DepthAveragedPortFlowParameters& parameters) {
   parameters.validate();
-  const detail::ResolvedFlowSystem system(spec, drag, parameters.axis);
+  const detail::ShallowPortFlow flow(spec, ports, mobility);
+  DepthAveragedPortFlowReport report;
+  const auto solution = flow.solve([&](const detail::DepthAveragedFlowSystem& system) {
+    const auto solve = conjugate_gradient(
+        [&](std::span<const double> input, std::vector<double>& output) {
+          system.apply(input, output);
+        },
+        system.right_hand_side(), system.diagonal(), parameters.relative_tolerance,
+        parameters.max_iterations, "depth-averaged flow");
+    report.iterations += solve.iterations;
+    report.relative_residual =
+        std::max(report.relative_residual, static_cast<float>(solve.relative_residual));
+    return system.velocity(solve.solution);
+  });
+  report.solves = solution.solves;
+  report.max_speed = solution.max_speed;
+  return {
+      .field =
+          detail::make_velocity_field(spec, flow.reduction().original_layout(), solution.velocity),
+      .report = report,
+      .ports = solution.ports,
+  };
+}
+
+namespace {
+
+[[nodiscard]] detail::ResolvedSystemSolve solve_resolved_system(
+    const detail::ResolvedFlowSystem& system, const detail::ResolvedSolveControls& parameters) {
   std::uint64_t inner_iterations = 0;
   const auto solve_momentum = [&](std::span<const double> right_hand_side) {
     std::vector<float> rhs(right_hand_side.size());
@@ -311,20 +463,28 @@ ResolvedFlowResult solve_resolved_flow_cpu(const SignalGridSpec& spec, std::span
   std::vector<float> unscaled(velocity.size());
   std::transform(velocity.begin(), velocity.end(), unscaled.begin(),
                  [](double value) { return static_cast<float>(value); });
-  const auto scaled = detail::scale_velocity(
-      spec, system.layout(), unscaled, system.open_inlet_faces(), parameters.mean_inlet_speed);
   return {
-      .field = scaled.field,
-      .report = {.outer_iterations = solution.iterations,
-                 .inner_iterations = inner_iterations,
-                 .relative_residual = static_cast<float>(solution.relative_residual),
-                 .momentum_relative_residual =
-                     static_cast<float>(std::sqrt(momentum_square / force_square)),
-                 .divergence_rms = static_cast<float>(divergence_rms * std::abs(scaled.factor)),
-                 .mean_inlet_speed = parameters.mean_inlet_speed,
-                 .max_speed = scaled.max_speed,
-                 .min_gap_voxels = system.minimum_gap_voxels()},
+      .velocity = std::move(unscaled),
+      .outer_iterations = solution.iterations,
+      .inner_iterations = inner_iterations,
+      .relative_residual = static_cast<float>(solution.relative_residual),
+      .momentum_relative_residual = static_cast<float>(std::sqrt(momentum_square / force_square)),
+      .divergence_rms = divergence_rms,
   };
+}
+
+}  // namespace
+
+ResolvedFlowResult solve_resolved_flow_cpu(const SignalGridSpec& spec, std::span<const float> drag,
+                                           const ResolvedFlowParameters& parameters) {
+  return detail::solve_resolved_axis_flow(spec, drag, parameters, solve_resolved_system);
+}
+
+ResolvedPortFlowResult solve_resolved_port_flow_cpu(const SignalGridSpec& spec,
+                                                    std::span<const FlowPort> ports,
+                                                    std::span<const float> drag,
+                                                    const ResolvedPortFlowParameters& parameters) {
+  return detail::solve_resolved_port_flow(spec, ports, drag, parameters, solve_resolved_system);
 }
 
 }  // namespace microsimulator

@@ -20,6 +20,9 @@ struct SignalGridBoundariesGpu {
   std::uint32_t y_upper;
   std::uint32_t z_lower;
   std::uint32_t z_upper;
+  // Where each face's own block of fixed values begins, in GridFace order;
+  // zero for a face that carries the same values everywhere.
+  std::uint32_t offsets[6];
 };
 
 // Grid geometry and transport helpers shared by the signal and coupled-rate
@@ -37,8 +40,11 @@ __device__ inline float grid_level(const float* levels, SignalGridShapeGpu shape
   return levels[signal * shape.sites + site_index(shape, x, y, z)];
 }
 
+// The exterior stencil value beyond a boundary site. `plane` indexes the site
+// on its face, with the first in-plane axis varying slowest.
 __device__ inline float exterior_value(std::uint32_t kind, const float* fixed_values,
-                                       std::uint32_t face, std::uint32_t signal,
+                                       std::uint32_t face, std::uint32_t offset,
+                                       std::uint32_t plane, std::uint32_t signal,
                                        std::uint32_t signal_count, float current, float periodic) {
   if (kind == 0) {
     return current;
@@ -46,7 +52,10 @@ __device__ inline float exterior_value(std::uint32_t kind, const float* fixed_va
   if (kind == 1) {
     return periodic;
   }
-  return fixed_values[face * signal_count + signal];
+  if (offset == 0) {
+    return fixed_values[face * signal_count + signal];
+  }
+  return fixed_values[offset + plane * signal_count + signal];
 }
 
 // Whether each of a site's six faces is closed to transport, and the velocity

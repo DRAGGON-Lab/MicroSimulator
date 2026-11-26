@@ -25,8 +25,11 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import cast
+
+from ._core import GridFace  # pyright: ignore[reportMissingModuleSource]
 
 MAX_DESIGN_SCENE_BYTES = 64 << 20
 
@@ -121,6 +124,23 @@ class DesignInstance:
 
 
 @dataclass(frozen=True, slots=True)
+class DesignCrossing:
+    """Where a channel passes through one side of a window.
+
+    ``side`` is the window's side as a face of the device's grid. ``low`` and
+    ``high`` bound the channel along that side in window coordinates: along y
+    on an x side and along x on a y side. ``height`` is the fluid's height just
+    inside the window, and ``path`` names what was drawn there.
+    """
+
+    side: GridFace
+    low: float
+    high: float
+    height: float
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
 class DesignWindow:
     """The fluid of one rectangular part of a chip.
 
@@ -128,11 +148,16 @@ class DesignWindow:
     the glass is ``z = 0``, and each box rises from the glass to the height of
     its layer. ``origin`` is the window's low corner in design coordinates and
     ``size`` its extent in x and y.
+
+    ``crossings`` are where fluid inside the window meets fluid outside it
+    across one of the window's sides: the places a model opens as ports. Fluid
+    that only touches a side, with a wall beyond, is not a crossing.
     """
 
     origin: tuple[float, float]
     size: tuple[float, float]
     boxes: tuple[Box, ...]
+    crossings: tuple[DesignCrossing, ...] = ()
 
     def local(self, x: float, y: float) -> tuple[float, float]:
         """A point of the design in window coordinates."""
@@ -202,11 +227,16 @@ class DesignScene:
             raise DesignSceneError("a window's high corner must lie beyond its low corner")
         heights = {layer.name: layer.height for layer in self.layers}
         boxes: list[Box] = []
+        near: list[_Drawn] = []
 
-        def clip(layer: str, corner: tuple[float, float], far: tuple[float, float]) -> None:
+        def clip(
+            path: str, layer: str, corner: tuple[float, float], far: tuple[float, float]
+        ) -> None:
             height = heights.get(layer)
             if height is None:
                 raise DesignSceneError(f"a rectangle is drawn on unknown layer {layer!r}")
+            if far[0] > corner[0] and far[1] > corner[1]:
+                near.append((path, height, corner, far))
             x0, y0 = max(corner[0], low[0]), max(corner[1], low[1])
             x1, y1 = min(far[0], high[0]), min(far[1], high[1])
             if x1 > x0 and y1 > y0:
@@ -215,7 +245,7 @@ class DesignScene:
                 )
 
         for rectangle in self.rectangles:
-            clip(rectangle.layer, rectangle.low, rectangle.high)
+            clip(rectangle.path, rectangle.layer, rectangle.low, rectangle.high)
         for row in self.rows:
             outline = self.outlines.get(row.outline)
             if outline is None:
@@ -226,11 +256,77 @@ class DesignScene:
                     dx = row.origin[0] + index * row.step[0]
                     dy = row.origin[1] + index * row.step[1]
                     clip(
+                        row.path,
                         rectangle.layer,
                         (corner[0] + dx, corner[1] + dy),
                         (far[0] + dx, far[1] + dy),
                     )
-        return DesignWindow(low, (high[0] - low[0], high[1] - low[1]), tuple(boxes))
+        return DesignWindow(
+            low, (high[0] - low[0], high[1] - low[1]), tuple(boxes), _crossings(near, low, high)
+        )
+
+
+# A drawn rectangle near a window: its path, its height, and its corners.
+_Drawn = tuple[str, float, tuple[float, float], tuple[float, float]]
+
+
+def _holds(drawn: _Drawn, axis: int, at: float, *, above: bool) -> bool:
+    """Whether a rectangle holds the points just above, or just below, a coordinate."""
+
+    start, end = drawn[2][axis], drawn[3][axis]
+    return start <= at < end if above else start < at <= end
+
+
+def _tallest(drawn: list[_Drawn], along: int, at: float) -> tuple[float, str]:
+    """The height and path of the tallest rectangle that spans a coordinate."""
+
+    covering = [each for each in drawn if each[2][along] < at < each[3][along]]
+    return max(((each[1], each[0]) for each in covering), default=(0.0, ""))
+
+
+def _crossings(
+    near: list[_Drawn], low: tuple[float, float], high: tuple[float, float]
+) -> tuple[DesignCrossing, ...]:
+    """Where fluid inside a window meets fluid outside it across a side."""
+
+    sides = (
+        (GridFace.X_LOWER, 0, low[0], False),
+        (GridFace.X_UPPER, 0, high[0], True),
+        (GridFace.Y_LOWER, 1, low[1], False),
+        (GridFace.Y_UPPER, 1, high[1], True),
+    )
+    crossings: list[DesignCrossing] = []
+    for side, axis, at, upper in sides:
+        along = 1 - axis
+        # A rectangle lies inside the side when it holds the points just within
+        # the window there, and outside it when it holds those just beyond.
+        inside = [drawn for drawn in near if _holds(drawn, axis, at, above=not upper)]
+        outside = [drawn for drawn in near if _holds(drawn, axis, at, above=upper)]
+        edges = sorted(
+            {
+                min(max(edge[along], low[along]), high[along])
+                for drawn in (*inside, *outside)
+                for edge in (drawn[2], drawn[3])
+            }
+        )
+        open_from: float | None = None
+        height, path = 0.0, ""
+        for start, end in pairwise(edges):
+            middle = (start + end) * 0.5
+            within, beyond = _tallest(inside, along, middle), _tallest(outside, along, middle)
+            crosses = within[0] > 0.0 and beyond[0] > 0.0
+            if open_from is not None and (not crosses or within[0] != height):
+                crossings.append(
+                    DesignCrossing(side, open_from - low[along], start - low[along], height, path)
+                )
+                open_from = None
+            if crosses and open_from is None:
+                open_from, (height, path) = start, within
+        if open_from is not None:
+            crossings.append(
+                DesignCrossing(side, open_from - low[along], edges[-1] - low[along], height, path)
+            )
+    return tuple(crossings)
 
 
 def _turned(
@@ -257,10 +353,12 @@ def _reaching(
     low: tuple[float, float],
     high: tuple[float, float],
 ) -> range:
-    """The placements of a row whose rectangle may reach the window.
+    """The placements of a row whose rectangle may reach or touch the window.
 
     The range is the interval of indices that overlap the window on both axes,
-    widened by one against rounding; clipping discards any that do not reach.
+    widened by one against rounding and so that a placement lying against the
+    window's side from outside is among them; clipping discards any that do
+    not reach inside.
     """
 
     first, last = 0, row.count - 1
@@ -268,7 +366,7 @@ def _reaching(
         step = row.step[axis]
         start, end = corner[axis] + row.origin[axis], far[axis] + row.origin[axis]
         if step == 0.0:
-            if end <= low[axis] or start >= high[axis]:
+            if end < low[axis] or start > high[axis]:
                 return range(0)
             continue
         # A placement overlaps when its far edge is past the window's low edge

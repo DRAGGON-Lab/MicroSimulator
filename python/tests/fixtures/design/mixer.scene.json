@@ -1,0 +1,1511 @@
+{
+  "version": "0.6.0",
+  "design": "mixer",
+  "passes": true,
+  "problems": 0,
+  "size_um": [
+    25000.0,
+    20000.0
+  ],
+  "thickness_um": 4000.0,
+  "glass_um": [
+    75000.0,
+    25000.0,
+    1000.0
+  ],
+  "punch_um": 750.0,
+  "layers": [
+    {
+      "name": "flow",
+      "height_um": 50.0,
+      "gds": 1,
+      "colour": "#4c9be8"
+    }
+  ],
+  "outlines": {
+    "flow_2000000x200000": [
+      {
+        "path": "flow_2000000x200000",
+        "layer": "flow",
+        "rect": [
+          0.0,
+          0.0,
+          2000.0,
+          200.0
+        ]
+      }
+    ],
+    "flow_200000x200000": [
+      {
+        "path": "flow_200000x200000",
+        "layer": "flow",
+        "rect": [
+          0.0,
+          0.0,
+          200.0,
+          200.0
+        ]
+      }
+    ],
+    "flow_3300000x200000": [
+      {
+        "path": "flow_3300000x200000",
+        "layer": "flow",
+        "rect": [
+          0.0,
+          0.0,
+          3300.0,
+          200.0
+        ]
+      }
+    ],
+    "flow_4000000x200000": [
+      {
+        "path": "flow_4000000x200000",
+        "layer": "flow",
+        "rect": [
+          0.0,
+          0.0,
+          4000.0,
+          200.0
+        ]
+      }
+    ],
+    "flow_5400000x200000": [
+      {
+        "path": "flow_5400000x200000",
+        "layer": "flow",
+        "rect": [
+          0.0,
+          0.0,
+          5400.0,
+          200.0
+        ]
+      }
+    ]
+  },
+  "shapes": [
+    {
+      "path": "meet.collector",
+      "layer": "flow",
+      "rect": [
+        4900.0,
+        12000.0,
+        15000.0,
+        12200.0
+      ]
+    },
+    {
+      "path": "third_in.pad",
+      "layer": "flow",
+      "rect": [
+        5750.0,
+        2500.0,
+        6650.0,
+        3400.0
+      ]
+    },
+    {
+      "path": "second_in.pad",
+      "layer": "flow",
+      "rect": [
+        9750.0,
+        2500.0,
+        10650.0,
+        3400.0
+      ]
+    },
+    {
+      "path": "first_in.pad",
+      "layer": "flow",
+      "rect": [
+        13750.0,
+        2500.0,
+        14650.0,
+        3400.0
+      ]
+    },
+    {
+      "path": "third_resistor.link[0]",
+      "layer": "flow",
+      "rect": [
+        5700.0,
+        9200.0,
+        6100.0,
+        9400.0
+      ]
+    },
+    {
+      "path": "third_resistor.link[1]",
+      "layer": "flow",
+      "rect": [
+        5100.0,
+        4000.0,
+        5500.0,
+        4200.0
+      ]
+    },
+    {
+      "path": "second_resistor.link[0]",
+      "layer": "flow",
+      "rect": [
+        9700.0,
+        7100.0,
+        10100.0,
+        7300.0
+      ]
+    },
+    {
+      "path": "second_resistor.link[1]",
+      "layer": "flow",
+      "rect": [
+        9100.0,
+        4000.0,
+        9500.0,
+        4200.0
+      ]
+    },
+    {
+      "path": "first_resistor.link[0]",
+      "layer": "flow",
+      "rect": [
+        13700.0,
+        5800.0,
+        14100.0,
+        6000.0
+      ]
+    },
+    {
+      "path": "first_resistor.link[1]",
+      "layer": "flow",
+      "rect": [
+        13100.0,
+        4000.0,
+        13500.0,
+        4200.0
+      ]
+    },
+    {
+      "path": "third_lead",
+      "layer": "flow",
+      "rect": [
+        6100.0,
+        3400.0,
+        6300.0,
+        4000.0
+      ]
+    },
+    {
+      "path": "second_lead",
+      "layer": "flow",
+      "rect": [
+        10100.0,
+        3400.0,
+        10300.0,
+        4000.0
+      ]
+    },
+    {
+      "path": "first_lead",
+      "layer": "flow",
+      "rect": [
+        14100.0,
+        3400.0,
+        14300.0,
+        4000.0
+      ]
+    },
+    {
+      "path": "third_feed",
+      "layer": "flow",
+      "rect": [
+        4900.0,
+        9400.0,
+        5100.0,
+        11800.0
+      ]
+    },
+    {
+      "path": "second_feed",
+      "layer": "flow",
+      "rect": [
+        8900.0,
+        7300.0,
+        9100.0,
+        11800.0
+      ]
+    },
+    {
+      "path": "first_feed",
+      "layer": "flow",
+      "rect": [
+        12900.0,
+        6000.0,
+        13100.0,
+        11800.0
+      ]
+    },
+    {
+      "path": "mixer.link[0]",
+      "layer": "flow",
+      "rect": [
+        18800.0,
+        12200.0,
+        19000.0,
+        12600.0
+      ]
+    },
+    {
+      "path": "mixer.link[1]",
+      "layer": "flow",
+      "rect": [
+        15000.0,
+        12800.0,
+        15200.0,
+        13200.0
+      ]
+    },
+    {
+      "path": "mixer.link[2]",
+      "layer": "flow",
+      "rect": [
+        18800.0,
+        13400.0,
+        19000.0,
+        13800.0
+      ]
+    },
+    {
+      "path": "mixer.link[3]",
+      "layer": "flow",
+      "rect": [
+        15000.0,
+        14000.0,
+        15200.0,
+        14400.0
+      ]
+    },
+    {
+      "path": "mixer.link[4]",
+      "layer": "flow",
+      "rect": [
+        18800.0,
+        14600.0,
+        19000.0,
+        15000.0
+      ]
+    },
+    {
+      "path": "mixer.link[5]",
+      "layer": "flow",
+      "rect": [
+        15000.0,
+        15200.0,
+        15200.0,
+        15600.0
+      ]
+    },
+    {
+      "path": "outlet.pad",
+      "layer": "flow",
+      "rect": [
+        19600.0,
+        15250.0,
+        20500.0,
+        16150.0
+      ]
+    },
+    {
+      "path": "exit",
+      "layer": "flow",
+      "rect": [
+        19000.0,
+        15600.0,
+        19600.0,
+        15800.0
+      ]
+    }
+  ],
+  "translates": [
+    {
+      "path": "meet.stub",
+      "outline": "flow_200000x200000",
+      "origin": [
+        4900.0,
+        11800.0
+      ],
+      "step": [
+        4000.0,
+        0.0
+      ],
+      "count": 3,
+      "quarter_turns": 0
+    },
+    {
+      "path": "third_resistor.run",
+      "outline": "flow_5400000x200000",
+      "origin": [
+        6300.0,
+        4000.0
+      ],
+      "step": [
+        -600.0,
+        0.0
+      ],
+      "count": 3,
+      "quarter_turns": 1
+    },
+    {
+      "path": "second_resistor.run",
+      "outline": "flow_3300000x200000",
+      "origin": [
+        10300.0,
+        4000.0
+      ],
+      "step": [
+        -600.0,
+        0.0
+      ],
+      "count": 3,
+      "quarter_turns": 1
+    },
+    {
+      "path": "first_resistor.run",
+      "outline": "flow_2000000x200000",
+      "origin": [
+        14300.0,
+        4000.0
+      ],
+      "step": [
+        -600.0,
+        0.0
+      ],
+      "count": 3,
+      "quarter_turns": 1
+    },
+    {
+      "path": "mixer.run",
+      "outline": "flow_4000000x200000",
+      "origin": [
+        15000.0,
+        12000.0
+      ],
+      "step": [
+        0.0,
+        600.0
+      ],
+      "count": 7,
+      "quarter_turns": 0
+    }
+  ],
+  "ports": [
+    {
+      "path": "meet.input[0]",
+      "at": [
+        5000.0,
+        11800.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "path": "meet.input[1]",
+      "at": [
+        9000.0,
+        11800.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "path": "meet.input[2]",
+      "at": [
+        13000.0,
+        11800.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "path": "meet.outlet",
+      "at": [
+        15000.0,
+        12100.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        1.0,
+        0.0
+      ]
+    },
+    {
+      "path": "third_in.opening",
+      "at": [
+        6200.0,
+        3400.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "path": "second_in.opening",
+      "at": [
+        10200.0,
+        3400.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "path": "first_in.opening",
+      "at": [
+        14200.0,
+        3400.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "path": "third_resistor.inlet",
+      "at": [
+        6200.0,
+        4000.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "path": "third_resistor.outlet",
+      "at": [
+        5000.0,
+        9400.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "path": "second_resistor.inlet",
+      "at": [
+        10200.0,
+        4000.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "path": "second_resistor.outlet",
+      "at": [
+        9000.0,
+        7300.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "path": "first_resistor.inlet",
+      "at": [
+        14200.0,
+        4000.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "path": "first_resistor.outlet",
+      "at": [
+        13000.0,
+        6000.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "path": "mixer.inlet",
+      "at": [
+        15000.0,
+        12100.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        -1.0,
+        0.0
+      ]
+    },
+    {
+      "path": "mixer.outlet",
+      "at": [
+        19000.0,
+        15700.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        1.0,
+        0.0
+      ]
+    },
+    {
+      "path": "outlet.opening",
+      "at": [
+        19600.0,
+        15700.0
+      ],
+      "width_um": 200.0,
+      "layer": "flow",
+      "facing": [
+        -1.0,
+        0.0
+      ]
+    }
+  ],
+  "access": [
+    [
+      6200.0,
+      2950.0
+    ],
+    [
+      10200.0,
+      2950.0
+    ],
+    [
+      14200.0,
+      2950.0
+    ],
+    [
+      20050.0,
+      15700.0
+    ]
+  ],
+  "flows": [
+    {
+      "element": "meet",
+      "start": "meet.input[0]",
+      "end": "meet.c[0]",
+      "flow_ul_min": 0.25569377570348956,
+      "velocity_mm_s": 0.42615629283914935,
+      "shear_pa": 0.06070322274885598,
+      "reynolds": 0.034092503427131944
+    },
+    {
+      "element": "meet",
+      "start": "meet.input[1]",
+      "end": "meet.c[1]",
+      "flow_ul_min": 0.38286371149256493,
+      "velocity_mm_s": 0.6381061858209417,
+      "shear_pa": 0.09089412167833899,
+      "reynolds": 0.05104849486567533
+    },
+    {
+      "element": "meet",
+      "start": "meet.input[2]",
+      "end": "meet.c[2]",
+      "flow_ul_min": 0.6384695845578849,
+      "velocity_mm_s": 1.0641159742631419,
+      "shear_pa": 0.15157647581821013,
+      "reynolds": 0.08512927794105132
+    },
+    {
+      "element": "meet",
+      "start": "meet.c[0]",
+      "end": "meet.c[1]",
+      "flow_ul_min": 0.25569377570350904,
+      "velocity_mm_s": 0.4261562928391818,
+      "shear_pa": 0.0607032227488606,
+      "reynolds": 0.03409250342713454
+    },
+    {
+      "element": "meet",
+      "start": "meet.c[1]",
+      "end": "meet.c[2]",
+      "flow_ul_min": 0.6385574871961204,
+      "velocity_mm_s": 1.0642624786602006,
+      "shear_pa": 0.15159734442721062,
+      "reynolds": 0.08514099829281604
+    },
+    {
+      "element": "meet",
+      "start": "meet.c[2]",
+      "end": "meet.outlet",
+      "flow_ul_min": 1.2770270717540324,
+      "velocity_mm_s": 2.1283784529233873,
+      "shear_pa": 0.3031738202454271,
+      "reynolds": 0.17027027623387098
+    },
+    {
+      "element": "third_in",
+      "start": "third_in.opening",
+      "end": "third_in.access",
+      "flow_ul_min": -0.2556937757034522,
+      "velocity_mm_s": 0.09470139840868602,
+      "shear_pa": 0.011776508410845406,
+      "reynolds": 0.008971711428191306
+    },
+    {
+      "element": "second_in",
+      "start": "second_in.opening",
+      "end": "second_in.access",
+      "flow_ul_min": -0.38286371149261356,
+      "velocity_mm_s": 0.14180137462689393,
+      "shear_pa": 0.017633584181687135,
+      "reynolds": 0.013433814438337318
+    },
+    {
+      "element": "first_in",
+      "start": "first_in.opening",
+      "end": "first_in.access",
+      "flow_ul_min": -0.6384695845578632,
+      "velocity_mm_s": 0.23647021650291233,
+      "shear_pa": 0.029406044053786218,
+      "reynolds": 0.022402441563433798
+    },
+    {
+      "element": "third_resistor",
+      "start": "third_resistor.inlet",
+      "end": "third_resistor.outlet",
+      "flow_ul_min": 0.25569377570347684,
+      "velocity_mm_s": 0.42615629283912815,
+      "shear_pa": 0.06070322274885295,
+      "reynolds": 0.034092503427130244
+    },
+    {
+      "element": "second_resistor",
+      "start": "second_resistor.inlet",
+      "end": "second_resistor.outlet",
+      "flow_ul_min": 0.38286371149260995,
+      "velocity_mm_s": 0.6381061858210166,
+      "shear_pa": 0.09089412167834968,
+      "reynolds": 0.05104849486568132
+    },
+    {
+      "element": "first_resistor",
+      "start": "first_resistor.inlet",
+      "end": "first_resistor.outlet",
+      "flow_ul_min": 0.6384695845578948,
+      "velocity_mm_s": 1.0641159742631583,
+      "shear_pa": 0.15157647581821246,
+      "reynolds": 0.08512927794105264
+    },
+    {
+      "element": "third_lead",
+      "start": "third_in.opening",
+      "end": "third_resistor.inlet",
+      "flow_ul_min": 0.2556937757034697,
+      "velocity_mm_s": 0.42615629283911627,
+      "shear_pa": 0.06070322274885126,
+      "reynolds": 0.03409250342712929
+    },
+    {
+      "element": "second_lead",
+      "start": "second_in.opening",
+      "end": "second_resistor.inlet",
+      "flow_ul_min": 0.3828637114926249,
+      "velocity_mm_s": 0.6381061858210415,
+      "shear_pa": 0.09089412167835323,
+      "reynolds": 0.051048494865683317
+    },
+    {
+      "element": "first_lead",
+      "start": "first_in.opening",
+      "end": "first_resistor.inlet",
+      "flow_ul_min": 0.638469584557895,
+      "velocity_mm_s": 1.0641159742631585,
+      "shear_pa": 0.1515764758182125,
+      "reynolds": 0.08512927794105267
+    },
+    {
+      "element": "third_feed",
+      "start": "third_resistor.outlet",
+      "end": "meet.input[0]",
+      "flow_ul_min": 0.25569377570347956,
+      "velocity_mm_s": 0.42615629283913264,
+      "shear_pa": 0.0607032227488536,
+      "reynolds": 0.03409250342713061
+    },
+    {
+      "element": "second_feed",
+      "start": "second_resistor.outlet",
+      "end": "meet.input[1]",
+      "flow_ul_min": 0.3828637114926108,
+      "velocity_mm_s": 0.638106185821018,
+      "shear_pa": 0.09089412167834987,
+      "reynolds": 0.05104849486568143
+    },
+    {
+      "element": "first_feed",
+      "start": "first_resistor.outlet",
+      "end": "meet.input[2]",
+      "flow_ul_min": 0.6384695845578959,
+      "velocity_mm_s": 1.06411597426316,
+      "shear_pa": 0.1515764758182127,
+      "reynolds": 0.08512927794105278
+    },
+    {
+      "element": "mixer",
+      "start": "meet.outlet",
+      "end": "mixer.outlet",
+      "flow_ul_min": 1.2770270717540333,
+      "velocity_mm_s": 2.128378452923389,
+      "shear_pa": 0.3031738202454274,
+      "reynolds": 0.17027027623387112
+    },
+    {
+      "element": "outlet",
+      "start": "outlet.opening",
+      "end": "outlet.access",
+      "flow_ul_min": 1.2770270717540337,
+      "velocity_mm_s": 0.47297298953853106,
+      "shear_pa": 0.058816136646323576,
+      "reynolds": 0.044807967429966095
+    },
+    {
+      "element": "exit",
+      "start": "mixer.outlet",
+      "end": "outlet.opening",
+      "flow_ul_min": 1.2770270717540337,
+      "velocity_mm_s": 2.1283784529233896,
+      "shear_pa": 0.30317382024542744,
+      "reynolds": 0.17027027623387114
+    }
+  ],
+  "pressures_mbar": {
+    "first_in.access": 5.0,
+    "first_in.opening": 4.994706912070319,
+    "first_resistor.inlet": 4.958328557873948,
+    "first_resistor.outlet": 4.521788307517496,
+    "meet.c[0]": 4.497685673035499,
+    "meet.c[1]": 4.400560516637322,
+    "meet.c[2]": 4.158004765553785,
+    "meet.input[0]": 4.502541930855408,
+    "meet.input[1]": 4.407832046371589,
+    "meet.input[2]": 4.170130883619242,
+    "meet.outlet": 3.915465709357443,
+    "mixer.outlet": 0.08334862145524082,
+    "outlet.access": 0.0,
+    "outlet.opening": 0.010586904596338244,
+    "second_in.access": 5.0,
+    "second_in.opening": 4.996825954847297,
+    "second_resistor.inlet": 4.975011365644492,
+    "second_resistor.outlet": 4.571441465392619,
+    "third_in.access": 5.0,
+    "third_in.opening": 4.997880228486048,
+    "third_resistor.inlet": 4.983311455026324,
+    "third_resistor.outlet": 4.560817024694307
+  },
+  "viscosity_mpa_s": 1.0,
+  "fractions": {
+    "first": {
+      "first_in.access": 1.0,
+      "first_in.opening": 0.99999999999995,
+      "first_resistor.inlet": 0.99999999999995,
+      "first_resistor.outlet": 0.9999999999999484,
+      "meet.c[0]": 0.0,
+      "meet.c[1]": 0.0,
+      "meet.c[2]": 0.4999655830951933,
+      "meet.input[0]": 0.0,
+      "meet.input[1]": 0.0,
+      "meet.input[2]": 0.9999999999999484,
+      "meet.outlet": 0.4999655830951929,
+      "mixer.outlet": 0.49996558309519273,
+      "outlet.access": 0.49996558309519273,
+      "outlet.opening": 0.49996558309519273,
+      "second_in.access": 0.0,
+      "second_in.opening": 0.0,
+      "second_resistor.inlet": 0.0,
+      "second_resistor.outlet": 0.0,
+      "third_in.access": 0.0,
+      "third_in.opening": 0.0,
+      "third_resistor.inlet": 0.0,
+      "third_resistor.outlet": 0.0
+    },
+    "second": {
+      "first_in.access": 0.0,
+      "first_in.opening": 0.0,
+      "first_resistor.inlet": 0.0,
+      "first_resistor.outlet": 0.0,
+      "meet.c[0]": 0.0,
+      "meet.c[1]": 0.599575949181477,
+      "meet.c[2]": 0.2998086101390778,
+      "meet.input[0]": 0.0,
+      "meet.input[1]": 0.9999999999999684,
+      "meet.input[2]": 0.0,
+      "meet.outlet": 0.29980861013907756,
+      "mixer.outlet": 0.29980861013907745,
+      "outlet.access": 0.29980861013907745,
+      "outlet.opening": 0.29980861013907745,
+      "second_in.access": 1.0,
+      "second_in.opening": 0.9999999999999705,
+      "second_resistor.inlet": 0.9999999999999705,
+      "second_resistor.outlet": 0.9999999999999684,
+      "third_in.access": 0.0,
+      "third_in.opening": 0.0,
+      "third_resistor.inlet": 0.0,
+      "third_resistor.outlet": 0.0
+    },
+    "third": {
+      "first_in.access": 0.0,
+      "first_in.opening": 0.0,
+      "first_resistor.inlet": 0.0,
+      "first_resistor.outlet": 0.0,
+      "meet.c[0]": 0.9999999999997776,
+      "meet.c[1]": 0.40042405081834215,
+      "meet.c[2]": 0.2002258067655916,
+      "meet.input[0]": 0.9999999999998539,
+      "meet.input[1]": 0.0,
+      "meet.input[2]": 0.0,
+      "meet.outlet": 0.20022580676559146,
+      "mixer.outlet": 0.2002258067655914,
+      "outlet.access": 0.2002258067655914,
+      "outlet.opening": 0.2002258067655914,
+      "second_in.access": 0.0,
+      "second_in.opening": 0.0,
+      "second_resistor.inlet": 0.0,
+      "second_resistor.outlet": 0.0,
+      "third_in.access": 1.0,
+      "third_in.opening": 0.9999999999999316,
+      "third_resistor.inlet": 0.9999999999999037,
+      "third_resistor.outlet": 0.9999999999998931
+    }
+  },
+  "tunables": [
+    {
+      "path": "second_resistor.run_length",
+      "value": 3300.0,
+      "low": 100.0,
+      "high": 20000.0,
+      "count": false,
+      "written": "3300um"
+    },
+    {
+      "path": "third_resistor.run_length",
+      "value": 5400.0,
+      "low": 100.0,
+      "high": 20000.0,
+      "count": false,
+      "written": "5400um"
+    }
+  ],
+  "requirements": [
+    {
+      "name": "first_share",
+      "statement": "The first liquid is 50 % of the mixture",
+      "status": "satisfied",
+      "values": {
+        "outlet": 49.99655830951927
+      },
+      "unit": "%",
+      "bound": {
+        "kind": "target",
+        "low": 49.5,
+        "high": 50.5,
+        "target": 50.0
+      },
+      "across": {
+        "low": 49.994327176886294,
+        "low_corner": "flow thin, features wide",
+        "high": 49.998821841947716,
+        "high_corner": "flow thick, features narrow",
+        "reached": 49.994327176886294,
+        "corner": "flow thin, features wide",
+        "holds": true
+      },
+      "note": "The first liquid is 50 % of the mixture; values in %"
+    },
+    {
+      "name": "second_share",
+      "statement": "The second liquid is 30 % of the mixture",
+      "status": "satisfied",
+      "values": {
+        "outlet": 29.980861013907745
+      },
+      "unit": "%",
+      "bound": {
+        "kind": "target",
+        "low": 29.7,
+        "high": 30.3,
+        "target": 30.0
+      },
+      "across": {
+        "low": 29.98013723599886,
+        "low_corner": "flow thick, features narrow",
+        "high": 29.981574362219177,
+        "high_corner": "flow thin, features wide",
+        "reached": 29.98013723599886,
+        "corner": "flow thick, features narrow",
+        "holds": true
+      },
+      "note": "The second liquid is 30 % of the mixture; values in %"
+    },
+    {
+      "name": "third_share",
+      "statement": "The third liquid is 20 % of the mixture",
+      "status": "satisfied",
+      "values": {
+        "outlet": 20.02258067655914
+      },
+      "unit": "%",
+      "bound": {
+        "kind": "target",
+        "low": 19.8,
+        "high": 20.2,
+        "target": 20.0
+      },
+      "across": {
+        "low": 20.021040922039923,
+        "low_corner": "flow thick, features narrow",
+        "high": 20.02409846087993,
+        "high_corner": "flow thin, features wide",
+        "reached": 20.02409846087993,
+        "corner": "flow thin, features wide",
+        "holds": true
+      },
+      "note": "The third liquid is 20 % of the mixture; values in %"
+    }
+  ],
+  "instances": [
+    {
+      "path": "meet",
+      "region": "junction",
+      "rect": [
+        4900.0,
+        11800.0,
+        15000.0,
+        12200.0
+      ],
+      "parameters": [
+        [
+          "inputs",
+          "3"
+        ],
+        [
+          "pitch",
+          "4000um"
+        ],
+        [
+          "collector_width",
+          "200um"
+        ],
+        [
+          "input_width",
+          "200um"
+        ],
+        [
+          "stub_length",
+          "200um"
+        ]
+      ]
+    },
+    {
+      "path": "third_in",
+      "region": "access_pad",
+      "rect": [
+        5750.0,
+        2500.0,
+        6650.0,
+        3400.0
+      ],
+      "parameters": [
+        [
+          "pad_size",
+          "900um"
+        ],
+        [
+          "channel_width",
+          "200um"
+        ]
+      ]
+    },
+    {
+      "path": "second_in",
+      "region": "access_pad",
+      "rect": [
+        9750.0,
+        2500.0,
+        10650.0,
+        3400.0
+      ],
+      "parameters": [
+        [
+          "pad_size",
+          "900um"
+        ],
+        [
+          "channel_width",
+          "200um"
+        ]
+      ]
+    },
+    {
+      "path": "first_in",
+      "region": "access_pad",
+      "rect": [
+        13750.0,
+        2500.0,
+        14650.0,
+        3400.0
+      ],
+      "parameters": [
+        [
+          "pad_size",
+          "900um"
+        ],
+        [
+          "channel_width",
+          "200um"
+        ]
+      ]
+    },
+    {
+      "path": "third_resistor",
+      "region": "serpentine",
+      "rect": [
+        4900.0,
+        4000.0,
+        6300.0,
+        9400.0
+      ],
+      "parameters": [
+        [
+          "runs",
+          "3"
+        ],
+        [
+          "run_length",
+          "5400um"
+        ],
+        [
+          "width",
+          "200um"
+        ],
+        [
+          "pitch",
+          "600um"
+        ]
+      ]
+    },
+    {
+      "path": "second_resistor",
+      "region": "serpentine",
+      "rect": [
+        8900.0,
+        4000.0,
+        10300.0,
+        7300.0
+      ],
+      "parameters": [
+        [
+          "runs",
+          "3"
+        ],
+        [
+          "run_length",
+          "3300um"
+        ],
+        [
+          "width",
+          "200um"
+        ],
+        [
+          "pitch",
+          "600um"
+        ]
+      ]
+    },
+    {
+      "path": "first_resistor",
+      "region": "serpentine",
+      "rect": [
+        12900.0,
+        4000.0,
+        14300.0,
+        6000.0
+      ],
+      "parameters": [
+        [
+          "runs",
+          "3"
+        ],
+        [
+          "run_length",
+          "2000um"
+        ],
+        [
+          "width",
+          "200um"
+        ],
+        [
+          "pitch",
+          "600um"
+        ]
+      ]
+    },
+    {
+      "path": "mixer",
+      "region": "serpentine",
+      "rect": [
+        15000.0,
+        12000.0,
+        19000.0,
+        15800.0
+      ],
+      "parameters": [
+        [
+          "runs",
+          "7"
+        ],
+        [
+          "run_length",
+          "4000um"
+        ],
+        [
+          "width",
+          "200um"
+        ],
+        [
+          "pitch",
+          "600um"
+        ]
+      ]
+    },
+    {
+      "path": "outlet",
+      "region": "access_pad",
+      "rect": [
+        19600.0,
+        15250.0,
+        20500.0,
+        16150.0
+      ],
+      "parameters": [
+        [
+          "pad_size",
+          "900um"
+        ],
+        [
+          "channel_width",
+          "200um"
+        ]
+      ]
+    }
+  ],
+  "drives": [
+    {
+      "instance": "first_in",
+      "vertex": "first_in.access",
+      "at": [
+        14200.0,
+        2950.0
+      ],
+      "pressure_mbar": 5.0,
+      "flow_ul_min": null
+    },
+    {
+      "instance": "outlet",
+      "vertex": "outlet.access",
+      "at": [
+        20050.0,
+        15700.0
+      ],
+      "pressure_mbar": 0.0,
+      "flow_ul_min": null
+    },
+    {
+      "instance": "second_in",
+      "vertex": "second_in.access",
+      "at": [
+        10200.0,
+        2950.0
+      ],
+      "pressure_mbar": 5.0,
+      "flow_ul_min": null
+    },
+    {
+      "instance": "third_in",
+      "vertex": "third_in.access",
+      "at": [
+        6200.0,
+        2950.0
+      ],
+      "pressure_mbar": 5.0,
+      "flow_ul_min": null
+    }
+  ],
+  "checks": [
+    {
+      "id": "deterministic",
+      "title": "Reproducible build",
+      "group": "integrity",
+      "status": "satisfied",
+      "note": null,
+      "metrics": {},
+      "process": null
+    },
+    {
+      "id": "connectivity",
+      "title": "Connections",
+      "group": "function",
+      "status": "satisfied",
+      "note": null,
+      "metrics": {
+        "components": 1.0,
+        "edges": 21.0,
+        "nets": 15.0,
+        "open_to_flow": 1.0,
+        "ports": 16.0
+      },
+      "process": null
+    },
+    {
+      "id": "graph",
+      "title": "Flow",
+      "group": "function",
+      "status": "satisfied",
+      "note": null,
+      "metrics": {
+        "conservation_residual": 3.6359428280794854e-14,
+        "edges": 21.0,
+        "edges_without_flow": 0.0,
+        "inertial_loss_percent": 0.0004529994838868561,
+        "max_reynolds": 0.17027027623387114,
+        "vertices": 22.0
+      },
+      "process": null
+    },
+    {
+      "id": "requirement/first_share",
+      "title": "Requirement `first_share`",
+      "group": "function",
+      "status": "satisfied",
+      "note": "The first liquid is 50 % of the mixture; values in %",
+      "metrics": {
+        "outlet": 49.99655830951927
+      },
+      "process": null
+    },
+    {
+      "id": "requirement/second_share",
+      "title": "Requirement `second_share`",
+      "group": "function",
+      "status": "satisfied",
+      "note": "The second liquid is 30 % of the mixture; values in %",
+      "metrics": {
+        "outlet": 29.980861013907745
+      },
+      "process": null
+    },
+    {
+      "id": "requirement/third_share",
+      "title": "Requirement `third_share`",
+      "group": "function",
+      "status": "satisfied",
+      "note": "The third liquid is 20 % of the mixture; values in %",
+      "metrics": {
+        "outlet": 20.02258067655914
+      },
+      "process": null
+    },
+    {
+      "id": "rules",
+      "title": "Design rules",
+      "group": "fabrication",
+      "status": "satisfied",
+      "note": "7 of 10 limits are assumed, not published by FlowJEM: layer.overlap, resist.aspect, roof.span, port.pitch, port.edge, chip.size, layer.count",
+      "metrics": {
+        "chip.size": 25.0,
+        "feature.space": 199.99999999999878,
+        "feature.width": 199.99999999999878,
+        "layer.count": 1.0,
+        "layer.height": 49.99999999999999,
+        "port.edge": 2950.0,
+        "port.pitch": 4000.0,
+        "resist.aspect": 0.2500000000000015,
+        "roof.span": 4.000000000000011
+      },
+      "process": "flowjem-su8-pdms"
+    },
+    {
+      "id": "mask-rules",
+      "title": "Design rules after mask preparation",
+      "group": "fabrication",
+      "status": "satisfied",
+      "note": "7 of 10 limits are assumed, not published by FlowJEM: layer.overlap, resist.aspect, roof.span, port.pitch, port.edge, chip.size, layer.count",
+      "metrics": {
+        "chip.size": 25.0,
+        "feature.space": 199.99999999999878,
+        "feature.width": 199.99999999999878,
+        "layer.count": 1.0,
+        "layer.height": 49.99999999999999,
+        "port.edge": 2950.0,
+        "port.pitch": 4000.0,
+        "resist.aspect": 0.2500000000000015,
+        "roof.span": 4.000000000000011
+      },
+      "process": "flowjem-su8-pdms"
+    },
+    {
+      "id": "gds-readback",
+      "title": "Mask file round trip",
+      "group": "integrity",
+      "status": "satisfied",
+      "note": null,
+      "metrics": {
+        "bytes": 2678.0,
+        "flow.outlines": 43.0,
+        "structures": 6.0
+      },
+      "process": "flowjem-su8-pdms"
+    },
+    {
+      "id": "corners",
+      "title": "Fabrication variation",
+      "group": "variation",
+      "status": "satisfied",
+      "note": "each requirement at every corner of the process: each layer 3 standard deviations thick and thin, with every feature as much wide and narrow",
+      "metrics": {
+        "first_share": 0.011345646227411965,
+        "first_share.high": 49.998821841947716,
+        "first_share.low": 49.994327176886294,
+        "second_share": 0.066209213337128,
+        "second_share.high": 29.981574362219177,
+        "second_share.low": 29.98013723599886,
+        "third_share": 0.1204923043996442,
+        "third_share.high": 20.02409846087993,
+        "third_share.low": 20.021040922039923
+      },
+      "process": "flowjem-su8-pdms"
+    },
+    {
+      "id": "rules",
+      "title": "Design rules",
+      "group": "fabrication",
+      "status": "satisfied",
+      "note": "10 of 10 limits are assumed, not published by COSINC: feature.width, feature.space, layer.overlap, resist.aspect, roof.span, port.pitch, port.edge, chip.size, layer.height, layer.count; also assumed, not published by COSINC: its tolerances and print model",
+      "metrics": {
+        "chip.size": 25.0,
+        "feature.space": 199.99999999999878,
+        "feature.width": 199.99999999999878,
+        "layer.count": 1.0,
+        "layer.height": 49.99999999999999,
+        "port.edge": 2950.0,
+        "port.pitch": 4000.0,
+        "resist.aspect": 0.2500000000000015,
+        "roof.span": 4.000000000000011
+      },
+      "process": "cosinc-su8-pdms"
+    },
+    {
+      "id": "mask-rules",
+      "title": "Design rules after mask preparation",
+      "group": "fabrication",
+      "status": "satisfied",
+      "note": "10 of 10 limits are assumed, not published by COSINC: feature.width, feature.space, layer.overlap, resist.aspect, roof.span, port.pitch, port.edge, chip.size, layer.height, layer.count; also assumed, not published by COSINC: its tolerances and print model",
+      "metrics": {
+        "chip.size": 25.0,
+        "feature.space": 199.99999999999878,
+        "feature.width": 199.99999999999878,
+        "layer.count": 1.0,
+        "layer.height": 49.99999999999999,
+        "port.edge": 2950.0,
+        "port.pitch": 4000.0,
+        "resist.aspect": 0.2500000000000015,
+        "roof.span": 4.000000000000011
+      },
+      "process": "cosinc-su8-pdms"
+    },
+    {
+      "id": "gds-readback",
+      "title": "Mask file round trip",
+      "group": "integrity",
+      "status": "satisfied",
+      "note": null,
+      "metrics": {
+        "bytes": 2678.0,
+        "flow.outlines": 43.0,
+        "structures": 6.0
+      },
+      "process": "cosinc-su8-pdms"
+    },
+    {
+      "id": "print",
+      "title": "Printable features",
+      "group": "fabrication",
+      "status": "satisfied",
+      "note": "features narrower than 3.2 um, by an uncalibrated model: its blur and threshold are not measurements of this process; each layer names its 20 worst",
+      "metrics": {
+        "flow.checked": 0.0,
+        "flow.failing": 0.0,
+        "flow.worst_error_um": 0.0
+      },
+      "process": "cosinc-su8-pdms"
+    },
+    {
+      "id": "corners",
+      "title": "Fabrication variation",
+      "group": "variation",
+      "status": "satisfied",
+      "note": "each requirement at every corner of the process: each layer 3 standard deviations thick and thin, with every feature as much wide and narrow",
+      "metrics": {
+        "first_share": 0.011345646227411965,
+        "first_share.high": 49.998821841947716,
+        "first_share.low": 49.994327176886294,
+        "second_share": 0.066209213337128,
+        "second_share.high": 29.981574362219177,
+        "second_share.low": 29.98013723599886,
+        "third_share": 0.1204923043996442,
+        "third_share.high": 20.02409846087993,
+        "third_share.low": 20.021040922039923
+      },
+      "process": "cosinc-su8-pdms"
+    }
+  ],
+  "findings": []
+}

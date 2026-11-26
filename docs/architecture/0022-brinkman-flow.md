@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-16
-- Amended: 2026-09-10
+- Amended: 2026-11-26
 
 ## Decision
 
@@ -10,7 +10,7 @@
 
 Supported masks have contiguous fluid columns above a common planar floor, with flow along x or y. Overhangs, vertically disconnected channels, and depth-varying mobility are rejected; they require resolved flow. H is the authored staircase height, not an exact continuous-device height. Geometry convergence remains necessary, particularly near sharp depth changes.
 
-Pressure is fixed at the flow-axis inlet and outlet, with no flux elsewhere. Native CPU, Metal, and CUDA operators solve the reduced system by Jacobi-preconditioned conjugate gradient. Accelerator vectors stay on device. Fields use binary32, with default pressure residual tolerance `1e-6`. Disconnected inlet/outlet geometry and periodic boundaries are rejected.
+Pressure is held half a spacing outside each open exterior face, with no flux through any other. A single-axis solve opens the whole lower face of its axis at pressure one and the whole upper face at zero. A port solve opens the faces of its ports: each port is a rectangle of boundary sites on an x or y face that spans the full depth of the fluid behind it, and either carries a stated mean speed over its open area, positive into the grid, or holds a stated pressure. At least one port holds a pressure. Port fluxes are linear in port pressures, so the solver makes one pressure solve for each speed port held alone at pressure one, finds by a small dense solve the pressures that deliver the stated speeds, and returns that combination of the solved fields with each port's pressure, flux and mean speed. The combination conserves volume as each solve does. Port pressures are in the solver's units, relative to the mobility's scale. A port's face must be a fixed boundary; the face is closed to flow outside its ports, though transport still treats a fixed face as a reservoir wherever fluid touches it, so a device keeps the rest of a port's face solid. Native CPU, Metal, and CUDA operators solve the reduced system by Jacobi-preconditioned conjugate gradient. Accelerator vectors stay on device. Fields use binary32, with default pressure residual tolerance `1e-6`. Disconnected inlet/outlet geometry and periodic boundaries are rejected.
 
 The depth-integrated horizontal face flux is distributed over the overlapping open depth. A reconstructed vertical flux balances horizontal redistribution within each column, while distributing the small pressure residual over depth and keeping floor and roof closed. This is a conservative transport reconstruction, not a resolved vertical velocity profile. Conservation holds to pressure-solve and floating-point error; pressure residual alone is not a relative flux error bound. The complete field is scaled to the requested mean inlet speed.
 
@@ -20,4 +20,4 @@ The caller decides which biomass is stationary and belongs in a stationary resis
 
 ## Validation
 
-Tests cover cubic flux partition between unequal depths, flux continuity and uniform-tracer preservation across a depth step, invalid column geometry, mass-conserving deposition and exact aggregation under refinement, native backend conformance, and the uniform duct/pillar benchmarks. `scripts/run_flow_benchmarks.py` compares the closure with resolved flow in its shared regime. Shallow flow does not supply no-slip wall shear or near-wall rod velocities.
+Tests cover inlets at different speeds on one face, an inlet on a face perpendicular to the outlet's, the agreement of a full-face port pair with the single-axis solve, port solves on every backend, cubic flux partition between unequal depths, flux continuity and uniform-tracer preservation across a depth step, invalid column geometry, mass-conserving deposition and exact aggregation under refinement, native backend conformance, and the uniform duct/pillar benchmarks. `scripts/run_flow_benchmarks.py` compares the closure with resolved flow in its shared regime. Shallow flow does not supply no-slip wall shear or near-wall rod velocities.

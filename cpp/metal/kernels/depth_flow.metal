@@ -68,6 +68,7 @@ kernel void depth_pair_operator(device const float2* input [[buffer(0)]],
                                 device float2* output [[buffer(3)]],
                                 constant FlowGridParameters& grid [[buffer(4)]],
                                 constant DepthFlowScales& scales [[buffer(5)]],
+                                device const float* boundary_conductance [[buffer(6)]],
                                 uint index [[thread_position_in_grid]]) {
   if (index >= grid.site_count) {
     return;
@@ -77,16 +78,8 @@ kernel void depth_pair_operator(device const float2* input [[buffer(0)]],
     return;
   }
   const uint3 coordinate = site_coordinate(index, grid);
-  const uint flow_axis = grid.flow_axis;
-  float2 result = float2(0.0f);
-  const float2 boundary = pair_multiply(
-      pair_scale(inverse_square(scales, flow_axis), 2.0f * mobility[index]), input[index]);
-  if (coordinate[flow_axis] == 0) {
-    result = pair_add(result, boundary);
-  }
-  if (coordinate[flow_axis] + 1 == grid.dimensions[flow_axis]) {
-    result = pair_add(result, boundary);
-  }
+  // The site's coupling to the pressures held beyond its open exterior faces.
+  float2 result = pair_scale(input[index], boundary_conductance[index]);
   for (uint axis = 0; axis < 3; ++axis) {
     if (coordinate[axis] > 0) {
       uint3 neighbor = coordinate;
@@ -114,6 +107,8 @@ kernel void depth_pair_velocity(device const float2* pressure [[buffer(0)]],
                                 device const float* mobility [[buffer(1)]],
                                 device float* velocity [[buffer(2)]],
                                 constant FlowGridParameters& grid [[buffer(3)]],
+                                device const float* face_conductance [[buffer(4)]],
+                                device const float* face_pressure [[buffer(5)]],
                                 uint index [[thread_position_in_grid]]) {
   if (index >= grid.total_face_count) {
     return;
@@ -134,12 +129,12 @@ kernel void depth_pair_velocity(device const float2* pressure [[buffer(0)]],
     value = pair_divide(pair_scale(pair_subtract(pressure[lower], pressure[upper]),
                                    harmonic_mean(mobility[lower], mobility[upper])),
                         spacing);
-  } else if (component == grid.flow_axis && has_upper) {
-    value = pair_divide(
-        pair_scale(pair_subtract(float2(1.0f, 0.0f), pressure[upper]), 2.0f * mobility[upper]),
-        spacing);
-  } else if (component == grid.flow_axis && has_lower) {
-    value = pair_divide(pair_scale(pressure[lower], 2.0f * mobility[lower]), spacing);
+  } else {
+    // An exterior face: closed unless it carries a conductance to the
+    // pressure held beyond it.
+    const uint site = has_upper ? upper : lower;
+    value = pair_scale(pair_subtract(float2(face_pressure[index], 0.0f), pressure[site]),
+                       face_conductance[index]);
   }
   velocity[index] = value.x + value.y;
 }

@@ -70,6 +70,14 @@ constexpr std::uint64_t uint64_max = std::numeric_limits<std::uint64_t>::max();
   return JsonValue::object({
       {"kind", name_json(grid_boundary_kind_name(boundary.kind))},
       {"values", floats_to_json(boundary.values)},
+      {"patches", array_json(boundary.patches,
+                             [](const GridBoundaryPatch& patch) {
+                               return JsonValue::object({
+                                   {"begin", array_json(patch.region.begin, unsigned_json)},
+                                   {"end", array_json(patch.region.end, unsigned_json)},
+                                   {"values", floats_to_json(patch.values)},
+                               });
+                             })},
   });
 }
 
@@ -263,13 +271,31 @@ constexpr std::uint64_t uint64_max = std::numeric_limits<std::uint64_t>::max();
 }
 
 [[nodiscard]] GridBoundary decode_boundary(const JsonValue& value, const JsonPath& path) {
-  expect_object(value, path, {"kind", "values"});
+  expect_object(value, path, {"kind", "values", "patches"});
   const auto& name = expect_string(*value.find("kind"), path["kind"]);
   const auto kind = parse_grid_boundary_kind(name);
   if (!kind.has_value()) {
     fail(path["kind"], "unknown grid boundary kind '" + name + "'");
   }
-  return {.kind = *kind, .values = expect_floats(*value.find("values"), path["values"])};
+  const auto decode_corner = [](const JsonValue& corner, const JsonPath& corner_path) {
+    const auto& indices = expect_array(corner, corner_path);
+    if (indices.size() != 2) {
+      fail(corner_path, "expected two in-plane indices");
+    }
+    return std::array<std::uint32_t, 2>{decode_uint32(indices[0], corner_path[0]),
+                                        decode_uint32(indices[1], corner_path[1])};
+  };
+  const auto decode_patch = [&](const JsonValue& patch, const JsonPath& patch_path) {
+    expect_object(patch, patch_path, {"begin", "end", "values"});
+    return GridBoundaryPatch{
+        .region = {.begin = decode_corner(*patch.find("begin"), patch_path["begin"]),
+                   .end = decode_corner(*patch.find("end"), patch_path["end"])},
+        .values = expect_floats(*patch.find("values"), patch_path["values"]),
+    };
+  };
+  return {.kind = *kind,
+          .values = expect_floats(*value.find("values"), path["values"]),
+          .patches = decode_array(*value.find("patches"), path["patches"], decode_patch)};
 }
 
 [[nodiscard]] std::optional<SignalGridCheckpoint> decode_signal_grid(const JsonValue& value,

@@ -29,26 +29,32 @@ __device__ TransportPoint transport_point(
 
   float lower[3];
   float upper[3];
-  lower[0] = x == 0 ? exterior_value(boundaries.x_lower, fixed_values, 0, signal, signal_count,
-                                     current, grid_level(levels, shape, signal, shape.x - 1, y, z))
+  lower[0] = x == 0 ? exterior_value(boundaries.x_lower, fixed_values, 0, boundaries.offsets[0],
+                                     y * shape.z + z, signal, signal_count, current,
+                                     grid_level(levels, shape, signal, shape.x - 1, y, z))
                     : grid_level(levels, shape, signal, x - 1, y, z);
   upper[0] = x + 1 == shape.x
-                 ? exterior_value(boundaries.x_upper, fixed_values, 1, signal, signal_count,
-                                  current, grid_level(levels, shape, signal, 0, y, z))
+                 ? exterior_value(boundaries.x_upper, fixed_values, 1, boundaries.offsets[1],
+                                  y * shape.z + z, signal, signal_count, current,
+                                  grid_level(levels, shape, signal, 0, y, z))
                  : grid_level(levels, shape, signal, x + 1, y, z);
-  lower[1] = y == 0 ? exterior_value(boundaries.y_lower, fixed_values, 2, signal, signal_count,
-                                     current, grid_level(levels, shape, signal, x, shape.y - 1, z))
+  lower[1] = y == 0 ? exterior_value(boundaries.y_lower, fixed_values, 2, boundaries.offsets[2],
+                                     x * shape.z + z, signal, signal_count, current,
+                                     grid_level(levels, shape, signal, x, shape.y - 1, z))
                     : grid_level(levels, shape, signal, x, y - 1, z);
   upper[1] = y + 1 == shape.y
-                 ? exterior_value(boundaries.y_upper, fixed_values, 3, signal, signal_count,
-                                  current, grid_level(levels, shape, signal, x, 0, z))
+                 ? exterior_value(boundaries.y_upper, fixed_values, 3, boundaries.offsets[3],
+                                  x * shape.z + z, signal, signal_count, current,
+                                  grid_level(levels, shape, signal, x, 0, z))
                  : grid_level(levels, shape, signal, x, y + 1, z);
-  lower[2] = z == 0 ? exterior_value(boundaries.z_lower, fixed_values, 4, signal, signal_count,
-                                     current, grid_level(levels, shape, signal, x, y, shape.z - 1))
+  lower[2] = z == 0 ? exterior_value(boundaries.z_lower, fixed_values, 4, boundaries.offsets[4],
+                                     x * shape.y + y, signal, signal_count, current,
+                                     grid_level(levels, shape, signal, x, y, shape.z - 1))
                     : grid_level(levels, shape, signal, x, y, z - 1);
   upper[2] = z + 1 == shape.z
-                 ? exterior_value(boundaries.z_upper, fixed_values, 5, signal, signal_count,
-                                  current, grid_level(levels, shape, signal, x, y, 0))
+                 ? exterior_value(boundaries.z_upper, fixed_values, 5, boundaries.offsets[5],
+                                  x * shape.y + y, signal, signal_count, current,
+                                  grid_level(levels, shape, signal, x, y, 0))
                  : grid_level(levels, shape, signal, x, y, z + 1);
 
   const std::uint32_t dimensions[3]{shape.x, shape.y, shape.z};

@@ -11,7 +11,9 @@ from microsimulator import (
     CoupledRatePlan,
     GridBoundary,
     GridBoundaryKind,
+    GridBoundaryPatch,
     GridFace,
+    GridFacePatch,
     GridShape,
     RateInstruction,
     RateOp,
@@ -267,6 +269,101 @@ def test_boundary_values_set_during_a_run_survive_a_checkpoint(tmp_path: Path) -
         restored.step(0.1)
     assert restored.signal_levels == simulation.signal_levels
     assert restored.signal_levels[0] > 1.0
+
+
+def _patched_sheet(
+    patch_values: tuple[float, float], backend: BackendKind = BackendKind.CPU
+) -> Simulation:
+    """A sheet fed through its lower x face, which holds two patches of its own media.
+
+    The face spans y and z. Its sites at y = 1 and y = 2 are one patch and its
+    site at y = 4 another; the sites between and beside them carry the face's
+    own value. The far end is closed.
+    """
+
+    shape = GridShape()
+    shape.x, shape.y, shape.z = 3, 6, 1
+    spec = SignalGridSpec()
+    spec.signal_count = 1
+    spec.shape = shape
+    spec.diffusion = [1.0]
+    spec.advection = [Vec3()]
+    spec.integration = SignalIntegrationKind.BACKWARD_EULER
+    lower = GridBoundary()
+    lower.kind = GridBoundaryKind.FIXED
+    lower.values = [1.0]
+    lower.patches = [
+        GridBoundaryPatch(GridFacePatch((1, 0), (3, 1)), [patch_values[0]]),
+        GridBoundaryPatch(GridFacePatch((4, 0), (5, 1)), [patch_values[1]]),
+    ]
+    spec.x_lower = lower
+    simulation = Simulation(backend)
+    simulation.configure_signal_grid(spec, [0.0] * 18)
+    return simulation
+
+
+@pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.METAL, BackendKind.CUDA])
+def test_patches_of_a_fixed_boundary_hold_their_own_media(backend: BackendKind) -> None:
+    if not backend_available(backend):
+        pytest.skip(f"{backend.name} backend is unavailable")
+    simulation = _patched_sheet((8.0, 0.0), backend)
+    reference = _patched_sheet((8.0, 0.0))
+    for _ in range(3):
+        simulation.step(0.05)
+        reference.step(0.05)
+    levels = simulation.signal_levels
+    assert all(
+        math.isclose(level, expected, rel_tol=1.0e-5, abs_tol=1.0e-6)
+        for level, expected in zip(levels, reference.signal_levels, strict=True)
+    )
+    # The first column of sites, one per y, faces the boundary: richest opposite
+    # the first patch and poorest opposite the second, with the face's own
+    # value between.
+    facing = levels[0:6]
+    assert facing[1] > facing[0] > facing[4]
+    assert facing[2] > facing[3] > facing[4]
+
+    # Changing one patch during a run is the run a grid configured that way makes.
+    switched = _patched_sheet((8.0, 0.0), backend)
+    switched.set_signal_boundary_patch_values(GridFace.X_LOWER, 1, [5.0])
+    configured = _patched_sheet((8.0, 5.0), backend)
+    for _ in range(3):
+        switched.step(0.05)
+        configured.step(0.05)
+    assert switched.signal_levels == configured.signal_levels
+    assert switched.signal_levels[4] > levels[4]
+
+
+def test_boundary_patches_are_validated_and_survive_a_checkpoint(tmp_path: Path) -> None:
+    simulation = _patched_sheet((8.0, 0.0))
+    with pytest.raises(IndexError, match="no such patch"):
+        simulation.set_signal_boundary_patch_values(GridFace.X_LOWER, 2, [1.0])
+    with pytest.raises(RuntimeError, match="only a fixed signal grid boundary"):
+        simulation.set_signal_boundary_patch_values(GridFace.X_UPPER, 0, [1.0])
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        simulation.set_signal_boundary_patch_values(GridFace.X_LOWER, 0, [-1.0])
+
+    spec = SignalGridSpec()
+    spec.signal_count = 1
+    lower = GridBoundary()
+    lower.kind = GridBoundaryKind.FIXED
+    lower.values = [1.0]
+    lower.patches = [GridBoundaryPatch(GridFacePatch((0, 0), (2, 1)), [1.0])]
+    spec.x_lower = lower
+    spec.diffusion = [1.0]
+    spec.advection = [Vec3()]
+    with pytest.raises(ValueError, match="must lie on their face"):
+        spec.validate()
+
+    simulation.set_signal_boundary_patch_values(GridFace.X_LOWER, 0, [3.0])
+    simulation.step(0.05)
+    path = tmp_path / "patched.msim"
+    save_checkpoint(simulation, path)
+    restored = load_checkpoint(path)
+    for _ in range(4):
+        simulation.step(0.05)
+        restored.step(0.05)
+    assert restored.signal_levels == simulation.signal_levels
 
 
 @pytest.mark.parametrize("backend", [BackendKind.CPU, BackendKind.METAL, BackendKind.CUDA])

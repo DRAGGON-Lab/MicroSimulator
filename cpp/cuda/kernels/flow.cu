@@ -69,7 +69,8 @@ __device__ float harmonic_mean(float first, float second) {
 }
 
 __global__ void depth_flow_operator_double(const double* input, const float* mobility,
-                                           double* output, FlowGridParameters grid) {
+                                           const float* boundary_conductance, double* output,
+                                           FlowGridParameters grid) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index >= grid.site_count) return;
   if (mobility[index] == 0.0F) {
@@ -77,12 +78,8 @@ __global__ void depth_flow_operator_double(const double* input, const float* mob
     return;
   }
   const auto coordinate = site_coordinate(index, grid);
-  const auto axis = grid.flow_axis;
-  const auto flow_spacing = static_cast<double>(grid.spacing[axis]);
-  const auto boundary = 2.0 * mobility[index] / (flow_spacing * flow_spacing);
-  double result = 0.0;
-  if (coordinate.values[axis] == 0) result += boundary * input[index];
-  if (coordinate.values[axis] + 1 == grid.dimensions[axis]) result += boundary * input[index];
+  // The site's coupling to the pressures held beyond its open exterior faces.
+  double result = static_cast<double>(boundary_conductance[index]) * input[index];
   for (std::uint32_t component = 0; component < 3; ++component) {
     const auto spacing = static_cast<double>(grid.spacing[component]);
     const auto inverse_square = 1.0 / (spacing * spacing);
@@ -109,7 +106,9 @@ __global__ void depth_flow_operator_double(const double* input, const float* mob
 }
 
 __global__ void depth_flow_velocity_double(const double* pressure, const float* mobility,
-                                           float* velocity, FlowGridParameters grid) {
+                                           const float* face_conductance,
+                                           const float* face_pressure, float* velocity,
+                                           FlowGridParameters grid) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index >= grid.total_face_count) return;
   const auto face = face_coordinate(index, grid);
@@ -125,10 +124,12 @@ __global__ void depth_flow_velocity_double(const double* pressure, const float* 
   if (has_lower && has_upper) {
     value = -static_cast<double>(harmonic_mean(mobility[lower], mobility[upper])) *
             (pressure[upper] - pressure[lower]) / spacing;
-  } else if (component == grid.flow_axis && has_upper) {
-    value = 2.0 * mobility[upper] * (1.0 - pressure[upper]) / spacing;
-  } else if (component == grid.flow_axis && has_lower) {
-    value = 2.0 * mobility[lower] * pressure[lower] / spacing;
+  } else {
+    // An exterior face: closed unless it carries a conductance to the
+    // pressure held beyond it.
+    const auto site = has_upper ? upper : lower;
+    value = static_cast<double>(face_conductance[index]) *
+            (static_cast<double>(face_pressure[index]) - pressure[site]);
   }
   velocity[index] = static_cast<float>(value);
 }
@@ -361,17 +362,19 @@ std::uint32_t block_count(std::uint32_t count, std::uint32_t width = threads_per
 
 }  // namespace
 
-void launch_depth_flow_operator_double(const double* input, const float* mobility, double* output,
+void launch_depth_flow_operator_double(const double* input, const float* mobility,
+                                       const float* boundary_conductance, double* output,
                                        const FlowGridParameters& grid, cudaStream_t stream) {
   depth_flow_operator_double<<<block_count(grid.site_count), threads_per_block, 0, stream>>>(
-      input, mobility, output, grid);
+      input, mobility, boundary_conductance, output, grid);
 }
 
 void launch_depth_flow_velocity_double(const double* pressure, const float* mobility,
+                                       const float* face_conductance, const float* face_pressure,
                                        float* velocity, const FlowGridParameters& grid,
                                        cudaStream_t stream) {
   depth_flow_velocity_double<<<block_count(grid.total_face_count), threads_per_block, 0, stream>>>(
-      pressure, mobility, velocity, grid);
+      pressure, mobility, face_conductance, face_pressure, velocity, grid);
 }
 
 void launch_depth_flow_pcg_initialize(const double* right_hand_side, const float* diagonal,

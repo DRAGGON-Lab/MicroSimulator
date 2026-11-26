@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from microsimulator import GridFace
 from microsimulator.design import (
     DesignSceneError,
     load_design_scene,
@@ -224,6 +225,58 @@ def test_a_window_refuses_what_the_scene_does_not_define() -> None:
         parse_design_scene(_scene(shapes=shapes)).window((0.0, 0.0), (1.0, 1.0))
 
 
+def test_a_window_reports_where_channels_cross_its_sides() -> None:
+    # A channel 100 wide runs up the page, a side channel joins it from the
+    # right, and a shallow chamber touches the window's right side with only
+    # wall beyond.
+    shapes = [
+        {"path": "main", "layer": "flow", "rect": [100, 0, 200, 1000]},
+        {"path": "side", "layer": "flow", "rect": [200, 400, 900, 450]},
+        {"path": "chamber", "layer": "trench", "rect": [200, 600, 400, 700]},
+        {"path": "beyond", "layer": "flow", "rect": [400, 100, 500, 200]},
+    ]
+    scene = parse_design_scene(_scene(shapes=shapes, translates=[]))
+    window = scene.window((0.0, 300.0), (400.0, 800.0))
+
+    crossings = {(crossing.side, crossing.path): crossing for crossing in window.crossings}
+    assert set(crossings) == {
+        (GridFace.Y_LOWER, "main"),
+        (GridFace.Y_UPPER, "main"),
+        (GridFace.X_UPPER, "side"),
+    }
+    lower = crossings[GridFace.Y_LOWER, "main"]
+    assert (lower.low, lower.high, lower.height) == (100.0, 200.0, 20.0)
+    side = crossings[GridFace.X_UPPER, "side"]
+    assert (side.low, side.high, side.height) == (100.0, 150.0, 20.0)
+
+    # Two rectangles that meet end to end at a side cross it as one does.
+    met = [
+        {"path": "inside", "layer": "flow", "rect": [100, 300, 200, 800]},
+        {"path": "outside", "layer": "trench", "rect": [120, 100, 260, 300]},
+    ]
+    window = parse_design_scene(_scene(shapes=met, translates=[])).window(
+        (0.0, 300.0), (400.0, 800.0)
+    )
+    (crossing,) = window.crossings
+    assert (crossing.side, crossing.path) == (GridFace.Y_LOWER, "inside")
+    assert (crossing.low, crossing.high, crossing.height) == (120.0, 200.0, 20.0)
+
+
+def test_a_row_lying_against_a_window_crosses_its_side() -> None:
+    # Teeth 2 wide at a pitch of 10 stand to the right of the window, which
+    # ends where they begin; the channel inside runs the window's height.
+    shapes = [{"path": "lane.channel", "layer": "flow", "rect": [1000, 500, 1100, 900]}]
+    scene = parse_design_scene(_scene(shapes=shapes))
+    window = scene.window((1000.0, 595.0), (1100.0, 625.0))
+    teeth = [crossing for crossing in window.crossings if crossing.side == GridFace.X_UPPER]
+    assert [(crossing.low, crossing.high) for crossing in teeth] == [
+        (5.0, 7.0),
+        (15.0, 17.0),
+        (25.0, 27.0),
+    ]
+    assert all(crossing.height == 20.0 and crossing.path == "lane.channel" for crossing in teeth)
+
+
 def test_the_design_tool_scene_gives_the_trap_chamber_window() -> None:
     scene = load_design_scene(_TRAP_CHAMBER)
 
@@ -237,6 +290,12 @@ def test_the_design_tool_scene_gives_the_trap_chamber_window() -> None:
         ((0.0, 0.0, 0.0), (100.0, 300.0, 10.0)),
         ((100.0, 100.0, 0.0), (185.0, 200.0, 1.65)),
     }
+
+    # The chamber's channel runs on into the pads at both ends of the window.
+    assert [(crossing.side, crossing.low, crossing.high) for crossing in window.crossings] == [
+        (GridFace.Y_LOWER, 0.0, 100.0),
+        (GridFace.Y_UPPER, 0.0, 100.0),
+    ]
 
     # What the design says of how the chip is run comes with the geometry.
     assert scene.viscosity_mpa_s is not None and math.isclose(scene.viscosity_mpa_s, 0.7)

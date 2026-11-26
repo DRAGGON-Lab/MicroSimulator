@@ -14,7 +14,7 @@ The [microfluidic trap](../examples/microfluidic_trap.py) is a compact starting 
 
 ## Choosing a flow model
 
-Both solvers calculate steady, inertia-free device flow and normalize the result to a prescribed mean inlet speed. They expose the same velocity-field interface for transport, with native implementations on CPU, Metal, and CUDA. See [backend status](../README.md#backend-status) for current support.
+Both solvers calculate steady, inertia-free device flow. Along one axis, they normalize the result to a prescribed mean inlet speed; through [ports](tutorials/microfluidics.md#several-inlets-ports-and-mixers), each inlet and outlet carries its own stated speed or holds a pressure, so that several channels meet in one field. They expose the same velocity-field interface for transport, with native implementations on CPU, Metal, and CUDA. See [backend status](../README.md#backend-status) for current support.
 
 | Model | Appropriate geometry and question | Numerical scope |
 | --- | --- | --- |

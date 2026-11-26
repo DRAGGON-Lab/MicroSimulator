@@ -87,6 +87,7 @@ describe("dataset presentation lifecycle", () => {
       speciesChannel: 0,
       signalVisible: true,
       deviceVisible: true,
+      signalMode: "single",
       signalChannel: 0,
       signalAxis: "z",
       signalSlice: 4,

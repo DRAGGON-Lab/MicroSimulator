@@ -12,7 +12,12 @@ half-cell pressure boundaries define the finite-volume operator. CPU, Metal,
 and CUDA solve it natively. A conservative lift distributes each integrated
 face flux over its open depth and reconstructs vertical flux by continuity for
 3D transport. This lift does not resolve a wall-normal velocity profile.
-Velocities are normalized to the requested mean inlet speed.
+
+`solve_flow_field` drives flow along one axis, from the whole of its lower face
+to the whole of its upper, and normalizes velocities to the requested mean
+inlet speed. `solve_port_flow_field` drives it through ports instead: openings
+in the side faces of the grid that each carry a stated mean speed or hold a
+pressure, so that several inlets and outlets on any side meet in one field.
 """
 
 from __future__ import annotations
@@ -28,7 +33,10 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendKind,
     DepthAveragedFlowParameters,
     DepthAveragedFlowReport,
+    DepthAveragedPortFlowParameters,
+    DepthAveragedPortFlowResult,
     FlowAxis,
+    FlowPort,
     GridBoundaryKind,
     SignalGridSpec,
     SignalGridVelocityField,
@@ -128,6 +136,51 @@ def solve_flow_field(
     except (OverflowError, RuntimeError, ValueError) as error:
         raise FlowError(str(error)) from error
     return result.field, result.report
+
+
+def solve_port_flow_field(
+    spec: SignalGridSpec,
+    ports: Sequence[FlowPort],
+    *,
+    mobility: Sequence[float] | None = None,
+    tolerance: float = 1.0e-6,
+    max_iterations: int = 50_000,
+    simulation: Simulation | None = None,
+    backend: BackendKind = BackendKind.CPU,
+    device_index: int = 0,
+) -> DepthAveragedPortFlowResult:
+    """Solve the device flow driven through ports.
+
+    Each port is a rectangle of boundary sites on an x or y face of the grid,
+    spanning the full depth of the fluid behind it. A ``SPEED`` port carries
+    its value as the mean speed over its open area, positive into the grid and
+    negative out of it; a ``PRESSURE`` port holds its value just outside the
+    face. At least one port must hold a pressure, and every port's face must
+    be a ``FIXED`` boundary. Faces of the grid outside every port are closed.
+
+    The result holds the face-staggered velocity field, the solve report, and
+    for each port its pressure, flux and mean speed. Pressures are in the
+    solver's units: with relative mobility they are not physical pressures,
+    and only their differences matter. ``mobility`` is as for
+    `solve_flow_field`. If a simulation is supplied, its native backend
+    executes the solves; one is made for each speed port.
+    """
+
+    parameters = DepthAveragedPortFlowParameters()
+    parameters.relative_tolerance = tolerance
+    parameters.max_iterations = max_iterations
+    selected = (
+        simulation if simulation is not None else Simulation(backend, device_index=device_index)
+    )
+    try:
+        return selected.solve_depth_averaged_port_flow(
+            spec,
+            list(ports),
+            [] if mobility is None else [float(value) for value in mobility],
+            parameters,
+        )
+    except (OverflowError, RuntimeError, ValueError) as error:
+        raise FlowError(str(error)) from error
 
 
 def gap_mobility(spec: SignalGridSpec) -> list[float]:

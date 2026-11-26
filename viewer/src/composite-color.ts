@@ -30,44 +30,52 @@ export function validateTint(tint: string): void {
     );
 }
 
-/** Return sRGB display colors, as required by ColonyViewer.setCellColors(). */
-export function mapCompositeSpecies(
+type ChannelGroup = "species" | "signals";
+
+/**
+ * Blend the enabled channels of one group into one sRGB display color per
+ * item. `valuesOf(index)` gives a channel's value for every item.
+ */
+function mapComposite(
   frame: SceneFrame,
+  group: ChannelGroup,
+  channelCount: number,
+  itemCount: number,
+  valuesOf: (index: number) => readonly number[],
   configuration: readonly CompositeChannelConfig[],
 ): { colors: readonly RGB[]; channels: readonly CompositeChannelLegend[] } {
+  const name = group === "species" ? "species" : "signal";
   const seen = new Set<number>();
   const active = configuration.filter((channel) => channel.enabled);
   for (const channel of active) {
     if (
       !Number.isSafeInteger(channel.index) ||
       channel.index < 0 ||
-      channel.index >= frame.speciesCount
+      channel.index >= channelCount
     )
-      throw new RangeError(`species channel ${channel.index} is out of range`);
+      throw new RangeError(`${name} channel ${channel.index} is out of range`);
     if (seen.has(channel.index))
-      throw new RangeError(`duplicate species channel ${channel.index}`);
+      throw new RangeError(`duplicate ${name} channel ${channel.index}`);
     seen.add(channel.index);
     validateTint(channel.tint);
   }
   // Canonical summation order makes results bitwise independent of UI order.
   const resolved = active
     .toSorted((a, b) => a.index - b.index)
-    .map((channel) => ({
-      channel,
-      tint: new Color(channel.tint), // Three.js decodes CSS sRGB into linear RGB.
-      range: resolveScalarRange(
-        frame.cells.map((cell) => cell.species[channel.index] ?? 0),
-        channel.range,
-      ),
-    }));
-  const colors: RGB[] = frame.cells.map((cell) => {
+    .map((channel) => {
+      const values = valuesOf(channel.index);
+      return {
+        channel,
+        values,
+        tint: new Color(channel.tint), // Three.js decodes CSS sRGB into linear RGB.
+        range: resolveScalarRange(values, channel.range),
+      };
+    });
+  const colors: RGB[] = Array.from({ length: itemCount }, (_, item) => {
     if (resolved.length === 0) return COMPOSITE_NEUTRAL;
     const linear = new Color(0, 0, 0);
-    for (const { channel, tint, range } of resolved) {
-      const intensity = normalizeScalar(
-        cell.species[channel.index] ?? 0,
-        range,
-      );
+    for (const { values, tint, range } of resolved) {
+      const intensity = normalizeScalar(values[item] ?? 0, range);
       linear.r += intensity * tint.r;
       linear.g += intensity * tint.g;
       linear.b += intensity * tint.b;
@@ -86,8 +94,45 @@ export function mapCompositeSpecies(
     channels: active.map(({ index, tint }) => ({
       index,
       tint,
-      label: channelLabel(frame, "species", index),
+      label: channelLabel(frame, group, index),
       range: byIndex.get(index)!.range,
     })),
   };
+}
+
+/** Return sRGB display colors, as required by ColonyViewer.setCellColors(). */
+export function mapCompositeSpecies(
+  frame: SceneFrame,
+  configuration: readonly CompositeChannelConfig[],
+): { colors: readonly RGB[]; channels: readonly CompositeChannelLegend[] } {
+  return mapComposite(
+    frame,
+    "species",
+    frame.speciesCount,
+    frame.cells.length,
+    (index) => frame.cells.map((cell) => cell.species[index] ?? 0),
+    configuration,
+  );
+}
+
+/**
+ * Return one sRGB display color per pixel of a signal slice, as required by
+ * ColonyViewer.setSignalComposite(). `valuesOf(index)` gives a signal
+ * channel's values over the slice, each of `pixelCount` values; each
+ * channel's range resolves over those values, as a single channel's does.
+ */
+export function mapCompositeSignals(
+  frame: SceneFrame,
+  pixelCount: number,
+  valuesOf: (index: number) => readonly number[],
+  configuration: readonly CompositeChannelConfig[],
+): { colors: readonly RGB[]; channels: readonly CompositeChannelLegend[] } {
+  return mapComposite(
+    frame,
+    "signals",
+    frame.signalGrid?.signalCount ?? 0,
+    pixelCount,
+    valuesOf,
+    configuration,
+  );
 }

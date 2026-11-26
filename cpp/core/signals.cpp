@@ -145,15 +145,17 @@ FaceVelocities face_velocities(const SignalGridSpec& spec, std::size_t signal, s
   return result;
 }
 
+// The exterior stencil value beyond a boundary site whose two in-plane indices
+// are `first` and `second`.
 float boundary_value(const GridBoundary& boundary, std::size_t signal, float current,
-                     float periodic) {
+                     float periodic, std::uint32_t first, std::uint32_t second) {
   switch (boundary.kind) {
     case GridBoundaryKind::no_flux:
       return current;
     case GridBoundaryKind::periodic:
       return periodic;
     case GridBoundaryKind::fixed:
-      return boundary.values[signal];
+      return boundary.values_at(first, second)[signal];
   }
   throw std::logic_error("unknown signal grid boundary kind");
 }
@@ -384,23 +386,43 @@ float signal_implicit_operator_scale(const SignalGridSpec& spec, float implicit_
   return scale;
 }
 
+std::span<const float> GridBoundary::values_at(std::uint32_t first,
+                                               std::uint32_t second) const noexcept {
+  for (auto patch = patches.rbegin(); patch != patches.rend(); ++patch) {
+    if (patch->region.contains(first, second)) {
+      return patch->values;
+    }
+  }
+  return values;
+}
+
 void GridBoundary::validate(std::size_t signal_count) const {
+  const auto validate_values = [&](const std::vector<float>& candidate) {
+    if (candidate.size() != signal_count) {
+      throw std::invalid_argument("fixed signal grid boundary values must match signal count");
+    }
+    for (const auto value : candidate) {
+      if (!std::isfinite(value) || value < 0.0F) {
+        throw std::invalid_argument(
+            "fixed signal grid boundary values must be finite and non-negative");
+      }
+    }
+  };
   switch (kind) {
     case GridBoundaryKind::no_flux:
     case GridBoundaryKind::periodic:
-      if (!values.empty()) {
+      if (!values.empty() || !patches.empty()) {
         throw std::invalid_argument("non-fixed signal grid boundaries cannot have values");
       }
       return;
     case GridBoundaryKind::fixed:
-      if (values.size() != signal_count) {
-        throw std::invalid_argument("fixed signal grid boundary values must match signal count");
-      }
-      for (const auto value : values) {
-        if (!std::isfinite(value) || value < 0.0F) {
-          throw std::invalid_argument(
-              "fixed signal grid boundary values must be finite and non-negative");
+      validate_values(values);
+      for (const auto& patch : patches) {
+        if (patch.region.end[0] <= patch.region.begin[0] ||
+            patch.region.end[1] <= patch.region.begin[1]) {
+          throw std::invalid_argument("signal grid boundary patches must hold at least one site");
         }
+        validate_values(patch.values);
       }
       return;
   }
@@ -456,6 +478,21 @@ const GridBoundary& SignalGridSpec::boundary(GridFace face) const {
 
 GridBoundary& SignalGridSpec::boundary(GridFace face) {
   return const_cast<GridBoundary&>(std::as_const(*this).boundary(face));
+}
+
+std::array<std::uint32_t, 2> SignalGridSpec::face_extent(GridFace face) const noexcept {
+  switch (face) {
+    case GridFace::x_lower:
+    case GridFace::x_upper:
+      return {shape.y, shape.z};
+    case GridFace::y_lower:
+    case GridFace::y_upper:
+      return {shape.x, shape.z};
+    case GridFace::z_lower:
+    case GridFace::z_upper:
+      break;
+  }
+  return {shape.x, shape.y};
 }
 
 std::size_t SignalGridSpec::site_count() const {
@@ -637,8 +674,16 @@ void SignalGridSpec::validate() const {
       throw std::invalid_argument("unknown signal integration kind");
   }
   solver.validate();
-  for (const auto* boundary : {&x_lower, &x_upper, &y_lower, &y_upper, &z_lower, &z_upper}) {
-    boundary->validate(signal_count);
+  for (const auto face : {GridFace::x_lower, GridFace::x_upper, GridFace::y_lower,
+                          GridFace::y_upper, GridFace::z_lower, GridFace::z_upper}) {
+    const auto& held = boundary(face);
+    held.validate(signal_count);
+    const auto extent = face_extent(face);
+    for (const auto& patch : held.patches) {
+      if (patch.region.end[0] > extent[0] || patch.region.end[1] > extent[1]) {
+        throw std::invalid_argument("signal grid boundary patches must lie on their face");
+      }
+    }
   }
   validate_periodic_pair(x_lower, x_upper, "x");
   validate_periodic_pair(y_lower, y_upper, "y");
@@ -769,7 +814,23 @@ void SignalGrid::set_boundary_values(GridFace face, std::span<const float> value
     throw std::logic_error("only a fixed signal grid boundary has values to set");
   }
   GridBoundary candidate{.kind = GridBoundaryKind::fixed,
-                         .values = std::vector<float>(values.begin(), values.end())};
+                         .values = std::vector<float>(values.begin(), values.end()),
+                         .patches = boundary.patches};
+  candidate.validate(spec_.signal_count);
+  boundary = std::move(candidate);
+}
+
+void SignalGrid::set_boundary_patch_values(GridFace face, std::size_t patch,
+                                           std::span<const float> values) {
+  auto& boundary = spec_.boundary(face);
+  if (boundary.kind != GridBoundaryKind::fixed) {
+    throw std::logic_error("only a fixed signal grid boundary has values to set");
+  }
+  if (patch >= boundary.patches.size()) {
+    throw std::out_of_range("signal grid boundary has no such patch");
+  }
+  auto candidate = boundary;
+  candidate.patches[patch].values.assign(values.begin(), values.end());
   candidate.validate(spec_.signal_count);
   boundary = std::move(candidate);
 }
@@ -901,22 +962,22 @@ void transport_rates_into(const SignalGrid& grid, std::span<const float> levels,
         std::array<float, 3> lower{};
         std::array<float, 3> upper{};
         lower[0] = x == 0 ? boundary_value(spec.x_lower, signal, current,
-                                           level(signal, spec.shape.x - 1, y, z))
+                                           level(signal, spec.shape.x - 1, y, z), y, z)
                           : level(signal, x - 1, y, z);
         upper[0] = x + 1 == spec.shape.x
-                       ? boundary_value(spec.x_upper, signal, current, level(signal, 0, y, z))
+                       ? boundary_value(spec.x_upper, signal, current, level(signal, 0, y, z), y, z)
                        : level(signal, x + 1, y, z);
         lower[1] = y == 0 ? boundary_value(spec.y_lower, signal, current,
-                                           level(signal, x, spec.shape.y - 1, z))
+                                           level(signal, x, spec.shape.y - 1, z), x, z)
                           : level(signal, x, y - 1, z);
         upper[1] = y + 1 == spec.shape.y
-                       ? boundary_value(spec.y_upper, signal, current, level(signal, x, 0, z))
+                       ? boundary_value(spec.y_upper, signal, current, level(signal, x, 0, z), x, z)
                        : level(signal, x, y + 1, z);
         lower[2] = z == 0 ? boundary_value(spec.z_lower, signal, current,
-                                           level(signal, x, y, spec.shape.z - 1))
+                                           level(signal, x, y, spec.shape.z - 1), x, y)
                           : level(signal, x, y, z - 1);
         upper[2] = z + 1 == spec.shape.z
-                       ? boundary_value(spec.z_upper, signal, current, level(signal, x, y, 0))
+                       ? boundary_value(spec.z_upper, signal, current, level(signal, x, y, 0), x, y)
                        : level(signal, x, y, z + 1);
 
         float rate = 0.0F;

@@ -156,10 +156,10 @@ MetalFlowGridParameters make_grid_parameters(const detail::FlowGridLayout& layou
                        static_cast<std::uint32_t>(offsets[2]), face_count},
       .face_counts = {static_cast<std::uint32_t>(counts[0]), static_cast<std::uint32_t>(counts[1]),
                       static_cast<std::uint32_t>(counts[2]), face_count},
-      .flow_axis = static_cast<std::uint32_t>(layout.flow_axis()),
       .site_count = site_count,
       .total_face_count = face_count,
-      .padding = 0,
+      .padding0 = 0,
+      .padding1 = 0,
   };
 }
 
@@ -392,12 +392,44 @@ struct FlowSolver::Impl {
     return result;
   }
 
+  // Solves one depth-averaged pressure system and returns the velocity on
+  // every face of its grid.
+  std::vector<float> solve_depth_system(const detail::DepthAveragedFlowSystem& system,
+                                        float tolerance, std::uint32_t max_iterations,
+                                        PcgReport& report) const {
+    const auto grid = make_grid_parameters(system.layout());
+    const auto mobility_buffer = upload<float>(system.mobility(), "depth mobility");
+    const auto diagonal_buffer = upload<float>(system.diagonal(), "depth diagonal");
+    const auto rhs_buffer = upload<float>(system.right_hand_side(), "depth right-hand side");
+    const auto boundary_buffer =
+        upload<float>(system.boundary_conductance(), "depth boundary conductance");
+    const auto face_conductance_buffer =
+        upload<float>(system.face_conductance(), "depth face conductance");
+    const auto face_pressure_buffer = upload<float>(system.face_pressure(), "depth face pressure");
+    const auto pressure_buffer = pair_buffer(grid.site_count, "depth pressure");
+    const auto velocity_buffer = float_buffer(grid.total_face_count, "depth velocity");
+    report = solve_depth_pcg(rhs_buffer, diagonal_buffer, mobility_buffer, boundary_buffer,
+                             pressure_buffer, grid, tolerance, max_iterations);
+    dispatch(depth_velocity, grid.total_face_count,
+             "Metal depth-averaged velocity reconstruction failed",
+             [&](id<MTLComputeCommandEncoder> encoder) {
+               [encoder setBuffer:pressure_buffer offset:0 atIndex:0];
+               [encoder setBuffer:mobility_buffer offset:0 atIndex:1];
+               [encoder setBuffer:velocity_buffer offset:0 atIndex:2];
+               [encoder setBytes:&grid length:sizeof(grid) atIndex:3];
+               [encoder setBuffer:face_conductance_buffer offset:0 atIndex:4];
+               [encoder setBuffer:face_pressure_buffer offset:0 atIndex:5];
+             });
+    const auto* values = static_cast<const float*>(velocity_buffer.contents);
+    return {values, values + grid.total_face_count};
+  }
+
   // The depth-averaged pressure solve on double-word vectors, which follow the
   // double-precision vectors of the CPU and CUDA backends.
   PcgReport solve_depth_pcg(id<MTLBuffer> right_hand_side, id<MTLBuffer> diagonal,
-                            id<MTLBuffer> mobility, id<MTLBuffer> solution,
-                            const MetalFlowGridParameters& grid, float tolerance,
-                            std::uint32_t max_iterations) const {
+                            id<MTLBuffer> mobility, id<MTLBuffer> boundary_conductance,
+                            id<MTLBuffer> solution, const MetalFlowGridParameters& grid,
+                            float tolerance, std::uint32_t max_iterations) const {
     const auto count = grid.site_count;
     const auto spacing = grid.spacing;
     const std::array inverse_square{
@@ -445,6 +477,7 @@ struct FlowSolver::Impl {
                          [encoder setBuffer:transformed offset:0 atIndex:3];
                          [encoder setBytes:&grid length:sizeof(grid) atIndex:4];
                          [encoder setBytes:&scales length:sizeof(scales) atIndex:5];
+                         [encoder setBuffer:boundary_conductance offset:0 atIndex:6];
                        });
               return depth_dot_product(direction, transformed, count, partials);
             },
@@ -561,6 +594,103 @@ struct FlowSolver::Impl {
              });
   }
 
+  // Solves one resolved block system and returns its velocity on every face.
+  detail::ResolvedSystemSolve solve_resolved_system(
+      const detail::ResolvedFlowSystem& system,
+      const detail::ResolvedSolveControls& parameters) const {
+    const auto grid = make_grid_parameters(system.layout());
+    const auto fluid_buffer = upload<std::uint8_t>(system.fluid(), "fluid mask");
+    const auto active_buffer = upload<std::uint8_t>(system.active(), "active face mask");
+    const auto exists_buffer = upload<std::uint8_t>(system.exists(), "face existence mask");
+    const auto face_drag_buffer = upload<float>(system.face_drag(), "face drag");
+    const auto face_diagonal_buffer = upload<float>(system.diagonal(), "momentum diagonal");
+    const auto force_buffer = upload<float>(system.force(), "momentum force");
+    const auto pressure_diagonal = system.pressure_diagonal();
+    const auto pressure_diagonal_buffer = upload<float>(pressure_diagonal, "pressure diagonal");
+
+    const auto gradient = float_buffer(grid.total_face_count, "block gradient");
+    auto inner_workspace = make_workspace(grid.total_face_count, "momentum");
+    auto outer_workspace = make_workspace(grid.site_count, "pressure");
+    struct Vector {
+      id<MTLBuffer> u;
+      id<MTLBuffer> p;
+    };
+    const double continuity_scale =
+        1.0 / *std::min_element(system.layout().spacing().begin(), system.layout().spacing().end());
+    detail::FlexibleKrylovOperations<Vector> ops;
+    ops.make_zero = [&] {
+      Vector v{float_buffer(grid.total_face_count, "Krylov velocity"),
+               float_buffer(grid.site_count, "Krylov pressure")};
+      std::memset(v.u.contents, 0, grid.total_face_count * sizeof(float));
+      std::memset(v.p.contents, 0, grid.site_count * sizeof(float));
+      return v;
+    };
+    ops.copy = [&](const Vector& source, Vector& target) {
+      combine(source.u, target.u, 1, 0, grid.total_face_count);
+      combine(source.p, target.p, 1, 0, grid.site_count);
+    };
+    ops.axpy = [&](Vector& target, double alpha, const Vector& source) {
+      combine(source.u, target.u, static_cast<float>(alpha), 1, grid.total_face_count);
+      combine(source.p, target.p, static_cast<float>(alpha), 1, grid.site_count);
+    };
+    ops.dot = [&](const Vector& a, const Vector& b) {
+      return dot(a.u, b.u, grid.total_face_count, inner_workspace.partials) +
+             dot(a.p, b.p, grid.site_count, outer_workspace.partials);
+    };
+    ops.apply = [&](const Vector& input, Vector& output) {
+      apply_momentum(input.u, active_buffer, exists_buffer, face_drag_buffer, output.u, grid);
+      apply_gradient(input.p, fluid_buffer, active_buffer, gradient, grid);
+      combine(gradient, output.u, 1, 1, grid.total_face_count);
+      apply_divergence(input.u, fluid_buffer, output.p, grid);
+      combine(output.p, output.p, static_cast<float>(continuity_scale), 0, grid.site_count);
+    };
+    std::uint64_t inner_iterations = 0;
+    ops.precondition = [&](const Vector& input, Vector& output) {
+      const auto report =
+          solve_pcg(input.u, face_diagonal_buffer, output.u, inner_workspace, grid.total_face_count,
+                    parameters.inner_relative_tolerance, parameters.max_inner_iterations,
+                    "Metal momentum preconditioner", [&](id<MTLBuffer> x, id<MTLBuffer> y) {
+                      apply_momentum(x, active_buffer, exists_buffer, face_drag_buffer, y, grid);
+                    });
+      inner_iterations += report.iterations;
+      dispatch(pcg_precondition, grid.site_count, "Metal pressure preconditioner",
+               [&](id<MTLComputeCommandEncoder> encoder) {
+                 [encoder setBuffer:input.p offset:0 atIndex:0];
+                 [encoder setBuffer:pressure_diagonal_buffer offset:0 atIndex:1];
+                 [encoder setBuffer:output.p offset:0 atIndex:2];
+                 [encoder setBytes:&grid.site_count length:sizeof(grid.site_count) atIndex:3];
+               });
+      combine(output.p, output.p, static_cast<float>(-1 / continuity_scale), 0, grid.site_count);
+    };
+    auto rhs = ops.make_zero();
+    combine(force_buffer, rhs.u, 1, 0, grid.total_face_count);
+    const auto solution = detail::flexible_gmres(ops, rhs, parameters.relative_tolerance,
+                                                 parameters.max_outer_iterations);
+    auto residual = ops.make_zero();
+    ops.apply(solution.solution, residual);
+    ops.axpy(residual, -1, rhs);
+    const auto momentum_square =
+        dot(residual.u, residual.u, grid.total_face_count, inner_workspace.partials);
+    const auto force_square = dot(rhs.u, rhs.u, grid.total_face_count, inner_workspace.partials);
+    const auto divergence_square =
+        dot(residual.p, residual.p, grid.site_count, outer_workspace.partials);
+    const auto fluid_count =
+        std::count(system.fluid().begin(), system.fluid().end(), std::uint8_t{1});
+    const double divergence_rms =
+        fluid_count == 0
+            ? 0.0
+            : std::sqrt(divergence_square / static_cast<double>(fluid_count)) / continuity_scale;
+    const auto* values = static_cast<const float*>(solution.solution.u.contents);
+    return {
+        .velocity = {values, values + grid.total_face_count},
+        .outer_iterations = solution.iterations,
+        .inner_iterations = inner_iterations,
+        .relative_residual = static_cast<float>(solution.relative_residual),
+        .momentum_relative_residual = static_cast<float>(std::sqrt(momentum_square / force_square)),
+        .divergence_rms = divergence_rms,
+    };
+  }
+
   id<MTLDevice> device;
   id<MTLCommandQueue> queue;
   id<MTLComputePipelineState> depth_operator;
@@ -593,31 +723,17 @@ DepthAveragedFlowResult FlowSolver::solve_depth_averaged(
     const SignalGridSpec& spec, std::span<const float> mobility,
     const DepthAveragedFlowParameters& parameters) {
   parameters.validate();
-  const detail::ShallowFlowReduction reduction(spec, mobility, parameters.axis);
-  const detail::DepthAveragedFlowSystem system(reduction.grid(), reduction.conductance(),
-                                               parameters.axis);
-  const auto grid = make_grid_parameters(system.layout());
-  const auto mobility_buffer = impl_->upload<float>(system.mobility(), "depth mobility");
-  const auto diagonal_buffer = impl_->upload<float>(system.diagonal(), "depth diagonal");
-  const auto rhs_buffer = impl_->upload<float>(system.right_hand_side(), "depth right-hand side");
-  const auto pressure_buffer = impl_->pair_buffer(grid.site_count, "depth pressure");
-  const auto velocity_buffer = impl_->float_buffer(grid.total_face_count, "depth velocity");
-  const auto report =
-      impl_->solve_depth_pcg(rhs_buffer, diagonal_buffer, mobility_buffer, pressure_buffer, grid,
-                             parameters.relative_tolerance, parameters.max_iterations);
-  impl_->dispatch(impl_->depth_velocity, grid.total_face_count,
-                  "Metal depth-averaged velocity reconstruction failed",
-                  [&](id<MTLComputeCommandEncoder> encoder) {
-                    [encoder setBuffer:pressure_buffer offset:0 atIndex:0];
-                    [encoder setBuffer:mobility_buffer offset:0 atIndex:1];
-                    [encoder setBuffer:velocity_buffer offset:0 atIndex:2];
-                    [encoder setBytes:&grid length:sizeof(grid) atIndex:3];
-                  });
-  const auto* velocity_values = static_cast<const float*>(velocity_buffer.contents);
-  const std::span<const float> velocity(velocity_values, grid.total_face_count);
+  const auto reduction = detail::reduce_shallow_flow(spec, mobility, parameters.axis);
+  const auto axis = static_cast<std::size_t>(parameters.axis);
+  const detail::DepthAveragedFlowSystem system(
+      reduction.grid(), reduction.conductance(),
+      detail::axis_flow_boundary(reduction.reduced_layout(), axis));
+  PcgReport report;
+  const auto velocity = impl_->solve_depth_system(system, parameters.relative_tolerance,
+                                                  parameters.max_iterations, report);
   const auto scaled =
       detail::scale_velocity(spec, reduction.original_layout(), reduction.lift(velocity),
-                             reduction.open_inlet_faces(), parameters.mean_inlet_speed);
+                             reduction.open_inlet_faces(axis), parameters.mean_inlet_speed);
   return {
       .field = scaled.field,
       .report = {.iterations = report.iterations,
@@ -627,112 +743,48 @@ DepthAveragedFlowResult FlowSolver::solve_depth_averaged(
   };
 }
 
+DepthAveragedPortFlowResult FlowSolver::solve_depth_averaged_ports(
+    const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> mobility,
+    const DepthAveragedPortFlowParameters& parameters) {
+  parameters.validate();
+  const detail::ShallowPortFlow flow(spec, ports, mobility);
+  DepthAveragedPortFlowReport report;
+  const auto solution = flow.solve([&](const detail::DepthAveragedFlowSystem& system) {
+    PcgReport solve;
+    auto velocity = impl_->solve_depth_system(system, parameters.relative_tolerance,
+                                              parameters.max_iterations, solve);
+    report.iterations += solve.iterations;
+    report.relative_residual = std::max(report.relative_residual, solve.relative_residual);
+    return velocity;
+  });
+  report.solves = solution.solves;
+  report.max_speed = solution.max_speed;
+  return {
+      .field =
+          detail::make_velocity_field(spec, flow.reduction().original_layout(), solution.velocity),
+      .report = report,
+      .ports = solution.ports,
+  };
+}
+
 ResolvedFlowResult FlowSolver::solve_resolved(const SignalGridSpec& spec,
                                               std::span<const float> drag,
                                               const ResolvedFlowParameters& parameters) {
-  parameters.validate();
-  const detail::ResolvedFlowSystem system(spec, drag, parameters.axis);
-  const auto grid = make_grid_parameters(system.layout());
-  const auto fluid_buffer = impl_->upload<std::uint8_t>(system.fluid(), "fluid mask");
-  const auto active_buffer = impl_->upload<std::uint8_t>(system.active(), "active face mask");
-  const auto exists_buffer = impl_->upload<std::uint8_t>(system.exists(), "face existence mask");
-  const auto face_drag_buffer = impl_->upload<float>(system.face_drag(), "face drag");
-  const auto face_diagonal_buffer = impl_->upload<float>(system.diagonal(), "momentum diagonal");
-  const auto force_buffer = impl_->upload<float>(system.force(), "momentum force");
-  const auto pressure_diagonal = system.pressure_diagonal();
-  const auto pressure_diagonal_buffer =
-      impl_->upload<float>(pressure_diagonal, "pressure diagonal");
+  return detail::solve_resolved_axis_flow(
+      spec, drag, parameters,
+      [&](const detail::ResolvedFlowSystem& system, const detail::ResolvedSolveControls& controls) {
+        return impl_->solve_resolved_system(system, controls);
+      });
+}
 
-  const auto gradient = impl_->float_buffer(grid.total_face_count, "block gradient");
-  auto inner_workspace = impl_->make_workspace(grid.total_face_count, "momentum");
-  auto outer_workspace = impl_->make_workspace(grid.site_count, "pressure");
-  struct Vector {
-    id<MTLBuffer> u;
-    id<MTLBuffer> p;
-  };
-  const double continuity_scale =
-      1.0 / *std::min_element(system.layout().spacing().begin(), system.layout().spacing().end());
-  detail::FlexibleKrylovOperations<Vector> ops;
-  ops.make_zero = [&] {
-    Vector v{impl_->float_buffer(grid.total_face_count, "Krylov velocity"),
-             impl_->float_buffer(grid.site_count, "Krylov pressure")};
-    std::memset(v.u.contents, 0, grid.total_face_count * sizeof(float));
-    std::memset(v.p.contents, 0, grid.site_count * sizeof(float));
-    return v;
-  };
-  ops.copy = [&](const Vector& source, Vector& target) {
-    impl_->combine(source.u, target.u, 1, 0, grid.total_face_count);
-    impl_->combine(source.p, target.p, 1, 0, grid.site_count);
-  };
-  ops.axpy = [&](Vector& target, double alpha, const Vector& source) {
-    impl_->combine(source.u, target.u, static_cast<float>(alpha), 1, grid.total_face_count);
-    impl_->combine(source.p, target.p, static_cast<float>(alpha), 1, grid.site_count);
-  };
-  ops.dot = [&](const Vector& a, const Vector& b) {
-    return impl_->dot(a.u, b.u, grid.total_face_count, inner_workspace.partials) +
-           impl_->dot(a.p, b.p, grid.site_count, outer_workspace.partials);
-  };
-  ops.apply = [&](const Vector& input, Vector& output) {
-    impl_->apply_momentum(input.u, active_buffer, exists_buffer, face_drag_buffer, output.u, grid);
-    impl_->apply_gradient(input.p, fluid_buffer, active_buffer, gradient, grid);
-    impl_->combine(gradient, output.u, 1, 1, grid.total_face_count);
-    impl_->apply_divergence(input.u, fluid_buffer, output.p, grid);
-    impl_->combine(output.p, output.p, static_cast<float>(continuity_scale), 0, grid.site_count);
-  };
-  std::uint64_t inner_iterations = 0;
-  ops.precondition = [&](const Vector& input, Vector& output) {
-    const auto report = impl_->solve_pcg(
-        input.u, face_diagonal_buffer, output.u, inner_workspace, grid.total_face_count,
-        parameters.inner_relative_tolerance, parameters.max_inner_iterations,
-        "Metal momentum preconditioner", [&](id<MTLBuffer> x, id<MTLBuffer> y) {
-          impl_->apply_momentum(x, active_buffer, exists_buffer, face_drag_buffer, y, grid);
-        });
-    inner_iterations += report.iterations;
-    impl_->dispatch(impl_->pcg_precondition, grid.site_count, "Metal pressure preconditioner",
-                    [&](id<MTLComputeCommandEncoder> encoder) {
-                      [encoder setBuffer:input.p offset:0 atIndex:0];
-                      [encoder setBuffer:pressure_diagonal_buffer offset:0 atIndex:1];
-                      [encoder setBuffer:output.p offset:0 atIndex:2];
-                      [encoder setBytes:&grid.site_count length:sizeof(grid.site_count) atIndex:3];
-                    });
-    impl_->combine(output.p, output.p, static_cast<float>(-1 / continuity_scale), 0,
-                   grid.site_count);
-  };
-  auto rhs = ops.make_zero();
-  impl_->combine(force_buffer, rhs.u, 1, 0, grid.total_face_count);
-  const auto solution = detail::flexible_gmres(ops, rhs, parameters.relative_tolerance,
-                                               parameters.max_outer_iterations);
-  auto residual = ops.make_zero();
-  ops.apply(solution.solution, residual);
-  ops.axpy(residual, -1, rhs);
-  const auto momentum_square =
-      impl_->dot(residual.u, residual.u, grid.total_face_count, inner_workspace.partials);
-  const auto force_square =
-      impl_->dot(rhs.u, rhs.u, grid.total_face_count, inner_workspace.partials);
-  const auto divergence_square =
-      impl_->dot(residual.p, residual.p, grid.site_count, outer_workspace.partials);
-  const auto fluid_count =
-      std::count(system.fluid().begin(), system.fluid().end(), std::uint8_t{1});
-  const double divergence_rms =
-      fluid_count == 0
-          ? 0.0
-          : std::sqrt(divergence_square / static_cast<double>(fluid_count)) / continuity_scale;
-  const auto* values = static_cast<const float*>(solution.solution.u.contents);
-  const auto scaled = detail::scale_velocity(
-      spec, system.layout(), std::span<const float>(values, grid.total_face_count),
-      system.open_inlet_faces(), parameters.mean_inlet_speed);
-  return {
-      .field = scaled.field,
-      .report = {.outer_iterations = solution.iterations,
-                 .inner_iterations = inner_iterations,
-                 .relative_residual = static_cast<float>(solution.relative_residual),
-                 .momentum_relative_residual =
-                     static_cast<float>(std::sqrt(momentum_square / force_square)),
-                 .divergence_rms = static_cast<float>(divergence_rms * std::abs(scaled.factor)),
-                 .mean_inlet_speed = parameters.mean_inlet_speed,
-                 .max_speed = scaled.max_speed,
-                 .min_gap_voxels = system.minimum_gap_voxels()},
-  };
+ResolvedPortFlowResult FlowSolver::solve_resolved_ports(
+    const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> drag,
+    const ResolvedPortFlowParameters& parameters) {
+  return detail::solve_resolved_port_flow(
+      spec, ports, drag, parameters,
+      [&](const detail::ResolvedFlowSystem& system, const detail::ResolvedSolveControls& controls) {
+        return impl_->solve_resolved_system(system, controls);
+      });
 }
 
 }  // namespace microsimulator::metal

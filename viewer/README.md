@@ -126,6 +126,8 @@ When all channels are disabled or unavailable, cells use neutral gray and the le
 
 Tints, visibility, list order, and ranges remain associated with numerical channel identity when labels change or data temporarily disappears. Single-species and composite views share each species channel's range. Same-model reset and frame seeking retain settings; opening another dataset restores defaults. The cell inspector, picking, selection highlights, and lineage values continue using the original cell state.
 
+The signal grid has the same choice. Under Signal grid, Show offers One channel or Signal composite. A composite blends several signal channels over the slice on display, with the controls of the species composite: a checkbox, a tint, a range and an order for each channel. The first three channels start enabled, in red, green and blue. Each channel's range resolves over the displayed slice, and single-channel and composite views share it. With no channel enabled the slice is neutral gray.
+
 `browser/composite-species.mjs` exercises red-only, green-only, co-expressing, and zero-expression cells in a moving colony, verifies the rendered instance colors, and checks controls, ordering, picking, highlighting, lineage, and dataset transitions. It uses a Vite server on port 4319 (or `VIEWER_URL`) and the same Playwright/evidence environment variables as the other browser checks.
 
 ## Replay a recording

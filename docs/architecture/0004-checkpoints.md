@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-15
+- Amended: 2026-11-26
 
 ## Context
 
@@ -11,7 +12,7 @@ MicroSimulator needs reproducible restart files that can cross CPU, Metal, and C
 
 ## Decision
 
-The public checkpoint is UTF-8 JSON with the format identifier `microsimulator-checkpoint` and format version 10. It records:
+The public checkpoint is UTF-8 JSON with the format identifier `microsimulator-checkpoint` and format version 11. It records:
 
 - simulation time;
 - every active cell in compact slot order, including its stable identifier, geometry, attributes, whether it is fixed in mechanics, and fixed-schema species levels;
@@ -30,7 +31,7 @@ The C++ core implements the format in `microsimulator/checkpoint_file.hpp`: enco
 
 Native channel counts are not capped by the scene format's 4096-channel presentation budget; checkpoint metadata always holds explicit count-matched arrays.
 
-Files are written to a temporary sibling, flushed, and atomically replaced. Loading rejects text that is not strict JSON, duplicate keys, non-finite numbers, unknown or missing fields, any format version other than 10, files over 1 GiB, digest mismatches, and any state that fails native domain validation. No module is imported and no source text, callback, pickle opcode, or other executable representation is accepted.
+Files are written to a temporary sibling, flushed, and atomically replaced. Loading rejects text that is not strict JSON, duplicate keys, non-finite numbers, unknown or missing fields, any format version other than 11, files over 1 GiB, digest mismatches, and any state that fails native domain validation. No module is imported and no source text, callback, pickle opcode, or other executable representation is accepted.
 
 Device buffers, command queues, streams, compiled pipelines, contact graphs, and mechanics workspaces are deliberately excluded. They are derived caches and are reconstructed lazily by the selected backend. A checkpoint written by one backend may therefore be restored on another backend and device. The source backend name and device index remain provenance rather than restore instructions; callers choose the target explicitly.
 

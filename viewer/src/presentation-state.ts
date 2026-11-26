@@ -2,11 +2,15 @@ import type { ColorMode } from "./color";
 import { sliceDimension, type SliceAxis } from "./grid";
 import type { SceneFrame } from "./scene";
 
+/** Whether the signal slice shows one channel or a blend of several. */
+export type SignalMode = "single" | "composite";
+
 export interface PresentationPreferences {
   colorMode: ColorMode;
   speciesChannel: number;
   signalVisible: boolean;
   deviceVisible: boolean;
+  signalMode: SignalMode;
   signalChannel: number;
   signalAxis: SliceAxis;
   signalSlice: number | null;
@@ -18,6 +22,7 @@ function defaults(): PresentationPreferences {
     speciesChannel: 0,
     signalVisible: true,
     deviceVisible: true,
+    signalMode: "single",
     signalChannel: 0,
     signalAxis: "z",
     signalSlice: null,

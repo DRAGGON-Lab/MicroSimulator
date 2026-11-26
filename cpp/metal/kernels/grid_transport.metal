@@ -11,15 +11,20 @@ float grid_level(device const float* levels, GridShape shape, uint signal, uint 
   return levels[signal * shape.sites + site_index(shape, x, y, z)];
 }
 
-float exterior_value(uint kind, device const float* fixed_values, uint face, uint signal,
-                     uint signal_count, float current, float periodic) {
+float exterior_value(constant uint* boundary_kinds, device const float* fixed_values, uint face,
+                     uint plane, uint signal, uint signal_count, float current, float periodic) {
+  uint kind = boundary_kinds[face];
   if (kind == 0u) {
     return current;
   }
   if (kind == 1u) {
     return periodic;
   }
-  return fixed_values[face * signal_count + signal];
+  uint offset = boundary_kinds[6u + face];
+  if (offset == 0u) {
+    return fixed_values[face * signal_count + signal];
+  }
+  return fixed_values[offset + plane * signal_count + signal];
 }
 
 // Whether each of a site's six faces is closed to transport, and the velocity

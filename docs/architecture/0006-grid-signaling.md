@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-15
+- Amended: 2026-11-26
 
 ## Context
 
@@ -23,6 +24,8 @@ Each signal declares a non-negative diffusion coefficient and a finite 3D advect
 - `no_flux`: diffusive and advective face fluxes are zero;
 - `periodic`: the stencil wraps to the opposite face; or
 - `fixed`: the exterior stencil value is the declared non-negative reservoir concentration for that signal. The reservoir concentrations of a fixed boundary may be replaced between steps with `SignalGrid::set_boundary_values`; the boundary kind of each face is set when the grid is configured and does not change.
+
+A fixed face may also declare patches. A patch is a rectangle of the face's boundary sites, stated in the face's two in-plane axes in x, y, z order, with its own reservoir concentration per signal. A boundary site reads the last patch that holds it and otherwise the face's own concentrations, so several inlets on one face can carry different media. A patch changes only which reservoir a site reads: face closure, the operator diagonal, and the stability bound depend on the boundary kind alone. `SignalGrid::set_boundary_patch_values` replaces one patch's concentrations between steps; the patches' rectangles are set when the grid is configured. Devices read patched faces from one dense block of concentrations per boundary site, built from the patches at each step.
 
 Periodic faces must occur in opposing pairs on an axis. For diffusion, a no-flux exterior stencil value equals the boundary lattice value. Fixed values are defined at the exterior stencil location one grid spacing beyond the boundary, which removes half-cell ambiguity.
 

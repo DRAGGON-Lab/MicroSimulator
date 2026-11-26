@@ -49,7 +49,7 @@ static_assert(sizeof(ContactSolveData) == 32);
 static_assert(sizeof(ContactSolveState) == 16);
 static_assert(sizeof(ExternalConstraint) == 48 && offsetof(ExternalConstraint, geometry) == 16);
 static_assert(sizeof(GridShape) == 16);
-static_assert(sizeof(FlowGridParameters) == 96 && offsetof(FlowGridParameters, flow_axis) == 80);
+static_assert(sizeof(FlowGridParameters) == 96 && offsetof(FlowGridParameters, site_count) == 80);
 static_assert(sizeof(DepthFlowScales) == 32);
 
 }  // namespace microsimulator::device

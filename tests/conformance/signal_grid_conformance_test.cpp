@@ -85,6 +85,35 @@ microsimulator::SignalGridSpec make_velocity_field_spec() {
   return spec;
 }
 
+// Every face is a fixed reservoir, three of them with patches, and a velocity
+// field crosses all six. Each of the three patched faces indexes its sites by
+// a different pair of axes.
+microsimulator::SignalGridSpec make_patched_spec() {
+  auto spec = make_spec();
+  spec.advection = {{0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}};
+  for (auto* boundary : {&spec.x_lower, &spec.x_upper, &spec.y_lower, &spec.y_upper}) {
+    boundary->kind = microsimulator::GridBoundaryKind::fixed;
+    boundary->values = {0.4F, 0.6F};
+  }
+  spec.x_lower.patches = {
+      {.region = {.begin = {1, 0}, .end = {4, 3}}, .values = {1.5F, 0.1F}},
+      {.region = {.begin = {3, 2}, .end = {7, 5}}, .values = {0.0F, 2.0F}},
+  };
+  spec.y_upper.patches = {
+      {.region = {.begin = {0, 1}, .end = {5, 4}}, .values = {0.9F, 0.2F}},
+  };
+  spec.z_lower.patches = {
+      {.region = {.begin = {2, 0}, .end = {9, 2}}, .values = {1.2F, 0.3F}},
+      {.region = {.begin = {6, 1}, .end = {8, 7}}, .values = {0.1F, 1.1F}},
+  };
+  microsimulator::SignalGridVelocityField field;
+  field.x_faces.assign(spec.x_face_count(), 0.06F);
+  field.y_faces.assign(spec.y_face_count(), -0.04F);
+  field.z_faces.assign(spec.z_face_count(), 0.05F);
+  spec.velocity_field = std::move(field);
+  return spec;
+}
+
 std::vector<float> make_levels(const microsimulator::SignalGridSpec& spec) {
   std::vector<float> levels(spec.level_count());
   for (std::size_t index = 0; index < levels.size(); ++index) {
@@ -117,12 +146,13 @@ void assert_matches(const microsimulator::Simulation& actual,
   }
 }
 
-enum class SpecKind { plain, masked, velocity_field };
+enum class SpecKind { plain, masked, velocity_field, patched };
 
 void run_case(microsimulator::SignalIntegrationKind integration, float dt,
               SpecKind kind = SpecKind::plain) {
-  auto spec = kind == SpecKind::masked         ? make_masked_spec()
+  auto spec = kind == SpecKind::masked           ? make_masked_spec()
               : kind == SpecKind::velocity_field ? make_velocity_field_spec()
+              : kind == SpecKind::patched        ? make_patched_spec()
                                                  : make_spec();
   spec.integration = integration;
   const auto levels = make_levels(spec);
@@ -154,4 +184,7 @@ int main() {
   run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::masked);
   run_case(microsimulator::SignalIntegrationKind::forward_euler, 0.02F, SpecKind::velocity_field);
   run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::velocity_field);
+  run_case(microsimulator::SignalIntegrationKind::forward_euler, 0.02F, SpecKind::patched);
+  run_case(microsimulator::SignalIntegrationKind::crank_nicolson, 0.5F, SpecKind::patched);
+  run_case(microsimulator::SignalIntegrationKind::backward_euler, 0.5F, SpecKind::patched);
 }
