@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -19,6 +20,9 @@ struct DepthAveragedFlowParameters {
   FlowAxis axis{FlowAxis::y};
   float relative_tolerance{1.0e-6F};
   std::uint32_t max_iterations{50'000};
+
+  // In-plane body force per column, in pressure-gradient units (x-major, y-minor).
+  std::vector<std::array<float, 2>> body_force{};
 
   void validate() const;
 };

@@ -1,3 +1,4 @@
+import { flowSlice, type FlowSlice, type VectorDisplay } from "./flow-field";
 import "./style.css";
 
 import { mapCellColors, rgbBytes, viridis, type ColorMode } from "./color";
@@ -24,6 +25,7 @@ import { ReplayControls } from "./replay-controls";
 import {
   DatasetPresentationState,
   type SignalMode,
+  type PresentationPreferences,
 } from "./presentation-state";
 import {
   LiveConnection,
@@ -37,6 +39,7 @@ import {
   parseScene,
   type SceneCell,
   type SceneFrame,
+  type SceneSignalGrid,
 } from "./scene";
 
 function required<T extends HTMLElement>(id: string): T {
@@ -67,6 +70,14 @@ const colorLegend = required<HTMLElement>("color-legend");
 const legendMinimum = required<HTMLElement>("legend-min");
 const legendMaximum = required<HTMLElement>("legend-max");
 const legendTitle = required<HTMLElement>("legend-title");
+const flowControls = required<HTMLElement>("flow-controls");
+const flowMode = required<HTMLSelectElement>("flow-mode");
+const flowVectorLegend = required<HTMLElement>("flow-vector-legend");
+const flowGain = required<HTMLSelectElement>("flow-vector-gain");
+const flowTipLabel = required<HTMLElement>("flow-tip-label");
+const flowScaleLabel = required<HTMLElement>("flow-scale-label");
+const flowScaleValue = required<HTMLElement>("flow-scale-value");
+const flowScale = required<HTMLElement>("flow-scale");
 const signalSection = required<HTMLElement>("signal-section");
 const signalVisible = required<HTMLInputElement>("signal-visible");
 const deviceVisible = required<HTMLInputElement>("device-visible");
@@ -276,6 +287,108 @@ function displayedSlice(current: SceneFrame, channel: number): SignalSlice {
   );
 }
 
+interface FlowReference {
+  time: number;
+  grid: SceneSignalGrid;
+  vectorSlice: { key: string; field: FlowSlice } | null;
+  // A slice initially at rest acquires its scale on the first nonzero vector view.
+  vectorScales: Map<string, number>;
+}
+let flowReference: FlowReference | null = null;
+
+function trackFlowReference(next: SceneFrame, newDataset: boolean): void {
+  const grid = next.signalGrid;
+  if (!grid?.velocityFaces) {
+    flowReference = null;
+    return;
+  }
+  const previous = flowReference;
+  if (
+    newDataset ||
+    !previous ||
+    next.time < previous.time ||
+    grid.shape.some(
+      (size, a) =>
+        size !== previous.grid.shape[a] ||
+        grid.origin[a] !== previous.grid.origin[a] ||
+        grid.spacing[a] !== previous.grid.spacing[a],
+    )
+  ) {
+    flowReference = {
+      time: next.time,
+      grid,
+      vectorSlice: null,
+      vectorScales: new Map(),
+    };
+  }
+}
+
+function vectorDisplay(
+  reference: FlowReference,
+  axis: SliceAxis,
+  index: number,
+  peakSpeed: number,
+): VectorDisplay {
+  const key = `${axis}:${index}`;
+  if (reference.vectorSlice?.key !== key) {
+    reference.vectorSlice = {
+      key,
+      field: flowSlice(reference.grid, axis, index),
+    };
+  }
+  const baseline = reference.vectorSlice.field;
+  const scaleSpeed =
+    baseline.peakSpeed || reference.vectorScales.get(key) || peakSpeed;
+  if (!baseline.peakSpeed && scaleSpeed)
+    reference.vectorScales.set(key, scaleSpeed);
+  return {
+    reference: baseline,
+    scaleSpeed,
+    gain: presentation.preferences.vectorGain,
+  };
+}
+
+function updateFlow(): void {
+  const grid = frame?.signalGrid;
+  flowControls.hidden = !grid?.velocityFaces;
+  const mode = presentation.preferences.flowMode;
+  flowMode.value = mode;
+  flowScale.hidden = mode === "off";
+  const changeLegend = required<HTMLElement>("flow-change-legend");
+  changeLegend.hidden = mode !== "change";
+  flowVectorLegend.hidden = mode !== "vector";
+  flowGain.value = String(presentation.preferences.vectorGain);
+  if (!frame || !grid?.velocityFaces || !flowReference || mode === "off") {
+    viewer.setFlowSlice(null, 0);
+    return;
+  }
+  const axis = signalAxis.value as SliceAxis;
+  const index = selectedInteger(signalRange);
+  const field = flowSlice(
+    grid,
+    axis,
+    index,
+    mode === "change" ? flowReference.grid.velocityFaces : undefined,
+  );
+  const vectors =
+    mode === "vector"
+      ? vectorDisplay(flowReference, axis, index, field.peakSpeed)
+      : null;
+  viewer.setFlowSlice(field, frame.time, vectors);
+  if (vectors)
+    flowTipLabel.textContent = `Tip at t = ${formatNumber(flowReference.time)}`;
+  const speed = (value: number) => Number(value.toPrecision(3));
+  if (mode === "change") {
+    required<HTMLElement>("flow-change-max").textContent =
+      `${speed(field.changeScale)} length/time`;
+    flowScaleLabel.textContent = `Peak change since t = ${formatNumber(flowReference.time)}`;
+    flowScaleValue.textContent = String(speed(field.peakChange));
+  } else {
+    flowScaleLabel.textContent = "Peak in-plane speed";
+    flowScaleValue.textContent = String(speed(field.peakSpeed));
+  }
+}
+
 function updateSignal(): void {
   const legend = required<HTMLElement>("signal-legend");
   const rangeRoot = required<HTMLElement>("signal-color-range");
@@ -406,6 +519,7 @@ function presentScene(
   }
   const display = presentation.forFrame(next);
   frame = next;
+  trackFlowReference(next, newDataset);
   viewer.setFrame(next, newDataset);
   deviceVisible.checked = display.deviceVisible;
   deviceVisible.disabled = !Object.values(next.constraints).some(
@@ -458,6 +572,7 @@ function presentScene(
   }
   updateColors();
   updateSignal();
+  updateFlow();
   if (announce) {
     setStatus(`Opened ${label}`);
   }
@@ -514,6 +629,15 @@ deviceVisible.addEventListener("change", () => {
   presentation.preferences.deviceVisible = deviceVisible.checked;
   viewer.setDeviceVisible(deviceVisible.checked);
 });
+flowGain.addEventListener("change", () => {
+  presentation.preferences.vectorGain = Number(flowGain.value);
+  updateFlow();
+});
+flowMode.addEventListener("change", () => {
+  presentation.preferences.flowMode =
+    flowMode.value as PresentationPreferences["flowMode"];
+  updateFlow();
+});
 signalVisible.addEventListener("change", () => {
   presentation.preferences.signalVisible = signalVisible.checked;
   updateSignal();
@@ -530,11 +654,13 @@ signalAxis.addEventListener("change", () => {
   presentation.preferences.signalAxis = signalAxis.value as SliceAxis;
   updateSignalRange();
   updateSignal();
+  updateFlow();
 });
 signalRange.addEventListener("input", () => {
   presentation.preferences.signalSlice = selectedInteger(signalRange);
   sliceValue.value = signalRange.value;
   updateSignal();
+  updateFlow();
 });
 
 for (const eventName of ["dragenter", "dragover"] as const) {

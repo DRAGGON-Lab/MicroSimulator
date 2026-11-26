@@ -392,6 +392,35 @@ class ShallowFlowReduction {
     return faces;
   }
 
+  // Integrate the imposed pressure-gradient-equivalent body force across each
+  // half cell in series. Only open faces carry this part of the flux.
+  std::vector<float> body_flux(std::span<const std::array<float, 2>> force,
+                               const FlowBoundary& boundary) const {
+    if (force.size() != conductance_.size()) {
+      throw std::invalid_argument("shallow flow needs one in-plane body force per column");
+    }
+    for (const auto& f : force) {
+      if (!std::isfinite(f[0]) || !std::isfinite(f[1])) {
+        throw std::invalid_argument("shallow-flow body force must be finite");
+      }
+    }
+    std::vector<float> flux(reduced_layout_.total_face_count());
+    for (std::size_t i = 0; i < flux.size(); ++i) {
+      const auto [axis, face] = reduced_layout_.face_coordinates(i);
+      if (axis == 2) continue;
+      const auto lower = reduced_layout_.adjacent_site(axis, face, -1);
+      const auto upper = reduced_layout_.adjacent_site(axis, face, 1);
+      if (lower && upper) {
+        flux[i] = harmonic_mean(conductance_[*lower], conductance_[*upper]) *
+                  (0.5F * force[*lower][axis] + 0.5F * force[*upper][axis]);
+      } else if (boundary.open[i]) {
+        const auto site = lower ? *lower : *upper;
+        flux[i] = conductance_[site] * force[site][axis];
+      }
+    }
+    return flux;
+  }
+
   std::vector<float> lift(std::span<const float> flux) const {
     if (flux.size() != reduced_layout_.total_face_count())
       throw std::logic_error("shallow flux size mismatch");
@@ -491,7 +520,7 @@ struct ActiveDepthSystem {
 class DepthAveragedFlowSystem {
  public:
   DepthAveragedFlowSystem(const SignalGridSpec& spec, std::span<const float> mobility,
-                          const FlowBoundary& boundary)
+                          const FlowBoundary& boundary, std::span<const float> body_flux = {})
       : spec_(spec),
         layout_(spec),
         mobility_(layout_.site_count(), 1.0F),
@@ -503,6 +532,9 @@ class DepthAveragedFlowSystem {
     if (boundary.open.size() != layout_.total_face_count() ||
         boundary.pressure.size() != layout_.total_face_count()) {
       throw std::logic_error("flow boundary does not match the grid's faces");
+    }
+    if (!body_flux.empty() && body_flux.size() != layout_.total_face_count()) {
+      throw std::logic_error("body flux does not match the grid's faces");
     }
     if (!mobility.empty()) {
       if (mobility.size() != layout_.site_count()) {
@@ -529,6 +561,14 @@ class DepthAveragedFlowSystem {
       for (std::size_t component = 0; component < 3; ++component) {
         const auto spacing = layout_.spacing()[component];
         const auto inverse_square = 1.0F / (spacing * spacing);
+        if (!body_flux.empty()) {
+          auto upper = coordinates;
+          ++upper[component];
+          const auto lo =
+              layout_.face_index(component, coordinates[0], coordinates[1], coordinates[2]);
+          const auto hi = layout_.face_index(component, upper[0], upper[1], upper[2]);
+          right_hand_side_[site] += (body_flux[lo] - body_flux[hi]) / spacing;
+        }
         for (const auto offset : {-1, 1}) {
           const auto neighbor = layout_.neighbor_site(site, component, offset);
           if (neighbor.has_value()) {
@@ -1329,11 +1369,13 @@ struct ScaledVelocity {
                                                    const FlowGridLayout& layout,
                                                    std::span<const float> values,
                                                    std::span<const std::uint8_t> open_inlet,
-                                                   float requested_mean) {
-  if (values.size() != layout.total_face_count() || open_inlet.size() != values.size()) {
+                                                   float requested_mean,
+                                                   std::span<const float> driven = {}) {
+  if ((!driven.empty() && driven.size() != values.size()) ||
+      values.size() != layout.total_face_count() || open_inlet.size() != values.size()) {
     throw std::invalid_argument("flow velocity scaling arrays have inconsistent sizes");
   }
-  double inlet_sum = 0.0;
+  double inlet_sum = 0.0, driven_inlet_sum = 0.0;
   std::size_t inlet_count = 0;
   float peak = 0.0F;
   for (std::size_t index = 0; index < values.size(); ++index) {
@@ -1343,6 +1385,7 @@ struct ScaledVelocity {
     peak = std::max(peak, std::abs(values[index]));
     if (open_inlet[index] != 0) {
       inlet_sum += values[index];
+      if (!driven.empty()) driven_inlet_sum += driven[index];
       ++inlet_count;
     }
   }
@@ -1353,11 +1396,14 @@ struct ScaledVelocity {
   if (peak == 0.0F || solved_mean <= 1.0e-9F * peak) {
     throw std::runtime_error("the device carries no through-flow: the outlet is unreachable");
   }
-  const auto factor = requested_mean / solved_mean;
+  const auto driven_mean = static_cast<float>(driven_inlet_sum / static_cast<double>(inlet_count));
+  const auto factor = (requested_mean - driven_mean) / solved_mean;
   std::vector<float> scaled(values.size());
   float scaled_peak = 0.0F;
   for (std::size_t index = 0; index < values.size(); ++index) {
-    scaled[index] = values[index] * factor;
+    scaled[index] = values[index] * factor + (driven.empty() ? 0.0F : driven[index]);
+    if (!std::isfinite(scaled[index]))
+      throw std::runtime_error("non-finite combined flow velocity");
     scaled_peak = std::max(scaled_peak, std::abs(scaled[index]));
   }
 
@@ -1366,6 +1412,38 @@ struct ScaledVelocity {
           .solved_mean = solved_mean,
           .max_speed = scaled_peak,
           .factor = factor};
+}
+
+// For a moving population the flow is affine in the pressure drop. Project
+// the body-driven flux at zero boundary pressure, then adjust only the
+// pressure-driven solution to meet the imposed mean inlet speed.
+template <typename SolveSystem>
+DepthAveragedFlowResult solve_shallow_axis_flow(const SignalGridSpec& spec,
+                                                std::span<const float> mobility,
+                                                const DepthAveragedFlowParameters& parameters,
+                                                SolveSystem&& solve_system) {
+  parameters.validate();
+  const auto reduction = reduce_shallow_flow(spec, mobility, parameters.axis);
+  const auto axis = static_cast<std::size_t>(parameters.axis);
+  auto boundary = axis_flow_boundary(reduction.reduced_layout(), axis);
+  DepthAveragedFlowReport report;
+  const DepthAveragedFlowSystem system(reduction.grid(), reduction.conductance(), boundary);
+  const auto pressure_velocity = reduction.lift(solve_system(system, report));
+  std::vector<float> driven;
+  if (!parameters.body_force.empty()) {
+    auto flux = reduction.body_flux(parameters.body_force, boundary);
+    std::fill(boundary.pressure.begin(), boundary.pressure.end(), 0.0F);
+    const DepthAveragedFlowSystem forced(reduction.grid(), reduction.conductance(), boundary, flux);
+    const auto correction = solve_system(forced, report);
+    for (std::size_t i = 0; i < flux.size(); ++i) flux[i] += correction[i];
+    driven = reduction.lift(flux);
+  }
+  auto scaled =
+      scale_velocity(spec, reduction.original_layout(), pressure_velocity,
+                     reduction.open_inlet_faces(axis), parameters.mean_inlet_speed, driven);
+  report.mean_inlet_speed = parameters.mean_inlet_speed;
+  report.max_speed = scaled.max_speed;
+  return {.field = std::move(scaled.field), .report = report};
 }
 
 // Resolved flow along one axis, scaled to the stated mean inlet speed.

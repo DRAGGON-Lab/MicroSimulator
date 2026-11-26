@@ -162,8 +162,10 @@ struct SceneFrame {
 
 // Captures a validated frame from the current simulation state. Throws
 // ChannelMetadataError when the labels do not match the simulation's channels.
+// A live viewer may also request the staggered velocity field from the same instant.
 [[nodiscard]] SceneFrame capture_scene(const Simulation& simulation,
-                                       const ChannelMetadata& channel_metadata = {});
+                                       const ChannelMetadata& channel_metadata = {},
+                                       std::optional<SignalGridVelocityField>* velocity = nullptr);
 
 // Encodes a validated frame as readable JSON text. Cell and constraint
 // identifiers are decimal strings because they exceed the integer range of

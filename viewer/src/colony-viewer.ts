@@ -3,6 +3,7 @@ import {
   AmbientLight,
   Box3,
   BoxGeometry,
+  type BufferGeometry,
   Color,
   CylinderGeometry,
   DataTexture,
@@ -31,7 +32,6 @@ import {
   Vector2,
   Vector3,
   WebGLRenderer,
-  type BufferGeometry,
   type Material,
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -39,6 +39,8 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { mapScalarColors, rgbBytes, type RGB } from "./color";
 import { AUTOMATIC_SCALAR_RANGE, type ScalarRangeConfig } from "./scalar-range";
 import { capsuleGeometries, CapsuleTransform } from "./capsule";
+import { FlowLayer } from "./flow-layer";
+import type { FlowSlice, VectorDisplay } from "./flow-field";
 import type { SignalSlice } from "./grid";
 import {
   DatasetReferenceGrid,
@@ -102,6 +104,7 @@ export class ColonyViewer {
   private readonly colony = new Group();
   private readonly device = new Group();
   private readonly signal = new Group();
+  private readonly flow = new FlowLayer();
   private readonly highlight = new Group();
   private readonly grid = new GridHelper(
     20,
@@ -165,6 +168,7 @@ export class ColonyViewer {
       fill,
       this.grid,
       this.signal,
+      this.flow,
       this.colony,
       this.device,
       this.highlight,
@@ -324,6 +328,14 @@ export class ColonyViewer {
     }
   }
 
+  public setFlowSlice(
+    field: FlowSlice | null,
+    time: number,
+    vectors: VectorDisplay | null = null,
+  ): void {
+    this.flow.update(field, time, vectors);
+  }
+
   public setSignalSlice(
     slice: SignalSlice | null,
     range: ScalarRangeConfig = AUTOMATIC_SCALAR_RANGE,
@@ -437,6 +449,7 @@ export class ColonyViewer {
 
   public dispose(): void {
     this.renderer.setAnimationLoop(null);
+    this.flow.dispose();
     disposeGroup(this.device);
     this.resizeObserver.disconnect();
     this.renderer.domElement.removeEventListener(
@@ -794,6 +807,7 @@ export class ColonyViewer {
     const width = Math.max(host.clientWidth, 1);
     const height = Math.max(host.clientHeight, 1);
     this.renderer.setSize(width, height, false);
+    this.flow.setViewport(width, height);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
   }

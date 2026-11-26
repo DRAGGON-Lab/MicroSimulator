@@ -394,6 +394,7 @@ struct Move {
 
 struct Substep {
   Geometry geometry;
+  std::vector<std::array<float, 6>> velocities;
   std::vector<float> loads;
   ForceMemory forces;
   std::uint32_t refinements{0};
@@ -550,6 +551,7 @@ struct SubstepAttempt {
           .substep =
               Substep{
                   .geometry = std::move(*move.geometry),
+                  .velocities = std::move(response.velocities),
                   .loads = std::move(response.loads),
                   .forces = {.rows = std::move(keyed),
                              .keys = std::move(keys),
@@ -684,6 +686,7 @@ ContactDynamicsResult advance_contact_dynamics(
   state.validate();
 
   ContactDynamicsResult result;
+  result.center_velocities.resize(state.size());
   result.axial_loads.assign(state.size(), 0.0F);
   result.length_increments.assign(state.size(), 0.0F);
   if (state.empty() || dt == 0.0F) {
@@ -749,6 +752,12 @@ ContactDynamicsResult advance_contact_dynamics(
       remaining -= static_cast<double>(length);
       proven = std::max(proven, length);
       base = std::move(substep->geometry);
+      if (remaining <= 0.0) {
+        for (std::size_t slot = 0; slot < state.size(); ++slot) {
+          const auto& v = substep->velocities[slot];
+          result.center_velocities[slot] = {v[0], v[1], v[2]};
+        }
+      }
       result.axial_loads = std::move(substep->loads);
       ++result.report.substeps;
       result.report.refinements += substep->refinements;

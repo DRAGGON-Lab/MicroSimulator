@@ -37,6 +37,10 @@ uv run microsimulator view \
 
 Without `--open`, open the tokenized loopback URL printed by `microsimulator`. The live transport can play, pause, advance one step, rebuild the original model, write to the configured checkpoint destination, and stop the session. Camera position, display mapping, grid slice, and selected-cell identity survive frame updates.
 
+When a live model supplies a velocity field, **Fluid flow** opens in **Flow disturbance**. For the trap, look down on the XY slice. The warm overlay shows how much the in-plane velocity has changed since the first displayed frame, including turns at constant speed. The caption gives the reference time and the largest change. The color scale runs from zero to the reference frame’s peak speed and expands if the change exceeds it. **Streamlines** traces the current flow. Highlights travel downstream with simulation time and hold when paused.
+
+**Vector field** samples the current velocity at grid sites. The arrow tail marks the sample site, direction follows the flow, and length is proportional to speed. Each slice uses its first-frame peak as a fixed scale. A slice that starts at rest uses its first nonzero peak displayed in vector mode. Where the velocity changes, an amber dot marks the original arrow tip. Increase **Arrow gain** to magnify both displacements equally when inspecting slow flow. The numerical readout always gives the current peak speed.
+
 ### Stop one model and start another
 
 Click **Stop session** or press **Ctrl+C** once in the terminal running the server. The current individual step or checkpoint write finishes, the browser displays **Stopped**, and the command returns to the prompt. A large playback batch does not have to finish. Start another `microsimulator view` command using the same port and open the new printed URL. Reset rebuilds the current model; Pause keeps its process available; closing the browser pauses it and allows reconnection. Stop does not automatically save a checkpoint: use Checkpoint first if you need restartable state.

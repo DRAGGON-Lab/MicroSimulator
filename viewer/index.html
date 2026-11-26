@@ -138,6 +138,55 @@
                 value="0"
               />
             </label>
+            <div id="flow-controls" hidden>
+              <label class="field">
+                <span>Fluid flow</span>
+                <select id="flow-mode">
+                  <option value="change">Flow disturbance</option>
+                  <option value="velocity">Streamlines</option>
+                  <option value="vector">Vector field</option>
+                  <option value="off">Off</option>
+                </select>
+              </label>
+              <div id="flow-change-legend" class="legend" hidden>
+                <div class="legend-ramp flow-change-ramp"></div>
+                <div class="legend-labels">
+                  <span>0</span><span id="flow-change-max"></span>
+                </div>
+              </div>
+              <div id="flow-vector-legend" hidden>
+                <label class="flow-gain">
+                  <span>Arrow gain</span>
+                  <select id="flow-vector-gain">
+                    <option value="1">1×</option>
+                    <option value="2">2×</option>
+                    <option value="4">4×</option>
+                    <option value="8">8×</option>
+                  </select>
+                </label>
+                <div class="flow-vector-key">
+                  <span
+                    ><img
+                      src="./src/flow-arrow.svg"
+                      width="24"
+                      alt=""
+                    />Current</span
+                  >
+                  <span
+                    ><img
+                      src="./src/flow-reference-tip.svg"
+                      width="8"
+                      alt="" /><span id="flow-tip-label"></span
+                  ></span>
+                </div>
+              </div>
+              <div id="flow-scale" class="legend-caption">
+                <span id="flow-scale-label"></span>
+                <span class="flow-measure"
+                  ><span id="flow-scale-value"></span> length/time</span
+                >
+              </div>
+            </div>
             <div id="signal-color-range"></div>
             <div id="signal-legend" class="legend" hidden>
               <div

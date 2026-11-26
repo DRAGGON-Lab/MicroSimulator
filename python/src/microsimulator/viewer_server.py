@@ -21,6 +21,9 @@ from urllib.parse import urlencode
 import numpy as np
 from aiohttp import WSMsgType, web
 
+from ._core import (  # pyright: ignore[reportMissingModuleSource]
+    _capture_scene_with_velocity,  # pyright: ignore[reportPrivateUsage]
+)
 from .channels import ChannelMetadata
 from .checkpoint import JSONValue, save_checkpoint
 from .runner import RunnableModel, controller_state, model_channel_metadata, native_simulation
@@ -176,17 +179,25 @@ class LiveSession:
         )
         return destination
 
-    def frame_message(self, *, playing: bool) -> tuple[dict[str, JSONValue], bytes | None]:
+    def frame_message(
+        self, *, playing: bool, include_velocity: bool = False
+    ) -> tuple[dict[str, JSONValue], bytes | None]:
         """The current frame as a JSON header and the signal levels that follow it.
 
         The header's scene is a complete scene document without its signal
         grid. The grid is described beside it, and its levels travel as the
         second value: little-endian float32 in the scene's order, which are the
-        engine's own values. A model without a signal grid has no levels.
+        engine's own values. If requested, the same payload ends with the
+        grid's staggered x, y, z face velocities, with their own digest.
         """
 
         native = native_simulation(self._model)
-        frame = capture_scene(native, channel_metadata=model_channel_metadata(self._model))
+        metadata = model_channel_metadata(self._model)
+        velocity = None
+        if include_velocity:
+            frame, velocity = _capture_scene_with_velocity(native, metadata)
+        else:
+            frame = capture_scene(native, channel_metadata=metadata)
         grid = frame.signal_grid
         levels: bytes | None = None
         described: dict[str, JSONValue] | None = None
@@ -222,6 +233,17 @@ class LiveSession:
                     "sha256": hashlib.sha256(levels).hexdigest(),
                 },
             }
+            if velocity is not None:
+                faces = b"".join(
+                    np.asarray(values, dtype="<f4").tobytes()
+                    for values in (velocity.x_faces, velocity.y_faces, velocity.z_faces)
+                )
+                described["velocity_faces"] = {
+                    "encoding": "float32-le",
+                    "byte_length": len(faces),
+                    "sha256": hashlib.sha256(faces).hexdigest(),
+                }
+                levels += faces
             frame = frame.replace(
                 signal_grid=None,
                 channel_metadata=ChannelMetadata(species=frame.channel_metadata.species),
@@ -283,14 +305,27 @@ class LiveController:
                     await asyncio.shield(work)
                 raise
 
-    async def _message(self) -> tuple[str, bytes | None]:
-        """The current frame encoded for the wire: its header text and its signal levels."""
-
-        header, levels = cast(
-            tuple[dict[str, JSONValue], bytes | None],
-            await self._run(partial(self.session.frame_message, playing=self.playing)),
-        )
-        return json.dumps(header, separators=(",", ":")), levels
+    async def _messages(
+        self, sockets: tuple[web.WebSocketResponse, ...]
+    ) -> dict[bool, tuple[str, bytes | None]]:
+        """Encode one snapshot for every requested wire format."""
+        formats = {socket.get(_VELOCITY_KEY, False) for socket in sockets}
+        capture = partial(self.session.frame_message, playing=self.playing)
+        if True in formats:
+            capture = partial(capture, include_velocity=True)
+        header, payload = cast(tuple[dict[str, JSONValue], bytes | None], await self._run(capture))
+        full = json.dumps(header, separators=(",", ":")), payload
+        messages = dict.fromkeys(formats, full)
+        grid = header["signal_grid"]
+        if formats == {False, True} and isinstance(grid, dict) and "velocity_faces" in grid:
+            del grid["velocity_faces"]
+            levels = grid["levels"]
+            assert isinstance(levels, dict) and isinstance(levels["byte_length"], int)
+            assert payload is not None
+            messages[False] = (
+                json.dumps(header, separators=(",", ":")), payload[: levels["byte_length"]]
+            )
+        return messages
 
     async def _deliver_frame(
         self, socket: web.WebSocketResponse, header: str, levels: bytes | None
@@ -304,14 +339,14 @@ class LiveController:
                 await asyncio.wait_for(socket.send_bytes(levels), timeout=SOCKET_SEND_TIMEOUT)
 
     async def _send_frame(self, socket: web.WebSocketResponse) -> None:
-        header, levels = await self._message()
-        await self._deliver_frame(socket, header, levels)
+        messages = await self._messages((socket,))
+        await self._deliver_frame(socket, *messages[socket.get(_VELOCITY_KEY, False)])
 
     async def broadcast_frame(self) -> None:
         sockets = tuple(self._sockets)
         if not sockets:
             return
-        header, levels = await self._message()
+        messages = await self._messages(sockets)
         stale: list[web.WebSocketResponse] = []
         # A frame captured for earlier clients must not arrive ahead of a newly
         # connected client's initial frame (or carry its stale playing flag).
@@ -322,7 +357,7 @@ class LiveController:
                 stale.append(socket)
                 continue
             try:
-                await self._deliver_frame(socket, header, levels)
+                await self._deliver_frame(socket, *messages[socket.get(_VELOCITY_KEY, False)])
             except TimeoutError:
                 # Retain this socket for shutdown even if it cannot drain a
                 # frame; Stop must not wait indefinitely on frame delivery.
@@ -503,6 +538,7 @@ async def _close_socket(socket: web.WebSocketResponse, transport: asyncio.Transp
 
 _CONTROLLER_KEY = web.AppKey("microsimulator.controller", LiveController)
 _TOKEN_KEY = web.AppKey("microsimulator.token", str)
+_VELOCITY_KEY = web.ResponseKey("microsimulator.velocity", bool)
 
 
 def _authorized(request: web.Request) -> bool:
@@ -520,6 +556,7 @@ async def _websocket(request: web.Request) -> web.StreamResponse:
     if controller.stopping:
         raise web.HTTPServiceUnavailable(text="live session is stopping or stopped")
     socket = web.WebSocketResponse(max_msg_size=MAX_COMMAND_BYTES, heartbeat=20.0)
+    socket[_VELOCITY_KEY] = request.query.get("velocity") == "1"
     await socket.prepare(request)
     commands: asyncio.Queue[LiveCommand] = asyncio.Queue(maxsize=MAX_QUEUED_COMMANDS)
 

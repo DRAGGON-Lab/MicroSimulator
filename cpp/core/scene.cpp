@@ -634,7 +634,8 @@ void SceneFrame::validate() const {
   }
 }
 
-SceneFrame capture_scene(const Simulation& simulation, const ChannelMetadata& channel_metadata) {
+SceneFrame capture_scene(const Simulation& simulation, const ChannelMetadata& channel_metadata,
+                         std::optional<SignalGridVelocityField>* velocity) {
   // Reject an oversized channel count before copying state or expanding labels.
   const JsonPath root;
   const auto frame_path = root["frame"];
@@ -732,6 +733,10 @@ SceneFrame capture_scene(const Simulation& simulation, const ChannelMetadata& ch
   frame.channel_metadata =
       channel_metadata.resolved(simulation.species_count(), simulation.signal_count());
   frame.validate();
+  if (velocity != nullptr) {
+    *velocity = checkpoint.signal_grid ? std::move(checkpoint.signal_grid->spec.velocity_field)
+                                       : std::nullopt;
+  }
   return frame;
 }
 
