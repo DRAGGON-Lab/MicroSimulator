@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -20,6 +21,7 @@
 #include "core/contact_solver.hpp"
 #include "core/device_types.hpp"
 #include "core/signal_jacobi.hpp"
+#include "metal_deposition.hpp"
 #include "metal_flow.hpp"
 #include "microsimulator/backend.hpp"
 #include "microsimulator/metal/contact_dynamics_source.hpp"
@@ -237,6 +239,7 @@ class MetalBackend final : public ComputeBackend {
           compile_pipeline(device_, contact_dynamics_library, @"contact_advance",
                            "failed to create the Metal contact-advance pipeline");
       flow_solver_ = std::make_unique<metal::FlowSolver>(device_index_);
+      deposition_ = std::make_unique<metal::DepositionKernels>(device_index_);
     }
   }
 
@@ -251,15 +254,6 @@ class MetalBackend final : public ComputeBackend {
           .native = true,
       };
     }
-  }
-
-  [[nodiscard]] bool supports(BackendFeature feature) const noexcept override {
-    return feature == BackendFeature::growth || feature == BackendFeature::species ||
-           feature == BackendFeature::cell_contacts ||
-           feature == BackendFeature::external_constraints || feature == BackendFeature::signals ||
-           feature == BackendFeature::coupled_rates ||
-           feature == BackendFeature::depth_averaged_flow ||
-           feature == BackendFeature::resolved_flow || feature == BackendFeature::contact_dynamics;
   }
 
   void advance_growth(WorldState& state, float dt) override {
@@ -856,6 +850,24 @@ class MetalBackend final : public ComputeBackend {
       const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> drag,
       const ResolvedPortFlowParameters& parameters) override {
     return flow_solver_->solve_resolved_ports(spec, ports, drag, parameters);
+  }
+
+  [[nodiscard]] BiomassDeposit deposit_biomass(
+      const SignalGridSpec& spec, const DepositCells& cells,
+      const BiomassDepositParameters& parameters) override {
+    return deposition_->deposit(spec, cells, parameters);
+  }
+
+  [[nodiscard]] ShallowFlowCoupling shallow_flow_coupling(
+      const SignalGridSpec& spec, std::span<const float> base, const BiomassDeposit& deposit,
+      const BiomassDragParameters& parameters) override {
+    return deposition_->shallow_flow_coupling(spec, base, deposit, parameters);
+  }
+
+  [[nodiscard]] std::vector<float> brinkman_drag(const SignalGridSpec& spec,
+                                                 const BiomassDeposit& deposit,
+                                                 const BiomassDragParameters& parameters) override {
+    return deposition_->brinkman_drag(spec, deposit, parameters);
   }
 
  private:
@@ -2060,6 +2072,7 @@ class MetalBackend final : public ComputeBackend {
   id<MTLComputePipelineState> contact_reduce_pipeline_{nil};
   id<MTLComputePipelineState> contact_advance_pipeline_{nil};
   std::unique_ptr<metal::FlowSolver> flow_solver_;
+  std::unique_ptr<metal::DepositionKernels> deposition_;
 
   id<MTLBuffer> lengths_{nil};
   id<MTLBuffer> growth_rates_{nil};
@@ -2186,6 +2199,9 @@ class MetalBackend final : public ComputeBackend {
   std::size_t contact_body_capacity_{0};
   std::size_t contact_row_capacity_{0};
 };
+
+// A backend that leaves out any provider method is abstract.
+static_assert(!std::is_abstract_v<MetalBackend>, "the Metal backend must implement every provider");
 
 }  // namespace
 

@@ -88,6 +88,20 @@ class Simulation {
   [[nodiscard]] ResolvedPortFlowResult solve_resolved_port_flow(
       const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> drag = {},
       const ResolvedPortFlowParameters& parameters = ResolvedPortFlowParameters{});
+  // Deposits cells' biomass on a grid on the selected backend. The cells and
+  // grid stand on their own; they need not be this simulation's.
+  [[nodiscard]] BiomassDeposit deposit_biomass(
+      const SignalGridSpec& spec, const DepositCells& cells,
+      const BiomassDepositParameters& parameters = BiomassDepositParameters{});
+  // The shallow-flow mobility and body force of a deposit on the selected
+  // backend. `base` holds one mobility per site, or one for every site.
+  [[nodiscard]] ShallowFlowCoupling shallow_flow_coupling(
+      const SignalGridSpec& spec, std::span<const float> base, const BiomassDeposit& deposit,
+      const BiomassDragParameters& parameters = BiomassDragParameters{});
+  // The resolved-flow Brinkman drag of a deposit on the selected backend.
+  [[nodiscard]] std::vector<float> brinkman_drag(
+      const SignalGridSpec& spec, const BiomassDeposit& deposit,
+      const BiomassDragParameters& parameters = BiomassDragParameters{});
 
   [[nodiscard]] CellSnapshot cell(CellId id) const;
   [[nodiscard]] std::vector<CellSnapshot> cells() const;

@@ -1,4 +1,5 @@
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
 #include <nanobind/stl/array.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
@@ -298,6 +299,53 @@ NB_MODULE(_core, module) {
   nb::class_<microsimulator::DepthAveragedFlowResult>(module, "DepthAveragedFlowResult")
       .def_ro("field", &microsimulator::DepthAveragedFlowResult::field)
       .def_ro("report", &microsimulator::DepthAveragedFlowResult::report);
+
+  nb::class_<microsimulator::DepositCells>(module, "DepositCells")
+      .def(nb::init<>())
+      .def_rw("positions", &microsimulator::DepositCells::positions)
+      .def_rw("lengths", &microsimulator::DepositCells::lengths)
+      .def_rw("radii", &microsimulator::DepositCells::radii)
+      .def_rw("channel_count", &microsimulator::DepositCells::channel_count)
+      .def_rw("channels", &microsimulator::DepositCells::channels)
+      .def("__len__", &microsimulator::DepositCells::size)
+      .def("validate", &microsimulator::DepositCells::validate);
+
+  nb::class_<microsimulator::BiomassDepositParameters>(module, "BiomassDepositParameters")
+      .def(nb::init<>())
+      .def_rw("averaging_radius", &microsimulator::BiomassDepositParameters::averaging_radius)
+      .def("validate", &microsimulator::BiomassDepositParameters::validate);
+
+  // The deposit's fields are read-only NumPy views of its own storage.
+  using FloatView = nb::ndarray<nb::numpy, const float, nb::ndim<1>>;
+  nb::class_<microsimulator::BiomassDeposit>(module, "BiomassDeposit")
+      .def_prop_ro(
+          "density",
+          [](const microsimulator::BiomassDeposit& deposit) {
+            return FloatView(deposit.density.data(), {deposit.density.size()}, nb::handle());
+          },
+          nb::rv_policy::reference_internal)
+      .def_ro("channel_count", &microsimulator::BiomassDeposit::channel_count)
+      .def_prop_ro(
+          "channels",
+          [](const microsimulator::BiomassDeposit& deposit) {
+            return FloatView(deposit.channels.data(), {deposit.channels.size()}, nb::handle());
+          },
+          nb::rv_policy::reference_internal);
+
+  nb::class_<microsimulator::BiomassDragParameters>(module, "BiomassDragParameters")
+      .def(nb::init<>())
+      .def_rw("drag_coefficient", &microsimulator::BiomassDragParameters::drag_coefficient)
+      .def_rw("max_volume_fraction", &microsimulator::BiomassDragParameters::max_volume_fraction)
+      .def("validate", &microsimulator::BiomassDragParameters::validate);
+
+  nb::class_<microsimulator::ShallowFlowCoupling>(module, "ShallowFlowCoupling")
+      .def_prop_ro(
+          "mobility",
+          [](const microsimulator::ShallowFlowCoupling& coupling) {
+            return FloatView(coupling.mobility.data(), {coupling.mobility.size()}, nb::handle());
+          },
+          nb::rv_policy::reference_internal)
+      .def_ro("body_force", &microsimulator::ShallowFlowCoupling::body_force);
 
   nb::class_<microsimulator::ResolvedFlowParameters>(module, "ResolvedFlowParameters")
       .def(nb::init<>())
@@ -784,6 +832,33 @@ NB_MODULE(_core, module) {
           },
           "spec"_a, "mobility"_a = std::vector<float>{},
           "parameters"_a = microsimulator::DepthAveragedFlowParameters{})
+      .def(
+          "deposit_biomass",
+          [](microsimulator::Simulation& simulation, const microsimulator::SignalGridSpec& spec,
+             const microsimulator::DepositCells& cells,
+             const microsimulator::BiomassDepositParameters& parameters) {
+            const microsimulator::python::ReleasedCall call(&simulation);
+            return simulation.deposit_biomass(spec, cells, parameters);
+          },
+          "spec"_a, "cells"_a, "parameters"_a = microsimulator::BiomassDepositParameters{})
+      .def(
+          "shallow_flow_coupling",
+          [](microsimulator::Simulation& simulation, const microsimulator::SignalGridSpec& spec,
+             const std::vector<float>& base, const microsimulator::BiomassDeposit& deposit,
+             const microsimulator::BiomassDragParameters& parameters) {
+            const microsimulator::python::ReleasedCall call(&simulation);
+            return simulation.shallow_flow_coupling(spec, base, deposit, parameters);
+          },
+          "spec"_a, "base"_a, "deposit"_a, "parameters"_a = microsimulator::BiomassDragParameters{})
+      .def(
+          "brinkman_drag",
+          [](microsimulator::Simulation& simulation, const microsimulator::SignalGridSpec& spec,
+             const microsimulator::BiomassDeposit& deposit,
+             const microsimulator::BiomassDragParameters& parameters) {
+            const microsimulator::python::ReleasedCall call(&simulation);
+            return simulation.brinkman_drag(spec, deposit, parameters);
+          },
+          "spec"_a, "deposit"_a, "parameters"_a = microsimulator::BiomassDragParameters{})
       .def(
           "solve_resolved_flow",
           [](microsimulator::Simulation& simulation, const microsimulator::SignalGridSpec& spec,

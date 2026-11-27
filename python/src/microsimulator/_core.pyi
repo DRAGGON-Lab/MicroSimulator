@@ -3,6 +3,9 @@ from enum import Enum
 from os import PathLike
 from typing import overload
 
+import numpy as np
+from numpy.typing import NDArray
+
 class OccupancyCapsule:
     def __init__(
         self,
@@ -260,6 +263,44 @@ class SignalGridVelocityField:
     z_faces: list[float]
 
     def __init__(self) -> None: ...
+
+class DepositCells:
+    positions: list[Vec3]
+    lengths: list[float]
+    radii: list[float]
+    channel_count: int
+    channels: list[float]
+
+    def __init__(self) -> None: ...
+    def __len__(self) -> int: ...
+    def validate(self) -> None: ...
+
+class BiomassDepositParameters:
+    averaging_radius: float
+
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+
+class BiomassDeposit:
+    @property
+    def density(self) -> NDArray[np.float32]: ...
+    @property
+    def channel_count(self) -> int: ...
+    @property
+    def channels(self) -> NDArray[np.float32]: ...
+
+class BiomassDragParameters:
+    drag_coefficient: float
+    max_volume_fraction: float
+
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+
+class ShallowFlowCoupling:
+    @property
+    def mobility(self) -> NDArray[np.float32]: ...
+    @property
+    def body_force(self) -> list[tuple[float, float]]: ...
 
 class DepthAveragedFlowParameters:
     body_force: list[tuple[float, float]]
@@ -831,6 +872,25 @@ class Simulation:
     def find_external_contacts(
         self, parameters: ConstraintContactParameters = ...
     ) -> ExternalContactGraph: ...
+    def deposit_biomass(
+        self,
+        spec: SignalGridSpec,
+        cells: DepositCells,
+        parameters: BiomassDepositParameters = ...,
+    ) -> BiomassDeposit: ...
+    def shallow_flow_coupling(
+        self,
+        spec: SignalGridSpec,
+        base: list[float],
+        deposit: BiomassDeposit,
+        parameters: BiomassDragParameters = ...,
+    ) -> ShallowFlowCoupling: ...
+    def brinkman_drag(
+        self,
+        spec: SignalGridSpec,
+        deposit: BiomassDeposit,
+        parameters: BiomassDragParameters = ...,
+    ) -> list[float]: ...
     def solve_depth_averaged_flow(
         self,
         spec: SignalGridSpec,

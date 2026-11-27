@@ -39,8 +39,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
-import numpy as np
-
 from ._core import (  # pyright: ignore[reportMissingModuleSource]
     BackendKind,
     FlowAxis,
@@ -55,10 +53,11 @@ from ._core import (  # pyright: ignore[reportMissingModuleSource]
 )
 from .flow import (
     FlowError,
+    _deposit,
+    _drag_parameters,
     _flow_axis_index,
-    _kozeny_carman_drag,
+    _native,
     _RodLike,
-    colony_volume_fraction,
 )
 
 _NATIVE_AXES = {"x": FlowAxis.X, "y": FlowAxis.Y, "z": FlowAxis.Z}
@@ -73,27 +72,27 @@ def colony_drag(
     drag_coefficient: float,
     max_volume_fraction: float = 0.9,
     averaging_radius: float = 4.0,
+    simulation: Simulation | None = None,
+    backend: BackendKind = BackendKind.CPU,
+    device_index: int = 0,
 ) -> list[float]:
     """Build the Brinkman drag field (inverse permeability) from the colony.
 
     The colony's per-voxel volume fraction ``phi`` sets a Kozeny-Carman style
     drag ``drag_coefficient * phi^2 / (1 - phi)^3``. The coefficient carries
     units of one over length squared and is a modeling choice. Solid voxels
-    stay at zero (they are walls, not porous media).
+    stay at zero (they are walls, not porous media). The deposit and drag run
+    on the simulation's backend, or on ``backend``.
     """
 
-    if not 0 < max_volume_fraction < 1:
-        raise FlowError("maximum volume fraction must lie strictly between zero and one")
-    fraction = np.minimum(
-        colony_volume_fraction(spec, cells, averaging_radius=averaging_radius), max_volume_fraction
-    )
-    drag = _kozeny_carman_drag(fraction, drag_coefficient)
-    obstacles = spec.obstacles
-    if obstacles:
-        dims = (spec.shape.x, spec.shape.y, spec.shape.z)
-        solid = np.asarray(obstacles, dtype=np.uint8).reshape(dims) != 0
-        drag[solid] = 0.0
-    return [float(value) for value in drag.ravel()]
+    selected = _native(simulation, backend, device_index)
+    deposit = _deposit(spec, list(cells), [], averaging_radius, selected)
+    try:
+        return selected.brinkman_drag(
+            spec, deposit, _drag_parameters(drag_coefficient, max_volume_fraction)
+        )
+    except (OverflowError, RuntimeError, ValueError, TypeError) as error:
+        raise FlowError(str(error)) from error
 
 
 def solve_stokes_field(

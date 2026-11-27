@@ -36,6 +36,7 @@ The [numerical contract](numerical-contract.md) is the best starting point for w
 ## Execution, data, and presentation
 
 - [Independent native Metal and CUDA backends](0001-native-backends.md)
+- [Provider interfaces](0030-provider-interfaces.md)
 - [Threaded CPU execution](0027-cpu-threading.md)
 - [Deterministic batch execution](0005-batch-execution.md)
 - [Restartable native model controllers](0014-native-controllers.md)

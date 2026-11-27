@@ -81,11 +81,12 @@ def test_biomass_deposition_conserves_amount_across_refinement() -> None:
         spec = duct_grid(n, n, n, (h, h, h))
         spec.origin = Vec3(*([-8 + h / 2] * 3))
         density = colony_volume_fraction(spec, [rod] * 100, averaging_radius=4)
-        assert math.isclose(float(density.sum()) * spec.voxel_volume, expected, rel_tol=2e-7)
+        assert math.isclose(float(density.sum()) * spec.voxel_volume, expected, rel_tol=1e-6)
         densities.append(density)
-    # Exact cell integrals agree after aggregating fine voxels, even above density 0.9.
+    # Exact cell integrals agree to binary32 rounding after aggregating fine
+    # voxels, even above density 0.9.
     fine_to_coarse = densities[2].reshape(4, 4, 4, 4, 4, 4).mean(axis=(1, 3, 5))
-    assert float(np.max(np.abs(fine_to_coarse - densities[0]))) < 1e-10
+    assert float(np.max(np.abs(fine_to_coarse - densities[0]))) < 2e-6
     assert float(densities[2].max()) > 0.9
 
 
