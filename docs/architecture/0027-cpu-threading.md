@@ -21,7 +21,8 @@ A loop is cut into pieces of a fixed number of indices, its *grain*. The pieces 
 - A reduction folds each piece on its own and combines the pieces in index order, so a floating-point sum has one grouping.
 - Work that gathers from several sources is arranged so that each destination sums its own terms in a fixed order. The contact solve keeps, for every cell, the rows that touch it in row order; a cell sums its own force and torque from them rather than rows adding into shared cells.
 - Work that scatters into shared destinations and has no such arrangement stays on one thread. The coupled step computes every cell's exchange with the grid in parallel and adds the exchanges to the grid sites one cell at a time.
-- Contact candidates and contacts are produced piece by piece and joined in piece order. Each cell emits its partners of higher identifier, so the joined list is already in identifier order.
+- Contact candidates and contacts are counted, the counts summed into ranges, and each cell or candidate writes its own range, as on the devices. A cell orders its own partners by identifier.
+- The contact solve sums its step terms by a fixed tree over blocks of 256 rows.
 
 `tests/cpp/thread_invariance_test.cpp` runs contact dynamics, signal transport, coupled and species rates, and both flow solves on one and on several threads and requires identical bits.
 

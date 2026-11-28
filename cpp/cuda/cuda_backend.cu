@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <span>
@@ -18,12 +19,13 @@
 
 #include "core/boundary_values.hpp"
 #include "core/contact_response.hpp"
+#include "core/contact_solve_plan.hpp"
 #include "core/contact_solver.hpp"
+#include "core/shared_constants.hpp"
 #include "core/signal_jacobi.hpp"
 #include "cuda_cell_kernels.cuh"
 #include "cuda_flow.cuh"
 #include "kernels/contact_dynamics.cuh"
-#include "kernels/contacts.cuh"
 #include "kernels/coupled_rates.cuh"
 #include "kernels/growth.cuh"
 #include "kernels/signals.cuh"
@@ -541,36 +543,7 @@ class CudaBackend final : public ComputeBackend {
   [[nodiscard]] ContactGraph find_cell_contacts(const WorldState& state,
                                                 const ContactParameters& parameters) override {
     activate_device();
-    validate_contact_parameters(parameters);
-    const auto geometry = state.geometry_state();
-    if (geometry.size() == 0) {
-      return ContactGraph{};
-    }
-    if (geometry.size() > std::numeric_limits<std::uint32_t>::max()) {
-      throw std::overflow_error("CUDA contact launch exceeds the uint32 cell index space");
-    }
-    const auto candidates = find_cell_contact_candidates(state, parameters);
-    if (candidates.empty()) {
-      return ContactGraph(geometry.size(), {});
-    }
-    if (candidates.size() > std::numeric_limits<std::uint32_t>::max() / 2) {
-      throw std::overflow_error("CUDA contact candidates exceed the uint32 scan space");
-    }
-
-    ensure_contact_cell_capacity(geometry.size());
-    ensure_contact_candidate_capacity(candidates.size());
-    ensure_contact_pair_capacity(candidates.size());
-    upload_contact_cells(geometry);
-    upload_contact_candidates(candidates);
-    const auto candidate_count = static_cast<std::uint32_t>(candidates.size());
-    const auto contact_count = count_contacts(candidate_count, parameters);
-    if (contact_count == 0) {
-      return ContactGraph(geometry.size(), {});
-    }
-
-    ensure_contact_output_capacity(contact_count);
-    fill_contacts(candidate_count, parameters);
-    return download_contacts(geometry.size(), contact_count);
+    return cuda::cell_contacts(state, parameters, stream_);
   }
 
   [[nodiscard]] ExternalContactGraph find_external_contacts(
@@ -604,46 +577,23 @@ class CudaBackend final : public ComputeBackend {
       const ContactSystem& system, std::span<const float> initial_multipliers,
       const ContactSolveParameters& parameters) override {
     activate_device();
-    validate_contact_system(system);
-    if (initial_multipliers.size() != system.rows.size()) {
-      throw std::invalid_argument("contact multiplier count does not match the contact rows");
-    }
-    for (const auto multiplier : initial_multipliers) {
-      if (!std::isfinite(multiplier) || multiplier < 0.0F) {
-        throw std::invalid_argument("contact multipliers must be finite and non-negative");
-      }
-    }
-    if (!std::isfinite(parameters.tolerance) || parameters.tolerance <= 0.0F) {
-      throw std::invalid_argument("contact solve tolerance must be finite and positive");
-    }
-
+    const auto plan = detail::plan_contact_solve(system, initial_multipliers, parameters.tolerance);
     ContactSolveResult result;
     result.multipliers.assign(initial_multipliers.begin(), initial_multipliers.end());
-    // An incidence entry packs a row index with one bit for the row's side.
-    if (system.bodies.size() >= std::numeric_limits<std::uint32_t>::max() ||
-        system.rows.size() > std::numeric_limits<std::uint32_t>::max() / 2) {
-      throw std::overflow_error("CUDA contact dynamics exceeds the uint32 index space");
-    }
-    const cuda::ContactSolveGpu solve{
-        .dt = system.dt,
-        .law = static_cast<std::uint32_t>(system.growth.law),
-        .sensitivity = system.growth.sensitivity,
-        .free_load = system.growth.free_load,
-        .stall_load = system.growth.stall_load,
-        .row_count = static_cast<std::uint32_t>(system.rows.size()),
-        .body_count = static_cast<std::uint32_t>(system.bodies.size()),
-    };
+    const auto solve = as_cuda<cuda::device::ContactSolveData>(plan.data);
     if (solve.body_count == 0) {
       return result;
     }
+    ensure_contact_dynamics_capacity(solve.body_count, std::max<std::uint32_t>(solve.row_count, 1));
+    upload_contact_plan(plan);
+    contact_state_.reserve(1, "contact solve state");
     if (solve.row_count == 0) {
       // Without contacts every cell moves with its drift and grows freely.
-      ensure_contact_dynamics_capacity(solve.body_count, 1);
-      upload_contact_system(system, result.multipliers);
-      cuda::launch_contact_respond(
-          contact_rows_.data(), contact_bodies_.data(), contact_multipliers_[0].data(),
-          contact_incidence_offsets_.data(), contact_incidence_entries_.data(),
-          contact_response_.data(), solve, stream_);
+      cuda::launch_contact_respond(contact_rows_.data(), contact_bodies_.data(),
+                                   contact_multipliers_[0].data(), contact_gaps_[0].data(),
+                                   contact_incidence_offsets_.data(),
+                                   contact_incidence_entries_.data(), contact_response_.data(),
+                                   contact_state_.data(), solve, 0, stream_);
       check_cuda(cudaGetLastError(), "failed to launch the CUDA contact-respond kernel");
       result.response = download_contact_response(solve.body_count);
       return result;
@@ -652,84 +602,53 @@ class CudaBackend final : public ComputeBackend {
     if (!std::isfinite(bound) || bound <= 0.0F) {
       throw std::invalid_argument("contact system has no positive diagonal");
     }
-
-    ensure_contact_dynamics_capacity(solve.body_count, solve.row_count);
-    upload_contact_system(system, result.multipliers);
+    const auto first_step_length = 1.0F / bound;
     if (solve.row_count <= contact_solve_block_rows) {
       // One block runs the whole solve, so the host waits once.
-      contact_state_.reserve(1, "contact solve state");
       cuda::launch_contact_solve(
           contact_rows_.data(), contact_bodies_.data(), contact_multipliers_[0].data(),
           contact_multipliers_[1].data(), contact_gaps_[0].data(), contact_gaps_[1].data(),
           contact_incidence_offsets_.data(), contact_incidence_entries_.data(),
-          contact_response_.data(), contact_state_.data(), solve, parameters.tolerance,
-          parameters.max_iterations, 1.0F / bound, stream_);
+          contact_response_.data(), contact_state_.data(), solve, parameters.max_iterations,
+          first_step_length, stream_);
       check_cuda(cudaGetLastError(), "failed to launch the CUDA contact-solve kernel");
-      cuda::ContactSolveStateGpu state{};
-      check_cuda(cudaMemcpyAsync(&state, contact_state_.data(), sizeof(state),
-                                 cudaMemcpyDeviceToHost, stream_),
-                 "failed to download the CUDA contact solve state");
-      check_cuda(cudaStreamSynchronize(stream_), "CUDA contact solve failed");
-      result.report = detail::device_contact_solve_report(state.iterations, state.residual,
-                                                          parameters.tolerance);
-      copy_to_host(result.multipliers, contact_multipliers_[state.iterations % 2],
-                   "failed to download CUDA contact multipliers");
-      result.response = download_contact_response(solve.body_count);
-      return result;
+    } else {
+      // A step at a time over the whole device, a batch of steps per wait.
+      // The device stops itself when the solve is done, so the steps left in
+      // a batch do nothing.
+      float4* const partials[2] = {contact_reduce_[0].data(), contact_reduce_[1].data()};
+      std::size_t current = 0;
+      const auto encode = [&](std::uint32_t project, std::uint32_t initial, float first) {
+        const auto next = 1 - current;
+        cuda::launch_contact_respond(
+            contact_rows_.data(), contact_bodies_.data(), contact_multipliers_[current].data(),
+            contact_gaps_[current].data(), contact_incidence_offsets_.data(),
+            contact_incidence_entries_.data(), contact_response_.data(), contact_state_.data(),
+            solve, project, stream_);
+        cuda::launch_contact_terms(contact_rows_.data(), contact_response_.data(),
+                                   contact_multipliers_[current].data(),
+                                   contact_gaps_[current].data(), contact_multipliers_[next].data(),
+                                   contact_gaps_[next].data(), partials, contact_state_.data(),
+                                   solve, initial, first, parameters.max_iterations, stream_);
+        check_cuda(cudaGetLastError(), "failed to launch the CUDA contact step kernels");
+      };
+      encode(0, 1, first_step_length);
+      for (;;) {
+        for (std::uint32_t index = 0; index < contact_solve_batch; ++index) {
+          encode(1, 0, 0.0F);
+          current = 1 - current;
+        }
+        if (read_contact_state().done != 0) {
+          break;
+        }
+      }
     }
-
-    // The multipliers and their gaps live in the buffer pair `current` names;
-    // each step writes the other pair. The solve's state stays on the device,
-    // so the host waits once for each batch of steps.
-    std::uint32_t current = 0;
-    std::uint32_t taken_total = 0;
-    contact_state_.reserve(1, "contact solve state");
-    float* const multipliers[2] = {contact_multipliers_[0].data(), contact_multipliers_[1].data()};
-    float* const gaps[2] = {contact_gaps_[0].data(), contact_gaps_[1].data()};
-    const auto read_state = [&] {
-      cuda::ContactSolveStateGpu state{};
-      check_cuda(cudaMemcpyAsync(&state, contact_state_.data(), sizeof(state),
-                                 cudaMemcpyDeviceToHost, stream_),
-                 "failed to download the CUDA contact solve state");
-      check_cuda(cudaStreamSynchronize(stream_), "CUDA contact solve failed");
-      return state;
-    };
-    const detail::ContactSolverOperations operations{
-        .initialize =
-            [&](float first_step_length) {
-              const auto residual = evaluate_contact_step(solve, 0, 0, true).residual;
-              const cuda::ContactSolveStateGpu state{
-                  .step_length = first_step_length,
-                  .residual = residual,
-                  .iterations = 0,
-                  .done = !(residual > parameters.tolerance) || !std::isfinite(residual) ? 1U : 0U,
-              };
-              check_cuda(cudaMemcpyAsync(contact_state_.data(), &state, sizeof(state),
-                                         cudaMemcpyHostToDevice, stream_),
-                         "failed to upload the CUDA contact solve state");
-              return residual;
-            },
-        .iterate =
-            [&](std::uint32_t count) {
-              cuda::launch_contact_steps(
-                  count, current, contact_rows_.data(), contact_bodies_.data(), multipliers, gaps,
-                  contact_incidence_offsets_.data(), contact_incidence_entries_.data(),
-                  contact_response_.data(), contact_reduce_[0].data(), contact_state_.data(), solve,
-                  parameters.tolerance, stream_);
-              check_cuda(cudaGetLastError(), "failed to launch the CUDA contact step kernels");
-              const auto state = read_state();
-              const auto taken = state.iterations - taken_total;
-              taken_total = state.iterations;
-              current = (current + taken) % 2;
-              return detail::ContactSolverProgress{.iterations = taken, .residual = state.residual};
-            },
-        .batch = contact_solve_batch,
-    };
-    result.report = detail::solve_contact_system(operations, 1.0F / bound, parameters);
-    copy_to_host(result.multipliers, contact_multipliers_[current],
+    const auto state = read_contact_state();
+    result.report =
+        detail::device_contact_solve_report(state.iterations, state.residual, parameters.tolerance);
+    copy_to_host(result.multipliers, contact_multipliers_[state.iterations % 2],
                  "failed to download CUDA contact multipliers");
     check_cuda(cudaStreamSynchronize(stream_), "CUDA contact multiplier download failed");
-    // The respond kernel last ran on the multipliers the solve returns.
     result.response = download_contact_response(solve.body_count);
     return result;
   }
@@ -801,181 +720,6 @@ class CudaBackend final : public ComputeBackend {
     species_outputs_.reserve(species_count, "species rate outputs");
     species_workspace_.reserve(workspace_count, "species rate workspace");
     species_error_.reserve(1, "species error flag");
-  }
-
-  void ensure_contact_cell_capacity(std::size_t count) {
-    contact_ids_.reserve(count, "contact cell IDs");
-    contact_centers_.reserve(count, "contact cell centers");
-    contact_axes_.reserve(count, "contact cell axes");
-    contact_geometry_.reserve(count, "contact cell geometry");
-  }
-
-  void ensure_contact_pair_capacity(std::size_t count) {
-    contact_counts_.reserve(count, "contact counts");
-    contact_scan_a_.reserve(count, "contact scan A");
-    contact_scan_b_.reserve(count, "contact scan B");
-  }
-
-  void ensure_contact_candidate_capacity(std::size_t count) {
-    contact_candidates_.reserve(count, "contact candidates");
-  }
-
-  void ensure_contact_output_capacity(std::size_t count) {
-    contact_first_ids_.reserve(count, "contact first IDs");
-    contact_second_ids_.reserve(count, "contact second IDs");
-    contact_first_slots_.reserve(count, "contact first slots");
-    contact_second_slots_.reserve(count, "contact second slots");
-    contact_ordinals_.reserve(count, "contact ordinals");
-    contact_points_.reserve(count, "contact points");
-    contact_normals_.reserve(count, "contact normals");
-    contact_separations_.reserve(count, "contact separations");
-    contact_weights_.reserve(count, "contact weights");
-  }
-
-  void upload_contact_cells(const CellGeometryView& geometry) {
-    std::vector<float4> centers(geometry.size());
-    std::vector<float4> axes(geometry.size());
-    std::vector<float4> shapes(geometry.size());
-    for (std::size_t index = 0; index < geometry.size(); ++index) {
-      centers[index] = make_float4(geometry.position_x[index], geometry.position_y[index],
-                                   geometry.position_z[index], 0.0F);
-      axes[index] = make_float4(geometry.direction_x[index], geometry.direction_y[index],
-                                geometry.direction_z[index], 0.0F);
-      shapes[index] = make_float4(geometry.lengths[index], geometry.radii[index], 0.0F, 0.0F);
-    }
-
-    check_cuda(cudaMemcpyAsync(contact_ids_.data(), geometry.ids.data(), geometry.ids.size_bytes(),
-                               cudaMemcpyHostToDevice, stream_),
-               "failed to upload CUDA contact cell IDs");
-    check_cuda(cudaMemcpyAsync(contact_centers_.data(), centers.data(),
-                               centers.size() * sizeof(float4), cudaMemcpyHostToDevice, stream_),
-               "failed to upload CUDA contact cell centers");
-    check_cuda(cudaMemcpyAsync(contact_axes_.data(), axes.data(), axes.size() * sizeof(float4),
-                               cudaMemcpyHostToDevice, stream_),
-               "failed to upload CUDA contact cell axes");
-    check_cuda(cudaMemcpyAsync(contact_geometry_.data(), shapes.data(),
-                               shapes.size() * sizeof(float4), cudaMemcpyHostToDevice, stream_),
-               "failed to upload CUDA contact cell geometry");
-    check_cuda(cudaStreamSynchronize(stream_), "CUDA contact cell upload failed");
-  }
-
-  void upload_contact_candidates(std::span<const ContactCandidate> candidates) {
-    std::vector<uint2> values;
-    values.reserve(candidates.size());
-    for (const auto& candidate : candidates) {
-      values.push_back(make_uint2(candidate.first_slot, candidate.second_slot));
-    }
-    check_cuda(cudaMemcpyAsync(contact_candidates_.data(), values.data(),
-                               values.size() * sizeof(uint2), cudaMemcpyHostToDevice, stream_),
-               "failed to upload CUDA contact candidates");
-    check_cuda(cudaStreamSynchronize(stream_), "CUDA contact candidate upload failed");
-  }
-
-  void scan_contact_counts(std::uint32_t element_count) {
-    const std::uint32_t* scan_input = contact_counts_.data();
-    std::uint32_t* scan_output = contact_scan_a_.data();
-    std::uint32_t offset = 1;
-    while (offset < element_count) {
-      cuda::launch_inclusive_scan_step(scan_input, scan_output, offset, element_count, stream_);
-      check_cuda(cudaGetLastError(), "failed to launch the CUDA contact-scan kernel");
-      scan_input = scan_output;
-      scan_output =
-          scan_output == contact_scan_a_.data() ? contact_scan_b_.data() : contact_scan_a_.data();
-      if (offset > element_count / 2) {
-        break;
-      }
-      offset *= 2;
-    }
-    contact_inclusive_counts_ = scan_input;
-  }
-
-  [[nodiscard]] std::uint32_t download_contact_count(std::uint32_t pair_count,
-                                                     const char* operation) {
-    std::uint32_t contact_count = 0;
-    check_cuda(cudaMemcpyAsync(&contact_count, contact_inclusive_counts_ + pair_count - 1,
-                               sizeof(contact_count), cudaMemcpyDeviceToHost, stream_),
-               "failed to download the CUDA contact count");
-    check_cuda(cudaStreamSynchronize(stream_), operation);
-    return contact_count;
-  }
-
-  [[nodiscard]] std::uint32_t count_contacts(std::uint32_t candidate_count,
-                                             const ContactParameters& parameters) {
-    const cuda::ContactParametersGpu gpu_parameters{
-        .activation_margin = parameters.activation_margin,
-        .parallel_sine_threshold = parameters.parallel_sine_threshold,
-        .degeneracy_epsilon = parameters.degeneracy_epsilon,
-    };
-    cuda::launch_contact_count(contact_ids_.data(), contact_centers_.data(), contact_axes_.data(),
-                               contact_geometry_.data(), contact_candidates_.data(),
-                               contact_counts_.data(), gpu_parameters, candidate_count, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA contact-count kernel");
-    scan_contact_counts(candidate_count);
-    return download_contact_count(candidate_count, "CUDA contact count or scan failed");
-  }
-
-  void fill_contacts(std::uint32_t candidate_count, const ContactParameters& parameters) {
-    const cuda::ContactParametersGpu gpu_parameters{
-        .activation_margin = parameters.activation_margin,
-        .parallel_sine_threshold = parameters.parallel_sine_threshold,
-        .degeneracy_epsilon = parameters.degeneracy_epsilon,
-    };
-    cuda::launch_contact_fill(
-        contact_ids_.data(), contact_centers_.data(), contact_axes_.data(),
-        contact_geometry_.data(), contact_candidates_.data(), contact_counts_.data(),
-        contact_inclusive_counts_, contact_first_ids_.data(), contact_second_ids_.data(),
-        contact_first_slots_.data(), contact_second_slots_.data(), contact_ordinals_.data(),
-        contact_points_.data(), contact_normals_.data(), contact_separations_.data(),
-        contact_weights_.data(), gpu_parameters, candidate_count, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA contact-fill kernel");
-  }
-
-  [[nodiscard]] ContactGraph download_contacts(std::size_t cell_count,
-                                               std::uint32_t contact_count) {
-    std::vector<std::uint64_t> first_ids(contact_count);
-    std::vector<std::uint64_t> second_ids(contact_count);
-    std::vector<std::uint32_t> first_slots(contact_count);
-    std::vector<std::uint32_t> second_slots(contact_count);
-    std::vector<std::uint32_t> ordinals(contact_count);
-    std::vector<float4> points(contact_count);
-    std::vector<float4> normals(contact_count);
-    std::vector<float> separations(contact_count);
-    std::vector<float> weights(contact_count);
-
-    copy_to_host(first_ids, contact_first_ids_, "failed to download CUDA contact first IDs");
-    copy_to_host(second_ids, contact_second_ids_, "failed to download CUDA contact second IDs");
-    copy_to_host(first_slots, contact_first_slots_, "failed to download CUDA contact first slots");
-    copy_to_host(second_slots, contact_second_slots_,
-                 "failed to download CUDA contact second slots");
-    copy_to_host(ordinals, contact_ordinals_, "failed to download CUDA contact ordinals");
-    copy_to_host(points, contact_points_, "failed to download CUDA contact points");
-    copy_to_host(normals, contact_normals_, "failed to download CUDA contact normals");
-    copy_to_host(separations, contact_separations_, "failed to download CUDA contact separations");
-    copy_to_host(weights, contact_weights_, "failed to download CUDA contact weights");
-    check_cuda(cudaStreamSynchronize(stream_), "CUDA contact fill or download failed");
-
-    std::vector<CellContact> contacts;
-    contacts.reserve(contact_count);
-    for (std::uint32_t index = 0; index < contact_count; ++index) {
-      if (ordinals[index] > 1) {
-        throw std::runtime_error("CUDA contact kernel produced an invalid ordinal");
-      }
-      contacts.push_back({
-          .first_id = first_ids[index],
-          .second_id = second_ids[index],
-          .first_slot = first_slots[index],
-          .second_slot = second_slots[index],
-          .ordinal = static_cast<std::uint8_t>(ordinals[index]),
-          .point_on_first = {points[index].x, points[index].y, points[index].z},
-          .normal = {normals[index].x, normals[index].y, normals[index].z},
-          .signed_separation = separations[index],
-          .weight = weights[index],
-      });
-    }
-    std::ranges::sort(contacts, {}, [](const CellContact& contact) {
-      return std::tuple{contact.first_id, contact.second_id, contact.ordinal};
-    });
-    return ContactGraph(cell_count, std::move(contacts));
   }
 
   // What the transport kernels are told of the grid on the device.
@@ -1255,110 +999,51 @@ class CudaBackend final : public ComputeBackend {
     contact_incidence_offsets_.reserve(body_count + 1, "contact incidence offsets");
     contact_rows_.reserve(row_count, "contact rows");
     contact_incidence_entries_.reserve(row_count * 2, "contact incidence entries");
-    contact_terms_.reserve(row_count, "contact step terms");
+    const auto partials =
+        (row_count + shared::contact_reduction_width - 1) / shared::contact_reduction_width;
     for (std::size_t index = 0; index < 2; ++index) {
       contact_multipliers_[index].reserve(row_count, "contact multipliers");
       contact_gaps_[index].reserve(row_count, "contact gaps");
-      contact_reduce_[index].reserve(row_count, "contact reduction");
+      contact_reduce_[index].reserve(partials, "contact partial sums");
     }
   }
 
-  void upload_contact_system(const ContactSystem& system,
-                             const std::vector<float>& initial_multipliers) {
-    const auto body_count = system.bodies.size();
-    std::vector<cuda::ContactRowGpu> rows(system.rows.size());
-    std::vector<std::uint32_t> offsets(body_count + 1, 0U);
-    for (std::size_t index = 0; index < system.rows.size(); ++index) {
-      const auto& row = system.rows[index];
-      const auto& first = row.first_jacobian;
-      const auto& second = row.second_jacobian;
-      rows[index] = {
-          .first_linear = make_float4(first[0], first[1], first[2], row.first_length_lever),
-          .first_angular = make_float4(first[3], first[4], first[5], row.offset),
-          .second_linear = make_float4(second[0], second[1], second[2], row.second_length_lever),
-          .second_angular = make_float4(second[3], second[4], second[5], row.compliance),
-          .first_slot = row.first_slot,
-          .second_slot = row.second_slot,
-          .padding0 = 0,
-          .padding1 = 0,
-      };
-      ++offsets[row.first_slot + 1];
-      if (row.second_slot != invalid_slot) {
-        ++offsets[row.second_slot + 1];
-      }
-    }
-    for (std::size_t body = 0; body < body_count; ++body) {
-      offsets[body + 1] += offsets[body];
-    }
-    std::vector<std::uint32_t> entries(offsets[body_count]);
-    std::vector<std::uint32_t> cursors(offsets.begin(), offsets.end() - 1);
-    for (std::size_t index = 0; index < system.rows.size(); ++index) {
-      const auto& row = system.rows[index];
-      const auto entry = static_cast<std::uint32_t>(index) << 1U;
-      entries[cursors[row.first_slot]++] = entry;
-      if (row.second_slot != invalid_slot) {
-        entries[cursors[row.second_slot]++] = entry | 1U;
-      }
-    }
-    std::vector<cuda::ContactBodyGpu> bodies(body_count);
-    for (std::size_t body = 0; body < body_count; ++body) {
-      const auto& source = system.bodies[body];
-      bodies[body] = {
-          .axis_mobility = make_float4(source.axis.x, source.axis.y, source.axis.z,
-                                       source.translational_mobility),
-          .rates = make_float4(source.transverse_mobility, source.axial_mobility,
-                               source.length_rate, 0.0F),
-          .drift_linear = make_float4(source.drift[0], source.drift[1], source.drift[2], 0.0F),
-          .drift_angular = make_float4(source.drift[3], source.drift[4], source.drift[5], 0.0F),
-      };
-    }
-    copy_to_device(contact_rows_, rows, "failed to upload CUDA contact rows");
-    copy_to_device(contact_bodies_, bodies, "failed to upload CUDA contact bodies");
-    copy_to_device(contact_incidence_offsets_, offsets,
-                   "failed to upload CUDA contact incidence offsets");
-    copy_to_device(contact_incidence_entries_, entries,
-                   "failed to upload CUDA contact incidence entries");
-    copy_to_device(contact_multipliers_[0], initial_multipliers,
-                   "failed to upload CUDA contact multipliers");
-    check_cuda(cudaStreamSynchronize(stream_), "CUDA contact system upload failed");
+  // The same bytes as a host-side shared structure, in its CUDA spelling.
+  template <typename Cuda, typename Host>
+  [[nodiscard]] static Cuda as_cuda(const Host& value) {
+    static_assert(sizeof(Cuda) == sizeof(Host));
+    Cuda result;
+    std::memcpy(&result, &value, sizeof(result));
+    return result;
   }
 
-  // Evaluates the response to the multipliers in pair `target`, then their
-  // gaps and step terms against pair `previous`, and reduces the terms.
-  [[nodiscard]] detail::ContactSolverSums evaluate_contact_step(const cuda::ContactSolveGpu& solve,
-                                                                std::size_t target,
-                                                                std::size_t previous,
-                                                                bool initial) {
-    cuda::launch_contact_respond(
-        contact_rows_.data(), contact_bodies_.data(), contact_multipliers_[target].data(),
-        contact_incidence_offsets_.data(), contact_incidence_entries_.data(),
-        contact_response_.data(), solve, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA contact-respond kernel");
-    cuda::launch_contact_gaps(contact_rows_.data(), contact_response_.data(),
-                              contact_multipliers_[target].data(), contact_gaps_[target].data(),
-                              contact_multipliers_[previous].data(), contact_gaps_[previous].data(),
-                              contact_terms_.data(), solve, initial, stream_);
-    check_cuda(cudaGetLastError(), "failed to launch the CUDA contact-gaps kernel");
-    const float4* input = contact_terms_.data();
-    std::size_t output = 0;
-    auto element_count = solve.row_count;
-    while (element_count > 1) {
-      cuda::launch_contact_reduce(input, contact_reduce_[output].data(), element_count, stream_);
-      check_cuda(cudaGetLastError(), "failed to launch the CUDA contact-reduce kernel");
-      input = contact_reduce_[output].data();
-      output = 1 - output;
-      element_count = (element_count + 1) / 2;
-    }
-    float4 reduced{};
-    check_cuda(cudaMemcpyAsync(&reduced, input, sizeof(reduced), cudaMemcpyDeviceToHost, stream_),
-               "failed to download a CUDA contact reduction");
-    check_cuda(cudaStreamSynchronize(stream_), "CUDA contact step failed");
-    return {
-        .step_dot_step = reduced.x,
-        .step_dot_change = reduced.y,
-        .change_dot_change = reduced.z,
-        .residual = reduced.w,
-    };
+  template <typename Cuda, typename Host>
+  void upload_bytes(CudaBuffer<Cuda>& destination, const std::vector<Host>& source,
+                    const char* operation) {
+    static_assert(sizeof(Cuda) == sizeof(Host));
+    check_cuda(cudaMemcpyAsync(destination.data(), source.data(), source.size() * sizeof(Host),
+                               cudaMemcpyHostToDevice, stream_),
+               operation);
+  }
+
+  void upload_contact_plan(const detail::ContactSolvePlan& plan) {
+    upload_bytes(contact_rows_, plan.rows, "failed to upload CUDA contact rows");
+    upload_bytes(contact_bodies_, plan.bodies, "failed to upload CUDA contact bodies");
+    upload_bytes(contact_incidence_offsets_, plan.incidence_offsets,
+                 "failed to upload CUDA contact incidence offsets");
+    upload_bytes(contact_incidence_entries_, plan.incidence_entries,
+                 "failed to upload CUDA contact incidence entries");
+    upload_bytes(contact_multipliers_[0], plan.multipliers,
+                 "failed to upload CUDA contact multipliers");
+  }
+
+  [[nodiscard]] cuda::device::ContactSolveState read_contact_state() {
+    cuda::device::ContactSolveState state{};
+    check_cuda(cudaMemcpyAsync(&state, contact_state_.data(), sizeof(state), cudaMemcpyDeviceToHost,
+                               stream_),
+               "failed to download the CUDA contact solve state");
+    check_cuda(cudaStreamSynchronize(stream_), "CUDA contact solve failed");
+    return state;
   }
 
   template <typename T>
@@ -1372,9 +1057,9 @@ class CudaBackend final : public ComputeBackend {
 
   [[nodiscard]] ContactResponse download_contact_response(std::uint32_t body_count) {
     std::vector<device::ContactResponse> packed(body_count);
-    static_assert(sizeof(device::ContactResponse) == sizeof(cuda::ContactResponseGpu));
+    static_assert(sizeof(device::ContactResponse) == sizeof(cuda::device::ContactResponse));
     check_cuda(cudaMemcpyAsync(packed.data(), contact_response_.data(),
-                               packed.size() * sizeof(cuda::ContactResponseGpu),
+                               packed.size() * sizeof(cuda::device::ContactResponse),
                                cudaMemcpyDeviceToHost, stream_),
                "failed to download the CUDA contact response");
     check_cuda(cudaStreamSynchronize(stream_), "CUDA contact response download failed");
@@ -1466,35 +1151,13 @@ class CudaBackend final : public ComputeBackend {
   CudaBuffer<float> coupled_grid_output_;
   CudaBuffer<std::uint32_t> coupled_error_;
 
-  CudaBuffer<std::uint64_t> contact_ids_;
-  CudaBuffer<float4> contact_centers_;
-  CudaBuffer<float4> contact_axes_;
-  CudaBuffer<float4> contact_geometry_;
-  CudaBuffer<uint2> contact_candidates_;
-
-  CudaBuffer<std::uint32_t> contact_counts_;
-  CudaBuffer<std::uint32_t> contact_scan_a_;
-  CudaBuffer<std::uint32_t> contact_scan_b_;
-  const std::uint32_t* contact_inclusive_counts_{nullptr};
-
-  CudaBuffer<std::uint64_t> contact_first_ids_;
-  CudaBuffer<std::uint64_t> contact_second_ids_;
-  CudaBuffer<std::uint32_t> contact_first_slots_;
-  CudaBuffer<std::uint32_t> contact_second_slots_;
-  CudaBuffer<std::uint32_t> contact_ordinals_;
-  CudaBuffer<float4> contact_points_;
-  CudaBuffer<float4> contact_normals_;
-  CudaBuffer<float> contact_separations_;
-  CudaBuffer<float> contact_weights_;
-
-  CudaBuffer<cuda::ContactRowGpu> contact_rows_;
-  CudaBuffer<cuda::ContactBodyGpu> contact_bodies_;
-  CudaBuffer<cuda::ContactResponseGpu> contact_response_;
-  CudaBuffer<cuda::ContactSolveStateGpu> contact_state_;
+  CudaBuffer<cuda::device::ContactRowData> contact_rows_;
+  CudaBuffer<cuda::device::ContactBodyData> contact_bodies_;
+  CudaBuffer<cuda::device::ContactResponse> contact_response_;
+  CudaBuffer<cuda::device::ContactSolveState> contact_state_;
   CudaBuffer<cuda::SignalSweepStateGpu> signal_sweep_state_;
   CudaBuffer<std::uint32_t> contact_incidence_offsets_;
   CudaBuffer<std::uint32_t> contact_incidence_entries_;
-  CudaBuffer<float4> contact_terms_;
   std::array<CudaBuffer<float>, 2> contact_multipliers_;
   std::array<CudaBuffer<float>, 2> contact_gaps_;
   std::array<CudaBuffer<float4>, 2> contact_reduce_;

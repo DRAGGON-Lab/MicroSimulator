@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "microsimulator/constraints.hpp"
+#include "microsimulator/contact_graph.hpp"
 #include "microsimulator/deposition.hpp"
 #include "microsimulator/mechanics.hpp"
 #include "microsimulator/signals.hpp"
@@ -15,7 +16,7 @@
 namespace microsimulator::metal {
 
 // The per-cell Metal kernels of one device: biomass deposition and its flow
-// closures, external contacts, and flow drift.
+// closures, cell and external contacts, and flow drift.
 class CellKernels {
  public:
   explicit CellKernels(std::uint32_t device_index);
@@ -33,6 +34,8 @@ class CellKernels {
   [[nodiscard]] std::vector<float> brinkman_drag(const SignalGridSpec& spec,
                                                  const BiomassDeposit& deposit,
                                                  const BiomassDragParameters& parameters);
+  [[nodiscard]] ContactGraph cell_contacts(const WorldState& state,
+                                           const ContactParameters& parameters);
   [[nodiscard]] ExternalContactGraph external_contacts(
       const WorldState& state, const ConstraintSet& constraints,
       const ConstraintContactParameters& parameters, bool every_face);

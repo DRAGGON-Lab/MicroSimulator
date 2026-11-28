@@ -8,6 +8,7 @@
 #include <numbers>
 #include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "backend_devices.hpp"
@@ -294,6 +295,60 @@ void run_free_colony(BackendKind backend, std::uint32_t device_index) {
 
 }  // namespace
 
+
+// A colony that fills a closed chamber follows the CPU's trajectory bit for
+// bit: contact detection, the solve, and the stepping between them run the
+// same operations on every backend.
+// A chamber filled by division over 300 steps. A backend repeats its own
+// trajectory exactly; its trajectory and the CPU's part ways at rounding
+// level and grow apart, so they are compared by what the colony does: it
+// fills the chamber to about the same population and stays inside it.
+void run_chamber_repeats_and_fills(BackendKind backend, std::uint32_t device_index) {
+  const auto run = [](BackendKind kind, std::uint32_t index) {
+    microsimulator::Simulation simulation(kind, 0, 0, index);
+    microsimulator::BoxConstraintInit chamber;
+    chamber.half_extents = {5.0F, 5.0F, 0.6F};
+    chamber.allowed_region = microsimulator::ConstraintRegion::inside;
+    simulation.add_box_constraint(chamber);
+    microsimulator::CellInit founder;
+    founder.length = 1.0F;
+    founder.radius = 0.4F;
+    simulation.add_cell(founder);
+    microsimulator::ContactDynamicsParameters parameters;
+    parameters.growth.law = GrowthLoadLaw::linear;
+    parameters.growth.stall_load = 2.0F;
+    std::uint32_t counter = 0;
+    std::vector<std::uint32_t> iterations;
+    for (int step = 0; step < 300; ++step) {
+      divide_long_cells(simulation, 2.0F, counter);
+      iterations.push_back(simulation.step(0.05F, parameters).report.iterations);
+    }
+    return std::pair{simulation.cells(), iterations};
+  };
+  const auto [cells, iterations] = run(backend, device_index);
+  const auto [repeated, repeated_iterations] = run(backend, device_index);
+  assert(iterations == repeated_iterations && cells.size() == repeated.size());
+  for (std::size_t index = 0; index < cells.size(); ++index) {
+    const auto& cell = cells[index];
+    const auto& other = repeated[index];
+    if (cell.id != other.id || cell.position.x != other.position.x ||
+        cell.position.y != other.position.y || cell.position.z != other.position.z ||
+        cell.direction.x != other.direction.x || cell.direction.y != other.direction.y ||
+        cell.direction.z != other.direction.z || cell.length != other.length) {
+      std::cerr << "chamber cell " << cell.id << " differs on a second run\n";
+      std::abort();
+    }
+  }
+  const auto reference = run(BackendKind::cpu, 0).first;
+  const auto population = static_cast<double>(cells.size());
+  const auto expected = static_cast<double>(reference.size());
+  assert(expected > 20 && std::abs(population - expected) <= 0.15 * expected);
+  for (const auto& cell : cells) {
+    const auto reach = 0.5F * cell.length + cell.radius;
+    assert(std::abs(cell.position.x) <= 5.0F + reach && std::abs(cell.position.y) <= 5.0F + reach);
+  }
+}
+
 int main() {
   microsimulator::test::for_each_backend_device(
       [](BackendKind backend, std::uint32_t device_index) {
@@ -315,6 +370,7 @@ int main() {
         run_empty_and_limited_solves(*solver);
         run_closed_chamber(backend, device_index);
         run_free_colony(backend, device_index);
+        run_chamber_repeats_and_fills(backend, device_index);
       });
   return 0;
 }

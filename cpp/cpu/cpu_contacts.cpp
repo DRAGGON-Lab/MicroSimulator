@@ -1,244 +1,174 @@
 #include <algorithm>
-#include <array>
-#include <cmath>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <tuple>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
+#include "core/cell_contact_plan.hpp"
 #include "core/parallel.hpp"
-#include "core/shared_constants.hpp"
+#include "cpu/cpu_scan.hpp"
+#include "cpu/kernels/cell_contacts.hpp"
 #include "microsimulator/contact_graph.hpp"
 
 namespace microsimulator {
 namespace {
 
-using shared::inverse_sqrt_two;
-
-struct Capsule {
-  CellId id;
-  Slot slot;
-  Vec3 center;
-  Vec3 axis;
-  float length;
-  float radius;
-};
-
-struct PointPair {
-  Vec3 first;
-  Vec3 second;
-};
-
-// The one or two contact points of a capsule pair.
-struct PointPairs {
-  std::array<PointPair, 2> pairs{};
-  std::size_t count{0};
-};
-
-// Candidate pairs handed to one thread at a time.
+// Cells and candidate pairs handed to one thread at a time.
+constexpr std::size_t cell_grain = 512;
 constexpr std::size_t pair_grain = 512;
 
-Capsule capsule_at(const CellGeometryView& state, std::size_t index) {
-  return {
-      .id = state.ids[index],
-      .slot = static_cast<Slot>(index),
-      .center = {state.position_x[index], state.position_y[index], state.position_z[index]},
-      .axis = {state.direction_x[index], state.direction_y[index], state.direction_z[index]},
-      .length = state.lengths[index],
-      .radius = state.radii[index],
-  };
-}
+struct Detection {
+  std::vector<device::uint2> candidates;
+  std::vector<device::CellContactRecord> records;
+};
 
-PointPair closest_points(const Capsule& first, const Capsule& second, float epsilon) {
-  const auto first_half = first.length * 0.5F;
-  const auto second_half = second.length * 0.5F;
-  const auto first_start = first.center - (first.axis * first_half);
-  const auto first_end = first.center + (first.axis * first_half);
-  const auto second_start = second.center - (second.axis * second_half);
-  const auto second_end = second.center + (second.axis * second_half);
-  const auto first_delta = first_end - first_start;
-  const auto second_delta = second_end - second_start;
-  const auto between_starts = first_start - second_start;
-  const auto first_length_squared = dot(first_delta, first_delta);
-  const auto second_length_squared = dot(second_delta, second_delta);
-  const auto second_projection = dot(second_delta, between_starts);
-
-  float first_parameter = 0.0F;
-  float second_parameter = 0.0F;
-  if (first_length_squared <= epsilon * epsilon && second_length_squared <= epsilon * epsilon) {
-    return {.first = first_start, .second = second_start};
+// The broad phase of cpu/kernels/cell_contacts.hpp.
+std::vector<device::uint2> broad_phase(detail::CellContactPlan& plan) {
+  const auto cells = static_cast<std::size_t>(plan.data.cell_count);
+  if (cells < 2) {
+    return {};
   }
-  if (first_length_squared <= epsilon * epsilon) {
-    second_parameter = std::clamp(second_projection / second_length_squared, 0.0F, 1.0F);
-  } else {
-    const auto first_projection = dot(first_delta, between_starts);
-    if (second_length_squared <= epsilon * epsilon) {
-      first_parameter = std::clamp(-first_projection / first_length_squared, 0.0F, 1.0F);
-    } else {
-      const auto cross_projection = dot(first_delta, second_delta);
-      const auto denominator =
-          (first_length_squared * second_length_squared) - (cross_projection * cross_projection);
-      const auto parallel_tolerance =
-          std::numeric_limits<float>::epsilon() * first_length_squared * second_length_squared;
-      if (denominator > parallel_tolerance) {
-        first_parameter = std::clamp(
-            ((cross_projection * second_projection) - (first_projection * second_length_squared)) /
-                denominator,
-            0.0F, 1.0F);
-      }
-      second_parameter =
-          (cross_projection * first_parameter + second_projection) / second_length_squared;
-      if (second_parameter < 0.0F) {
-        second_parameter = 0.0F;
-        first_parameter = std::clamp(-first_projection / first_length_squared, 0.0F, 1.0F);
-      } else if (second_parameter > 1.0F) {
-        second_parameter = 1.0F;
-        first_parameter =
-            std::clamp((cross_projection - first_projection) / first_length_squared, 0.0F, 1.0F);
-      }
-    }
-  }
-
-  return {
-      .first = first_start + (first_delta * first_parameter),
-      .second = second_start + (second_delta * second_parameter),
-  };
-}
-
-PointPairs contact_points(const Capsule& first, const Capsule& second,
-                          const ContactParameters& parameters) {
-  const auto axis_dot = std::clamp(dot(first.axis, second.axis), -1.0F, 1.0F);
-  const auto sine = std::sqrt(std::max(0.0F, 1.0F - (axis_dot * axis_dot)));
-  if (sine > parameters.parallel_sine_threshold || first.length <= parameters.degeneracy_epsilon ||
-      second.length <= parameters.degeneracy_epsilon) {
-    return {.pairs = {closest_points(first, second, parameters.degeneracy_epsilon)}, .count = 1};
-  }
-
-  const auto first_half = first.length * 0.5F;
-  const auto second_half = second.length * 0.5F;
-  const auto center_coordinate = dot(second.center - first.center, first.axis);
-  const auto projected_second_half = second_half * std::abs(axis_dot);
-  const auto overlap_begin = std::max(-first_half, center_coordinate - projected_second_half);
-  const auto overlap_end = std::min(first_half, center_coordinate + projected_second_half);
-  if (overlap_end - overlap_begin <= parameters.degeneracy_epsilon) {
-    return {.pairs = {closest_points(first, second, parameters.degeneracy_epsilon)}, .count = 1};
-  }
-
-  PointPairs result;
-  for (const auto first_parameter : {overlap_begin, overlap_end}) {
-    const auto point_on_first = first.center + (first.axis * first_parameter);
-    const auto second_parameter =
-        std::clamp(dot(point_on_first - second.center, second.axis), -second_half, second_half);
-    result.pairs[result.count++] = {
-        .first = point_on_first,
-        .second = second.center + (second.axis * second_parameter),
-    };
-  }
-  return result;
-}
-
-Vec3 deterministic_normal(const Capsule& first, const Capsule& second, const PointPair& points,
-                          float epsilon) {
-  const auto point_delta = points.second - points.first;
-  if (norm(point_delta) > epsilon) {
-    return normalized(point_delta);
-  }
-
-  const auto axes_cross = cross(first.axis, second.axis);
-  if (norm(axes_cross) > epsilon) {
-    return normalized(axes_cross);
-  }
-
-  const auto center_delta = second.center - first.center;
-  const auto transverse_center_delta = center_delta - (first.axis * dot(center_delta, first.axis));
-  if (norm(transverse_center_delta) > epsilon) {
-    return normalized(transverse_center_delta);
-  }
-
-  const std::array basis{Vec3{1.0F, 0.0F, 0.0F}, Vec3{0.0F, 1.0F, 0.0F}, Vec3{0.0F, 0.0F, 1.0F}};
-  const auto least_aligned =
-      std::ranges::min_element(basis, [&first](const Vec3& left, const Vec3& right) {
-        return std::abs(dot(first.axis, left)) < std::abs(dot(first.axis, right));
-      });
-  return normalized(cross(first.axis, *least_aligned));
-}
-
-ContactGraph contacts_for_candidates(const WorldState& state, const ContactParameters& parameters,
-                                     std::span<const ContactCandidate> candidates) {
-  const auto geometry = state.geometry_state();
-  std::vector<std::vector<CellContact>> pieces((candidates.size() + pair_grain - 1) / pair_grain);
-  detail::parallel_for(candidates.size(), pair_grain, [&](std::size_t begin, std::size_t end) {
-    auto& piece = pieces[begin / pair_grain];
-    for (std::size_t index = begin; index < end; ++index) {
-      const auto first = capsule_at(geometry, candidates[index].first_slot);
-      const auto second = capsule_at(geometry, candidates[index].second_slot);
-
-      const auto points = contact_points(first, second, parameters);
-      const auto weight = points.count == 2 ? inverse_sqrt_two : 1.0F;
-      for (std::size_t ordinal = 0; ordinal < points.count; ++ordinal) {
-        const auto& pair = points.pairs[ordinal];
-        const auto point_delta = pair.second - pair.first;
-        const auto separation = norm(point_delta) - (first.radius + second.radius);
-        if (separation >= parameters.activation_margin) {
-          continue;
-        }
-        const auto normal =
-            deterministic_normal(first, second, pair, parameters.degeneracy_epsilon);
-        piece.push_back({
-            .first_id = first.id,
-            .second_id = second.id,
-            .first_slot = first.slot,
-            .second_slot = second.slot,
-            .ordinal = static_cast<std::uint8_t>(ordinal),
-            .point_on_first = pair.first + (normal * first.radius),
-            .normal = normal,
-            .signed_separation = separation,
-            .weight = weight,
-        });
-      }
+  const auto* centers = plan.centers.data();
+  const auto* axes = plan.axes.data();
+  std::vector<device::float4> lower(cells);
+  std::vector<device::float4> upper(cells);
+  detail::parallel_for(cells, cell_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t cell = begin; cell < end; ++cell) {
+      device::cell_bounds(static_cast<std::uint32_t>(cell), plan.data, centers, axes, lower.data(),
+                          upper.data());
     }
   });
-  auto contacts = detail::concatenate(pieces);
-  // Candidates sorted by identifier yield contacts already in order.
-  const auto key = [](const CellContact& contact) {
-    return std::tuple{contact.first_id, contact.second_id, contact.ordinal};
-  };
-  if (!std::ranges::is_sorted(contacts, {}, key)) {
-    std::ranges::sort(contacts, {}, key);
+  // Pairwise levels of the largest-width reduction.
+  auto count = cells;
+  std::vector<device::float4> widths((count + 1) / 2);
+  detail::parallel_for(widths.size(), cell_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t index = begin; index < end; ++index) {
+      device::cell_width_leaf(static_cast<std::uint32_t>(index), static_cast<std::uint32_t>(count),
+                              lower.data(), upper.data(), widths.data());
+    }
+  });
+  count = widths.size();
+  std::vector<device::float4> next(widths.size());
+  while (count > 1) {
+    const auto half = (count + 1) / 2;
+    for (std::size_t index = 0; index < half; ++index) {
+      device::cell_width_pair(static_cast<std::uint32_t>(index), static_cast<std::uint32_t>(count),
+                              widths.data(), next.data());
+    }
+    std::swap(widths, next);
+    count = half;
   }
-  return ContactGraph(geometry.size(), std::move(contacts));
+
+  const auto buckets = static_cast<std::size_t>(plan.data.bucket_count);
+  std::vector<device::uint4> coordinates(cells);
+  std::vector<std::uint32_t> bucket_counts(buckets, 0);
+  detail::parallel_for(cells, cell_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t cell = begin; cell < end; ++cell) {
+      device::cell_grid_place(static_cast<std::uint32_t>(cell), plan.data, lower.data(),
+                              upper.data(), widths.data(), coordinates.data(),
+                              bucket_counts.data());
+    }
+  });
+  const auto bucket_ends = detail::inclusive_scan(std::move(bucket_counts));
+  std::vector<std::uint32_t> cursors(buckets, 0);
+  std::vector<std::uint32_t> members(cells);
+  detail::parallel_for(cells, cell_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t cell = begin; cell < end; ++cell) {
+      device::cell_grid_fill(static_cast<std::uint32_t>(cell), coordinates.data(),
+                             bucket_ends.data(), cursors.data(), members.data());
+    }
+  });
+
+  const auto* ids = plan.ids.data();
+  std::vector<std::uint32_t> counts(cells);
+  std::vector<device::uint2> candidates(1);
+  detail::parallel_for(cells, cell_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t cell = begin; cell < end; ++cell) {
+      counts[cell] = device::cell_candidate_count(
+          static_cast<std::uint32_t>(cell), plan.data, ids, lower.data(), upper.data(),
+          coordinates.data(), bucket_ends.data(), members.data(), candidates.data());
+    }
+  });
+  const auto ends = detail::inclusive_scan(std::move(counts));
+  plan.data.candidate_capacity = ends.back();
+  candidates.resize(std::max<std::size_t>(ends.back(), 1));
+  detail::parallel_for(cells, cell_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t cell = begin; cell < end; ++cell) {
+      device::cell_candidate_fill(static_cast<std::uint32_t>(cell), plan.data, ids, lower.data(),
+                                  upper.data(), coordinates.data(), bucket_ends.data(),
+                                  members.data(), ends.data(), candidates.data());
+    }
+  });
+  candidates.resize(ends.back());
+  return candidates;
+}
+
+// The narrow phase of cpu/kernels/cell_contacts.hpp over the candidates.
+std::vector<device::CellContactRecord> narrow_phase(detail::CellContactPlan& plan,
+                                                    const std::vector<device::uint2>& candidates) {
+  if (candidates.empty()) {
+    return {};
+  }
+  const auto total = static_cast<std::uint32_t>(candidates.size());
+  std::vector<std::uint32_t> counts(candidates.size());
+  detail::parallel_for(candidates.size(), pair_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t index = begin; index < end; ++index) {
+      counts[index] =
+          device::cell_pair_count(static_cast<std::uint32_t>(index), total, plan.data,
+                                  plan.centers.data(), plan.axes.data(), candidates.data());
+    }
+  });
+  const auto ends = detail::inclusive_scan(std::move(counts));
+  plan.data.contact_capacity = ends.back();
+  std::vector<device::CellContactRecord> records(std::max<std::size_t>(ends.back(), 1));
+  detail::parallel_for(candidates.size(), pair_grain, [&](std::size_t begin, std::size_t end) {
+    for (std::size_t index = begin; index < end; ++index) {
+      device::cell_pair_fill(static_cast<std::uint32_t>(index), total, plan.data,
+                             plan.centers.data(), plan.axes.data(), candidates.data(), ends.data(),
+                             records.data());
+    }
+  });
+  records.resize(ends.back());
+  return records;
 }
 
 }  // namespace
 
+std::vector<ContactCandidate> find_cell_contact_candidates(const WorldState& state,
+                                                           const ContactParameters& parameters) {
+  auto plan = detail::plan_cell_contacts(state, parameters);
+  const auto candidates = broad_phase(plan);
+  return detail::finish_cell_candidates(plan, candidates);
+}
+
 ContactGraph find_cell_contacts_cpu(const WorldState& state, const ContactParameters& parameters) {
-  const auto candidates = find_cell_contact_candidates(state, parameters);
-  return contacts_for_candidates(state, parameters, candidates);
+  auto plan = detail::plan_cell_contacts(state, parameters);
+  const auto candidates = broad_phase(plan);
+  const auto records = narrow_phase(plan, candidates);
+  return detail::finish_cell_contacts(plan, records);
 }
 
 ContactGraph find_cell_contacts_cpu_exhaustive(const WorldState& state,
                                                const ContactParameters& parameters) {
-  validate_contact_parameters(parameters);
-  const auto geometry = state.geometry_state();
-  std::vector<ContactCandidate> candidates;
-  if (geometry.size() > 1 &&
-      geometry.size() - 1 > std::numeric_limits<std::size_t>::max() / geometry.size()) {
+  auto plan = detail::plan_cell_contacts(state, parameters);
+  const auto cells = static_cast<std::size_t>(plan.data.cell_count);
+  if (cells > 1 && cells - 1 > std::numeric_limits<std::uint32_t>::max() / cells) {
     throw std::overflow_error("exhaustive contact candidate count overflow");
   }
-  const auto pair_count =
-      geometry.size() < 2 ? std::size_t{0} : geometry.size() * (geometry.size() - 1) / 2;
-  candidates.reserve(pair_count);
-  for (std::size_t first = 0; first < geometry.size(); ++first) {
-    for (std::size_t second = first + 1; second < geometry.size(); ++second) {
-      candidates.push_back(
-          geometry.ids[first] < geometry.ids[second]
-              ? ContactCandidate{static_cast<Slot>(first), static_cast<Slot>(second)}
-              : ContactCandidate{static_cast<Slot>(second), static_cast<Slot>(first)});
+  std::vector<device::uint2> candidates;
+  candidates.reserve(cells < 2 ? 0 : cells * (cells - 1) / 2);
+  for (std::size_t first = 0; first < cells; ++first) {
+    for (std::size_t second = first + 1; second < cells; ++second) {
+      const auto low = plan.ids[first] < plan.ids[second] ? first : second;
+      const auto high = low == first ? second : first;
+      candidates.push_back({static_cast<std::uint32_t>(low), static_cast<std::uint32_t>(high)});
     }
   }
-  return contacts_for_candidates(state, parameters, candidates);
+  const auto records = narrow_phase(plan, candidates);
+  return detail::finish_cell_contacts(plan, records);
 }
 
 }  // namespace microsimulator

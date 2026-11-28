@@ -11,17 +11,14 @@ Rod contact and its mechanics require irregular GPU work, dynamic topology, redu
 
 MicroSimulator represents a contact as a typed record with stable cell IDs, current compact slots, contact ordinal or centerline location, surface point, unit normal, signed separation, and row weight. External constraints use tagged plane, sphere, box, or cylinder references rather than sentinel cell IDs.
 
-The CPU reference performs an exhaustive pair search. It is intentionally simple and is the geometry oracle for small conformance scenarios.
+An exhaustive pair search on the CPU is the geometry oracle for conformance scenarios.
 
-Contact discovery uses a deterministic sweep-and-prune broad phase over capsule axis-aligned bounds. Each bound expands the centerline by its radius and half the activation margin, so overlap is a conservative prerequisite for the narrow-phase separation test. Bounds are sorted by minimum x coordinate and stable cell ID; candidates are emitted in stable-ID order. Sparse staging therefore scales with the number of overlapping bounds rather than allocating an `N x N` pair matrix.
+Every backend detects contacts between cells natively ([ADR 0030](0030-provider-interfaces.md)), in two phases, each a count, a prefix sum of the counts, and a fill:
 
-Metal and CUDA consume that candidate list through a native two-pass dynamic pipeline:
+1. The broad phase pads each capsule's axis-aligned box by its radius and half the activation margin, so overlap is a conservative prerequisite for the narrow-phase separation test. The boxes go into a hashed uniform grid whose boxes are at least as wide as the widest capsule box, so overlapping capsule boxes lie in the same or adjacent grid boxes. Each cell emits its partners of higher identifier from the 27 grid boxes about its own, in ascending identifier. A hash fits any spread of cells, and staging scales with the number of overlapping boxes rather than an `N x N` pair matrix.
+2. The narrow phase evaluates zero, one, or two contacts for each candidate.
 
-1. upload compact candidate slot pairs with the current cell arrays;
-2. count zero, one, or two narrow-phase contacts per candidate;
-3. scan the counts into offsets with native kernels;
-4. allocate or grow the contact arrays;
-5. fill the typed contact records with native kernels.
+Storage grows to the candidates and contacts a detection finds; a device detection that finds more than its buffers hold runs again with room for them.
 
 There is no scientific contact cap. Allocation failure is explicit. In deterministic mode, contacts are ordered by stable endpoint IDs and contact ordinal. Fast mode may use backend-native ordering, but consumers must not infer identity from contact-array position.
 
@@ -39,7 +36,7 @@ The public location type is `RodContactLocation`, and `ExternalContact.location`
 
 The Metal and CUDA implementations upload stable-ID-sorted tagged constraints and run native count/scan/fill pipelines over cell-constraint pairs. Each pair emits zero, one, or two location-tagged rows into dynamic storage.
 
-CPU, Metal, and CUDA own separate implementations of the contact geometry. They share contact fixtures, tolerances, and exact location-tag invariants. Metal uses Metal compute pipelines and MSL; CUDA uses CUDA C++ and the CUDA Runtime API.
+CPU, Metal, and CUDA implement the contact geometry natively. They share contact fixtures, tolerances, and exact location-tag invariants.
 
 ### Neighbor reporting
 
@@ -49,8 +46,8 @@ CPU, Metal, and CUDA own separate implementations of the contact geometry. They 
 
 1. Robust capsule geometry and an exhaustive CPU geometry oracle.
 2. Shared contact fixtures and a dynamic contact-graph API.
-3. Deterministic sweep-and-prune candidate staging.
-4. Native Metal and CUDA count/scan/fill pipelines.
+3. Deterministic hashed-grid candidate staging.
+4. Count/scan/fill pipelines on every backend.
 5. Typed plane, sphere, box, and cylinder constraint geometry.
 6. Full-centerline finite-obstacle contact fixtures, including clear endpoints with penetrating mid-spans.
 7. Native Metal external-constraint conformance.
@@ -62,5 +59,4 @@ This sequence isolates geometry disagreements before solver behavior can hide th
 
 - Pair staging scales with conservative spatial candidates and contact storage scales with actual topology rather than a per-cell maximum.
 - Stable cell identity survives compaction while kernels continue to use dense slots.
-- GPU implementations duplicate orchestration where native primitives differ.
 - Deterministic mode may require an ordering pass that fast mode can skip.

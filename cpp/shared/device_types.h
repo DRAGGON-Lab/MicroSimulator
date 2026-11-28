@@ -178,6 +178,33 @@ struct ExternalContactRecord {
   uint padding;
 };
 
+// The cells of a contact detection between cells and its parameters.
+// `bucket_count` is a power of two. Kernels write no candidate or contact
+// past its capacity.
+struct CellContactData {
+  uint cell_count;
+  uint bucket_count;
+  uint candidate_capacity;
+  uint contact_capacity;
+  float activation_margin;
+  float parallel_sine_threshold;
+  float degeneracy_epsilon;
+  float padding0;
+};
+
+// One contact between two cells: the point on the first cell's surface with
+// the separation in w, the unit normal from the first cell to the second with
+// the contact's weight in w, the two slots, and the contact's ordinal among
+// the pair's contact points.
+struct CellContactRecord {
+  float4 point;
+  float4 normal;
+  uint first;
+  uint second;
+  uint ordinal;
+  uint padding;
+};
+
 // The lattice and velocity field that flow drift samples, and the step it
 // takes. Faces are stored as SignalGridVelocityField stores them.
 struct FlowDriftData {

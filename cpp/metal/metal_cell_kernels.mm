@@ -2,6 +2,7 @@
 #import <Metal/Metal.h>
 
 #include "metal_cell_kernels.hpp"
+#include "metal_compile_options.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -13,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/cell_contact_plan.hpp"
 #include "core/deposition_plan.hpp"
 #include "core/device_types.hpp"
 #include "core/external_contact_plan.hpp"
@@ -40,21 +42,6 @@ id<MTLDevice> select_device(std::uint32_t device_index) {
     throw std::out_of_range("Metal device index is unavailable");
   }
   return devices[device_index];
-}
-
-// Safe math keeps isfinite meaningful, which the drift status relies on.
-MTLCompileOptions* safe_math_options() {
-  MTLCompileOptions* options = [MTLCompileOptions new];
-  if (@available(macOS 15.0, *)) {
-    options.mathMode = MTLMathModeSafe;
-    options.mathFloatingPointFunctions = MTLMathFloatingPointFunctionsPrecise;
-  } else {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    options.fastMathEnabled = NO;
-#pragma clang diagnostic pop
-  }
-  return options;
 }
 
 id<MTLComputePipelineState> make_pipeline(id<MTLDevice> device, id<MTLLibrary> library,
@@ -185,6 +172,16 @@ struct CellKernels::Impl {
   id<MTLComputePipelineState> external_fill;
   id<MTLComputePipelineState> drift_rates;
   id<MTLComputePipelineState> drift_advance;
+  id<MTLComputePipelineState> zero_values;
+  id<MTLComputePipelineState> cell_bounds;
+  id<MTLComputePipelineState> cell_width_leaf;
+  id<MTLComputePipelineState> cell_width_pair;
+  id<MTLComputePipelineState> cell_grid_place;
+  id<MTLComputePipelineState> cell_grid_fill;
+  id<MTLComputePipelineState> cell_candidate_count;
+  id<MTLComputePipelineState> cell_candidate_fill;
+  id<MTLComputePipelineState> cell_pair_count;
+  id<MTLComputePipelineState> cell_pair_fill;
 
   Buffer centers, radii, channels, solid, boxes, cell_weights, status, counts, scan_totals, cursors,
       entries, density, channel_density;
@@ -193,6 +190,13 @@ struct CellKernels::Impl {
       contact_records;
   Buffer drift_centers, drift_axes, drift_fixed, drift_solid, drift_x_faces, drift_y_faces,
       drift_z_faces, drift_output, drift_moved_centers, drift_moved_axes, drift_status;
+  Buffer cell_centers, cell_axes, cell_ids, cell_lower, cell_upper, cell_width_a, cell_width_b,
+      cell_coordinates, bucket_counts, bucket_cursors, bucket_scan_totals, bucket_members,
+      candidate_counts, candidate_scan_totals, candidates, pair_contact_counts,
+      pair_contact_scan_totals, cell_records;
+  // The candidates and contacts the cell contact buffers hold room for.
+  std::uint32_t candidate_capacity{0};
+  std::uint32_t contact_capacity{0};
   // The revision of the grid whose obstacles and velocity field the drift
   // buffers hold, and whether they hold any.
   std::uint64_t drift_revision{0};
@@ -224,6 +228,13 @@ struct CellKernels::Impl {
     [encoder setBuffer:drift_x_faces.get() offset:0 atIndex:4];
     [encoder setBuffer:drift_y_faces.get() offset:0 atIndex:5];
     [encoder setBuffer:drift_z_faces.get() offset:0 atIndex:6];
+  }
+
+  void encode_zero(id<MTLComputeCommandEncoder> encoder, id<MTLBuffer> values,
+                   std::uint32_t count) {
+    [encoder setBuffer:values offset:0 atIndex:0];
+    [encoder setBytes:&count length:sizeof(count) atIndex:1];
+    dispatch(encoder, zero_values, count);
   }
 
   // Encodes the inclusive prefix sum of the `count` values in `values`, in
@@ -263,6 +274,16 @@ CellKernels::CellKernels(std::uint32_t device_index) : impl_(std::make_unique<Im
     impl.external_fill = make_pipeline(impl.device, library, @"external_fill");
     impl.drift_rates = make_pipeline(impl.device, library, @"drift_rates");
     impl.drift_advance = make_pipeline(impl.device, library, @"drift_advance");
+    impl.zero_values = make_pipeline(impl.device, library, @"zero_values");
+    impl.cell_bounds = make_pipeline(impl.device, library, @"cell_bounds_kernel");
+    impl.cell_width_leaf = make_pipeline(impl.device, library, @"cell_width_leaf_kernel");
+    impl.cell_width_pair = make_pipeline(impl.device, library, @"cell_width_pair_kernel");
+    impl.cell_grid_place = make_pipeline(impl.device, library, @"cell_grid_place_kernel");
+    impl.cell_grid_fill = make_pipeline(impl.device, library, @"cell_grid_fill_kernel");
+    impl.cell_candidate_count = make_pipeline(impl.device, library, @"cell_candidate_count_kernel");
+    impl.cell_candidate_fill = make_pipeline(impl.device, library, @"cell_candidate_fill_kernel");
+    impl.cell_pair_count = make_pipeline(impl.device, library, @"cell_pair_count_kernel");
+    impl.cell_pair_fill = make_pipeline(impl.device, library, @"cell_pair_fill_kernel");
   }
 }
 
@@ -287,7 +308,10 @@ BiomassDeposit CellKernels::deposit(const SignalGridSpec& spec, const DepositCel
     const auto site_bytes = static_cast<std::size_t>(site_count) * sizeof(std::uint32_t);
     impl.counts.zero(impl.device, site_bytes, "deposit counts");
     impl.cursors.zero(impl.device, site_bytes, "deposit cursors");
-    impl.scan_totals.reserve(impl.device, scan_totals_bytes(site_count), "deposit scan");
+    impl.scan_totals.reserve(
+        impl.device,
+        scan_totals_bytes(static_cast<std::uint32_t>(site_bytes / sizeof(std::uint32_t))),
+        "deposit scan");
     // Each cell enters at most every site of its box.
     impl.entries.reserve(impl.device, plan.weight_count() * sizeof(std::uint32_t),
                          "deposit entries");
@@ -445,8 +469,10 @@ ExternalContactGraph CellKernels::external_contacts(const WorldState& state,
     impl.contact_constraints.write(impl.device, plan.constraints, "external constraints");
     const auto pair_bytes = pairs * sizeof(std::uint32_t);
     impl.pair_counts.reserve(impl.device, pair_bytes, "external contact counts");
-    impl.pair_scan_totals.reserve(impl.device, scan_totals_bytes(pair_count),
-                                  "external contact scan");
+    impl.pair_scan_totals.reserve(
+        impl.device,
+        scan_totals_bytes(static_cast<std::uint32_t>(pair_bytes / sizeof(std::uint32_t))),
+        "external contact scan");
     impl.contact_records.reserve(impl.device, capacity * sizeof(device::ExternalContactRecord),
                                  "external contact records");
 
@@ -483,6 +509,175 @@ ExternalContactGraph CellKernels::external_contacts(const WorldState& state,
   const auto* records =
       static_cast<const device::ExternalContactRecord*>(impl.contact_records.get().contents);
   return detail::finish_external_contacts(plan, {records, total});
+}
+
+ContactGraph CellKernels::cell_contacts(const WorldState& state,
+                                        const ContactParameters& parameters) {
+  auto plan = detail::plan_cell_contacts(state, parameters);
+  const auto cells = plan.data.cell_count;
+  if (cells < 2) {
+    return detail::finish_cell_contacts(plan, {});
+  }
+  auto& impl = *impl_;
+  const auto buckets = plan.data.bucket_count;
+  impl.candidate_capacity = std::max(impl.candidate_capacity, 8 * cells);
+  impl.contact_capacity = std::max(impl.contact_capacity, 2 * impl.candidate_capacity);
+  @autoreleasepool {
+    impl.cell_centers.write(impl.device, plan.centers, "cell contact centers");
+    impl.cell_axes.write(impl.device, plan.axes, "cell contact axes");
+    impl.cell_ids.write(impl.device, plan.ids, "cell contact ids");
+    const auto box_bytes = cells * sizeof(device::float4);
+    impl.cell_lower.reserve(impl.device, box_bytes, "cell boxes");
+    impl.cell_upper.reserve(impl.device, box_bytes, "cell boxes");
+    impl.cell_width_a.reserve(impl.device, box_bytes, "cell box widths");
+    impl.cell_width_b.reserve(impl.device, box_bytes, "cell box widths");
+    impl.cell_coordinates.reserve(impl.device, cells * sizeof(device::uint4), "cell grid boxes");
+    const auto bucket_bytes = buckets * sizeof(std::uint32_t);
+    impl.bucket_counts.reserve(impl.device, bucket_bytes, "grid bucket counts");
+    impl.bucket_cursors.reserve(impl.device, bucket_bytes, "grid bucket cursors");
+    impl.bucket_scan_totals.reserve(
+        impl.device,
+        scan_totals_bytes(static_cast<std::uint32_t>(bucket_bytes / sizeof(std::uint32_t))),
+        "grid bucket scan");
+    impl.bucket_members.reserve(impl.device, cells * sizeof(std::uint32_t), "grid members");
+    const auto cell_bytes = cells * sizeof(std::uint32_t);
+    impl.candidate_counts.reserve(impl.device, cell_bytes, "candidate counts");
+    impl.candidate_scan_totals.reserve(
+        impl.device,
+        scan_totals_bytes(static_cast<std::uint32_t>(cell_bytes / sizeof(std::uint32_t))),
+        "candidate scan");
+  }
+  // A detection that finds more candidates or contacts than the buffers hold
+  // runs again with room for them.
+  for (;;) {
+    plan.data.candidate_capacity = impl.candidate_capacity;
+    plan.data.contact_capacity = impl.contact_capacity;
+    std::uint32_t candidate_total = 0;
+    std::uint32_t contact_total = 0;
+    id<MTLBuffer> contact_ends = nil;
+    @autoreleasepool {
+      const auto pair_bytes = impl.candidate_capacity * sizeof(std::uint32_t);
+      impl.candidates.reserve(impl.device, impl.candidate_capacity * sizeof(device::uint2),
+                              "contact candidates");
+      impl.pair_contact_counts.reserve(impl.device, pair_bytes, "candidate contact counts");
+      impl.pair_contact_scan_totals.reserve(
+          impl.device,
+          scan_totals_bytes(static_cast<std::uint32_t>(pair_bytes / sizeof(std::uint32_t))),
+          "candidate contact scan");
+      impl.cell_records.reserve(impl.device,
+                                impl.contact_capacity * sizeof(device::CellContactRecord),
+                                "cell contact records");
+      id<MTLCommandBuffer> command = [impl.queue commandBuffer];
+      id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+      if (command == nil || encoder == nil) {
+        throw std::runtime_error("failed to create a Metal cell contact command");
+      }
+      impl.encode_zero(encoder, impl.bucket_counts.get(), buckets);
+      impl.encode_zero(encoder, impl.bucket_cursors.get(), buckets);
+      [encoder setBuffer:impl.cell_centers.get() offset:0 atIndex:0];
+      [encoder setBuffer:impl.cell_axes.get() offset:0 atIndex:1];
+      [encoder setBuffer:impl.cell_lower.get() offset:0 atIndex:2];
+      [encoder setBuffer:impl.cell_upper.get() offset:0 atIndex:3];
+      [encoder setBytes:&plan.data length:sizeof(plan.data) atIndex:4];
+      dispatch(encoder, impl.cell_bounds, cells);
+
+      auto width_count = cells;
+      [encoder setBuffer:impl.cell_lower.get() offset:0 atIndex:0];
+      [encoder setBuffer:impl.cell_upper.get() offset:0 atIndex:1];
+      [encoder setBuffer:impl.cell_width_a.get() offset:0 atIndex:2];
+      [encoder setBytes:&width_count length:sizeof(width_count) atIndex:3];
+      dispatch(encoder, impl.cell_width_leaf, (width_count + 1) / 2);
+      width_count = (width_count + 1) / 2;
+      id<MTLBuffer> widest = impl.cell_width_a.get();
+      id<MTLBuffer> spare = impl.cell_width_b.get();
+      while (width_count > 1) {
+        [encoder setBuffer:widest offset:0 atIndex:0];
+        [encoder setBuffer:spare offset:0 atIndex:1];
+        [encoder setBytes:&width_count length:sizeof(width_count) atIndex:2];
+        dispatch(encoder, impl.cell_width_pair, (width_count + 1) / 2);
+        width_count = (width_count + 1) / 2;
+        std::swap(widest, spare);
+      }
+
+      [encoder setBuffer:impl.cell_lower.get() offset:0 atIndex:0];
+      [encoder setBuffer:impl.cell_upper.get() offset:0 atIndex:1];
+      [encoder setBuffer:widest offset:0 atIndex:2];
+      [encoder setBuffer:impl.cell_coordinates.get() offset:0 atIndex:3];
+      [encoder setBuffer:impl.bucket_counts.get() offset:0 atIndex:4];
+      [encoder setBytes:&plan.data length:sizeof(plan.data) atIndex:5];
+      dispatch(encoder, impl.cell_grid_place, cells);
+      id<MTLBuffer> bucket_ends = impl.encode_scan(encoder, impl.bucket_counts.get(),
+                                                   impl.bucket_scan_totals.get(), buckets);
+      [encoder setBuffer:impl.cell_coordinates.get() offset:0 atIndex:0];
+      [encoder setBuffer:bucket_ends offset:0 atIndex:1];
+      [encoder setBuffer:impl.bucket_cursors.get() offset:0 atIndex:2];
+      [encoder setBuffer:impl.bucket_members.get() offset:0 atIndex:3];
+      [encoder setBytes:&plan.data length:sizeof(plan.data) atIndex:4];
+      dispatch(encoder, impl.cell_grid_fill, cells);
+
+      [encoder setBuffer:impl.cell_ids.get() offset:0 atIndex:0];
+      [encoder setBuffer:impl.cell_lower.get() offset:0 atIndex:1];
+      [encoder setBuffer:impl.cell_upper.get() offset:0 atIndex:2];
+      [encoder setBuffer:impl.cell_coordinates.get() offset:0 atIndex:3];
+      [encoder setBuffer:bucket_ends offset:0 atIndex:4];
+      [encoder setBuffer:impl.bucket_members.get() offset:0 atIndex:5];
+      [encoder setBuffer:impl.candidates.get() offset:0 atIndex:6];
+      [encoder setBuffer:impl.candidate_counts.get() offset:0 atIndex:7];
+      [encoder setBytes:&plan.data length:sizeof(plan.data) atIndex:8];
+      dispatch(encoder, impl.cell_candidate_count, cells);
+      id<MTLBuffer> candidate_ends = impl.encode_scan(encoder, impl.candidate_counts.get(),
+                                                      impl.candidate_scan_totals.get(), cells);
+      [encoder setBuffer:impl.cell_ids.get() offset:0 atIndex:0];
+      [encoder setBuffer:impl.cell_lower.get() offset:0 atIndex:1];
+      [encoder setBuffer:impl.cell_upper.get() offset:0 atIndex:2];
+      [encoder setBuffer:impl.cell_coordinates.get() offset:0 atIndex:3];
+      [encoder setBuffer:bucket_ends offset:0 atIndex:4];
+      [encoder setBuffer:impl.bucket_members.get() offset:0 atIndex:5];
+      [encoder setBuffer:candidate_ends offset:0 atIndex:6];
+      [encoder setBuffer:impl.candidates.get() offset:0 atIndex:7];
+      [encoder setBytes:&plan.data length:sizeof(plan.data) atIndex:8];
+      dispatch(encoder, impl.cell_candidate_fill, cells);
+
+      [encoder setBuffer:impl.cell_centers.get() offset:0 atIndex:0];
+      [encoder setBuffer:impl.cell_axes.get() offset:0 atIndex:1];
+      [encoder setBuffer:impl.candidates.get() offset:0 atIndex:2];
+      [encoder setBuffer:candidate_ends offset:0 atIndex:3];
+      [encoder setBuffer:impl.pair_contact_counts.get() offset:0 atIndex:4];
+      [encoder setBytes:&plan.data length:sizeof(plan.data) atIndex:5];
+      dispatch(encoder, impl.cell_pair_count, impl.candidate_capacity);
+      contact_ends = impl.encode_scan(encoder, impl.pair_contact_counts.get(),
+                                      impl.pair_contact_scan_totals.get(), impl.candidate_capacity);
+      [encoder setBuffer:impl.cell_centers.get() offset:0 atIndex:0];
+      [encoder setBuffer:impl.cell_axes.get() offset:0 atIndex:1];
+      [encoder setBuffer:impl.candidates.get() offset:0 atIndex:2];
+      [encoder setBuffer:candidate_ends offset:0 atIndex:3];
+      [encoder setBuffer:contact_ends offset:0 atIndex:4];
+      [encoder setBuffer:impl.cell_records.get() offset:0 atIndex:5];
+      [encoder setBytes:&plan.data length:sizeof(plan.data) atIndex:6];
+      dispatch(encoder, impl.cell_pair_fill, impl.candidate_capacity);
+      [encoder endEncoding];
+      [command commit];
+      [command waitUntilCompleted];
+      if (command.status == MTLCommandBufferStatusError) {
+        throw_metal_error("Metal cell contact command failed", command.error);
+      }
+      candidate_total = static_cast<const std::uint32_t*>(candidate_ends.contents)[cells - 1];
+      contact_total =
+          static_cast<const std::uint32_t*>(contact_ends.contents)[impl.candidate_capacity - 1];
+    }
+    if (candidate_total > impl.candidate_capacity) {
+      impl.candidate_capacity = std::bit_ceil(candidate_total + candidate_total / 4);
+      impl.contact_capacity = std::max(impl.contact_capacity, 2 * impl.candidate_capacity);
+      continue;
+    }
+    if (contact_total > impl.contact_capacity) {
+      impl.contact_capacity = std::bit_ceil(contact_total + contact_total / 4);
+      continue;
+    }
+    const auto* records =
+        static_cast<const device::CellContactRecord*>(impl.cell_records.get().contents);
+    return detail::finish_cell_contacts(plan, {records, contact_total});
+  }
 }
 
 std::vector<std::array<float, 6>> CellKernels::flow_drift_rates(const WorldState& state,
