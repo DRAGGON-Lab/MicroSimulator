@@ -10,6 +10,7 @@ namespace microsimulator::device {
 
 using uint = std::uint32_t;
 using ulong = std::uint64_t;
+using uchar = std::uint8_t;
 
 struct float2 {
   float x;
@@ -37,6 +38,9 @@ struct alignas(16) uint4 {
 
 #include "shared/device_types.h"
 
+#define MICROSIMULATOR_DEVICE_POINTER(type) type*
+#include "shared/contact_step_layout.h"
+
 static_assert(sizeof(float2) == 8 && alignof(float2) == 4);
 static_assert(sizeof(uint2) == 8 && alignof(uint2) == 4);
 static_assert(sizeof(float4) == 16 && alignof(float4) == 16);
@@ -60,6 +64,7 @@ static_assert(sizeof(ExternalContactRecord) == 48);
 static_assert(sizeof(FlowDriftData) == 64);
 static_assert(sizeof(CellContactData) == 32);
 static_assert(sizeof(CellContactRecord) == 48);
+static_assert(sizeof(ContactTouch) == 48);
 static_assert(sizeof(SignalSweepState) == 16);
 
 }  // namespace microsimulator::device

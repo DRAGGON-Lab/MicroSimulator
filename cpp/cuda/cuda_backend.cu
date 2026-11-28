@@ -24,6 +24,7 @@
 #include "core/shared_constants.hpp"
 #include "core/signal_jacobi.hpp"
 #include "cuda_cell_kernels.cuh"
+#include "cuda_contact_step.cuh"
 #include "cuda_flow.cuh"
 #include "kernels/contact_dynamics.cuh"
 #include "kernels/coupled_rates.cuh"
@@ -538,6 +539,14 @@ class CudaBackend final : public ComputeBackend {
     grid.accept_step(std::move(next_grid));
     std::ranges::copy(next_species, species_state.levels.begin());
     return report;
+  }
+
+  [[nodiscard]] detail::ContactStepDevice& contact_step_device() override {
+    activate_device();
+    if (!step_device_) {
+      step_device_ = cuda::make_contact_step_device(stream_);
+    }
+    return *step_device_;
   }
 
   [[nodiscard]] ContactGraph find_cell_contacts(const WorldState& state,
@@ -1086,6 +1095,7 @@ class CudaBackend final : public ComputeBackend {
   int device_index_{0};
   cudaDeviceProp device_properties_{};
   cudaStream_t stream_{nullptr};
+  std::unique_ptr<detail::ContactStepDevice> step_device_;
 
   CudaBuffer<float> lengths_;
   CudaBuffer<float> growth_rates_;

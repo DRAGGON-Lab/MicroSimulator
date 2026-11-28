@@ -18,9 +18,6 @@ endif()
 
 # Each file follows a comment naming the host compute it holds.
 set(MICROSIMULATOR_HOST_COMPUTE
-  # Contact dynamics assembles rows and bodies, moves cells, and checks their
-  # overlap on the host between the backend's contact detection and solves.
-  "cpp/core/contact_dynamics.cpp"
   # Contact graphs are built on the host from each backend's contact list.
   "cpp/core/contact_graph.cpp"
   # The CPU backend's signal transport.

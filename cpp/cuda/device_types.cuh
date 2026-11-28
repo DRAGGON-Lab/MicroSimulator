@@ -27,6 +27,9 @@ using microsimulator::shared::segment_minimization_iterations;
 
 #include "shared/device_types.h"
 
+#define MICROSIMULATOR_DEVICE_POINTER(type) type*
+#include "shared/contact_step_layout.h"
+
 static_assert(sizeof(DepositGrid) == 80);
 static_assert(sizeof(DepositBox) == 32);
 static_assert(sizeof(ShallowCouplingData) == 32);

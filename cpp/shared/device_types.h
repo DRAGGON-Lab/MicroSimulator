@@ -205,6 +205,20 @@ struct CellContactRecord {
   uint padding;
 };
 
+// A contact a substep's rows are made from: the point on the first cell's
+// surface with the separation in w, the unit normal with the weight in w,
+// the first cell's slot, the second cell's slot or 0xffffffff for a wall,
+// and the partner that identifies the contact from one substep to the next,
+// the second slot or the constraint id, as two words.
+struct ContactTouch {
+  float4 point;
+  float4 normal;
+  uint first;
+  uint second;
+  uint partner_low;
+  uint partner_high;
+};
+
 // The lattice and velocity field that flow drift samples, and the step it
 // takes. Faces are stored as SignalGridVelocityField stores them.
 struct FlowDriftData {

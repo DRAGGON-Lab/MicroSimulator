@@ -2,6 +2,7 @@
 #include <stdexcept>
 #include <type_traits>
 
+#include "cpu/cpu_contact_step.hpp"
 #include "cpu/cpu_deposition.hpp"
 #include "cpu/cpu_flow_drift.hpp"
 #include "microsimulator/backend.hpp"
@@ -38,6 +39,13 @@ class CpuBackend final : public ComputeBackend {
                                     const CoupledRatePlan& plan,
                                     std::span<const float> previous_lengths, float dt) override {
     return advance_coupled_cpu(state, grid, plan, previous_lengths, dt);
+  }
+
+  [[nodiscard]] detail::ContactStepDevice& contact_step_device() override {
+    if (!step_device_) {
+      step_device_ = make_cpu_contact_step_device();
+    }
+    return *step_device_;
   }
 
   [[nodiscard]] ContactGraph find_cell_contacts(const WorldState& state,
@@ -115,6 +123,9 @@ class CpuBackend final : public ComputeBackend {
                                                  const BiomassDragParameters& parameters) override {
     return brinkman_drag_cpu(spec, deposit, parameters);
   }
+
+ private:
+  std::unique_ptr<detail::ContactStepDevice> step_device_;
 };
 
 // A backend that leaves out any provider method is abstract.

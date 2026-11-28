@@ -311,7 +311,7 @@ ContactDynamicsResult Simulation::advance(float dt, const ContactDynamicsRequest
           throw std::logic_error("flow drift requires a signal grid with a velocity field");
         }
         const auto spacing = signal_grid_->spec().spacing;
-        drift.rates = [this](float length) { return flow_drift_rates(length); };
+        drift.grid = &*signal_grid_;
         drift.travel_limit = 0.25F * std::min({spacing.x, spacing.y, spacing.z});
       }
       result =

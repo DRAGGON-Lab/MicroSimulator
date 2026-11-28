@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -12,7 +13,8 @@
 #include "core/contact_solve_plan.hpp"
 #include "core/contact_solver.hpp"
 #include "core/parallel.hpp"
-#include "cpu/kernels/contact_solve.hpp"
+#include "cpu/cpu_contact_solve.hpp"
+#include "cpu/kernels/contact_step.hpp"
 #include "microsimulator/contact_dynamics.hpp"
 
 namespace microsimulator {
@@ -24,47 +26,67 @@ constexpr std::size_t chunk_grain = 1;
 
 constexpr std::size_t width = device::contact_reduction_width;
 
-// A contact system on the host, in the layout the solve kernels read.
+// A contact system in the layout the solve kernels read, with its
+// multipliers and gaps in two pairs that steps alternate between.
 struct HostSolve {
+  device::ContactSolveData data{};
+  const device::ContactRowData* rows{nullptr};
+  const device::ContactBodyData* bodies{nullptr};
+  const std::uint32_t* incidence_offsets{nullptr};
+  const std::uint32_t* incidence_entries{nullptr};
+  device::ContactResponse* response{nullptr};
+  std::array<float*, 2> multipliers{};
+  std::array<float*, 2> gaps{};
+  std::vector<device::float4> terms;
+  device::ContactSolveState state{};
+
+  [[nodiscard]] std::size_t row_count() const noexcept {
+    return data.row_count;
+  }
+
+  [[nodiscard]] std::size_t body_count() const noexcept {
+    return data.body_count;
+  }
+};
+
+// A system laid out by plan_contact_solve, with the storage its solve needs.
+struct OwnedSolve {
   detail::ContactSolvePlan plan;
   std::vector<device::ContactResponse> response;
   std::array<std::vector<float>, 2> multipliers;
   std::array<std::vector<float>, 2> gaps;
-  std::vector<device::float4> terms;
-  device::ContactSolveState state{};
-
-  [[nodiscard]] std::size_t rows() const noexcept {
-    return plan.data.row_count;
-  }
-
-  [[nodiscard]] std::size_t bodies() const noexcept {
-    return plan.data.body_count;
-  }
+  HostSolve view;
 };
 
-HostSolve make_solve(const ContactSystem& system, std::span<const float> multipliers,
-                     float tolerance) {
-  HostSolve solve;
-  solve.plan = detail::plan_contact_solve(system, multipliers, tolerance);
-  const auto rows = solve.plan.multipliers.size();
-  solve.response.resize(std::max<std::size_t>(solve.bodies(), 1));
-  solve.multipliers[0] = solve.plan.multipliers;
-  solve.multipliers[1].resize(rows);
-  solve.gaps[0].resize(rows);
-  solve.gaps[1].resize(rows);
-  return solve;
+void make_solve(OwnedSolve& owned, const ContactSystem& system, std::span<const float> multipliers,
+                float tolerance) {
+  owned.plan = detail::plan_contact_solve(system, multipliers, tolerance);
+  const auto rows = owned.plan.multipliers.size();
+  owned.response.resize(std::max<std::size_t>(owned.plan.data.body_count, 1));
+  owned.multipliers[0] = owned.plan.multipliers;
+  owned.multipliers[1].resize(rows);
+  owned.gaps[0].resize(rows);
+  owned.gaps[1].resize(rows);
+  auto& view = owned.view;
+  view.data = owned.plan.data;
+  view.rows = owned.plan.rows.data();
+  view.bodies = owned.plan.bodies.data();
+  view.incidence_offsets = owned.plan.incidence_offsets.data();
+  view.incidence_entries = owned.plan.incidence_entries.data();
+  view.response = owned.response.data();
+  view.multipliers = {owned.multipliers[0].data(), owned.multipliers[1].data()};
+  view.gaps = {owned.gaps[0].data(), owned.gaps[1].data()};
 }
 
 // The response of every body to the multipliers in pair `current`, or with
 // `project` to those one projected step from them.
 void respond(HostSolve& solve, std::size_t current, std::uint32_t project) {
-  const auto& plan = solve.plan;
-  detail::parallel_for(solve.bodies(), body_grain, [&](std::size_t begin, std::size_t end) {
+  detail::parallel_for(solve.body_count(), body_grain, [&](std::size_t begin, std::size_t end) {
     for (std::size_t body = begin; body < end; ++body) {
       solve.response[body] = device::contact_respond_body(
-          static_cast<std::uint32_t>(body), plan.rows.data(), plan.bodies.data(),
-          solve.multipliers[current].data(), solve.gaps[current].data(), solve.state.step_length,
-          project, plan.incidence_offsets.data(), plan.incidence_entries.data(), plan.data);
+          static_cast<std::uint32_t>(body), solve.rows, solve.bodies, solve.multipliers[current],
+          solve.gaps[current], solve.state.step_length, project, solve.incidence_offsets,
+          solve.incidence_entries, solve.data);
     }
   });
 }
@@ -74,7 +96,7 @@ void respond(HostSolve& solve, std::size_t current, std::uint32_t project) {
 // then the chunk sums the same way until one remains.
 template <typename RowTerms>
 device::float4 sum_terms(HostSolve& solve, const RowTerms& row_terms) {
-  const auto rows = solve.rows();
+  const auto rows = solve.row_count();
   auto count = (rows + width - 1) / width;
   auto& sums = solve.terms;
   sums.resize(count);
@@ -109,29 +131,42 @@ device::float4 sum_terms(HostSolve& solve, const RowTerms& row_terms) {
 
 // Responds to the multipliers in pair zero and evaluates their gaps.
 void initialize(HostSolve& solve, float first_step_length, std::uint32_t max_iterations) {
-  const auto& plan = solve.plan;
   respond(solve, 0, 0);
   const auto sums = sum_terms(solve, [&](std::uint32_t row) {
-    return device::contact_row_initial(row, plan.rows.data(), solve.response.data(),
-                                       solve.multipliers[0].data(), solve.gaps[0].data(),
-                                       plan.data);
+    return device::contact_row_initial(row, solve.rows, solve.response, solve.multipliers[0],
+                                       solve.gaps[0], solve.data);
   });
-  device::contact_record_step(solve.state, sums, plan.data, 1U, first_step_length, max_iterations);
+  device::contact_record_step(solve.state, sums, solve.data, 1U, first_step_length, max_iterations);
 }
 
 // One projected step from pair `current` into the other pair.
 void step(HostSolve& solve, std::size_t current, std::uint32_t max_iterations) {
-  const auto& plan = solve.plan;
   const auto next = 1 - current;
   respond(solve, current, 1);
   const auto length = solve.state.step_length;
   const auto sums = sum_terms(solve, [&](std::uint32_t row) {
-    return device::contact_row_step(row, plan.rows.data(), solve.response.data(),
-                                    solve.multipliers[current].data(), solve.gaps[current].data(),
-                                    solve.multipliers[next].data(), solve.gaps[next].data(), length,
-                                    plan.data);
+    return device::contact_row_step(row, solve.rows, solve.response, solve.multipliers[current],
+                                    solve.gaps[current], solve.multipliers[next], solve.gaps[next],
+                                    length, solve.data);
   });
-  device::contact_record_step(solve.state, sums, plan.data, 0U, 0.0F, max_iterations);
+  device::contact_record_step(solve.state, sums, solve.data, 0U, 0.0F, max_iterations);
+}
+
+// The whole solve from the multipliers in pair zero. The state ends with the
+// iterations taken and the residual of the multipliers in pair
+// `iterations % 2`, whose response `response` holds.
+void run_solve(HostSolve& solve, float first_step_length, std::uint32_t max_iterations) {
+  if (solve.row_count() == 0) {
+    respond(solve, 0, 0);
+    solve.state = {.step_length = first_step_length, .residual = 0.0F, .iterations = 0, .done = 1};
+    return;
+  }
+  initialize(solve, first_step_length, max_iterations);
+  std::size_t current = 0;
+  while (solve.state.done == 0U) {
+    step(solve, current, max_iterations);
+    current = 1 - current;
+  }
 }
 
 [[nodiscard]] float diagonal_bound(const detail::ContactSolvePlan& plan) {
@@ -148,16 +183,22 @@ void step(HostSolve& solve, std::size_t current, std::uint32_t max_iterations) {
 
 ContactResponse evaluate_contact_response(const ContactSystem& system,
                                           std::span<const float> multipliers) {
-  auto solve = make_solve(system, multipliers, 1.0F);
-  respond(solve, 0, 0);
-  return detail::unpack_contact_response(std::span(solve.response).first(solve.bodies()));
+  OwnedSolve owned;
+  make_solve(owned, system, multipliers, 1.0F);
+  respond(owned.view, 0, 0);
+  return detail::unpack_contact_response(std::span(owned.response).first(owned.view.body_count()));
 }
 
 std::vector<float> evaluate_contact_gaps(const ContactSystem& system,
                                          std::span<const float> multipliers) {
-  auto solve = make_solve(system, multipliers, 1.0F);
-  initialize(solve, 1.0F, 0);
-  return {solve.gaps[0].begin(), solve.gaps[0].begin() + static_cast<std::ptrdiff_t>(solve.rows())};
+  OwnedSolve owned;
+  make_solve(owned, system, multipliers, 1.0F);
+  if (owned.view.row_count() == 0) {
+    return {};
+  }
+  initialize(owned.view, 1.0F, 0);
+  return {owned.gaps[0].begin(),
+          owned.gaps[0].begin() + static_cast<std::ptrdiff_t>(owned.view.row_count())};
 }
 
 float contact_system_diagonal_bound(const ContactSystem& system) {
@@ -168,35 +209,55 @@ float contact_system_diagonal_bound(const ContactSystem& system) {
 ContactSolveResult solve_contact_system_cpu(const ContactSystem& system,
                                             std::span<const float> initial_multipliers,
                                             const ContactSolveParameters& parameters) {
-  auto solve = make_solve(system, initial_multipliers, parameters.tolerance);
+  OwnedSolve owned;
+  make_solve(owned, system, initial_multipliers, parameters.tolerance);
+  auto& solve = owned.view;
   ContactSolveResult result;
-  if (solve.bodies() == 0) {
+  if (solve.body_count() == 0) {
     return result;
   }
-  if (solve.rows() == 0) {
+  if (solve.row_count() == 0) {
     respond(solve, 0, 0);
     result.response =
-        detail::unpack_contact_response(std::span(solve.response).first(solve.bodies()));
+        detail::unpack_contact_response(std::span(owned.response).first(solve.body_count()));
     return result;
   }
-  const auto bound = diagonal_bound(solve.plan);
+  const auto bound = diagonal_bound(owned.plan);
   if (!std::isfinite(bound) || bound <= 0.0F) {
     throw std::invalid_argument("contact system has no positive diagonal");
   }
-  initialize(solve, 1.0F / bound, parameters.max_iterations);
-  std::size_t current = 0;
-  while (solve.state.done == 0U) {
-    step(solve, current, parameters.max_iterations);
-    current = 1 - current;
-  }
+  run_solve(solve, 1.0F / bound, parameters.max_iterations);
+  const auto current = solve.state.iterations % 2;
   result.report = detail::device_contact_solve_report(solve.state.iterations, solve.state.residual,
                                                       parameters.tolerance);
   result.multipliers.assign(
-      solve.multipliers[current].begin(),
-      solve.multipliers[current].begin() + static_cast<std::ptrdiff_t>(solve.rows()));
+      owned.multipliers[current].begin(),
+      owned.multipliers[current].begin() + static_cast<std::ptrdiff_t>(solve.row_count()));
   result.response =
-      detail::unpack_contact_response(std::span(solve.response).first(solve.bodies()));
+      detail::unpack_contact_response(std::span(owned.response).first(solve.body_count()));
   return result;
 }
 
+namespace detail {
+
+void solve_resident_contacts_cpu(const device::ContactStepBindings& bindings,
+                                 const device::ContactStepParams& params) {
+  if (bindings.status[MS_STEP_FAILED] != 0 || bindings.status[MS_STEP_OVERFLOW] != 0) {
+    return;
+  }
+  HostSolve solve;
+  solve.data = device::step_solve_data(bindings, params);
+  solve.rows = bindings.rows;
+  solve.bodies = bindings.bodies;
+  solve.incidence_offsets = bindings.incidence_offsets;
+  solve.incidence_entries = bindings.incidence_entries;
+  solve.response = bindings.response;
+  solve.multipliers = {bindings.multipliers, bindings.multipliers_next};
+  solve.gaps = {bindings.gaps, bindings.gaps_next};
+  run_solve(solve, std::bit_cast<float>(bindings.status[MS_STEP_FIRST_STEP]),
+            device::step_solve_iterations(bindings, params));
+  bindings.solve_state[0] = solve.state;
+}
+
+}  // namespace detail
 }  // namespace microsimulator
