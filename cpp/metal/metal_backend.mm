@@ -26,6 +26,7 @@
 #include "core/signal_jacobi.hpp"
 #include "metal_cell_kernels.hpp"
 #include "metal_compile_options.hpp"
+#include "metal_contact_step.hpp"
 #include "metal_flow.hpp"
 #include "microsimulator/backend.hpp"
 #include "microsimulator/metal/contact_dynamics_source.hpp"
@@ -683,6 +684,13 @@ class MetalBackend final : public ComputeBackend {
                   species_state.levels.size_bytes());
     }
     return report;
+  }
+
+  [[nodiscard]] detail::ContactStepDevice& contact_step_device() override {
+    if (!step_device_) {
+      step_device_ = metal::make_contact_step_device(device_, queue_);
+    }
+    return *step_device_;
   }
 
   [[nodiscard]] ContactGraph find_cell_contacts(const WorldState& state,
@@ -1670,6 +1678,7 @@ class MetalBackend final : public ComputeBackend {
   id<MTLComputePipelineState> contact_solve_pipeline_{nil};
   std::unique_ptr<metal::FlowSolver> flow_solver_;
   std::unique_ptr<metal::CellKernels> cell_kernels_;
+  std::unique_ptr<detail::ContactStepDevice> step_device_;
 
   id<MTLBuffer> lengths_{nil};
   id<MTLBuffer> growth_rates_{nil};

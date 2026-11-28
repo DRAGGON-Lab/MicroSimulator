@@ -1,23 +1,19 @@
 #pragma once
 
-#include <array>
-#include <functional>
-#include <vector>
-
 #include "microsimulator/backend.hpp"
 #include "microsimulator/constraints.hpp"
 #include "microsimulator/contact_dynamics.hpp"
 #include "microsimulator/contact_graph.hpp"
+#include "microsimulator/signals.hpp"
 #include "microsimulator/world_state.hpp"
 
 namespace microsimulator::detail {
 
-// Motion that cells have without contact. `rates` returns the velocity then
-// angular velocity of each cell, by slot, for a move of the given length from
-// the geometry the state holds. A substep moves no cell further than
+// Motion that cells have without contact: the flow of `grid`'s velocity
+// field, or none when `grid` is null. A substep moves no cell further than
 // `travel_limit` by drift.
 struct ContactDrift {
-  std::function<std::vector<std::array<float, 6>>(float)> rates;
+  const SignalGrid* grid{nullptr};
   float travel_limit{0.0F};
 };
 

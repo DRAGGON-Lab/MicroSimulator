@@ -56,7 +56,7 @@ A step is divided so that no cell end elongates by more than `max_growth_fractio
 3. finds the contacts that overlap at the moved geometry by more than the accepted overlap plus what their force accounts for;
 4. appends a row for each, linearized where it was found with its offset set so that the multipliers that produced the move predict the gap the move left, and solves again from the current multipliers.
 
-Rows are never rebuilt once added, which is the recursively generated complementarity scheme of [Palmer, Aktulga, and Gao 2025](https://arxiv.org/abs/2506.14097). A substep that does not converge, needs more than `max_refinements` rounds, or turns a cell through more than half a radian is retried at a shorter length, and after `max_step_halvings` the step throws. A step that throws leaves the simulation unchanged.
+Each substep runs on the backend's device, which holds the step's geometry, rows, and forces from one round to the next ([ADR 0031](0031-resident-contact-steps.md)). Rows are never rebuilt once added, which is the recursively generated complementarity scheme of [Palmer, Aktulga, and Gao 2025](https://arxiv.org/abs/2506.14097). A substep that does not converge, needs more than `max_refinements` rounds, or turns a cell through more than half a radian is retried at a shorter length, and after `max_step_halvings` the step throws. A step that throws leaves the simulation unchanged.
 
 ### The length of a substep
 

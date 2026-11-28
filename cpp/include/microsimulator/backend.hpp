@@ -19,6 +19,10 @@
 
 namespace microsimulator {
 
+namespace detail {
+class ContactStepDevice;
+}  // namespace detail
+
 // The compute a backend provides, divided by the physics it serves. Every
 // method is pure virtual, and each backend is a final class deriving from
 // ComputeBackend, so a backend that leaves any of them out does not compile.
@@ -45,6 +49,10 @@ class MechanicsProvider {
   [[nodiscard]] virtual ExternalContactGraph find_external_contact_faces(
       const WorldState& state, const ConstraintSet& constraints,
       const ConstraintContactParameters& parameters) = 0;
+  // The storage and stages of contact dynamics substeps on this backend's
+  // device, which keep a step's geometry, contacts, and rows there. The
+  // backend owns it, and one step uses it at a time.
+  [[nodiscard]] virtual detail::ContactStepDevice& contact_step_device() = 0;
   // Solves one substep's contact system from the given multipliers, and
   // returns what the multipliers it reaches do to the cells.
   [[nodiscard]] virtual ContactSolveResult solve_contact_forces(

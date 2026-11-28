@@ -42,7 +42,7 @@ inline float contact_growth_factor(uint law, float sensitivity, float free_load,
 
 // The multiplier of a row one projected step of length `length` on.
 inline float contact_projected(float multiplier, float gap, float length) {
-  float value = multiplier - length * gap;
+  float value = (-length * gap + multiplier);
   return value > 0.0f ? value : 0.0f;
 }
 
@@ -77,44 +77,45 @@ inline ContactResponse contact_respond_body(uint body, const ContactRowData* row
     bool second = (entry & 1u) != 0u;
     float4 linear = second ? rows[row].second_linear : rows[row].first_linear;
     float4 angular = second ? rows[row].second_angular : rows[row].first_angular;
-    force_x += multiplier * linear.x;
-    force_y += multiplier * linear.y;
-    force_z += multiplier * linear.z;
-    torque_x += multiplier * angular.x;
-    torque_y += multiplier * angular.y;
-    torque_z += multiplier * angular.z;
-    load += linear.w * multiplier;
+    force_x = (multiplier * linear.x + force_x);
+    force_y = (multiplier * linear.y + force_y);
+    force_z = (multiplier * linear.z + force_z);
+    torque_x = (multiplier * angular.x + torque_x);
+    torque_y = (multiplier * angular.y + torque_y);
+    torque_z = (multiplier * angular.z + torque_z);
+    load = (multiplier * linear.w + load);
   }
   ContactBodyData data = bodies[body];
   float translational = data.axis_mobility.w;
   float transverse = data.rates.x;
   float axial = data.rates.y;
   float nominal = data.rates.z;
-  Vec3f axis = Vec3f{data.axis_mobility.x, data.axis_mobility.y, data.axis_mobility.z};
-  Vec3f torque = Vec3f{torque_x, torque_y, torque_z};
-  Vec3f angular = ((torque * transverse) + (axis * (axial - transverse) * dot(axis, torque)));
+  float4 axis = data.axis_mobility;
+  float along =
+      (axial - transverse) * (axis.x * torque_x + (axis.y * torque_y + (axis.z * torque_z)));
   float rate = nominal > 0.0f
                    ? nominal * contact_growth_factor(solve.law, solve.sensitivity, solve.free_load,
                                                      solve.stall_load, load)
                    : nominal;
   ContactResponse result;
-  result.linear_length = float4{force_x * translational + data.drift_linear.x,
-                                force_y * translational + data.drift_linear.y,
-                                force_z * translational + data.drift_linear.z, rate};
-  result.rotation = float4{angular.x + data.drift_angular.x, angular.y + data.drift_angular.y,
-                           angular.z + data.drift_angular.z, load};
+  result.linear_length = float4{(force_x * translational + data.drift_linear.x),
+                                (force_y * translational + data.drift_linear.y),
+                                (force_z * translational + data.drift_linear.z), rate};
+  result.rotation = float4{(torque_x * transverse + (axis.x * along + data.drift_angular.x)),
+                           (torque_y * transverse + (axis.y * along + data.drift_angular.y)),
+                           (torque_z * transverse + (axis.z * along + data.drift_angular.z)), load};
   return result;
 }
 
 // The rate at which one side of a row closes under a cell's response.
 inline float contact_side_rate(float4 linear, float4 angular, ContactResponse response) {
   float rate = linear.x * response.linear_length.x;
-  rate += linear.y * response.linear_length.y;
-  rate += linear.z * response.linear_length.z;
-  rate += angular.x * response.rotation.x;
-  rate += angular.y * response.rotation.y;
-  rate += angular.z * response.rotation.z;
-  return rate - linear.w * response.linear_length.w;
+  rate = (linear.y * response.linear_length.y + rate);
+  rate = (linear.z * response.linear_length.z + rate);
+  rate = (angular.x * response.rotation.x + rate);
+  rate = (angular.y * response.rotation.y + rate);
+  rate = (angular.z * response.rotation.z + rate);
+  return (-linear.w * response.linear_length.w + rate);
 }
 
 // The gap of `row` at `multiplier` under the response the cells hold.
@@ -125,7 +126,7 @@ inline float contact_row_gap(uint row, const ContactRowData* rows, const Contact
   if (data.second_slot != 0xffffffffu) {
     rate += contact_side_rate(data.second_linear, data.second_angular, response[data.second_slot]);
   }
-  return data.first_angular.w + solve.dt * rate + data.second_angular.w * multiplier;
+  return (data.second_angular.w * multiplier + (solve.dt * rate + data.first_angular.w));
 }
 
 // How far a row is from its complementarity condition: a positive multiplier
@@ -229,7 +230,7 @@ inline float contact_side_bound(float4 linear, float4 angular, ContactBodyData b
   float axial = body.rates.y;
   Vec3f axis = Vec3f{body.axis_mobility.x, body.axis_mobility.y, body.axis_mobility.z};
   Vec3f torque = Vec3f{angular.x, angular.y, angular.z};
-  Vec3f turn = ((torque * transverse) + (axis * (axial - transverse) * dot(axis, torque)));
+  Vec3f turn = ((torque * transverse) + (axis * ((axial - transverse) * dot(axis, torque))));
   float value = linear.x * (linear.x * translational);
   value += linear.y * (linear.y * translational);
   value += linear.z * (linear.z * translational);

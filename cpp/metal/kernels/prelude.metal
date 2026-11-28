@@ -7,6 +7,8 @@
 
 using namespace metal;
 
+#define MICROSIMULATOR_DEVICE_POINTER(type) device type*
+
 #define MICROSIMULATOR_SHARED_FLOAT(name, value) constant float name = value##f;
 #define MICROSIMULATOR_SHARED_UINT(name, value) constant uint name = value##u;
 #define MICROSIMULATOR_RATE_OP(name, code) constant uint rate_op_##name = code##u;

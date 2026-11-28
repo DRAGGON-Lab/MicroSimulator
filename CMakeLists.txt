@@ -46,6 +46,7 @@ add_library(microsimulator_core STATIC
   cpp/cpu/cpu_contacts.cpp
   cpp/cpu/cpu_constraints.cpp
   cpp/cpu/cpu_contact_dynamics.cpp
+  cpp/cpu/cpu_contact_step.cpp
   cpp/cpu/cpu_coupled.cpp
   cpp/cpu/cpu_deposition.cpp
   cpp/cpu/cpu_flow_drift.cpp
@@ -126,6 +127,11 @@ if(MICROSIMULATOR_ENABLE_METAL)
     cpp/metal/kernels/scan.metal cpp/metal/kernels/deposition.metal
     cpp/metal/kernels/external_contacts.metal cpp/metal/kernels/cell_contacts.metal
     cpp/metal/kernels/flow_drift.metal)
+  microsimulator_embed_metal_source(contact_step
+    cpp/shared/contact_step_layout.h cpp/metal/kernels/scan.metal cpp/metal/kernels/external_contacts.metal
+    cpp/metal/kernels/cell_contacts.metal cpp/metal/kernels/contact_solve.metal
+    cpp/metal/kernels/flow_drift.metal cpp/metal/kernels/contact_step_kernels.metal
+    cpp/metal/kernels/contact_step.metal)
 
   set(MICROSIMULATOR_METAL_OCCUPANCY_HEADER "${MICROSIMULATOR_GENERATED_DIR}/microsimulator/metal/occupancy_source.hpp")
   add_custom_command(
@@ -142,6 +148,7 @@ if(MICROSIMULATOR_ENABLE_METAL)
   target_sources(microsimulator_core PRIVATE
     cpp/metal/metal_backend.mm
     cpp/metal/metal_cell_kernels.mm
+    cpp/metal/metal_contact_step.mm
     cpp/metal/metal_flow.mm
     cpp/metal/metal_occupancy.mm
     "${MICROSIMULATOR_METAL_OCCUPANCY_HEADER}"
@@ -167,6 +174,7 @@ if(MICROSIMULATOR_ENABLE_CUDA)
   target_sources(microsimulator_core PRIVATE
     cpp/cuda/cuda_backend.cu
     cpp/cuda/cuda_cell_kernels.cu
+    cpp/cuda/cuda_contact_step.cu
     cpp/cuda/cuda_flow.cu
     cpp/cuda/cuda_occupancy.cu
     cpp/cuda/kernels/occupancy.cu
