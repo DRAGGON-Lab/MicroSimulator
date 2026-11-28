@@ -35,6 +35,7 @@ Solver iterations enter a parallel region tens of microseconds after leaving the
 - The calling thread takes part, and finishes a region alone if no worker arrives.
 - When pieces throw, the exception of the lowest piece is rethrown.
 - A parallel call made from inside a region, or while another thread is using the pool, runs on the calling thread.
+- A team is a region in which each of a fixed number of threads runs one member and the members meet at a spin barrier, with no chunks taken from one another, so every member is running at once. The contact solve runs all its iterations in one team, a member for every 512 rows up to the thread count: each member responds for its own bodies and sums its own blocks of rows, and the first member sums the block sums and records the step. An iteration then costs three barriers in place of two parallel regions, and the sums are those of the blocks, so the result is the same on any number of threads.
 
 ### Thread count
 

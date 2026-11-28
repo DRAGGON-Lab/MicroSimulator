@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <vector>
 
@@ -21,6 +22,44 @@ void run_chunks(std::size_t chunks, const Task& task) {
       chunks,
       [](const void* context, std::size_t chunk) { (*static_cast<const Task*>(context))(chunk); },
       &task);
+}
+
+// A barrier that the members of a team pass together. The member that
+// arrives last releases the others, and every write a member makes before it
+// arrives is visible to every member after it passes.
+class TeamBarrier {
+ public:
+  explicit TeamBarrier(std::size_t members) noexcept : members_(members) {
+  }
+
+  void arrive_and_wait() noexcept;
+
+ private:
+  std::size_t members_;
+  alignas(64) std::atomic<std::size_t> arrived_{0};
+  alignas(64) std::atomic<std::size_t> generation_{0};
+};
+
+// Calls invoke(context, member, members, barrier) once for every member of a
+// team of at most `wanted` threads, all running at once, so the members may
+// wait for one another at `barrier`. The team is smaller than `wanted` when
+// the pool has fewer threads, and has one member for a call made from inside
+// parallel work or while another thread is using the pool. A member must not
+// throw: the others would wait for it forever.
+void run_team(std::size_t wanted,
+              void (*invoke)(const void*, std::size_t, std::size_t, TeamBarrier&),
+              const void* context);
+
+// Runs body(member, members, barrier) on a team of at most `wanted` threads;
+// see run_team.
+template <typename Body>
+void parallel_team(std::size_t wanted, const Body& body) {
+  run_team(
+      wanted,
+      [](const void* context, std::size_t member, std::size_t members, TeamBarrier& barrier) {
+        (*static_cast<const Body*>(context))(member, members, barrier);
+      },
+      &body);
 }
 
 // Calls body(begin, end) over [0, count) in pieces of `grain` indices. The
