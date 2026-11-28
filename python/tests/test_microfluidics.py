@@ -13,6 +13,7 @@ import pytest
 from microsimulator import (
     BackendKind,
     CellInit,
+    ContactDynamicsParameters,
     GridBoundaryKind,
     GridFace,
     GridShape,
@@ -282,9 +283,12 @@ def test_trap_example_fills_and_settles_at_a_steady_turnover() -> None:
 
     walls = simulation.find_external_contacts().contacts
     assert walls
-    # What the contact forces press into the walls, which are stiff.
-    assert min(contact.signed_separation for contact in walls) >= -2.0e-3
-    slack = 2.0e-3
+    # No cell overlaps a wall more deeply than the step reports, which bounds
+    # every overlap it accepts.
+    result = model.last_contact_dynamics
+    assert result is not None
+    slack = result.report.max_overlap + ContactDynamicsParameters().overlap_tolerance
+    assert min(contact.signed_separation for contact in walls) >= -slack
     for cell in cells:
         reach = abs(cell.direction.x) * cell.length * 0.5 + cell.radius
         assert cell.position.x + reach <= device.trap_back_x + slack

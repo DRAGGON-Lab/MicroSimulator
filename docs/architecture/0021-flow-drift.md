@@ -14,7 +14,7 @@ A normalized explicit midpoint step advances position and direction. Internal su
 
 The controller composes drift with contact relaxation and growth by first-order splitting. Drift integration is second order in a smooth fixed velocity field, but this does not make the complete coupled simulation second order. Outer timestep and mechanics convergence still need checking. Fixed cells are the explicit attached population; free-cell washout is kinematic, not a prediction of attachment or detachment thresholds.
 
-The operation runs on the host over committed state identically for every backend. `flow_drift` remains part of the controller checkpoint configuration.
+Every backend runs the drift natively over committed state ([ADR 0030](0030-provider-interfaces.md)). It interpolates the field in binary32. `flow_drift` remains part of the controller checkpoint configuration.
 
 ## Validation
 

@@ -133,6 +133,18 @@ void run_solve_matches_reference(microsimulator::Simulation& backend, std::size_
   }
   const auto actual_response =
       microsimulator::evaluate_contact_response(system, actual.multipliers);
+  // The solve returns the response to the multipliers it reached.
+  assert(actual.response.velocities.size() == fixture.bodies.size());
+  for (std::size_t body = 0; body < fixture.bodies.size(); ++body) {
+    for (std::size_t component = 0; component < 6; ++component) {
+      require_close(actual.response.velocities[body][component],
+                    actual_response.velocities[body][component], 1.0e-4F, scenario, body,
+                    "returned velocity");
+    }
+    require_close(actual.response.loads[body], actual_response.loads[body],
+                  1.0e-4F * (1.0F + actual_response.loads[body]), scenario, body,
+                  "returned load");
+  }
   const auto expected_response =
       microsimulator::evaluate_contact_response(system, expected.multipliers);
   for (std::size_t body = 0; body < fixture.bodies.size(); ++body) {
@@ -297,6 +309,9 @@ int main() {
         // A larger system after a smaller one grows the device buffers.
         run_solve_matches_reference(*solver, 300, GrowthLoadLaw::linear, "long chain");
         run_solve_matches_reference(*solver, 5, GrowthLoadLaw::exponential, "short chain");
+        // More rows than one threadgroup solves, so the solve spreads over the
+        // device.
+        run_solve_matches_reference(*solver, 4500, GrowthLoadLaw::linear, "very long chain");
         run_empty_and_limited_solves(*solver);
         run_closed_chamber(backend, device_index);
         run_free_colony(backend, device_index);

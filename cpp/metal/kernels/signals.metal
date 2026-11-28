@@ -160,8 +160,8 @@ kernel void crank_nicolson_jacobi(
     device const float* x_faces [[buffer(16)]], device const float* y_faces [[buffer(17)]],
     device const float* z_faces [[buffer(18)]], constant uint& has_velocity_field [[buffer(19)]],
     device const uint* fluid_sites [[buffer(20)]], constant uint& fluid_count [[buffer(21)]],
-    uint entry [[thread_position_in_grid]]) {
-  if (entry >= signal_count * fluid_count) {
+    device const uint* gate [[buffer(22)]], uint entry [[thread_position_in_grid]]) {
+  if (entry >= signal_count * fluid_count || gate[0] != 0u) {
     return;
   }
   uint index = fluid_level(fluid_sites, fluid_count, shape.sites, entry);
@@ -192,8 +192,8 @@ kernel void crank_nicolson_residual_terms(
     device const float* x_faces [[buffer(15)]], device const float* y_faces [[buffer(16)]],
     device const float* z_faces [[buffer(17)]], constant uint& has_velocity_field [[buffer(18)]],
     device const uint* fluid_sites [[buffer(19)]], constant uint& fluid_count [[buffer(20)]],
-    uint entry [[thread_position_in_grid]]) {
-  if (entry >= signal_count * fluid_count) {
+    device const uint* gate [[buffer(21)]], uint entry [[thread_position_in_grid]]) {
+  if (entry >= signal_count * fluid_count || gate[0] != 0u) {
     return;
   }
   uint index = fluid_level(fluid_sites, fluid_count, shape.sites, entry);
@@ -223,9 +223,10 @@ kernel void signal_square_terms(device const float* input [[buffer(0)]],
 kernel void reduce_signal_sum_pairs(device const float* input [[buffer(0)]],
                                     device float* output [[buffer(1)]],
                                     constant uint& element_count [[buffer(2)]],
+                                    device const uint* gate [[buffer(3)]],
                                     uint index [[thread_position_in_grid]]) {
   uint first = index * 2u;
-  if (first >= element_count) {
+  if (first >= element_count || gate[0] != 0u) {
     return;
   }
   float value = input[first];
@@ -233,4 +234,30 @@ kernel void reduce_signal_sum_pairs(device const float* input [[buffer(0)]],
     value += input[first + 1u];
   }
   output[index] = value;
+}
+
+// Records the sweep whose residual terms `reduction` sums: counts it, and
+// finishes the batch when its residual RMS is within `threshold`, is not
+// finite, or a level of the sweep was invalid. Does nothing once the batch is
+// finished.
+kernel void signal_sweep_check(device const float* reduction [[buffer(0)]],
+                               device const uint* error [[buffer(1)]],
+                               device SignalSweepState* state [[buffer(2)]],
+                               constant float& threshold [[buffer(3)]],
+                               constant uint& level_count [[buffer(4)]],
+                               constant uint& fluid_level_count [[buffer(5)]],
+                               uint index [[thread_position_in_grid]]) {
+  if (index != 0u || state[0].done != 0u) {
+    return;
+  }
+  state[0].iterations += 1u;
+  float sum = fluid_level_count == 0u ? 0.0f : reduction[0];
+  float rms = sqrt(sum / float(level_count));
+  state[0].residual_rms = rms;
+  if (error[0] != 0u) {
+    state[0].invalid = 1u;
+    state[0].done = 1u;
+  } else if (!isfinite(rms) || rms <= threshold) {
+    state[0].done = 1u;
+  }
 }

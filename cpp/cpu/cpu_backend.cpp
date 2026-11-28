@@ -3,6 +3,7 @@
 #include <type_traits>
 
 #include "cpu/cpu_deposition.hpp"
+#include "cpu/cpu_flow_drift.hpp"
 #include "microsimulator/backend.hpp"
 
 namespace microsimulator {
@@ -50,10 +51,27 @@ class CpuBackend final : public ComputeBackend {
     return find_external_contacts_cpu(state, constraints, parameters);
   }
 
+  [[nodiscard]] ExternalContactGraph find_external_contact_faces(
+      const WorldState& state, const ConstraintSet& constraints,
+      const ConstraintContactParameters& parameters) override {
+    return find_external_contact_faces_cpu(state, constraints, parameters);
+  }
+
   [[nodiscard]] ContactSolveResult solve_contact_forces(
       const ContactSystem& system, std::span<const float> initial_multipliers,
       const ContactSolveParameters& parameters) override {
     return solve_contact_system_cpu(system, initial_multipliers, parameters);
+  }
+
+  [[nodiscard]] std::vector<std::array<float, 6>> flow_drift_rates(const WorldState& state,
+                                                                   const SignalGrid& grid,
+                                                                   float dt) override {
+    return flow_drift_rates_cpu(state, grid, dt);
+  }
+
+  void advance_flow_drift(WorldState& state, const SignalGrid& grid, float dt,
+                          const FlowDriftParameters& parameters) override {
+    advance_flow_drift_cpu(state, grid, dt, parameters);
   }
 
   [[nodiscard]] DepthAveragedFlowResult solve_depth_averaged_flow(

@@ -13,9 +13,13 @@ using uint = unsigned int;
 using ulong = unsigned long long;
 using uchar = unsigned char;
 using ::float2;
+using ::float3;
 using ::float4;
 using ::uint2;
 using ::uint4;
+using microsimulator::shared::inverse_sqrt_two;
+using microsimulator::shared::pi;
+using microsimulator::shared::segment_minimization_iterations;
 
 #include "shared/device_types.h"
 
@@ -23,5 +27,9 @@ static_assert(sizeof(DepositGrid) == 80);
 static_assert(sizeof(DepositBox) == 32);
 static_assert(sizeof(ShallowCouplingData) == 32);
 static_assert(sizeof(BrinkmanDragData) == 32);
+static_assert(sizeof(ExternalConstraint) == 48);
+static_assert(sizeof(ExternalContactData) == 32);
+static_assert(sizeof(ExternalContactRecord) == 48);
+static_assert(sizeof(FlowDriftData) == 64);
 
 }  // namespace microsimulator::cuda::device

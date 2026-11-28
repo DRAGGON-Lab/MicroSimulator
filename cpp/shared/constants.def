@@ -19,3 +19,13 @@ MICROSIMULATOR_SHARED_UINT(growth_load_law_exponential, 1)
 MICROSIMULATOR_SHARED_UINT(growth_load_law_linear, 2)
 // Elements each device thread group reduces to one partial dot product.
 MICROSIMULATOR_SHARED_UINT(flow_reduction_width, 64)
+// What a drift reports for a cell besides its motion.
+MICROSIMULATOR_SHARED_UINT(drift_ok, 0)
+MICROSIMULATOR_SHARED_UINT(drift_too_many_substeps, 1)
+MICROSIMULATOR_SHARED_UINT(drift_substep_underflow, 2)
+MICROSIMULATOR_SHARED_UINT(drift_invalid_substep, 3)
+MICROSIMULATOR_SHARED_UINT(drift_non_finite, 4)
+MICROSIMULATOR_SHARED_UINT(drift_degenerate_direction, 5)
+// The most contacts one cell makes with one external constraint: six box
+// faces at each of two endpoints.
+MICROSIMULATOR_SHARED_UINT(external_pair_capacity, 12)

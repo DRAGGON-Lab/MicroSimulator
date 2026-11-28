@@ -1369,6 +1369,8 @@ SignalSolveResult signal_grid_crank_nicolson_candidate(const SignalGrid& grid, f
             current.swap(next);
             return detail::SignalSweepResult{.residual_rms = residual_rms()};
           },
+      .sweep_batch = {},
+      .batch = 1,
   };
   const auto report = detail::solve_signal_jacobi(operations, spec.solver);
   return {.levels = std::move(current), .report = report};

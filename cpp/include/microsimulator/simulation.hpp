@@ -114,10 +114,6 @@ class Simulation {
  private:
   struct ContactDynamicsRequest;
   ContactDynamicsResult advance(float dt, const ContactDynamicsRequest* dynamics);
-  // The fluid velocity at a point and the rate at which it turns a rod of
-  // the given axis and Jeffery shape factor.
-  [[nodiscard]] std::pair<Vec3, Vec3> flow_derivative(Vec3 point, Vec3 axis, float lambda,
-                                                      bool rotates) const;
   // The velocity then angular velocity the flow gives each cell over a move
   // of length `dt`, by slot. Fixed cells do not drift.
   [[nodiscard]] std::vector<std::array<float, 6>> flow_drift_rates(float dt) const;

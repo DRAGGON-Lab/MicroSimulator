@@ -13,8 +13,12 @@
 #include <vector>
 
 #include "core/deposition_plan.hpp"
-#include "cuda_deposition.cuh"
+#include "core/external_contact_plan.hpp"
+#include "core/flow_drift_plan.hpp"
+#include "cuda_cell_kernels.cuh"
 #include "device_types.cuh"
+#include "kernels/external_contacts.cuh"
+#include "kernels/flow_drift.cuh"
 
 namespace microsimulator::cuda {
 namespace {
@@ -430,8 +434,66 @@ __global__ void brinkman_drag_kernel(kernels::BrinkmanDragData data, const unsig
   drag[site] = solid[site] != 0 ? 0.0f : kozeny_carman(fraction, data.drag_coefficient);
 }
 
+__global__ void external_count(kernels::ExternalContactData data, const float4* centers,
+                               const float4* axes, const kernels::ExternalConstraint* constraints,
+                               unsigned int* counts) {
+  const auto pair = element_index();
+  if (pair < data.cell_count * data.constraint_count) {
+    counts[pair] = kernels::external_pair_count(pair, data, centers, axes, constraints);
+  }
+}
+
+__global__ void external_fill(kernels::ExternalContactData data, const float4* centers,
+                              const float4* axes, const kernels::ExternalConstraint* constraints,
+                              const unsigned int* ends, kernels::ExternalContactRecord* records) {
+  const auto pair = element_index();
+  if (pair < data.cell_count * data.constraint_count) {
+    kernels::external_pair_fill(pair, data, centers, axes, constraints, ends, records);
+  }
+}
+
+__global__ void drift_rates(kernels::FlowDriftData data, const float4* centers, const float4* axes,
+                            const unsigned char* fixed_cells, const unsigned char* solid,
+                            const float* x_faces, const float* y_faces, const float* z_faces,
+                            float* rates, unsigned int* status) {
+  const auto cell = element_index();
+  if (cell < data.cell_count) {
+    status[cell] = kernels::flow_drift_rates_cell(cell, data, centers, axes, fixed_cells, solid,
+                                                  x_faces, y_faces, z_faces, rates);
+  }
+}
+
+__global__ void drift_advance(kernels::FlowDriftData data, const float4* centers,
+                              const float4* axes, const unsigned char* fixed_cells,
+                              const unsigned char* solid, const float* x_faces,
+                              const float* y_faces, const float* z_faces, float4* moved_centers,
+                              float4* moved_axes, unsigned int* status) {
+  const auto cell = element_index();
+  if (cell < data.cell_count) {
+    status[cell] =
+        kernels::flow_drift_advance_cell(cell, data, centers, axes, fixed_cells, solid, x_faces,
+                                         y_faces, z_faces, moved_centers, moved_axes);
+  }
+}
+
 void check_launch(const char* operation) {
   check_cuda(cudaGetLastError(), operation);
+}
+
+// Replaces the `count` values at `values` with their inclusive prefix sum.
+void inclusive_scan(unsigned int* values, std::uint32_t count, cudaStream_t stream) {
+  if (count == 0) {
+    return;
+  }
+  std::size_t bytes = 0;
+  check_cuda(cub::DeviceScan::InclusiveSum(nullptr, bytes, values, values, static_cast<int>(count),
+                                           stream),
+             "failed to size a CUDA scan");
+  DeviceArray<unsigned char> storage(bytes, "failed to allocate CUDA scan storage");
+  check_cuda(cub::DeviceScan::InclusiveSum(storage.data(), bytes, values, values,
+                                           static_cast<int>(count), stream),
+             "failed to run a CUDA scan");
+  check_cuda(cudaStreamSynchronize(stream), "failed to finish a CUDA scan");
 }
 
 }  // namespace
@@ -476,18 +538,8 @@ BiomassDeposit deposit_biomass(const SignalGridSpec& spec, const DepositCells& c
                                                                  counts.data());
     check_launch("failed to launch the CUDA deposit-count kernel");
   }
-  // The inclusive prefix sum of the counts gives each site its range of
-  // entries.
-  DeviceArray<unsigned int> ends_array(site_count, "failed to allocate CUDA deposit ends");
-  unsigned int* ends = ends_array.data();
-  std::size_t scan_bytes = 0;
-  check_cuda(cub::DeviceScan::InclusiveSum(nullptr, scan_bytes, counts.data(), ends,
-                                           static_cast<int>(site_count), stream),
-             "failed to size the CUDA deposit scan");
-  DeviceArray<unsigned char> scan_storage(scan_bytes, "failed to allocate CUDA deposit scan");
-  check_cuda(cub::DeviceScan::InclusiveSum(scan_storage.data(), scan_bytes, counts.data(), ends,
-                                           static_cast<int>(site_count), stream),
-             "failed to run the CUDA deposit scan");
+  inclusive_scan(counts.data(), site_count, stream);
+  unsigned int* ends = counts.data();
   if (cell_count > 0) {
     deposit_fill<<<blocks(cell_count), block_size, 0, stream>>>(
         grid, boxes.data(), weights.data(), ends, cursors.data(), entries.data());
@@ -555,6 +607,124 @@ std::vector<float> brinkman_drag(const SignalGridSpec& spec, const BiomassDeposi
                                                                       density.data(), drag.data());
   check_launch("failed to launch the CUDA Brinkman-drag kernel");
   return drag.download<float>(site_count, stream, "failed to download CUDA drag");
+}
+
+ExternalContactGraph external_contacts(const WorldState& state, const ConstraintSet& constraints,
+                                       const ConstraintContactParameters& parameters,
+                                       bool every_face, cudaStream_t stream) {
+  const auto plan = detail::plan_external_contacts(state, constraints, parameters, every_face);
+  const auto pairs = plan.pair_count();
+  if (pairs == 0) {
+    return ExternalContactGraph(plan.data.cell_count, {});
+  }
+  const auto data = as_device<kernels::ExternalContactData>(plan.data);
+  const auto pair_count = static_cast<std::uint32_t>(pairs);
+  DeviceArray<float4> centers(plan.centers.size(), "failed to allocate CUDA contact centers");
+  DeviceArray<float4> axes(plan.axes.size(), "failed to allocate CUDA contact axes");
+  DeviceArray<kernels::ExternalConstraint> packed(plan.constraints.size(),
+                                                  "failed to allocate CUDA constraints");
+  DeviceArray<unsigned int> counts(pairs, "failed to allocate CUDA contact counts");
+  // A pair makes at most shared::external_pair_capacity contacts.
+  DeviceArray<kernels::ExternalContactRecord> records(pairs * 12,
+                                                      "failed to allocate CUDA contact records");
+  centers.upload(plan.centers, stream, "failed to upload CUDA contact centers");
+  axes.upload(plan.axes, stream, "failed to upload CUDA contact axes");
+  packed.upload(plan.constraints, stream, "failed to upload CUDA constraints");
+  external_count<<<blocks(pair_count), block_size, 0, stream>>>(data, centers.data(), axes.data(),
+                                                                packed.data(), counts.data());
+  check_launch("failed to launch the CUDA external-count kernel");
+  inclusive_scan(counts.data(), pair_count, stream);
+  unsigned int* ends = counts.data();
+  external_fill<<<blocks(pair_count), block_size, 0, stream>>>(data, centers.data(), axes.data(),
+                                                               packed.data(), ends, records.data());
+  check_launch("failed to launch the CUDA external-fill kernel");
+  unsigned int total = 0;
+  check_cuda(cudaMemcpyAsync(&total, ends + (pair_count - 1), sizeof(total), cudaMemcpyDeviceToHost,
+                             stream),
+             "failed to download the CUDA contact count");
+  const auto host_records = records.download<microsimulator::device::ExternalContactRecord>(
+      total, stream, "failed to download CUDA contact records");
+  return detail::finish_external_contacts(plan, host_records);
+}
+
+namespace {
+
+// A drift's cells, and its grid's obstacles and velocity field, on the device.
+struct DriftInputs {
+  explicit DriftInputs(const detail::FlowDriftPlan& plan, cudaStream_t stream)
+      : centers(plan.centers.size(), "failed to allocate CUDA drift centers"),
+        axes(plan.axes.size(), "failed to allocate CUDA drift axes"),
+        fixed(plan.fixed.size(), "failed to allocate CUDA drift fixed flags"),
+        solid(plan.solid.size(), "failed to allocate CUDA drift obstacles"),
+        x_faces(plan.field->x_faces.size(), "failed to allocate CUDA drift x faces"),
+        y_faces(plan.field->y_faces.size(), "failed to allocate CUDA drift y faces"),
+        z_faces(plan.field->z_faces.size(), "failed to allocate CUDA drift z faces"),
+        status(plan.centers.size(), "failed to allocate CUDA drift status") {
+    centers.upload(plan.centers, stream, "failed to upload CUDA drift centers");
+    axes.upload(plan.axes, stream, "failed to upload CUDA drift axes");
+    fixed.upload(plan.fixed, stream, "failed to upload CUDA drift fixed flags");
+    solid.upload(plan.solid, stream, "failed to upload CUDA drift obstacles");
+    x_faces.upload(plan.field->x_faces, stream, "failed to upload CUDA drift x faces");
+    y_faces.upload(plan.field->y_faces, stream, "failed to upload CUDA drift y faces");
+    z_faces.upload(plan.field->z_faces, stream, "failed to upload CUDA drift z faces");
+    status.zero(stream, "failed to clear CUDA drift status");
+  }
+
+  DeviceArray<float4> centers;
+  DeviceArray<float4> axes;
+  DeviceArray<unsigned char> fixed;
+  DeviceArray<unsigned char> solid;
+  DeviceArray<float> x_faces;
+  DeviceArray<float> y_faces;
+  DeviceArray<float> z_faces;
+  DeviceArray<unsigned int> status;
+};
+
+}  // namespace
+
+std::vector<std::array<float, 6>> flow_drift_rates(const WorldState& state, const SignalGrid& grid,
+                                                   float dt, cudaStream_t stream) {
+  const auto plan = detail::plan_flow_drift(state, grid, dt, 0.0F);
+  const auto cells = plan.data.cell_count;
+  const auto data = as_device<kernels::FlowDriftData>(plan.data);
+  DriftInputs inputs(plan, stream);
+  DeviceArray<float> rates(6 * plan.centers.size(), "failed to allocate CUDA drift rates");
+  if (cells > 0) {
+    drift_rates<<<blocks(cells), block_size, 0, stream>>>(
+        data, inputs.centers.data(), inputs.axes.data(), inputs.fixed.data(), inputs.solid.data(),
+        inputs.x_faces.data(), inputs.y_faces.data(), inputs.z_faces.data(), rates.data(),
+        inputs.status.data());
+    check_launch("failed to launch the CUDA drift-rates kernel");
+  }
+  detail::check_flow_drift_status(
+      inputs.status.download<std::uint32_t>(cells, stream, "failed to download CUDA drift status"));
+  const auto host_rates = rates.download<float>(6 * static_cast<std::size_t>(cells), stream,
+                                                "failed to download CUDA drift rates");
+  return detail::unpack_flow_drift_rates(host_rates, cells);
+}
+
+void advance_flow_drift(WorldState& state, const SignalGrid& grid, float dt,
+                        const FlowDriftParameters& parameters, cudaStream_t stream) {
+  const auto plan = detail::plan_flow_drift(state, grid, dt, parameters.max_rotation_radians);
+  const auto cells = plan.data.cell_count;
+  const auto data = as_device<kernels::FlowDriftData>(plan.data);
+  DriftInputs inputs(plan, stream);
+  DeviceArray<float4> moved_centers(plan.centers.size(), "failed to allocate CUDA drift centers");
+  DeviceArray<float4> moved_axes(plan.axes.size(), "failed to allocate CUDA drift axes");
+  if (cells > 0) {
+    drift_advance<<<blocks(cells), block_size, 0, stream>>>(
+        data, inputs.centers.data(), inputs.axes.data(), inputs.fixed.data(), inputs.solid.data(),
+        inputs.x_faces.data(), inputs.y_faces.data(), inputs.z_faces.data(), moved_centers.data(),
+        moved_axes.data(), inputs.status.data());
+    check_launch("failed to launch the CUDA drift-advance kernel");
+  }
+  detail::check_flow_drift_status(
+      inputs.status.download<std::uint32_t>(cells, stream, "failed to download CUDA drift status"));
+  const auto centers = moved_centers.download<microsimulator::device::float4>(
+      cells, stream, "failed to download CUDA drift centers");
+  const auto axes = moved_axes.download<microsimulator::device::float4>(
+      cells, stream, "failed to download CUDA drift axes");
+  detail::apply_flow_drift_moves(state, centers, axes);
 }
 
 }  // namespace microsimulator::cuda

@@ -223,7 +223,7 @@ void launch_signal_crank_nicolson_jacobi(
     const float* y_faces, const float* z_faces, std::uint32_t has_velocity_field,
     std::uint32_t* error, SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
     float4 spacing, float half_dt, std::uint32_t signal_count, SignalFluidGpu fluid,
-    cudaStream_t stream);
+    cudaStream_t stream, const std::uint32_t* gate = nullptr);
 // Writes one squared residual per fluid level.
 void launch_signal_crank_nicolson_residual_terms(
     const float* current, const float* right_hand_side, float* terms, const float* diffusion,
@@ -231,10 +231,29 @@ void launch_signal_crank_nicolson_residual_terms(
     const float* reaction_loss, const std::uint8_t* obstacles, const float* x_faces,
     const float* y_faces, const float* z_faces, std::uint32_t has_velocity_field,
     SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape, float4 spacing, float half_dt,
-    std::uint32_t signal_count, SignalFluidGpu fluid, cudaStream_t stream);
+    std::uint32_t signal_count, SignalFluidGpu fluid, cudaStream_t stream,
+    const std::uint32_t* gate = nullptr);
 
 // Sums neighboring elements of `input` into `output`, halving the count.
 void launch_reduce_sum_pairs(const float* input, float* output, std::uint32_t element_count,
-                             cudaStream_t stream);
+                             cudaStream_t stream, const std::uint32_t* gate = nullptr);
+
+// Progress of a batch of implicit signal sweeps on the device. Sweeps after
+// the one that finishes the solve do nothing.
+struct SignalSweepStateGpu {
+  std::uint32_t done;
+  std::uint32_t iterations;
+  float residual_rms;
+  std::uint32_t invalid;
+};
+
+// Records the sweep whose residual terms `reduction` sums, and finishes the
+// batch when its residual RMS is within `threshold`, is not finite, or the
+// sweep was invalid. A Jacobi kernel, residual kernel, or reduction given
+// `&state->done` as its gate does nothing once the batch is finished.
+void launch_signal_sweep_check(const float* reduction, const std::uint32_t* error,
+                               SignalSweepStateGpu* state, float threshold,
+                               std::uint32_t level_count, std::uint32_t fluid_level_count,
+                               cudaStream_t stream);
 
 }  // namespace microsimulator::cuda

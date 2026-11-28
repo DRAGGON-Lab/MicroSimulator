@@ -7,15 +7,18 @@
 #include <tuple>
 
 #include "core/contact_stepper.hpp"
-#include "core/parallel.hpp"
 
 namespace microsimulator {
 namespace {
 
-// Cells handed to one thread at a time.
-constexpr std::size_t cell_grain = 256;
+const SimulationCheckpoint& validated_checkpoint(const SimulationCheckpoint& checkpoint) {
+  checkpoint.validate();
+  return checkpoint;
+}
 
-std::unique_ptr<ComputeBackend> make_backend(BackendKind kind, std::uint32_t device_index) {
+}  // namespace
+
+std::unique_ptr<ComputeBackend> make_compute_backend(BackendKind kind, std::uint32_t device_index) {
   switch (kind) {
     case BackendKind::cpu:
       return make_cpu_backend(device_index);
@@ -34,13 +37,6 @@ std::unique_ptr<ComputeBackend> make_backend(BackendKind kind, std::uint32_t dev
   }
   throw std::runtime_error("unknown compute backend");
 }
-
-const SimulationCheckpoint& validated_checkpoint(const SimulationCheckpoint& checkpoint) {
-  checkpoint.validate();
-  return checkpoint;
-}
-
-}  // namespace
 
 std::size_t backend_device_count(BackendKind kind) noexcept {
   if (kind == BackendKind::cpu) {
@@ -66,7 +62,7 @@ bool backend_available(BackendKind kind, std::uint32_t device_index) noexcept {
 Simulation::Simulation(BackendKind backend, std::size_t reserved_capacity,
                        std::size_t species_count, std::uint32_t device_index)
     : state_(reserved_capacity, species_count),
-      backend_(make_backend(backend, device_index)),
+      backend_(make_compute_backend(backend, device_index)),
       species_rate_plan_(SpeciesRatePlan::zero(species_count)) {
 }
 
@@ -74,7 +70,7 @@ Simulation::Simulation(BackendKind backend, const SimulationCheckpoint& checkpoi
                        std::uint32_t device_index)
     : state_(validated_checkpoint(checkpoint).world),
       constraints_(checkpoint.constraints),
-      backend_(make_backend(backend, device_index)),
+      backend_(make_compute_backend(backend, device_index)),
       species_rate_plan_(checkpoint.species_rate_plan),
       signal_grid_(checkpoint.signal_grid.has_value()
                        ? std::optional<SignalGrid>(SignalGrid(*checkpoint.signal_grid))
@@ -128,61 +124,8 @@ void Simulation::remove_cell(CellId id) {
   state_.remove_cell(id);
 }
 
-std::pair<Vec3, Vec3> Simulation::flow_derivative(Vec3 point, Vec3 axis, float lambda,
-                                                  bool rotates) const {
-  const auto spacing = signal_grid_->spec().spacing;
-  const std::array<float, 3> h{spacing.x, spacing.y, spacing.z};
-  const std::array<std::uint32_t, 3> dims{
-      signal_grid_->spec().shape.x, signal_grid_->spec().shape.y, signal_grid_->spec().shape.z};
-  const auto sample = [&](Vec3 position) {
-    return signal_grid_->sample_velocity(position, GridSampleBound::clamped);
-  };
-  // Central differences of the interpolated fluid velocity. This is an
-  // equivalent-spheroid Jeffery closure, not cell-resolved hydrodynamics.
-  std::array<Vec3, 3> gradient{};
-  for (std::size_t k = 0; k < 3; ++k) {
-    if (dims[k] == 1) continue;
-    Vec3 offset{};
-    if (k == 0) offset.x = h[k] * 0.5F;
-    if (k == 1) offset.y = h[k] * 0.5F;
-    if (k == 2) offset.z = h[k] * 0.5F;
-    gradient[k] = (sample(point + offset) - sample(point - offset)) * (1 / h[k]);
-  }
-  const Vec3 ap = gradient[0] * axis.x + gradient[1] * axis.y + gradient[2] * axis.z;
-  const Vec3 atp{dot(gradient[0], axis), dot(gradient[1], axis), dot(gradient[2], axis)};
-  const Vec3 strain = (ap + atp) * 0.5F;
-  const Vec3 spin = (ap - atp) * 0.5F;
-  const auto orientation = rotates ? spin + (strain - axis * dot(axis, strain)) * lambda : Vec3{};
-  return {sample(point), orientation};
-}
-
 std::vector<std::array<float, 6>> Simulation::flow_drift_rates(float dt) const {
-  const auto geometry = state_.geometry_state();
-  const auto attributes = state_.cell_attributes();
-  std::vector<std::array<float, 6>> rates(geometry.size());
-  detail::parallel_for(geometry.size(), cell_grain, [&](std::size_t begin, std::size_t end) {
-    for (std::size_t slot = begin; slot < end; ++slot) {
-      if (attributes.fixed[slot] != 0) continue;
-      const Vec3 position{geometry.position_x[slot], geometry.position_y[slot],
-                          geometry.position_z[slot]};
-      const Vec3 direction{geometry.direction_x[slot], geometry.direction_y[slot],
-                           geometry.direction_z[slot]};
-      const float aspect =
-          (geometry.lengths[slot] + 2 * geometry.radii[slot]) / (2 * geometry.radii[slot]);
-      const float lambda = (aspect * aspect - 1) / (aspect * aspect + 1);
-      // The rates at the midpoint of the free motion over `dt`.
-      const auto [velocity, orientation] = flow_derivative(position, direction, lambda, true);
-      const auto midpoint = position + velocity * (dt * 0.5F);
-      const auto mid_direction = normalized(direction + orientation * (dt * 0.5F));
-      const auto [mid_velocity, mid_orientation] =
-          flow_derivative(midpoint, mid_direction, lambda, true);
-      // A direction turning at rate d is a rotation at angular velocity p x d.
-      const auto angular = cross(direction, mid_orientation);
-      rates[slot] = {mid_velocity.x, mid_velocity.y, mid_velocity.z,
-                     angular.x,      angular.y,      angular.z};
-    }
-  });
-  return rates;
+  return backend_->flow_drift_rates(state_, *signal_grid_, dt);
 }
 
 void Simulation::apply_flow_drift(float dt, const FlowDriftParameters& parameters) {
@@ -196,72 +139,7 @@ void Simulation::apply_flow_drift(float dt, const FlowDriftParameters& parameter
   if (dt == 0.0F || state_.empty()) {
     return;
   }
-  const auto geometry = state_.geometry_state();
-  const auto attributes = state_.cell_attributes();
-  const auto spacing = signal_grid_->spec().spacing;
-  const std::array<float, 3> h{spacing.x, spacing.y, spacing.z};
-  const std::array<std::uint32_t, 3> dims{
-      signal_grid_->spec().shape.x, signal_grid_->spec().shape.y, signal_grid_->spec().shape.z};
-  const float spatial_step = 0.25F * *std::min_element(h.begin(), h.end());
-  // Every moving cell's geometry after the drift, applied once all are valid.
-  struct DriftUpdate {
-    bool moved{false};
-    Vec3 position;
-    Vec3 direction;
-  };
-  std::vector<DriftUpdate> updates(geometry.size());
-  detail::parallel_for(geometry.size(), cell_grain, [&](std::size_t begin, std::size_t end) {
-    for (std::size_t slot = begin; slot < end; ++slot) {
-      if (attributes.fixed[slot] != 0) continue;
-      Vec3 position{geometry.position_x[slot], geometry.position_y[slot],
-                    geometry.position_z[slot]};
-      Vec3 direction{geometry.direction_x[slot], geometry.direction_y[slot],
-                     geometry.direction_z[slot]};
-      const float aspect =
-          (geometry.lengths[slot] + 2 * geometry.radii[slot]) / (2 * geometry.radii[slot]);
-      const float lambda = (aspect * aspect - 1) / (aspect * aspect + 1);
-      const auto derivative = [&](Vec3 point, Vec3 axis) {
-        return flow_derivative(point, axis, lambda, parameters.max_rotation_radians != 0);
-      };
-      double remaining = dt;
-      std::uint32_t steps = 0;
-      while (remaining > 0) {
-        if (++steps > 100000)
-          throw std::runtime_error("flow drift needs too many substeps; reduce dt");
-        const auto [velocity, orientation] = derivative(position, direction);
-        float step = static_cast<float>(remaining);
-        if (norm(velocity) > 0) step = std::min(step, spatial_step / norm(velocity));
-        if (norm(orientation) > 0)
-          step = std::min(step, parameters.max_rotation_radians / norm(orientation));
-        Vec3 mid_velocity, mid_orientation;
-        while (true) {
-          const auto midpoint = position + velocity * (step * 0.5F);
-          const auto mid_direction = normalized(direction + orientation * (step * 0.5F));
-          std::tie(mid_velocity, mid_orientation) = derivative(midpoint, mid_direction);
-          if (step * norm(mid_velocity) <= spatial_step * 1.001F &&
-              (parameters.max_rotation_radians == 0 ||
-               step * norm(mid_orientation) <= parameters.max_rotation_radians * 1.001F))
-            break;
-          step *= 0.5F;
-          if (step <= 0) throw std::runtime_error("flow drift substep underflow");
-        }
-        if (!std::isfinite(step) || step <= 0)
-          throw std::runtime_error("invalid flow drift substep");
-        position = position + mid_velocity * step;
-        direction = normalized(direction + mid_orientation * step);
-        remaining = std::max(0.0, remaining - step);
-      }
-      if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
-        throw std::runtime_error("flow drift produced non-finite geometry");
-      updates[slot] = {true, position, direction};
-    }
-  });
-  for (std::size_t slot = 0; slot < updates.size(); ++slot) {
-    if (updates[slot].moved) {
-      state_.set_cell_geometry(static_cast<Slot>(slot), updates[slot].position,
-                               updates[slot].direction, geometry.lengths[slot]);
-    }
-  }
+  backend_->advance_flow_drift(state_, *signal_grid_, dt, parameters);
 }
 
 ConstraintId Simulation::add_plane_constraint(const PlaneConstraintInit& plane) {

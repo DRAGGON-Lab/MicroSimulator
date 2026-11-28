@@ -195,7 +195,8 @@ struct ForceMemory {
     });
   }
   if (!constraints.empty()) {
-    const auto walls = find_external_contact_faces(state, constraints, constraint_parameters);
+    const auto walls =
+        backend.find_external_contact_faces(state, constraints, constraint_parameters);
     for (const auto& contact : walls.contacts()) {
       touches.push_back({
           .first_slot = contact.cell_slot,
@@ -494,7 +495,7 @@ struct SubstepAttempt {
       }
       multipliers = std::move(early.multipliers);
       if (early.report.status != ContactSolveStatus::converged) {
-        rotation = largest_rotation(evaluate_contact_response(system, multipliers), dt);
+        rotation = largest_rotation(early.response, dt);
         if (rotation > maximum_substep_rotation) {
           break;
         }
@@ -508,7 +509,7 @@ struct SubstepAttempt {
       break;
     }
     multipliers = std::move(solve.multipliers);
-    auto response = evaluate_contact_response(system, multipliers);
+    auto response = std::move(solve.response);
     auto move = moved(base, response, dt);
     rotation = move.rotation;
     if (!move.geometry.has_value()) {

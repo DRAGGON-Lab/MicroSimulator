@@ -91,6 +91,24 @@ constant uint depth_stopped = 1u;
 constant uint depth_converged = 2u;
 constant uint depth_failure = 3u;
 
+// The operator at one active site.
+inline float2 depth_operator_site(device const float2* input, device const uint* neighbors,
+                                  device const float* conductance, constant DepthFlowScales& scales,
+                                  device const float* boundary_conductance, uint index) {
+  // The site's coupling to the pressures held beyond its open exterior faces.
+  float2 result = pair_scale(input[index], boundary_conductance[index]);
+  for (uint slot = 0; slot < 6u; ++slot) {
+    const uint neighbor = neighbors[6u * index + slot];
+    if (neighbor == 0xffffffffu) {
+      continue;
+    }
+    const float2 scaled =
+        pair_scale(inverse_square(scales, slot / 2u), conductance[6u * index + slot]);
+    result = pair_add(result, pair_multiply(scaled, pair_subtract(input[index], input[neighbor])));
+  }
+  return result;
+}
+
 // The operator over the active sites of a depth-averaged system. Each has six
 // neighbors, lower then upper along x, y and z, named by their place among
 // the active sites, with the conductance to each.
@@ -105,18 +123,8 @@ kernel void depth_pair_operator(device const float2* input [[buffer(0)]],
   if (index >= count) {
     return;
   }
-  // The site's coupling to the pressures held beyond its open exterior faces.
-  float2 result = pair_scale(input[index], boundary_conductance[index]);
-  for (uint slot = 0; slot < 6u; ++slot) {
-    const uint neighbor = neighbors[6u * index + slot];
-    if (neighbor == 0xffffffffu) {
-      continue;
-    }
-    const float2 scaled =
-        pair_scale(inverse_square(scales, slot / 2u), conductance[6u * index + slot]);
-    result = pair_add(result, pair_multiply(scaled, pair_subtract(input[index], input[neighbor])));
-  }
-  output[index] = result;
+  output[index] =
+      depth_operator_site(input, neighbors, conductance, scales, boundary_conductance, index);
 }
 
 kernel void depth_pair_velocity(device const float2* pressure [[buffer(0)]],
@@ -274,12 +282,18 @@ kernel void depth_pair_sum(device const float2* partials [[buffer(0)]],
 
 // Begins an iteration: the step length from the curvature the operator left.
 // A solve that has stopped takes a step of no length, which changes nothing.
+inline void depth_step_length(device float2* scalars, device uint* counters);
+
 kernel void depth_pair_step_length(device float2* scalars [[buffer(0)]],
                                    device uint* counters [[buffer(1)]],
                                    uint worker [[thread_position_in_grid]]) {
   if (worker != 0u) {
     return;
   }
+  depth_step_length(scalars, counters);
+}
+
+inline void depth_step_length(device float2* scalars, device uint* counters) {
   scalars[depth_alpha] = float2(0.0f);
   if (counters[depth_stopped] != 0u) {
     return;
@@ -302,6 +316,8 @@ kernel void depth_pair_step_length(device float2* scalars [[buffer(0)]],
 
 // Ends an iteration: stops the solve if its residual meets the threshold,
 // and otherwise leaves the weight of the next direction.
+inline void depth_step_weight(device float2* scalars, device uint* counters, float2 threshold);
+
 kernel void depth_pair_step_weight(device float2* scalars [[buffer(0)]],
                                    device uint* counters [[buffer(1)]],
                                    constant float2& threshold [[buffer(2)]],
@@ -309,6 +325,10 @@ kernel void depth_pair_step_weight(device float2* scalars [[buffer(0)]],
   if (worker != 0u) {
     return;
   }
+  depth_step_weight(scalars, counters, threshold);
+}
+
+inline void depth_step_weight(device float2* scalars, device uint* counters, float2 threshold) {
   scalars[depth_beta] = float2(0.0f);
   if (counters[depth_stopped] != 0u) {
     return;
@@ -339,4 +359,91 @@ kernel void depth_pair_step_weight(device float2* scalars [[buffer(0)]],
   }
   scalars[depth_beta] = beta;
   scalars[depth_rho] = next_rho;
+}
+
+// The largest threadgroup depth_pair_solve runs in.
+constant uint depth_solve_group = 1024u;
+
+// A dot product over one threadgroup. Each lane adds one contiguous run of
+// the products in index order, and the runs are added pairwise in a fixed
+// tree, so the sum is the same on every run with the same group width. Leaves
+// the sum among the solve's scalars at `place`.
+inline void depth_group_dot(device const float2* left, device const float2* right,
+                            threadgroup float2* partial, device float2* scalars, uint place,
+                            uint count, uint lane, uint lanes) {
+  const uint run = (count + lanes - 1u) / lanes;
+  const uint first = lane * run;
+  const uint last = min(count, first + run);
+  float2 sum = float2(0.0f);
+  for (uint index = first; index < last; ++index) {
+    sum = pair_add(sum, pair_multiply(left[index], right[index]));
+  }
+  partial[lane] = sum;
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  for (uint stride = depth_solve_group / 2u; stride > 0u; stride /= 2u) {
+    if (lane < stride && lane + stride < lanes) {
+      partial[lane] = pair_add(partial[lane], partial[lane + stride]);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+  }
+  if (lane == 0u) {
+    scalars[place] = partial[0];
+  }
+  threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+}
+
+// Up to `max_iterations` iterations of the preconditioned conjugate-gradient
+// solve in one threadgroup, as the depth_pair_* kernels take them one
+// dispatch at a time, from the state depth_pair_initialize and the two
+// initial dot products left. Stops at the iteration that stops the solve.
+// Its dot products add in the order of depth_group_dot.
+kernel void depth_pair_solve(
+    device float2* solution [[buffer(0)]], device float2* residual [[buffer(1)]],
+    device float2* preconditioned [[buffer(2)]], device float2* direction [[buffer(3)]],
+    device float2* transformed [[buffer(4)]], device const float* diagonal [[buffer(5)]],
+    device const uint* neighbors [[buffer(6)]], device const float* conductance [[buffer(7)]],
+    device const float* boundary_conductance [[buffer(8)]], device float2* scalars [[buffer(11)]],
+    device uint* counters [[buffer(12)]], constant uint& count [[buffer(13)]],
+    constant DepthFlowScales& scales [[buffer(14)]], constant float2& threshold [[buffer(15)]],
+    constant uint& max_iterations [[buffer(16)]], uint lane [[thread_position_in_threadgroup]],
+    uint lanes [[threads_per_threadgroup]]) {
+  threadgroup float2 partial[depth_solve_group];
+  for (uint iteration = 0u; iteration < max_iterations; ++iteration) {
+    threadgroup_barrier(mem_flags::mem_device);
+    if (counters[depth_stopped] != 0u) {
+      return;
+    }
+    for (uint index = lane; index < count; index += lanes) {
+      transformed[index] = depth_operator_site(direction, neighbors, conductance, scales,
+                                               boundary_conductance, index);
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+    depth_group_dot(direction, transformed, partial, scalars, depth_curvature, count, lane, lanes);
+    if (lane == 0u) {
+      depth_step_length(scalars, counters);
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+    const float2 alpha = scalars[depth_alpha];
+    for (uint index = lane; index < count; index += lanes) {
+      solution[index] = pair_add(solution[index], pair_multiply(alpha, direction[index]));
+      residual[index] = pair_subtract(residual[index], pair_multiply(alpha, transformed[index]));
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+    depth_group_dot(residual, residual, partial, scalars, depth_residual_squared, count, lane,
+                    lanes);
+    for (uint index = lane; index < count; index += lanes) {
+      preconditioned[index] =
+          diagonal[index] > 0.0f ? pair_divide(residual[index], diagonal[index]) : float2(0.0f);
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+    depth_group_dot(residual, preconditioned, partial, scalars, depth_next_rho, count, lane, lanes);
+    if (lane == 0u) {
+      depth_step_weight(scalars, counters, threshold);
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+    const float2 beta = scalars[depth_beta];
+    for (uint index = lane; index < count; index += lanes) {
+      direction[index] = pair_add(preconditioned[index], pair_multiply(beta, direction[index]));
+    }
+  }
 }
