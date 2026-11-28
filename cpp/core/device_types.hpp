@@ -51,5 +51,9 @@ static_assert(sizeof(ExternalConstraint) == 48 && offsetof(ExternalConstraint, g
 static_assert(sizeof(GridShape) == 16);
 static_assert(sizeof(FlowGridParameters) == 96 && offsetof(FlowGridParameters, site_count) == 80);
 static_assert(sizeof(DepthFlowScales) == 32);
+static_assert(sizeof(DepositGrid) == 80 && offsetof(DepositGrid, cell_count) == 64);
+static_assert(sizeof(DepositBox) == 32);
+static_assert(sizeof(ShallowCouplingData) == 32);
+static_assert(sizeof(BrinkmanDragData) == 32);
 
 }  // namespace microsimulator::device

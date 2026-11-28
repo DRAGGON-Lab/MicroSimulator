@@ -12,12 +12,14 @@
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "core/boundary_values.hpp"
 #include "core/contact_solver.hpp"
 #include "core/signal_jacobi.hpp"
+#include "cuda_deposition.cuh"
 #include "cuda_flow.cuh"
 #include "kernels/contact_dynamics.cuh"
 #include "kernels/contacts.cuh"
@@ -121,15 +123,6 @@ class CudaBackend final : public ComputeBackend {
         .device_index = static_cast<std::uint32_t>(device_index_),
         .native = true,
     };
-  }
-
-  [[nodiscard]] bool supports(BackendFeature feature) const noexcept override {
-    return feature == BackendFeature::growth || feature == BackendFeature::species ||
-           feature == BackendFeature::cell_contacts ||
-           feature == BackendFeature::external_constraints || feature == BackendFeature::signals ||
-           feature == BackendFeature::coupled_rates ||
-           feature == BackendFeature::depth_averaged_flow ||
-           feature == BackendFeature::resolved_flow || feature == BackendFeature::contact_dynamics;
   }
 
   void advance_growth(WorldState& state, float dt) override {
@@ -723,6 +716,27 @@ class CudaBackend final : public ComputeBackend {
       const ResolvedPortFlowParameters& parameters) override {
     activate_device();
     return cuda::solve_resolved_port_flow(spec, ports, drag, parameters, stream_);
+  }
+
+  [[nodiscard]] BiomassDeposit deposit_biomass(
+      const SignalGridSpec& spec, const DepositCells& cells,
+      const BiomassDepositParameters& parameters) override {
+    activate_device();
+    return cuda::deposit_biomass(spec, cells, parameters, stream_);
+  }
+
+  [[nodiscard]] ShallowFlowCoupling shallow_flow_coupling(
+      const SignalGridSpec& spec, std::span<const float> base, const BiomassDeposit& deposit,
+      const BiomassDragParameters& parameters) override {
+    activate_device();
+    return cuda::shallow_flow_coupling(spec, base, deposit, parameters, stream_);
+  }
+
+  [[nodiscard]] std::vector<float> brinkman_drag(const SignalGridSpec& spec,
+                                                 const BiomassDeposit& deposit,
+                                                 const BiomassDragParameters& parameters) override {
+    activate_device();
+    return cuda::brinkman_drag(spec, deposit, parameters, stream_);
   }
 
  private:
@@ -1523,6 +1537,9 @@ class CudaBackend final : public ComputeBackend {
   std::array<CudaBuffer<float>, 2> contact_gaps_;
   std::array<CudaBuffer<float4>, 2> contact_reduce_;
 };
+
+// A backend that leaves out any provider method is abstract.
+static_assert(!std::is_abstract_v<CudaBackend>, "the CUDA backend must implement every provider");
 
 }  // namespace
 

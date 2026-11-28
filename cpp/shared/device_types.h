@@ -100,3 +100,52 @@ struct DepthFlowScales {
   float4 inverse_square_high;
   float4 inverse_square_low;
 };
+
+// The lattice and kernel of a biomass deposit. A cell spreads its biomass
+// over the sites of a box about its center, by the integrals over each site
+// of a separable tent of radius `origin.w`.
+struct DepositGrid {
+  // Site counts along x, y, and z; w is the site count.
+  uint4 shape;
+  // Lower corner of the first site's center; w is the tent radius.
+  float4 origin;
+  // Site spacing; w is the volume of one site.
+  float4 spacing;
+  // The largest box extent along x, y, and z; w is the weights each cell
+  // holds, their product.
+  uint4 box;
+  uint cell_count;
+  uint channel_count;
+  uint has_obstacles;
+  uint padding;
+};
+
+// The sites one cell deposits over: the box from `lower` spanning `extent`.
+// lower.w is one when the cell lies inside the grid and zero when it lies
+// outside and deposits nothing; extent.w is the box's site count.
+struct DepositBox {
+  uint4 lower;
+  uint4 extent;
+};
+
+// The closure of shallow flow over a deposit, one column at a time.
+struct ShallowCouplingData {
+  // Site counts along x, y, and z; w is the site count.
+  uint4 shape;
+  float drag_coefficient;
+  float max_volume_fraction;
+  // One when a single base mobility holds at every site.
+  uint uniform_base;
+  // One when the deposit carries the in-plane velocity of its biomass.
+  uint has_velocity;
+};
+
+// The resolved-flow Brinkman drag of a deposit, one site at a time.
+struct BrinkmanDragData {
+  // Site counts along x, y, and z; w is the site count.
+  uint4 shape;
+  float drag_coefficient;
+  float max_volume_fraction;
+  uint padding0;
+  uint padding1;
+};

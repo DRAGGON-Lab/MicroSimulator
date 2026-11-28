@@ -26,6 +26,7 @@ add_library(microsimulator_core STATIC
   cpp/core/contact_graph.cpp
   cpp/core/constraints.cpp
   cpp/core/coupled_rates.cpp
+  cpp/core/deposition.cpp
   cpp/core/json.cpp
   cpp/core/mechanics_integration.cpp
   cpp/core/names.cpp
@@ -42,6 +43,7 @@ add_library(microsimulator_core STATIC
   cpp/cpu/cpu_constraints.cpp
   cpp/cpu/cpu_contact_dynamics.cpp
   cpp/cpu/cpu_coupled.cpp
+  cpp/cpu/cpu_deposition.cpp
   cpp/cpu/cpu_flow.cpp
   cpp/cpu/cpu_species.cpp
 )
@@ -115,6 +117,7 @@ if(MICROSIMULATOR_ENABLE_METAL)
   microsimulator_embed_metal_source(flow cpp/metal/kernels/flow_grid.metal cpp/metal/kernels/flow.metal)
   microsimulator_embed_metal_source(depth_flow
     cpp/metal/kernels/flow_grid.metal cpp/metal/kernels/depth_flow.metal)
+  microsimulator_embed_metal_source(deposition cpp/metal/kernels/deposition.metal)
 
   set(MICROSIMULATOR_METAL_OCCUPANCY_HEADER "${MICROSIMULATOR_GENERATED_DIR}/microsimulator/metal/occupancy_source.hpp")
   add_custom_command(
@@ -130,6 +133,7 @@ if(MICROSIMULATOR_ENABLE_METAL)
 
   target_sources(microsimulator_core PRIVATE
     cpp/metal/metal_backend.mm
+    cpp/metal/metal_deposition.mm
     cpp/metal/metal_flow.mm
     cpp/metal/metal_occupancy.mm
     "${MICROSIMULATOR_METAL_OCCUPANCY_HEADER}"
@@ -154,6 +158,7 @@ if(MICROSIMULATOR_ENABLE_CUDA)
 
   target_sources(microsimulator_core PRIVATE
     cpp/cuda/cuda_backend.cu
+    cpp/cuda/cuda_deposition.cu
     cpp/cuda/cuda_flow.cu
     cpp/cuda/cuda_occupancy.cu
     cpp/cuda/kernels/occupancy.cu
@@ -201,6 +206,9 @@ endif()
 
 if(MICROSIMULATOR_BUILD_TESTS)
   include(CTest)
+  add_test(NAME layering
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckLayering.cmake")
   add_executable(microsimulator_occupancy_conformance_test tests/conformance/occupancy_conformance_test.cpp)
   target_link_libraries(microsimulator_occupancy_conformance_test PRIVATE microsimulator::core)
   add_test(NAME occupancy_conformance COMMAND microsimulator_occupancy_conformance_test)
@@ -309,6 +317,13 @@ if(MICROSIMULATOR_BUILD_TESTS)
   target_link_libraries(microsimulator_coupled_rates_conformance_test PRIVATE microsimulator::core)
   add_test(NAME coupled_rates_conformance COMMAND microsimulator_coupled_rates_conformance_test)
   set_tests_properties(coupled_rates_conformance PROPERTIES LABELS conformance)
+
+  add_executable(microsimulator_deposition_conformance_test
+    tests/conformance/deposition_conformance_test.cpp
+  )
+  target_link_libraries(microsimulator_deposition_conformance_test PRIVATE microsimulator::core)
+  add_test(NAME deposition_conformance COMMAND microsimulator_deposition_conformance_test)
+  set_tests_properties(deposition_conformance PROPERTIES LABELS conformance)
 
   add_executable(microsimulator_flow_conformance_test
     tests/conformance/flow_conformance_test.cpp

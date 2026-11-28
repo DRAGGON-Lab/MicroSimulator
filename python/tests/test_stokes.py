@@ -199,7 +199,7 @@ def test_colony_drag_rasterizes_the_colony() -> None:
     assert packed > 0.0
     assert 0.0 < empty < packed
     assert solid == 0.0
-    assert math.isclose(packed, 50.0 * 0.9**2 / (1.0 - 0.9) ** 3, rel_tol=1.0e-9)
+    assert math.isclose(packed, 50.0 * 0.9**2 / (1.0 - 0.9) ** 3, rel_tol=2.0e-6)
     with pytest.raises(FlowError, match="finite and non-negative"):
         colony_drag(spec, [], drag_coefficient=-1.0)
 

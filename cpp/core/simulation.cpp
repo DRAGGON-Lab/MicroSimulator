@@ -388,9 +388,6 @@ ContactDynamicsResult Simulation::step(float dt,
                                        const ContactDynamicsParameters& dynamics_parameters,
                                        const ContactParameters& contact_parameters,
                                        const ConstraintContactParameters& constraint_parameters) {
-  if (!backend_->supports(BackendFeature::contact_dynamics)) {
-    throw std::runtime_error("selected backend does not implement contact dynamics");
-  }
   const ContactDynamicsRequest request{dynamics_parameters, contact_parameters,
                                        constraint_parameters};
   return advance(dt, &request);
@@ -403,19 +400,9 @@ ContactDynamicsResult Simulation::advance(float dt, const ContactDynamicsRequest
   const auto geometry = state_.geometry_state();
   const std::vector<float> previous_lengths(geometry.lengths.begin(), geometry.lengths.end());
   if (coupled_rate_plan_.has_value()) {
-    if (!backend_->supports(BackendFeature::coupled_rates)) {
-      throw std::runtime_error("selected backend does not implement coupled rates");
-    }
     validate_coupled_step(state_, *signal_grid_, *coupled_rate_plan_, previous_lengths, dt);
-  } else {
-    if (state_.species_count() != 0 && !backend_->supports(BackendFeature::species)) {
-      throw std::runtime_error("selected backend does not implement species integration");
-    }
   }
   if (signal_grid_.has_value() && !coupled_rate_plan_.has_value()) {
-    if (!backend_->supports(BackendFeature::signals)) {
-      throw std::runtime_error("selected backend does not implement signal grid integration");
-    }
     signal_grid_->validate_step(dt);
   }
   // Growth, species, and coupled updates write only cell lengths and species
@@ -493,55 +480,55 @@ ContactGraph Simulation::find_cell_contacts(const ContactParameters& parameters)
 
 ExternalContactGraph Simulation::find_external_contacts(
     const ConstraintContactParameters& parameters) {
-  if (!backend_->supports(BackendFeature::external_constraints)) {
-    throw std::runtime_error("selected backend does not implement external constraints");
-  }
   return backend_->find_external_contacts(state_, constraints_, parameters);
 }
 
 ContactSolveResult Simulation::solve_contact_system(const ContactSystem& system,
                                                     std::span<const float> initial_multipliers,
                                                     const ContactSolveParameters& parameters) {
-  if (!backend_->supports(BackendFeature::contact_dynamics)) {
-    throw std::runtime_error("selected backend does not implement contact dynamics");
-  }
   return backend_->solve_contact_forces(system, initial_multipliers, parameters);
 }
 
 DepthAveragedFlowResult Simulation::solve_depth_averaged_flow(
     const SignalGridSpec& spec, std::span<const float> mobility,
     const DepthAveragedFlowParameters& parameters) {
-  if (!backend_->supports(BackendFeature::depth_averaged_flow)) {
-    throw std::runtime_error("selected backend does not implement depth-averaged flow");
-  }
   return backend_->solve_depth_averaged_flow(spec, mobility, parameters);
 }
 
 DepthAveragedPortFlowResult Simulation::solve_depth_averaged_port_flow(
     const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> mobility,
     const DepthAveragedPortFlowParameters& parameters) {
-  if (!backend_->supports(BackendFeature::depth_averaged_flow)) {
-    throw std::runtime_error("selected backend does not implement depth-averaged flow");
-  }
   return backend_->solve_depth_averaged_port_flow(spec, ports, mobility, parameters);
 }
 
 ResolvedFlowResult Simulation::solve_resolved_flow(const SignalGridSpec& spec,
                                                    std::span<const float> drag,
                                                    const ResolvedFlowParameters& parameters) {
-  if (!backend_->supports(BackendFeature::resolved_flow)) {
-    throw std::runtime_error("selected backend does not implement resolved flow");
-  }
   return backend_->solve_resolved_flow(spec, drag, parameters);
 }
 
 ResolvedPortFlowResult Simulation::solve_resolved_port_flow(
     const SignalGridSpec& spec, std::span<const FlowPort> ports, std::span<const float> drag,
     const ResolvedPortFlowParameters& parameters) {
-  if (!backend_->supports(BackendFeature::resolved_flow)) {
-    throw std::runtime_error("selected backend does not implement resolved flow");
-  }
   return backend_->solve_resolved_port_flow(spec, ports, drag, parameters);
+}
+
+BiomassDeposit Simulation::deposit_biomass(const SignalGridSpec& spec, const DepositCells& cells,
+                                           const BiomassDepositParameters& parameters) {
+  return backend_->deposit_biomass(spec, cells, parameters);
+}
+
+ShallowFlowCoupling Simulation::shallow_flow_coupling(const SignalGridSpec& spec,
+                                                      std::span<const float> base,
+                                                      const BiomassDeposit& deposit,
+                                                      const BiomassDragParameters& parameters) {
+  return backend_->shallow_flow_coupling(spec, base, deposit, parameters);
+}
+
+std::vector<float> Simulation::brinkman_drag(const SignalGridSpec& spec,
+                                             const BiomassDeposit& deposit,
+                                             const BiomassDragParameters& parameters) {
+  return backend_->brinkman_drag(spec, deposit, parameters);
 }
 
 CellSnapshot Simulation::cell(CellId id) const {

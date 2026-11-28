@@ -614,7 +614,7 @@ def test_flow_carries_cells_inside_the_solve(backend: BackendKind) -> None:
     result = simulation.step(0.1, parameters)
     # The flow carries the free cell at its own speed while nothing is in the way.
     assert math.isclose(simulation.cell(free).position.x, 2.05, abs_tol=1e-5)
-    assert result.center_velocities[simulation.cell(free).slot].x == pytest.approx(0.5)
+    assert math.isclose(result.center_velocities[simulation.cell(free).slot].x, 0.5, rel_tol=1e-6)
     assert result.center_velocities[simulation.cell(2).slot].x == 0.0
     for _ in range(9):
         result = simulation.step(0.1, parameters)

@@ -46,7 +46,7 @@ from microsimulator.flow import colony_flow_coupling, gap_mobility, solve_flow_f
 from microsimulator.microfluidics import TrapChannelDevice
 
 MODEL_ID = "examples.microfluidic-trap"
-MODEL_VERSION = 7
+MODEL_VERSION = 8
 DIVISION = UniformLengthDivision(3.2, 3.8, jitter_z=False)
 
 FLOW_SPEED = 20.0
@@ -165,7 +165,7 @@ def _regulate(step: ControllerStep) -> StepPlan:
             moving_cells.append((cell, Vec3(x, y, 0.0)))
         mobility, force = colony_flow_coupling(
             GRID, moving_cells, base=GAP_MOBILITY, drag_coefficient=DRAG_COEFFICIENT,
-            max_volume_fraction=MAX_VOLUME_FRACTION,
+            max_volume_fraction=MAX_VOLUME_FRACTION, simulation=step.simulation,
         )
         field, _ = solve_flow_field(
             GRID, mean_inlet_speed=FLOW_SPEED, mobility=mobility, body_force=force,

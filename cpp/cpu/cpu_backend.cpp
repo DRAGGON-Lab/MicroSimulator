@@ -1,6 +1,8 @@
 #include <memory>
 #include <stdexcept>
+#include <type_traits>
 
+#include "cpu/cpu_deposition.hpp"
 #include "microsimulator/backend.hpp"
 
 namespace microsimulator {
@@ -16,15 +18,6 @@ class CpuBackend final : public ComputeBackend {
         .device_index = 0,
         .native = true,
     };
-  }
-
-  [[nodiscard]] bool supports(BackendFeature feature) const noexcept override {
-    return feature == BackendFeature::growth || feature == BackendFeature::species ||
-           feature == BackendFeature::cell_contacts ||
-           feature == BackendFeature::external_constraints || feature == BackendFeature::signals ||
-           feature == BackendFeature::coupled_rates ||
-           feature == BackendFeature::depth_averaged_flow ||
-           feature == BackendFeature::resolved_flow || feature == BackendFeature::contact_dynamics;
   }
 
   void advance_growth(WorldState& state, float dt) override {
@@ -86,7 +79,28 @@ class CpuBackend final : public ComputeBackend {
       const ResolvedPortFlowParameters& parameters) override {
     return solve_resolved_port_flow_cpu(spec, ports, drag, parameters);
   }
+
+  [[nodiscard]] BiomassDeposit deposit_biomass(
+      const SignalGridSpec& spec, const DepositCells& cells,
+      const BiomassDepositParameters& parameters) override {
+    return deposit_biomass_cpu(spec, cells, parameters);
+  }
+
+  [[nodiscard]] ShallowFlowCoupling shallow_flow_coupling(
+      const SignalGridSpec& spec, std::span<const float> base, const BiomassDeposit& deposit,
+      const BiomassDragParameters& parameters) override {
+    return shallow_flow_coupling_cpu(spec, base, deposit, parameters);
+  }
+
+  [[nodiscard]] std::vector<float> brinkman_drag(const SignalGridSpec& spec,
+                                                 const BiomassDeposit& deposit,
+                                                 const BiomassDragParameters& parameters) override {
+    return brinkman_drag_cpu(spec, deposit, parameters);
+  }
 };
+
+// A backend that leaves out any provider method is abstract.
+static_assert(!std::is_abstract_v<CpuBackend>, "the CPU backend must implement every provider");
 
 }  // namespace
 
