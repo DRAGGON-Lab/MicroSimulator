@@ -193,6 +193,7 @@ struct FlowSolver::Impl {
       depth_fold = make_pipeline(device, depth_library, @"depth_pair_fold");
       depth_step_length = make_pipeline(device, depth_library, @"depth_pair_step_length");
       depth_step_weight = make_pipeline(device, depth_library, @"depth_pair_step_weight");
+      depth_solve = make_pipeline(device, depth_library, @"depth_pair_solve");
       momentum = make_pipeline(device, library, @"resolved_flow_momentum");
       gradient = make_pipeline(device, library, @"resolved_flow_gradient");
       divergence = make_pipeline(device, library, @"resolved_flow_divergence");
@@ -521,6 +522,9 @@ struct FlowSolver::Impl {
         .inverse_square_low = {inverse_square[0].low, inverse_square[1].low, inverse_square[2].low,
                                0.0F},
     };
+    // A system of up to this many sites is solved in one threadgroup, every
+    // iteration in one command.
+    const auto in_one_group = count <= depth_group_sites;
     const auto residual = pair_buffer(count, "depth residual");
     const auto preconditioned = pair_buffer(count, "depth preconditioned residual");
     const auto direction = pair_buffer(count, "depth direction");
@@ -566,6 +570,38 @@ struct FlowSolver::Impl {
         .iterate =
             [&](std::uint32_t iterations, double threshold) {
               const auto bound_squared = split(threshold);
+              if (in_one_group) {
+                run_command(
+                    "Metal depth-averaged PCG failed", [&](id<MTLComputeCommandEncoder> encoder) {
+                      [encoder setComputePipelineState:depth_solve];
+                      [encoder setBuffer:solution offset:0 atIndex:0];
+                      [encoder setBuffer:residual offset:0 atIndex:1];
+                      [encoder setBuffer:preconditioned offset:0 atIndex:2];
+                      [encoder setBuffer:direction offset:0 atIndex:3];
+                      [encoder setBuffer:transformed offset:0 atIndex:4];
+                      [encoder setBuffer:diagonal offset:0 atIndex:5];
+                      [encoder setBuffer:neighbors offset:0 atIndex:6];
+                      [encoder setBuffer:conductance offset:0 atIndex:7];
+                      [encoder setBuffer:boundary_conductance offset:0 atIndex:8];
+                      [encoder setBuffer:scalars offset:0 atIndex:11];
+                      [encoder setBuffer:counters offset:0 atIndex:12];
+                      [encoder setBytes:&count length:sizeof(count) atIndex:13];
+                      [encoder setBytes:&scales length:sizeof(scales) atIndex:14];
+                      [encoder setBytes:&bound_squared length:sizeof(bound_squared) atIndex:15];
+                      [encoder setBytes:&iterations length:sizeof(iterations) atIndex:16];
+                      const auto width =
+                          std::min<NSUInteger>(depth_solve.maxTotalThreadsPerThreadgroup, 1024);
+                      [encoder dispatchThreadgroups:MTLSizeMake(1, 1, 1)
+                              threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
+                    });
+                return detail::ConjugateGradientProgress{
+                    .iterations = counter(depth_iterations),
+                    .converged = counter(depth_converged) != 0,
+                    .failure =
+                        static_cast<detail::ConjugateGradientFailure>(counter(depth_failure)),
+                    .residual_squared = scalar(depth_residual_squared),
+                };
+              }
               run_command(
                   "Metal depth-averaged PCG iteration failed",
                   [&](id<MTLComputeCommandEncoder> encoder) {
@@ -630,7 +666,8 @@ struct FlowSolver::Impl {
             },
     };
     const auto report = detail::batched_conjugate_gradient(
-        operations, tolerance, max_iterations, depth_batch, "Metal depth-averaged flow");
+        operations, tolerance, max_iterations, in_one_group ? max_iterations : depth_batch,
+        "Metal depth-averaged flow");
     return {.iterations = report.iterations,
             .relative_residual = static_cast<float>(report.relative_residual)};
   }
@@ -816,6 +853,7 @@ struct FlowSolver::Impl {
   id<MTLComputePipelineState> depth_fold;
   id<MTLComputePipelineState> depth_step_length;
   id<MTLComputePipelineState> depth_step_weight;
+  id<MTLComputePipelineState> depth_solve;
   id<MTLComputePipelineState> momentum;
   id<MTLComputePipelineState> gradient;
   id<MTLComputePipelineState> divergence;
@@ -832,6 +870,7 @@ struct FlowSolver::Impl {
   static constexpr std::uint32_t depth_batch = 64;
   // Block partials one thread adds when a dot product is folded.
   static constexpr std::uint32_t depth_fold_width = 64;
+  static constexpr std::uint32_t depth_group_sites = 1U << 16;
 };
 
 FlowSolver::FlowSolver(std::uint32_t device_index) : impl_(std::make_unique<Impl>(device_index)) {

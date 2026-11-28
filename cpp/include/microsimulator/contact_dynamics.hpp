@@ -123,17 +123,19 @@ struct ContactSolveParameters {
   std::uint32_t max_iterations{20000};
 };
 
-struct ContactSolveResult {
-  std::vector<float> multipliers;
-  ContactSolveReport report;
-};
-
 // What a set of multipliers does to the cells.
 struct ContactResponse {
   // Velocity then angular velocity of every cell.
   std::vector<std::array<float, 6>> velocities;
   std::vector<float> loads;
   std::vector<float> length_rates;
+};
+
+// The multipliers a solve reached and what they do to the cells.
+struct ContactSolveResult {
+  std::vector<float> multipliers;
+  ContactResponse response;
+  ContactSolveReport report;
 };
 
 void validate_contact_system(const ContactSystem& system);

@@ -286,7 +286,7 @@ void test_container_corner_reports_every_wall() {
   // Both ends lie 0.05 clear of the +y wall, and the positive end also touches
   // the +x wall. The nearest-face contacts hold each end against one wall only.
   const auto nearest = microsimulator::find_external_contacts_cpu(state, constraints, parameters);
-  const auto faces = microsimulator::find_external_contact_faces(state, constraints, parameters);
+  const auto faces = microsimulator::find_external_contact_faces_cpu(state, constraints, parameters);
   assert(nearest.size() == 2);
   assert(faces.size() == 3);
   bool x_wall = false;

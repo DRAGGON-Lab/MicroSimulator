@@ -81,6 +81,25 @@ template <typename Step>
   return progress;
 }
 
+// The report of a solve that a device ran to its end in one dispatch, by the
+// stopping rule of solve_contact_system: the iterations it took and the
+// residual of the multipliers it stopped at.
+[[nodiscard]] inline ContactSolveReport device_contact_solve_report(std::uint32_t iterations,
+                                                                    float residual,
+                                                                    float tolerance) {
+  ContactSolveReport report;
+  report.iterations = iterations;
+  report.residual = residual;
+  if (!std::isfinite(residual)) {
+    report.status = ContactSolveStatus::breakdown;
+  } else if (residual <= tolerance) {
+    report.status = ContactSolveStatus::converged;
+  } else {
+    report.status = ContactSolveStatus::iteration_limit;
+  }
+  return report;
+}
+
 // Barzilai-Borwein projected gradient descent on the convex contact energy,
 // whose gradient is the gap. `first_step_length` must be positive.
 [[nodiscard]] inline ContactSolveReport solve_contact_system(

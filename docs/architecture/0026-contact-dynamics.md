@@ -74,7 +74,7 @@ The stepping carries no state between steps, so a resumed run repeats an uninter
 
 ### Walls
 
-Constraints are rows in the same solve. A box or cylinder that cells live inside contributes one row for every face a cell end is near, from `find_external_contact_faces`: each face is an independent half-space, and a row for the nearest face alone leaves a cell end in a corner free to cross the other wall. These rows come from the host constraint geometry on every backend.
+Constraints are rows in the same solve. A box or cylinder that cells live inside contributes one row for every face a cell end is near, from `find_external_contact_faces`: each face is an independent half-space, and a row for the nearest face alone leaves a cell end in a corner free to cross the other wall. Every backend detects them natively ([ADR 0030](0030-provider-interfaces.md)).
 
 ### Order within a step
 

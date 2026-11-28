@@ -18,13 +18,11 @@ endif()
 
 # Each file follows a comment naming the host compute it holds.
 set(MICROSIMULATOR_HOST_COMPUTE
-  # Contact dynamics assembles rows and bodies, moves cells, finds wall
-  # contacts, and evaluates the solved response on the host.
+  # Contact dynamics assembles rows and bodies, moves cells, and checks their
+  # overlap on the host between the backend's contact detection and solves.
   "cpp/core/contact_dynamics.cpp"
   # Contact graphs are built on the host from each backend's contact list.
   "cpp/core/contact_graph.cpp"
-  # Flow drift samples the velocity field for every cell on the host.
-  "cpp/core/simulation.cpp"
   # The CPU backend's signal transport.
   "cpp/core/signals.cpp"
   # Flow-system assembly and the reduction of shallow flow, before a solve.

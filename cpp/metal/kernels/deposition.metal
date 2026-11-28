@@ -1,13 +1,13 @@
-// Biomass deposition and the flow closures over it. The build concatenates
-// the prelude and the structure layouts ahead of this file.
+// Biomass deposition and the flow closures over it.
 //
 // A deposit runs in five passes over two index spaces:
 //
 //   1. deposit_weights (per cell): the cell's box and the normalized weights
 //      of its tent over the box, restricted to one connected fluid region.
 //   2. deposit_count (per cell): how many cells reach each site.
-//   3. scan_blocks / scan_add (per site): the inclusive prefix sum of the
-//      counts, which gives each site its range of entries.
+//   3. scan_blocks and scan_add of scan.metal (per site): the inclusive
+//      prefix sum of the counts, which gives each site its range of
+//      entries.
 //   4. deposit_fill (per cell): each cell enters itself in the range of every
 //      site it reaches, in whatever order the cells arrive.
 //   5. deposit_sites (per site): each site sorts its cells into ascending
@@ -179,47 +179,6 @@ kernel void deposit_count(device const DepositBox* boxes [[buffer(0)]],
     if (block[local] > 0.0f) {
       atomic_fetch_add_explicit(&counts[box_site(grid, box, local)], 1u, memory_order_relaxed);
     }
-  }
-}
-
-// The inclusive prefix sum of one threadgroup's block of `values` in place,
-// with the block's total in `totals`. SIMD groups scan their lanes, and the
-// first SIMD group scans the SIMD-group totals.
-kernel void scan_blocks(device uint* values [[buffer(0)]], device uint* totals [[buffer(1)]],
-                        constant uint& count [[buffer(2)]], uint index [[thread_position_in_grid]],
-                        uint group [[threadgroup_position_in_grid]],
-                        uint lane [[thread_index_in_simdgroup]],
-                        uint simd [[simdgroup_index_in_threadgroup]],
-                        uint simds [[simdgroups_per_threadgroup]],
-                        uint simd_width [[threads_per_simdgroup]],
-                        uint width [[threads_per_threadgroup]]) {
-  threadgroup uint simd_totals[32];
-  uint value = index < count ? values[index] : 0u;
-  uint running = simd_prefix_inclusive_sum(value);
-  if (lane == simd_width - 1u) {
-    simd_totals[simd] = running;
-  }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-  if (simd == 0u) {
-    uint total = lane < simds ? simd_totals[lane] : 0u;
-    simd_totals[lane] = simd_prefix_exclusive_sum(total);
-  }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-  running += simd_totals[simd];
-  if (index < count) {
-    values[index] = running;
-  }
-  if (index == min(count, (group + 1u) * width) - 1u) {
-    totals[group] = running;
-  }
-}
-
-// Adds the scanned totals of the blocks before each block to its values.
-kernel void scan_add(device uint* values [[buffer(0)]], device const uint* totals [[buffer(1)]],
-                     constant uint& count [[buffer(2)]], uint index [[thread_position_in_grid]],
-                     uint group [[threadgroup_position_in_grid]]) {
-  if (index < count && group > 0u) {
-    values[index] += totals[group - 1u];
   }
 }
 

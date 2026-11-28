@@ -163,9 +163,10 @@ __global__ void signal_crank_nicolson_jacobi(
     const float* reaction_loss, const std::uint8_t* obstacles, const float* x_faces,
     const float* y_faces, const float* z_faces, std::uint32_t has_velocity_field,
     std::uint32_t* error, SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
-    float4 spacing, float half_dt, std::uint32_t signal_count, SignalFluidGpu fluid) {
+    float4 spacing, float half_dt, std::uint32_t signal_count, SignalFluidGpu fluid,
+    const std::uint32_t* gate) {
   const auto entry = (blockIdx.x * blockDim.x) + threadIdx.x;
-  if (entry >= signal_count * fluid.count) {
+  if (entry >= signal_count * fluid.count || (gate != nullptr && *gate != 0U)) {
     return;
   }
   const auto index = fluid_level(fluid, shape.sites, entry);
@@ -190,9 +191,9 @@ __global__ void signal_crank_nicolson_residual_terms(
     const float* reaction_loss, const std::uint8_t* obstacles, const float* x_faces,
     const float* y_faces, const float* z_faces, std::uint32_t has_velocity_field,
     SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape, float4 spacing, float half_dt,
-    std::uint32_t signal_count, SignalFluidGpu fluid) {
+    std::uint32_t signal_count, SignalFluidGpu fluid, const std::uint32_t* gate) {
   const auto entry = (blockIdx.x * blockDim.x) + threadIdx.x;
-  if (entry >= signal_count * fluid.count) {
+  if (entry >= signal_count * fluid.count || (gate != nullptr && *gate != 0U)) {
     return;
   }
   const auto index = fluid_level(fluid, shape.sites, entry);
@@ -204,10 +205,11 @@ __global__ void signal_crank_nicolson_residual_terms(
   terms[entry] = residual * residual;
 }
 
-__global__ void reduce_sum_pairs(const float* input, float* output, std::uint32_t element_count) {
+__global__ void reduce_sum_pairs(const float* input, float* output, std::uint32_t element_count,
+                                 const std::uint32_t* gate) {
   const auto index = blockIdx.x * blockDim.x + threadIdx.x;
   const auto first = index * 2;
-  if (first >= element_count) {
+  if (first >= element_count || (gate != nullptr && *gate != 0U)) {
     return;
   }
   auto value = input[first];
@@ -215,6 +217,24 @@ __global__ void reduce_sum_pairs(const float* input, float* output, std::uint32_
     value += input[first + 1];
   }
   output[index] = value;
+}
+
+__global__ void signal_sweep_check(const float* reduction, const std::uint32_t* error,
+                                   SignalSweepStateGpu* state, float threshold,
+                                   std::uint32_t level_count, std::uint32_t fluid_level_count) {
+  if (blockIdx.x * blockDim.x + threadIdx.x != 0 || state->done != 0U) {
+    return;
+  }
+  state->iterations += 1U;
+  const auto sum = fluid_level_count == 0 ? 0.0F : reduction[0];
+  const auto rms = sqrtf(sum / static_cast<float>(level_count));
+  state->residual_rms = rms;
+  if (*error != 0U) {
+    state->invalid = 1U;
+    state->done = 1U;
+  } else if (!isfinite(rms) || rms <= threshold) {
+    state->done = 1U;
+  }
 }
 
 constexpr std::uint32_t threads_per_block = 256;
@@ -262,7 +282,7 @@ void launch_signal_crank_nicolson_jacobi(
     const float* y_faces, const float* z_faces, std::uint32_t has_velocity_field,
     std::uint32_t* error, SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape,
     float4 spacing, float half_dt, std::uint32_t signal_count, SignalFluidGpu fluid,
-    cudaStream_t stream) {
+    cudaStream_t stream, const std::uint32_t* gate) {
   const auto block_count = fluid_blocks(signal_count, fluid);
   if (block_count == 0) {
     return;
@@ -270,7 +290,7 @@ void launch_signal_crank_nicolson_jacobi(
   signal_crank_nicolson_jacobi<<<block_count, threads_per_block, 0, stream>>>(
       current, output, right_hand_side, diffusion, advection, fixed_values, reaction_source,
       reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, error, boundaries,
-      shape, spacing, half_dt, signal_count, fluid);
+      shape, spacing, half_dt, signal_count, fluid, gate);
 }
 
 void launch_signal_crank_nicolson_residual_terms(
@@ -279,7 +299,8 @@ void launch_signal_crank_nicolson_residual_terms(
     const float* reaction_loss, const std::uint8_t* obstacles, const float* x_faces,
     const float* y_faces, const float* z_faces, std::uint32_t has_velocity_field,
     SignalGridBoundariesGpu boundaries, SignalGridShapeGpu shape, float4 spacing, float half_dt,
-    std::uint32_t signal_count, SignalFluidGpu fluid, cudaStream_t stream) {
+    std::uint32_t signal_count, SignalFluidGpu fluid, cudaStream_t stream,
+    const std::uint32_t* gate) {
   const auto block_count = fluid_blocks(signal_count, fluid);
   if (block_count == 0) {
     return;
@@ -287,14 +308,23 @@ void launch_signal_crank_nicolson_residual_terms(
   signal_crank_nicolson_residual_terms<<<block_count, threads_per_block, 0, stream>>>(
       current, right_hand_side, terms, diffusion, advection, fixed_values, reaction_source,
       reaction_loss, obstacles, x_faces, y_faces, z_faces, has_velocity_field, boundaries, shape,
-      spacing, half_dt, signal_count, fluid);
+      spacing, half_dt, signal_count, fluid, gate);
 }
 
 void launch_reduce_sum_pairs(const float* input, float* output, std::uint32_t element_count,
-                             cudaStream_t stream) {
+                             cudaStream_t stream, const std::uint32_t* gate) {
   const auto output_count = (element_count + 1) / 2;
   const auto block_count = ((output_count - 1) / threads_per_block) + 1;
-  reduce_sum_pairs<<<block_count, threads_per_block, 0, stream>>>(input, output, element_count);
+  reduce_sum_pairs<<<block_count, threads_per_block, 0, stream>>>(input, output, element_count,
+                                                                  gate);
+}
+
+void launch_signal_sweep_check(const float* reduction, const std::uint32_t* error,
+                               SignalSweepStateGpu* state, float threshold,
+                               std::uint32_t level_count, std::uint32_t fluid_level_count,
+                               cudaStream_t stream) {
+  signal_sweep_check<<<1, 1, 0, stream>>>(reduction, error, state, threshold, level_count,
+                                          fluid_level_count);
 }
 
 }  // namespace microsimulator::cuda

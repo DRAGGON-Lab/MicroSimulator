@@ -55,5 +55,9 @@ static_assert(sizeof(DepositGrid) == 80 && offsetof(DepositGrid, cell_count) == 
 static_assert(sizeof(DepositBox) == 32);
 static_assert(sizeof(ShallowCouplingData) == 32);
 static_assert(sizeof(BrinkmanDragData) == 32);
+static_assert(sizeof(ExternalContactData) == 32);
+static_assert(sizeof(ExternalContactRecord) == 48);
+static_assert(sizeof(FlowDriftData) == 64);
+static_assert(sizeof(SignalSweepState) == 16);
 
 }  // namespace microsimulator::device

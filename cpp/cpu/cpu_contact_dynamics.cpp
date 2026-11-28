@@ -271,6 +271,7 @@ ContactSolveResult solve_contact_system_cpu(const ContactSystem& system,
   ContactSolveResult result;
   result.multipliers.assign(initial_multipliers.begin(), initial_multipliers.end());
   if (system.rows.empty()) {
+    result.response = evaluate_contact_response(system, result.multipliers);
     return result;
   }
   const auto bound = contact_system_diagonal_bound(system);
@@ -334,6 +335,7 @@ ContactSolveResult solve_contact_system_cpu(const ContactSystem& system,
           },
   };
   result.report = detail::solve_contact_system(operations, 1.0F / bound, parameters);
+  result.response = evaluate_contact_response(system, result.multipliers);
   return result;
 }
 

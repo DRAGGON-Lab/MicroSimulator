@@ -149,3 +149,57 @@ struct BrinkmanDragData {
   uint padding0;
   uint padding1;
 };
+
+// What external contact detection reads besides the cells and constraints.
+// Pairs are cell * constraint_count + constraint.
+struct ExternalContactData {
+  uint cell_count;
+  uint constraint_count;
+  // One when a cell inside a box or cylinder makes a row for every face an
+  // endpoint is near, and zero when it makes one for the nearest face.
+  uint every_face;
+  uint padding0;
+  float activation_margin;
+  float degeneracy_epsilon;
+  float padding1;
+  float padding2;
+};
+
+// One contact between a cell and a constraint: the point on the cell's
+// surface with the separation in w, the normal out of the constraint with
+// the row's weight in w, the cell's slot, the constraint's index among the
+// constraints in ascending id order, and the location on the rod.
+struct ExternalContactRecord {
+  float4 point;
+  float4 normal;
+  uint cell;
+  uint constraint;
+  uint location;
+  uint padding;
+};
+
+// The lattice and velocity field that flow drift samples, and the step it
+// takes. Faces are stored as SignalGridVelocityField stores them.
+struct FlowDriftData {
+  // Site counts along x, y, and z; w is one when the grid has obstacles.
+  uint4 shape;
+  // Lower corner of the first site's center; w is the largest turn of one
+  // drift substep, or zero for a cell that only translates.
+  float4 origin;
+  // Site spacing; w is the furthest one drift substep carries a cell.
+  float4 spacing;
+  uint cell_count;
+  float dt;
+  uint padding0;
+  uint padding1;
+};
+
+// Progress of a batch of implicit signal sweeps, kept on the device so that a
+// batch runs without returning to the host. Sweeps after the one that
+// finishes the solve do nothing.
+struct SignalSweepState {
+  uint done;
+  uint iterations;
+  float residual_rms;
+  uint invalid;
+};
