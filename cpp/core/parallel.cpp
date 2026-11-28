@@ -117,6 +117,24 @@ class ThreadPool {
     thread_count_.store(count == 0 ? default_thread_count() : count);
   }
 
+  void team(std::size_t wanted, void (*invoke)(const void*, std::size_t, std::size_t, TeamBarrier&),
+            const void* context) {
+    if (wanted > 1 && !inside_region) {
+      std::unique_lock busy(busy_, std::try_to_lock);
+      if (busy.owns_lock()) {
+        start_workers();
+        // The calling thread and each worker run one member.
+        const auto members = std::min(wanted, workers_.size() + 1);
+        if (members > 1) {
+          run_team_region(members, invoke, context);
+          return;
+        }
+      }
+    }
+    TeamBarrier alone(1);
+    invoke(context, 0, 1, alone);
+  }
+
   void run(std::size_t chunks, void (*invoke)(const void*, std::size_t), const void* context) {
     if (chunks == 0) {
       return;
@@ -200,6 +218,37 @@ class ThreadPool {
     }
   }
 
+  // Requires busy_. Each member runs on its own thread, the calling thread
+  // being member zero, and the region ends when every member has returned.
+  void run_team_region(std::size_t members,
+                       void (*invoke)(const void*, std::size_t, std::size_t, TeamBarrier&),
+                       const void* context) {
+    TeamBarrier barrier(members);
+    team_invoke_ = invoke;
+    context_ = context;
+    team_barrier_ = &barrier;
+    done_.store(0);
+    // One word holds the team's region and size, so a worker that reads it
+    // for the region it saw learns both at once, and one that wakes late for
+    // an earlier region never takes a place in this team.
+    team_word_.store(((region_.load() + 1) << 16U) | members);
+    region_.fetch_add(1);
+    if (sleepers_.load() != 0) {
+      const std::lock_guard lock(mutex_);
+      wake_.notify_all();
+    }
+    inside_region = true;
+    invoke(context, 0, members, barrier);
+    inside_region = false;
+    std::size_t spins = 0;
+    while (done_.load(std::memory_order_acquire) != members - 1) {
+      relax();
+      if (++spins > 4096) {
+        std::this_thread::yield();
+      }
+    }
+  }
+
   // Works through the thread's own run of chunks, then through whatever the
   // other threads have left of theirs.
   void work(std::size_t own) {
@@ -255,6 +304,14 @@ class ThreadPool {
         continue;
       }
       seen = region;
+      if (const auto word = team_word_.load(std::memory_order_acquire); (word >> 16U) == region) {
+        const auto members = static_cast<std::size_t>(word & 0xffffU);
+        if (own < members) {
+          team_invoke_(context_, own, members, *team_barrier_);
+          done_.fetch_add(1, std::memory_order_acq_rel);
+        }
+        continue;
+      }
       work(own);
     }
   }
@@ -268,6 +325,11 @@ class ThreadPool {
 
   // The task of the current region and the failure of its lowest chunk.
   void (*invoke_)(const void*, std::size_t){nullptr};
+  // The task of the latest team and the barrier its members meet at.
+  void (*team_invoke_)(const void*, std::size_t, std::size_t, TeamBarrier&){nullptr};
+  // The region of the latest team, shifted left by 16, and its size.
+  std::atomic<std::uint64_t> team_word_{0};
+  TeamBarrier* team_barrier_{nullptr};
   const void* context_{nullptr};
   std::exception_ptr error_;
   std::size_t error_chunk_{0};
@@ -284,6 +346,31 @@ class ThreadPool {
 
 void run_chunks(std::size_t chunks, void (*invoke)(const void*, std::size_t), const void* context) {
   ThreadPool::instance().run(chunks, invoke, context);
+}
+
+void run_team(std::size_t wanted,
+              void (*invoke)(const void*, std::size_t, std::size_t, TeamBarrier&),
+              const void* context) {
+  ThreadPool::instance().team(wanted, invoke, context);
+}
+
+void TeamBarrier::arrive_and_wait() noexcept {
+  if (members_ == 1) {
+    return;
+  }
+  const auto generation = generation_.load(std::memory_order_acquire);
+  if (arrived_.fetch_add(1, std::memory_order_acq_rel) + 1 == members_) {
+    arrived_.store(0, std::memory_order_relaxed);
+    generation_.store(generation + 1, std::memory_order_release);
+    return;
+  }
+  std::size_t spins = 0;
+  while (generation_.load(std::memory_order_acquire) == generation) {
+    relax();
+    if (++spins > 4096) {
+      std::this_thread::yield();
+    }
+  }
 }
 
 }  // namespace detail

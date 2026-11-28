@@ -16,6 +16,8 @@ using microsimulator::cpu_thread_count;
 using microsimulator::set_cpu_thread_count;
 using microsimulator::detail::concatenate;
 using microsimulator::detail::parallel_for;
+using microsimulator::detail::parallel_team;
+using microsimulator::detail::TeamBarrier;
 using microsimulator::detail::parallel_reduce;
 
 constexpr std::size_t thread_counts[] = {1, 2, 3, 8};
@@ -200,6 +202,43 @@ void test_thread_count_configuration() {
   assert(too_large);
 }
 
+// Every member of a team runs once per team, the members pass each barrier
+// together, and teams alternate with ordinary regions and with changes of
+// the thread count without a member running twice or a team waiting forever.
+void test_teams_run_each_member_once() {
+  for (const auto threads : thread_counts) {
+    set_cpu_thread_count(threads);
+    for (int round = 0; round < 2000; ++round) {
+      const std::size_t wanted = 1 + static_cast<std::size_t>(round % 9);
+      std::vector<std::atomic<int>> runs(16);
+      std::atomic<std::size_t> team_size{0};
+      std::vector<int> phases(16, 0);
+      parallel_team(wanted, [&](std::size_t member, std::size_t members, TeamBarrier& barrier) {
+        assert(members <= wanted && members <= threads && member < members);
+        team_size.store(members);
+        runs[member].fetch_add(1);
+        for (int phase = 1; phase <= 3; ++phase) {
+          phases[member] = phase;
+          barrier.arrive_and_wait();
+          for (std::size_t other = 0; other < members; ++other) {
+            assert(phases[other] == phase);
+          }
+          barrier.arrive_and_wait();
+        }
+      });
+      for (std::size_t member = 0; member < runs.size(); ++member) {
+        assert(runs[member].load() == (member < team_size.load() ? 1 : 0));
+      }
+      if (round % 3 == 0) {
+        std::atomic<std::size_t> total{0};
+        parallel_for(1000, 7, [&](std::size_t begin, std::size_t end) { total += end - begin; });
+        assert(total.load() == 1000);
+      }
+    }
+  }
+  set_cpu_thread_count(0);
+}
+
 void test_concatenate_keeps_piece_order() {
   const std::vector<std::vector<int>> pieces{{1, 2}, {}, {3}, {4, 5, 6}};
   assert(concatenate(pieces) == (std::vector<int>{1, 2, 3, 4, 5, 6}));
@@ -218,6 +257,7 @@ int main() {
   test_many_short_regions();
   test_regions_resume_after_the_workers_sleep();
   test_thread_count_configuration();
+  test_teams_run_each_member_once();
   test_concatenate_keeps_piece_order();
   return 0;
 }

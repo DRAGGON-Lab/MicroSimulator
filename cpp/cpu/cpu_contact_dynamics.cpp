@@ -23,6 +23,9 @@ namespace {
 // Bodies and reduction chunks handed to one thread at a time.
 constexpr std::size_t body_grain = 128;
 constexpr std::size_t chunk_grain = 1;
+// Rows each member of a solve's team takes at least. A team pays a few
+// barriers per iteration, so a member needs enough rows to cover them.
+constexpr std::size_t team_rows = 512;
 
 constexpr std::size_t width = device::contact_reduction_width;
 
@@ -78,18 +81,43 @@ void make_solve(OwnedSolve& owned, const ContactSystem& system, std::span<const 
   view.gaps = {owned.gaps[0].data(), owned.gaps[1].data()};
 }
 
-// The response of every body to the multipliers in pair `current`, or with
-// `project` to those one projected step from them.
+// The response of bodies [begin, end) to the multipliers in pair `current`,
+// or with `project` to those one projected step from them.
+void respond_range(HostSolve& solve, std::size_t begin, std::size_t end, std::size_t current,
+                   std::uint32_t project) {
+  for (std::size_t body = begin; body < end; ++body) {
+    solve.response[body] = device::contact_respond_body(
+        static_cast<std::uint32_t>(body), solve.rows, solve.bodies, solve.multipliers[current],
+        solve.gaps[current], solve.state.step_length, project, solve.incidence_offsets,
+        solve.incidence_entries, solve.data);
+  }
+}
+
+// The response of every body, as respond_range gives it.
 void respond(HostSolve& solve, std::size_t current, std::uint32_t project) {
   detail::parallel_for(solve.body_count(), body_grain, [&](std::size_t begin, std::size_t end) {
-    for (std::size_t body = begin; body < end; ++body) {
-      solve.response[body] = device::contact_respond_body(
-          static_cast<std::uint32_t>(body), solve.rows, solve.bodies, solve.multipliers[current],
-          solve.gaps[current], solve.state.step_length, project, solve.incidence_offsets,
-          solve.incidence_entries, solve.data);
-    }
+    respond_range(solve, begin, end, current, project);
   });
 }
+
+// The sum of the terms of each chunk of `width` rows in [begin, end) by the
+// reduction tree, each row's terms from `row_terms(row)`.
+template <typename RowTerms>
+void sum_chunks(HostSolve& solve, std::size_t begin, std::size_t end, const RowTerms& row_terms) {
+  const auto rows = solve.row_count();
+  std::array<device::float4, width> lanes{};
+  for (std::size_t chunk = begin; chunk < end; ++chunk) {
+    const auto first = chunk * width;
+    const auto members = std::min(width, rows - first);
+    for (std::size_t lane = 0; lane < members; ++lane) {
+      lanes[lane] = row_terms(static_cast<std::uint32_t>(first + lane));
+    }
+    solve.terms[chunk] =
+        device::contact_reduction_tree(lanes.data(), static_cast<std::uint32_t>(members));
+  }
+}
+
+device::float4 sum_levels(std::vector<device::float4>& sums, std::size_t count);
 
 // Sums the terms of every chunk of `width` rows by the reduction tree of
 // cpu/kernels/contact_solve.hpp, each row's terms from `row_terms(row)`,
@@ -101,17 +129,14 @@ device::float4 sum_terms(HostSolve& solve, const RowTerms& row_terms) {
   auto& sums = solve.terms;
   sums.resize(count);
   detail::parallel_for(count, chunk_grain, [&](std::size_t begin, std::size_t end) {
-    std::array<device::float4, width> lanes{};
-    for (std::size_t chunk = begin; chunk < end; ++chunk) {
-      const auto first = chunk * width;
-      const auto members = std::min(width, rows - first);
-      for (std::size_t lane = 0; lane < members; ++lane) {
-        lanes[lane] = row_terms(static_cast<std::uint32_t>(first + lane));
-      }
-      sums[chunk] =
-          device::contact_reduction_tree(lanes.data(), static_cast<std::uint32_t>(members));
-    }
+    sum_chunks(solve, begin, end, row_terms);
   });
+  return sum_levels(sums, count);
+}
+
+// Sums the first `count` chunk sums of `sums` by the reduction tree, level by
+// level, until one remains.
+device::float4 sum_levels(std::vector<device::float4>& sums, std::size_t count) {
   std::array<device::float4, width> lanes{};
   while (count > 1) {
     const auto chunks = (count + width - 1) / width;
@@ -139,34 +164,63 @@ void initialize(HostSolve& solve, float first_step_length, std::uint32_t max_ite
   device::contact_record_step(solve.state, sums, solve.data, 1U, first_step_length, max_iterations);
 }
 
-// One projected step from pair `current` into the other pair.
-void step(HostSolve& solve, std::size_t current, std::uint32_t max_iterations) {
-  const auto next = 1 - current;
-  respond(solve, current, 1);
-  const auto length = solve.state.step_length;
-  const auto sums = sum_terms(solve, [&](std::uint32_t row) {
-    return device::contact_row_step(row, solve.rows, solve.response, solve.multipliers[current],
-                                    solve.gaps[current], solve.multipliers[next], solve.gaps[next],
-                                    length, solve.data);
-  });
-  device::contact_record_step(solve.state, sums, solve.data, 0U, 0.0F, max_iterations);
-}
-
-// The whole solve from the multipliers in pair zero. The state ends with the
+// The whole solve from the multipliers in pair zero, by a team of threads
+// that stays together for every iteration. Each member responds for its own
+// bodies and sums the terms of its own chunks of rows, the first member sums
+// the chunk sums and records the step, and the members meet at a barrier
+// between these phases. The sums are those of sum_terms, so the solve gives
+// the same result on any number of threads. The state ends with the
 // iterations taken and the residual of the multipliers in pair
 // `iterations % 2`, whose response `response` holds.
 void run_solve(HostSolve& solve, float first_step_length, std::uint32_t max_iterations) {
-  if (solve.row_count() == 0) {
+  const auto rows = solve.row_count();
+  if (rows == 0) {
     respond(solve, 0, 0);
     solve.state = {.step_length = first_step_length, .residual = 0.0F, .iterations = 0, .done = 1};
     return;
   }
-  initialize(solve, first_step_length, max_iterations);
-  std::size_t current = 0;
-  while (solve.state.done == 0U) {
-    step(solve, current, max_iterations);
-    current = 1 - current;
-  }
+  const auto bodies = solve.body_count();
+  const auto chunks = (rows + width - 1) / width;
+  solve.terms.resize(chunks);
+  const auto wanted = std::min(chunks, (rows + team_rows - 1) / team_rows);
+  detail::parallel_team(
+      wanted, [&](std::size_t member, std::size_t members, detail::TeamBarrier& barrier) {
+        const auto body_begin = bodies * member / members;
+        const auto body_end = bodies * (member + 1) / members;
+        const auto chunk_begin = chunks * member / members;
+        const auto chunk_end = chunks * (member + 1) / members;
+        respond_range(solve, body_begin, body_end, 0, 0);
+        barrier.arrive_and_wait();
+        sum_chunks(solve, chunk_begin, chunk_end, [&](std::uint32_t row) {
+          return device::contact_row_initial(row, solve.rows, solve.response, solve.multipliers[0],
+                                             solve.gaps[0], solve.data);
+        });
+        barrier.arrive_and_wait();
+        if (member == 0) {
+          device::contact_record_step(solve.state, sum_levels(solve.terms, chunks), solve.data, 1U,
+                                      first_step_length, max_iterations);
+        }
+        barrier.arrive_and_wait();
+        std::size_t current = 0;
+        while (solve.state.done == 0U) {
+          const auto next = 1 - current;
+          respond_range(solve, body_begin, body_end, current, 1);
+          barrier.arrive_and_wait();
+          const auto length = solve.state.step_length;
+          sum_chunks(solve, chunk_begin, chunk_end, [&](std::uint32_t row) {
+            return device::contact_row_step(
+                row, solve.rows, solve.response, solve.multipliers[current], solve.gaps[current],
+                solve.multipliers[next], solve.gaps[next], length, solve.data);
+          });
+          barrier.arrive_and_wait();
+          if (member == 0) {
+            device::contact_record_step(solve.state, sum_levels(solve.terms, chunks), solve.data,
+                                        0U, 0.0F, max_iterations);
+          }
+          barrier.arrive_and_wait();
+          current = next;
+        }
+      });
 }
 
 [[nodiscard]] float diagonal_bound(const detail::ContactSolvePlan& plan) {
