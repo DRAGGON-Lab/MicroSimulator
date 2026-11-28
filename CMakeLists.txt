@@ -19,11 +19,13 @@ option(MICROSIMULATOR_ENABLE_METAL "Build the native Apple Metal backend" ${MICR
 
 add_library(microsimulator_core STATIC
   cpp/core/atomic_file.cpp
+  cpp/core/cell_contact_plan.cpp
   cpp/core/channels.cpp
   cpp/core/checkpoint.cpp
   cpp/core/checkpoint_file.cpp
   cpp/core/contact_dynamics.cpp
   cpp/core/contact_graph.cpp
+  cpp/core/contact_solve_plan.cpp
   cpp/core/constraints.cpp
   cpp/core/coupled_rates.cpp
   cpp/core/deposition.cpp
@@ -111,8 +113,8 @@ if(MICROSIMULATOR_ENABLE_METAL)
 
   microsimulator_embed_metal_source(growth cpp/metal/kernels/growth.metal)
   microsimulator_embed_metal_source(species cpp/metal/kernels/species.metal)
-  microsimulator_embed_metal_source(contacts cpp/metal/kernels/contacts.metal)
-  microsimulator_embed_metal_source(contact_dynamics cpp/metal/kernels/contact_dynamics.metal)
+  microsimulator_embed_metal_source(contact_dynamics
+    cpp/metal/kernels/contact_solve.metal cpp/metal/kernels/contact_dynamics.metal)
   microsimulator_embed_metal_source(signals
     cpp/metal/kernels/grid_transport.metal cpp/metal/kernels/signals.metal)
   microsimulator_embed_metal_source(coupled_rates
@@ -122,7 +124,8 @@ if(MICROSIMULATOR_ENABLE_METAL)
     cpp/metal/kernels/flow_grid.metal cpp/metal/kernels/depth_flow.metal)
   microsimulator_embed_metal_source(cell_kernels
     cpp/metal/kernels/scan.metal cpp/metal/kernels/deposition.metal
-    cpp/metal/kernels/external_contacts.metal cpp/metal/kernels/flow_drift.metal)
+    cpp/metal/kernels/external_contacts.metal cpp/metal/kernels/cell_contacts.metal
+    cpp/metal/kernels/flow_drift.metal)
 
   set(MICROSIMULATOR_METAL_OCCUPANCY_HEADER "${MICROSIMULATOR_GENERATED_DIR}/microsimulator/metal/occupancy_source.hpp")
   add_custom_command(
@@ -168,7 +171,7 @@ if(MICROSIMULATOR_ENABLE_CUDA)
     cpp/cuda/cuda_occupancy.cu
     cpp/cuda/kernels/occupancy.cu
     cpp/cuda/kernels/contact_dynamics.cu
-    cpp/cuda/kernels/contacts.cu
+    cpp/cuda/kernels/scan.cu
     cpp/cuda/kernels/coupled_rates.cu
     cpp/cuda/kernels/growth.cu
     cpp/cuda/kernels/flow.cu

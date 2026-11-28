@@ -45,7 +45,7 @@ A contact already deeper than `max_overlap_recovery` asks for only that much sep
 
 ### Solve
 
-The energy is minimized by Barzilai–Borwein projected gradient descent with the two step lengths alternating. The iteration needs only the gap of a multiplier vector, starts from a step length bounded by the largest diagonal entry of the linear part, and stops when the largest violation of the complementarity conditions, a length, falls below a quarter of the accepted overlap. `core/contact_solver.hpp` holds the iteration; a backend supplies the gap evaluation and the reductions over its own storage.
+The energy is minimized by Barzilai–Borwein projected gradient descent with the two step lengths alternating. The iteration needs only the gap of a multiplier vector, starts from a step length bounded by the largest diagonal entry of the linear part, and stops when the largest violation of the complementarity conditions, a length, falls below a quarter of the accepted overlap. Every backend implements the response of each cell, the gap and step terms of each row, and the step-length rule natively. The step terms are summed in float by one fixed tree: blocks of 256 rows, each halved pairwise, then the block sums the same way, so a solve repeats exactly on its backend.
 
 ### Substeps and refinement
 
@@ -74,7 +74,7 @@ The stepping carries no state between steps, so a resumed run repeats an uninter
 
 ### Walls
 
-Constraints are rows in the same solve. A box or cylinder that cells live inside contributes one row for every face a cell end is near, from `find_external_contact_faces`: each face is an independent half-space, and a row for the nearest face alone leaves a cell end in a corner free to cross the other wall. Every backend detects them natively ([ADR 0030](0030-provider-interfaces.md)).
+Constraints are rows in the same solve. A box or cylinder that cells live inside contributes one row for every face a cell end is near, from `find_external_contact_faces`: each face is an independent half-space, and a row for the nearest face alone leaves a cell end in a corner free to cross the other wall. Every backend detects them with the shared external-contact body ([ADR 0030](0030-provider-interfaces.md)).
 
 ### Order within a step
 

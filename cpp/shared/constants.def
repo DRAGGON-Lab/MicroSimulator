@@ -29,3 +29,6 @@ MICROSIMULATOR_SHARED_UINT(drift_degenerate_direction, 5)
 // The most contacts one cell makes with one external constraint: six box
 // faces at each of two endpoints.
 MICROSIMULATOR_SHARED_UINT(external_pair_capacity, 12)
+// Terms each step of the contact solve sums in one tree; partial sums of
+// that many are summed again the same way.
+MICROSIMULATOR_SHARED_UINT(contact_reduction_width, 256)

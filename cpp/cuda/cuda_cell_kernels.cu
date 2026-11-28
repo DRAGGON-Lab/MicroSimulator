@@ -12,11 +12,13 @@
 #include <utility>
 #include <vector>
 
+#include "core/cell_contact_plan.hpp"
 #include "core/deposition_plan.hpp"
 #include "core/external_contact_plan.hpp"
 #include "core/flow_drift_plan.hpp"
 #include "cuda_cell_kernels.cuh"
 #include "device_types.cuh"
+#include "kernels/cell_contacts.cuh"
 #include "kernels/external_contacts.cuh"
 #include "kernels/flow_drift.cuh"
 
@@ -434,6 +436,92 @@ __global__ void brinkman_drag_kernel(kernels::BrinkmanDragData data, const unsig
   drag[site] = solid[site] != 0 ? 0.0f : kozeny_carman(fraction, data.drag_coefficient);
 }
 
+__global__ void cell_bounds_kernel(kernels::CellContactData data, const float4* centers,
+                                   const float4* axes, float4* lower, float4* upper) {
+  const auto cell = element_index();
+  if (cell < data.cell_count) {
+    kernels::cell_bounds(cell, data, centers, axes, lower, upper);
+  }
+}
+
+__global__ void cell_width_leaf_kernel(unsigned int count, const float4* lower, const float4* upper,
+                                       float4* output) {
+  const auto index = element_index();
+  if (index < (count + 1) / 2) {
+    kernels::cell_width_leaf(index, count, lower, upper, output);
+  }
+}
+
+__global__ void cell_width_pair_kernel(unsigned int count, const float4* input, float4* output) {
+  const auto index = element_index();
+  if (index < (count + 1) / 2) {
+    kernels::cell_width_pair(index, count, input, output);
+  }
+}
+
+__global__ void cell_grid_place_kernel(kernels::CellContactData data, const float4* lower,
+                                       const float4* upper, const float4* widest,
+                                       uint4* coordinates, unsigned int* bucket_counts) {
+  const auto cell = element_index();
+  if (cell < data.cell_count) {
+    kernels::cell_grid_place(cell, data, lower, upper, widest, coordinates, bucket_counts);
+  }
+}
+
+__global__ void cell_grid_fill_kernel(kernels::CellContactData data, const uint4* coordinates,
+                                      const unsigned int* bucket_ends, unsigned int* bucket_cursors,
+                                      unsigned int* members) {
+  const auto cell = element_index();
+  if (cell < data.cell_count) {
+    kernels::cell_grid_fill(cell, coordinates, bucket_ends, bucket_cursors, members);
+  }
+}
+
+__global__ void cell_candidate_count_kernel(kernels::CellContactData data,
+                                            const unsigned long long* ids, const float4* lower,
+                                            const float4* upper, const uint4* coordinates,
+                                            const unsigned int* bucket_ends,
+                                            const unsigned int* members, uint2* candidates,
+                                            unsigned int* counts) {
+  const auto cell = element_index();
+  if (cell < data.cell_count) {
+    counts[cell] = kernels::cell_candidate_count(cell, data, ids, lower, upper, coordinates,
+                                                 bucket_ends, members, candidates);
+  }
+}
+
+__global__ void cell_candidate_fill_kernel(kernels::CellContactData data,
+                                           const unsigned long long* ids, const float4* lower,
+                                           const float4* upper, const uint4* coordinates,
+                                           const unsigned int* bucket_ends,
+                                           const unsigned int* members, const unsigned int* ends,
+                                           uint2* candidates) {
+  const auto cell = element_index();
+  if (cell < data.cell_count) {
+    kernels::cell_candidate_fill(cell, data, ids, lower, upper, coordinates, bucket_ends, members,
+                                 ends, candidates);
+  }
+}
+
+__global__ void cell_pair_count_kernel(kernels::CellContactData data, unsigned int total,
+                                       const float4* centers, const float4* axes,
+                                       const uint2* candidates, unsigned int* counts) {
+  const auto candidate = element_index();
+  if (candidate < total) {
+    counts[candidate] = kernels::cell_pair_count(candidate, total, data, centers, axes, candidates);
+  }
+}
+
+__global__ void cell_pair_fill_kernel(kernels::CellContactData data, unsigned int total,
+                                      const float4* centers, const float4* axes,
+                                      const uint2* candidates, const unsigned int* ends,
+                                      kernels::CellContactRecord* records) {
+  const auto candidate = element_index();
+  if (candidate < total) {
+    kernels::cell_pair_fill(candidate, total, data, centers, axes, candidates, ends, records);
+  }
+}
+
 __global__ void external_count(kernels::ExternalContactData data, const float4* centers,
                                const float4* axes, const kernels::ExternalConstraint* constraints,
                                unsigned int* counts) {
@@ -480,10 +568,11 @@ void check_launch(const char* operation) {
   check_cuda(cudaGetLastError(), operation);
 }
 
-// Replaces the `count` values at `values` with their inclusive prefix sum.
-void inclusive_scan(unsigned int* values, std::uint32_t count, cudaStream_t stream) {
+// Replaces the `count` values at `values` with their inclusive prefix sum
+// and returns `values`.
+unsigned int* encode_scan(unsigned int* values, std::uint32_t count, cudaStream_t stream) {
   if (count == 0) {
-    return;
+    return values;
   }
   std::size_t bytes = 0;
   check_cuda(cub::DeviceScan::InclusiveSum(nullptr, bytes, values, values, static_cast<int>(count),
@@ -494,9 +583,109 @@ void inclusive_scan(unsigned int* values, std::uint32_t count, cudaStream_t stre
                                            static_cast<int>(count), stream),
              "failed to run a CUDA scan");
   check_cuda(cudaStreamSynchronize(stream), "failed to finish a CUDA scan");
+  return values;
+}
+
+[[nodiscard]] std::uint32_t last_value(const unsigned int* ends, std::uint32_t count,
+                                       cudaStream_t stream) {
+  unsigned int total = 0;
+  check_cuda(
+      cudaMemcpyAsync(&total, ends + (count - 1), sizeof(total), cudaMemcpyDeviceToHost, stream),
+      "failed to download a CUDA scan total");
+  check_cuda(cudaStreamSynchronize(stream), "failed to download a CUDA scan total");
+  return total;
 }
 
 }  // namespace
+
+ContactGraph cell_contacts(const WorldState& state, const ContactParameters& parameters,
+                           cudaStream_t stream) {
+  auto plan = detail::plan_cell_contacts(state, parameters);
+  const auto cells = plan.data.cell_count;
+  if (cells < 2) {
+    return detail::finish_cell_contacts(plan, {});
+  }
+  const auto buckets = plan.data.bucket_count;
+  DeviceArray<float4> centers(cells, "failed to allocate CUDA cell centers");
+  DeviceArray<float4> axes(cells, "failed to allocate CUDA cell axes");
+  DeviceArray<unsigned long long> ids(cells, "failed to allocate CUDA cell ids");
+  DeviceArray<float4> lower(cells, "failed to allocate CUDA cell boxes");
+  DeviceArray<float4> upper(cells, "failed to allocate CUDA cell boxes");
+  DeviceArray<float4> width_a(cells, "failed to allocate CUDA box widths");
+  DeviceArray<float4> width_b(cells, "failed to allocate CUDA box widths");
+  DeviceArray<uint4> coordinates(cells, "failed to allocate CUDA grid boxes");
+  DeviceArray<unsigned int> bucket_counts(buckets, "failed to allocate CUDA bucket counts");
+  DeviceArray<unsigned int> bucket_cursors(buckets, "failed to allocate CUDA bucket cursors");
+  DeviceArray<unsigned int> members(cells, "failed to allocate CUDA grid members");
+  DeviceArray<unsigned int> candidate_counts(cells, "failed to allocate CUDA candidate counts");
+  centers.upload(plan.centers, stream, "failed to upload CUDA cell centers");
+  axes.upload(plan.axes, stream, "failed to upload CUDA cell axes");
+  ids.upload(plan.ids, stream, "failed to upload CUDA cell ids");
+  bucket_counts.zero(stream, "failed to clear CUDA bucket counts");
+  bucket_cursors.zero(stream, "failed to clear CUDA bucket cursors");
+
+  auto data = as_device<kernels::CellContactData>(plan.data);
+  cell_bounds_kernel<<<blocks(cells), block_size, 0, stream>>>(data, centers.data(), axes.data(),
+                                                               lower.data(), upper.data());
+  check_launch("failed to launch the CUDA cell-bounds kernel");
+  auto width_count = cells;
+  cell_width_leaf_kernel<<<blocks((width_count + 1) / 2), block_size, 0, stream>>>(
+      width_count, lower.data(), upper.data(), width_a.data());
+  check_launch("failed to launch the CUDA box-width kernel");
+  width_count = (width_count + 1) / 2;
+  float4* widest = width_a.data();
+  float4* spare = width_b.data();
+  while (width_count > 1) {
+    cell_width_pair_kernel<<<blocks((width_count + 1) / 2), block_size, 0, stream>>>(width_count,
+                                                                                     widest, spare);
+    check_launch("failed to launch the CUDA box-width kernel");
+    width_count = (width_count + 1) / 2;
+    std::swap(widest, spare);
+  }
+  cell_grid_place_kernel<<<blocks(cells), block_size, 0, stream>>>(
+      data, lower.data(), upper.data(), widest, coordinates.data(), bucket_counts.data());
+  check_launch("failed to launch the CUDA grid-place kernel");
+  const auto* bucket_ends = encode_scan(bucket_counts.data(), buckets, stream);
+  cell_grid_fill_kernel<<<blocks(cells), block_size, 0, stream>>>(
+      data, coordinates.data(), bucket_ends, bucket_cursors.data(), members.data());
+  check_launch("failed to launch the CUDA grid-fill kernel");
+
+  DeviceArray<uint2> unused(1, "failed to allocate CUDA candidates");
+  cell_candidate_count_kernel<<<blocks(cells), block_size, 0, stream>>>(
+      data, ids.data(), lower.data(), upper.data(), coordinates.data(), bucket_ends, members.data(),
+      unused.data(), candidate_counts.data());
+  check_launch("failed to launch the CUDA candidate-count kernel");
+  const auto* candidate_ends = encode_scan(candidate_counts.data(), cells, stream);
+  const auto candidate_total = last_value(candidate_ends, cells, stream);
+  if (candidate_total == 0) {
+    return detail::finish_cell_contacts(plan, {});
+  }
+  plan.data.candidate_capacity = candidate_total;
+  data = as_device<kernels::CellContactData>(plan.data);
+  DeviceArray<uint2> candidates(candidate_total, "failed to allocate CUDA candidates");
+  cell_candidate_fill_kernel<<<blocks(cells), block_size, 0, stream>>>(
+      data, ids.data(), lower.data(), upper.data(), coordinates.data(), bucket_ends, members.data(),
+      candidate_ends, candidates.data());
+  check_launch("failed to launch the CUDA candidate-fill kernel");
+
+  DeviceArray<unsigned int> pair_counts(candidate_total, "failed to allocate CUDA contact counts");
+  cell_pair_count_kernel<<<blocks(candidate_total), block_size, 0, stream>>>(
+      data, candidate_total, centers.data(), axes.data(), candidates.data(), pair_counts.data());
+  check_launch("failed to launch the CUDA cell-pair-count kernel");
+  const auto* contact_ends = encode_scan(pair_counts.data(), candidate_total, stream);
+  const auto contact_total = last_value(contact_ends, candidate_total, stream);
+  plan.data.contact_capacity = contact_total;
+  data = as_device<kernels::CellContactData>(plan.data);
+  DeviceArray<kernels::CellContactRecord> records(contact_total,
+                                                  "failed to allocate CUDA cell contacts");
+  cell_pair_fill_kernel<<<blocks(candidate_total), block_size, 0, stream>>>(
+      data, candidate_total, centers.data(), axes.data(), candidates.data(), contact_ends,
+      records.data());
+  check_launch("failed to launch the CUDA cell-pair-fill kernel");
+  const auto host_records = records.download<microsimulator::device::CellContactRecord>(
+      contact_total, stream, "failed to download CUDA cell contacts");
+  return detail::finish_cell_contacts(plan, host_records);
+}
 
 BiomassDeposit deposit_biomass(const SignalGridSpec& spec, const DepositCells& cells,
                                const BiomassDepositParameters& parameters, cudaStream_t stream) {
@@ -538,8 +727,7 @@ BiomassDeposit deposit_biomass(const SignalGridSpec& spec, const DepositCells& c
                                                                  counts.data());
     check_launch("failed to launch the CUDA deposit-count kernel");
   }
-  inclusive_scan(counts.data(), site_count, stream);
-  unsigned int* ends = counts.data();
+  unsigned int* ends = encode_scan(counts.data(), site_count, stream);
   if (cell_count > 0) {
     deposit_fill<<<blocks(cell_count), block_size, 0, stream>>>(
         grid, boxes.data(), weights.data(), ends, cursors.data(), entries.data());
@@ -633,8 +821,7 @@ ExternalContactGraph external_contacts(const WorldState& state, const Constraint
   external_count<<<blocks(pair_count), block_size, 0, stream>>>(data, centers.data(), axes.data(),
                                                                 packed.data(), counts.data());
   check_launch("failed to launch the CUDA external-count kernel");
-  inclusive_scan(counts.data(), pair_count, stream);
-  unsigned int* ends = counts.data();
+  unsigned int* ends = encode_scan(counts.data(), pair_count, stream);
   external_fill<<<blocks(pair_count), block_size, 0, stream>>>(data, centers.data(), axes.data(),
                                                                packed.data(), ends, records.data());
   check_launch("failed to launch the CUDA external-fill kernel");

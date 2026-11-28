@@ -10,6 +10,8 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "backend_devices.hpp"
@@ -605,6 +607,246 @@ void test_drift_moves_free_cells(const DriftReference& reference) {
 
 }  // namespace
 
+// Colonies that exercise the cell contact detection: random cells in a slab,
+// a packed lattice of nearly parallel cells with two contact points per
+// neighbor, a colony spread too thinly for a dense grid, and degenerate cells
+// of zero length and coincident centers.
+std::vector<microsimulator::WorldState> cell_contact_scenes() {
+  std::vector<microsimulator::WorldState> scenes;
+  scenes.push_back(contact_scene().state);
+
+  microsimulator::WorldState packed(4096);
+  for (std::size_t cell = 0; cell < 4096; ++cell) {
+    const auto column = static_cast<float>(cell % 64);
+    const auto row = static_cast<float>(cell / 64);
+    const auto tilt = 0.02F * std::sin(static_cast<float>(cell));
+    const Vec3 direction{1.0F, tilt, 0.0F};
+    packed.add_cell({.position = {3.05F * column + 0.3F * (row - 2.0F * std::floor(row / 2.0F)),
+                                  0.99F * row, 0.0F},
+                     .direction = direction * (1.0F / microsimulator::norm(direction)),
+                     .length = 2.0F,
+                     .radius = 0.5F});
+  }
+  scenes.push_back(std::move(packed));
+
+  microsimulator::WorldState sparse(64);
+  for (std::size_t cell = 0; cell < 64; ++cell) {
+    const auto spread = static_cast<float>(cell) * 1.0e4F;
+    sparse.add_cell({.position = {spread, cell % 2 == 0 ? 0.0F : 0.8F, 0.0F},
+                     .direction = {0.0F, 1.0F, 0.0F},
+                     .length = 1.0F,
+                     .radius = 0.5F});
+    sparse.add_cell({.position = {spread + 0.9F, 0.0F, 0.0F},
+                     .direction = {1.0F, 0.0F, 0.0F},
+                     .length = 1.0F,
+                     .radius = 0.5F});
+  }
+  scenes.push_back(std::move(sparse));
+
+  microsimulator::WorldState degenerate(8);
+  degenerate.add_cell({.position = {0.0F, 0.0F, 0.0F}, .direction = {1.0F, 0.0F, 0.0F},
+                       .length = 0.0F, .radius = 0.5F});
+  degenerate.add_cell({.position = {0.0F, 0.0F, 0.0F}, .direction = {0.0F, 1.0F, 0.0F},
+                       .length = 0.0F, .radius = 0.5F});
+  degenerate.add_cell({.position = {0.0F, 0.0F, 0.0F}, .direction = {1.0F, 0.0F, 0.0F},
+                       .length = 2.0F, .radius = 0.5F});
+  degenerate.add_cell({.position = {0.0F, 0.0F, 0.0F}, .direction = {1.0F, 0.0F, 0.0F},
+                       .length = 2.0F, .radius = 0.5F});
+  degenerate.add_cell({.position = {0.5F, 0.9F, 0.0F}, .direction = {1.0F, 0.0F, 0.0F},
+                       .length = 2.0F, .radius = 0.5F});
+  scenes.push_back(std::move(degenerate));
+  return scenes;
+}
+
+bool same_cell_contacts(const microsimulator::ContactGraph& left,
+                        const microsimulator::ContactGraph& right) {
+  const auto a = left.contacts();
+  const auto b = right.contacts();
+  if (a.size() != b.size()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < a.size(); ++index) {
+    const auto& x = a[index];
+    const auto& y = b[index];
+    if (x.first_id != y.first_id || x.second_id != y.second_id ||
+        x.first_slot != y.first_slot || x.second_slot != y.second_slot ||
+        x.ordinal != y.ordinal || x.point_on_first.x != y.point_on_first.x ||
+        x.point_on_first.y != y.point_on_first.y || x.point_on_first.z != y.point_on_first.z ||
+        x.normal.x != y.normal.x || x.normal.y != y.normal.y || x.normal.z != y.normal.z ||
+        x.signed_separation != y.signed_separation || x.weight != y.weight) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::vector<microsimulator::ContactGraph> run_cell_contacts(BackendKind backend,
+                                                            std::uint32_t device_index) {
+  const microsimulator::ContactParameters parameters{.activation_margin = 0.2F};
+  auto compute = microsimulator::make_compute_backend(backend, device_index);
+  std::vector<microsimulator::ContactGraph> graphs;
+  for (const auto& scene : cell_contact_scenes()) {
+    graphs.push_back(compute->find_cell_contacts(scene, parameters));
+  }
+  return graphs;
+}
+
+// The broad phase misses no pair the exhaustive search finds, and every
+// colony makes contacts.
+void test_cell_contacts_are_complete(const std::vector<microsimulator::ContactGraph>& graphs) {
+  const microsimulator::ContactParameters parameters{.activation_margin = 0.2F};
+  const auto scenes = cell_contact_scenes();
+  for (std::size_t index = 0; index < scenes.size(); ++index) {
+    const auto exhaustive =
+        microsimulator::find_cell_contacts_cpu_exhaustive(scenes[index], parameters);
+    require(!exhaustive.empty(), "cell contact scene " + std::to_string(index) + " has contacts");
+    require(same_cell_contacts(graphs[index], exhaustive),
+            "cell contacts of scene " + std::to_string(index) + " differ from the exhaustive search");
+  }
+}
+
+
+// A lattice of `columns` by `rows` cells, each pressed against its right and
+// upper neighbor, with walls on the first column and growth that slows
+// under load.
+struct Lattice {
+  std::vector<microsimulator::ContactBody> bodies;
+  std::vector<microsimulator::ContactRow> rows;
+  microsimulator::GrowthLoadLaw law{};
+
+  [[nodiscard]] microsimulator::ContactSystem system() const {
+    microsimulator::ContactSystem result{.rows = rows, .bodies = bodies, .dt = 0.05F};
+    result.growth.law = law;
+    result.growth.sensitivity = 0.3F;
+    result.growth.free_load = 0.2F;
+    result.growth.stall_load = 3.0F;
+    return result;
+  }
+};
+
+Lattice lattice_system(std::size_t columns, std::size_t rows, microsimulator::GrowthLoadLaw law) {
+  Lattice system;
+  system.law = law;
+  const auto count = columns * rows;
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto angle = 0.07F * static_cast<float>(index % 9);
+    system.bodies.push_back({
+        .axis = {std::cos(angle), std::sin(angle), 0.0F},
+        .translational_mobility = 1.0F / (3.0F + 0.1F * static_cast<float>(index % 7)),
+        .transverse_mobility = 0.9F,
+        .axial_mobility = 20.0F,
+        .length_rate = 0.8F + 0.05F * static_cast<float>(index % 3),
+        .drift = {0.01F * static_cast<float>(index % 5), 0.0F, 0.0F, 0.0F, 0.0F, 0.001F},
+    });
+  }
+  const auto slot = [](std::size_t index) { return static_cast<microsimulator::Slot>(index); };
+  for (std::size_t y = 0; y < rows; ++y) {
+    for (std::size_t x = 0; x < columns; ++x) {
+      const auto index = y * columns + x;
+      if (x == 0) {
+        microsimulator::ContactRow wall;
+        wall.first_slot = slot(index);
+        wall.first_jacobian = {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.1F};
+        wall.first_length_lever = 0.5F;
+        wall.offset = -0.004F;
+        wall.compliance = 1.0e-4F;
+        system.rows.push_back(wall);
+      }
+      const auto tilt = 0.1F * static_cast<float>(index % 5) - 0.2F;
+      for (const auto [neighbor, normal_x, normal_y] :
+           {std::tuple{x + 1 < columns ? index + 1 : count, std::cos(tilt), std::sin(tilt)},
+            std::tuple{y + 1 < rows ? index + columns : count, -std::sin(tilt), std::cos(tilt)}}) {
+        if (neighbor == count) {
+          continue;
+        }
+        microsimulator::ContactRow row;
+        row.first_slot = slot(index);
+        row.second_slot = slot(neighbor);
+        row.first_jacobian = {-normal_x, -normal_y, 0.0F, 0.0F, 0.0F, -1.5F * normal_y};
+        row.second_jacobian = {normal_x, normal_y, 0.0F, 0.0F, 0.0F, 0.5F * normal_x};
+        row.first_length_lever = 0.5F * std::abs(normal_x);
+        row.second_length_lever = 0.5F * std::abs(normal_x);
+        row.offset = index % 3 == 0 ? -0.01F : 0.002F * static_cast<float>(index % 4);
+        row.compliance = index % 6 == 0 ? 2.5e-5F : 1.0e-4F;
+        system.rows.push_back(row);
+      }
+    }
+  }
+  return system;
+}
+
+std::vector<microsimulator::ContactSolveResult> run_solves(BackendKind backend,
+                                                           std::uint32_t device_index) {
+  auto compute = microsimulator::make_compute_backend(backend, device_index);
+  std::vector<microsimulator::ContactSolveResult> results;
+  // About a thousand rows, solved in one threadgroup on a device, and about
+  // thirty-seven thousand, solved a step at a time.
+  for (const auto& [columns, rows, law] :
+       {std::tuple{25U, 20U, microsimulator::GrowthLoadLaw::exponential},
+        std::tuple{25U, 20U, microsimulator::GrowthLoadLaw::linear},
+        std::tuple{150U, 124U, microsimulator::GrowthLoadLaw::exponential}}) {
+    const auto lattice = lattice_system(columns, rows, law);
+    const std::vector<float> zero(lattice.rows.size(), 0.0F);
+    results.push_back(compute->solve_contact_forces(
+        lattice.system(), zero, {.tolerance = 2.0e-6F, .max_iterations = 4000}));
+  }
+  return results;
+}
+
+bool same_solve(const microsimulator::ContactSolveResult& left,
+                const microsimulator::ContactSolveResult& right) {
+  if (left.report.status != right.report.status ||
+      left.report.iterations != right.report.iterations ||
+      std::bit_cast<std::uint32_t>(left.report.residual) !=
+          std::bit_cast<std::uint32_t>(right.report.residual) ||
+      left.multipliers != right.multipliers ||
+      left.response.loads != right.response.loads ||
+      left.response.length_rates != right.response.length_rates ||
+      left.response.velocities != right.response.velocities) {
+    return false;
+  }
+  return true;
+}
+
+// The same cell contacts, with the same separations and weights within
+// tolerance and unit normals.
+void require_close_cell_contacts(const microsimulator::ContactGraph& actual,
+                                 const microsimulator::ContactGraph& expected,
+                                 const std::string& label) {
+  const auto a = actual.contacts();
+  const auto b = expected.contacts();
+  require(a.size() == b.size(), label + ": contact count differs");
+  for (std::size_t index = 0; index < a.size(); ++index) {
+    const auto& x = a[index];
+    const auto& y = b[index];
+    const auto at = label + ": contact " + std::to_string(index);
+    require(x.first_id == y.first_id && x.second_id == y.second_id &&
+                x.first_slot == y.first_slot && x.second_slot == y.second_slot &&
+                x.ordinal == y.ordinal,
+            at + " differs");
+    require(std::abs(x.signed_separation - y.signed_separation) <= 1e-4F, at + " separation");
+    require(std::abs(x.weight - y.weight) <= 1e-5F * std::max(1.0F, std::abs(y.weight)),
+            at + " weight");
+    const float length = x.normal.x * x.normal.x + x.normal.y * x.normal.y + x.normal.z * x.normal.z;
+    require(std::abs(length - 1.0F) <= 1e-5F, at + " normal is not a unit vector");
+  }
+}
+
+// Two converged solves of one system, whose solution is unique, respond alike
+// within a tolerance set by the solve tolerance.
+void require_close_solve(const microsimulator::ContactSolveResult& actual,
+                         const microsimulator::ContactSolveResult& expected,
+                         const std::string& label) {
+  require(actual.report.status == microsimulator::ContactSolveStatus::converged,
+          label + ": does not converge");
+  constexpr double tolerance = 1e-3;
+  require_near(flatten(actual.response.velocities), flatten(expected.response.velocities),
+               tolerance, label + " velocities");
+  require_near(actual.response.length_rates, expected.response.length_rates, tolerance,
+               label + " length rates");
+  require_near(actual.response.loads, expected.response.loads, tolerance, label + " loads");
+}
+
 int main() {
   test_conservation_and_truncation();
   test_wall_separates_support();
@@ -617,6 +859,13 @@ int main() {
   const auto drift = run_drift(BackendKind::cpu, 0);
   test_container_faces(contacts);
   test_drift_moves_free_cells(drift);
+  const auto cell_contacts = run_cell_contacts(BackendKind::cpu, 0);
+  test_cell_contacts_are_complete(cell_contacts);
+  const auto solves = run_solves(BackendKind::cpu, 0);
+  for (const auto& solve : solves) {
+    require(solve.report.status == microsimulator::ContactSolveStatus::converged,
+            "lattice contact solve converges");
+  }
   // The CPU gives the same bits on any number of threads.
   for (const std::size_t threads : {2U, 5U, 8U}) {
     microsimulator::set_cpu_thread_count(threads);
@@ -626,6 +875,16 @@ int main() {
     require(same_contacts(contacts.nearest, other.nearest), label + ": nearest-face contacts differ");
     require(same_contacts(contacts.faces, other.faces), label + ": every-face contacts differ");
     require(same_drift(drift, run_drift(BackendKind::cpu, 0)), label + ": flow drift differs");
+    const auto graphs = run_cell_contacts(BackendKind::cpu, 0);
+    for (std::size_t scene = 0; scene < graphs.size(); ++scene) {
+      require(same_cell_contacts(cell_contacts[scene], graphs[scene]),
+              label + ": cell contacts of scene " + std::to_string(scene) + " differ");
+    }
+    const auto other_solves = run_solves(BackendKind::cpu, 0);
+    for (std::size_t solve = 0; solve < solves.size(); ++solve) {
+      require(same_solve(solves[solve], other_solves[solve]),
+              label + ": contact solve " + std::to_string(solve) + " differs");
+    }
   }
   microsimulator::set_cpu_thread_count(0);
   // A device repeats its own results exactly and agrees with the CPU within
@@ -647,6 +906,20 @@ int main() {
     require(same_drift(device_drift, run_drift(backend, index)),
             label + ": flow drift differs on a second run");
     require_close_drift(device_drift, drift, label);
+    const auto graphs = run_cell_contacts(backend, index);
+    const auto repeated_graphs = run_cell_contacts(backend, index);
+    for (std::size_t scene = 0; scene < graphs.size(); ++scene) {
+      const auto at = label + " cell contacts of scene " + std::to_string(scene);
+      require(same_cell_contacts(graphs[scene], repeated_graphs[scene]), at + " on a second run");
+      require_close_cell_contacts(graphs[scene], cell_contacts[scene], at);
+    }
+    const auto device_solves = run_solves(backend, index);
+    const auto repeated_solves = run_solves(backend, index);
+    for (std::size_t solve = 0; solve < solves.size(); ++solve) {
+      const auto at = label + " contact solve " + std::to_string(solve);
+      require(same_solve(device_solves[solve], repeated_solves[solve]), at + " on a second run");
+      require_close_solve(device_solves[solve], solves[solve], at);
+    }
   });
   return 0;
 }

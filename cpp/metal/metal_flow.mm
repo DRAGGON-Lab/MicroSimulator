@@ -20,6 +20,7 @@
 #include "core/flexible_gmres.hpp"
 #include "core/flow_system.hpp"
 #include "core/shared_constants.hpp"
+#include "metal_compile_options.hpp"
 #include "metal_flow.hpp"
 #include "microsimulator/metal/depth_flow_source.hpp"
 #include "microsimulator/metal/flow_source.hpp"
@@ -63,22 +64,6 @@ id<MTLLibrary> compile_library(id<MTLDevice> device, const char* text, MTLCompil
     throw_metal_error(operation, error);
   }
   return library;
-}
-
-// Compile options under which every floating-point operation is evaluated as
-// written, as double-word arithmetic requires.
-MTLCompileOptions* exact_math_options() {
-  MTLCompileOptions* options = [MTLCompileOptions new];
-  if (@available(macOS 15.0, *)) {
-    options.mathMode = MTLMathModeSafe;
-    options.mathFloatingPointFunctions = MTLMathFloatingPointFunctionsPrecise;
-  } else {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    options.fastMathEnabled = NO;
-#pragma clang diagnostic pop
-  }
-  return options;
 }
 
 id<MTLDevice> select_device(std::uint32_t device_index) {
@@ -180,8 +165,8 @@ struct FlowSolver::Impl {
       }
       id<MTLLibrary> library =
           compile_library(device, flow_source, nil, "failed to compile Metal flow");
-      id<MTLLibrary> depth_library = compile_library(
-          device, depth_flow_source, exact_math_options(), "failed to compile Metal depth flow");
+      id<MTLLibrary> depth_library = compile_library(device, depth_flow_source, safe_math_options(),
+                                                     "failed to compile Metal depth flow");
       depth_operator = make_pipeline(device, depth_library, @"depth_pair_operator");
       depth_velocity = make_pipeline(device, depth_library, @"depth_pair_velocity");
       depth_initialize = make_pipeline(device, depth_library, @"depth_pair_initialize");

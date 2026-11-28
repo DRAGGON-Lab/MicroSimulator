@@ -17,6 +17,10 @@ using ::float3;
 using ::float4;
 using ::uint2;
 using ::uint4;
+using microsimulator::shared::contact_reduction_width;
+using microsimulator::shared::float_epsilon;
+using microsimulator::shared::growth_load_law_exponential;
+using microsimulator::shared::growth_load_law_linear;
 using microsimulator::shared::inverse_sqrt_two;
 using microsimulator::shared::pi;
 using microsimulator::shared::segment_minimization_iterations;
@@ -31,5 +35,7 @@ static_assert(sizeof(ExternalConstraint) == 48);
 static_assert(sizeof(ExternalContactData) == 32);
 static_assert(sizeof(ExternalContactRecord) == 48);
 static_assert(sizeof(FlowDriftData) == 64);
+static_assert(sizeof(CellContactData) == 32);
+static_assert(sizeof(CellContactRecord) == 48);
 
 }  // namespace microsimulator::cuda::device

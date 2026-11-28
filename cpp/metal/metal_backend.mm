@@ -19,14 +19,16 @@
 
 #include "core/boundary_values.hpp"
 #include "core/contact_response.hpp"
+#include "core/contact_solve_plan.hpp"
 #include "core/contact_solver.hpp"
 #include "core/device_types.hpp"
+#include "core/shared_constants.hpp"
 #include "core/signal_jacobi.hpp"
 #include "metal_cell_kernels.hpp"
+#include "metal_compile_options.hpp"
 #include "metal_flow.hpp"
 #include "microsimulator/backend.hpp"
 #include "microsimulator/metal/contact_dynamics_source.hpp"
-#include "microsimulator/metal/contacts_source.hpp"
 #include "microsimulator/metal/coupled_rates_source.hpp"
 #include "microsimulator/metal/growth_source.hpp"
 #include "microsimulator/metal/signals_source.hpp"
@@ -53,14 +55,14 @@ using MetalSweepState = device::SignalSweepState;
   throw std::runtime_error(std::string(operation) + ": " + detail);
 }
 
-id<MTLLibrary> compile_library(id<MTLDevice> device, const char* source_text,
-                               const char* operation) {
+id<MTLLibrary> compile_library(id<MTLDevice> device, const char* source_text, const char* operation,
+                               MTLCompileOptions* options = nil) {
   NSString* source = [NSString stringWithUTF8String:source_text];
   if (source == nil) {
     throw std::runtime_error(std::string(operation) + ": source is not valid UTF-8");
   }
   NSError* error = nil;
-  id<MTLLibrary> library = [device newLibraryWithSource:source options:nil error:&error];
+  id<MTLLibrary> library = [device newLibraryWithSource:source options:options error:&error];
   if (library == nil) {
     throw_metal_error(operation, error);
   }
@@ -213,42 +215,27 @@ class MetalBackend final : public ComputeBackend {
       coupled_scatter_sort_pipeline_ =
           compile_pipeline(device_, coupled_library, @"coupled_scatter_sort",
                            "failed to create the Metal coupled scatter-sort pipeline");
-      const auto contacts_library =
-          compile_library(device_, metal::contacts_source, "failed to compile Metal contacts");
-      contact_count_pipeline_ =
-          compile_pipeline(device_, contacts_library, @"count_cell_contacts",
-                           "failed to create the Metal contact-count pipeline");
       inclusive_scan_pipeline_ =
-          compile_pipeline(device_, contacts_library, @"inclusive_scan_step",
+          compile_pipeline(device_, coupled_library, @"inclusive_scan_step",
                            "failed to create the Metal inclusive-scan pipeline");
-      contact_fill_pipeline_ = compile_pipeline(device_, contacts_library, @"fill_cell_contacts",
-                                                "failed to create the Metal contact-fill pipeline");
 
-      const auto contact_dynamics_library = compile_library(
-          device_, metal::contact_dynamics_source, "failed to compile Metal contact dynamics");
+      const auto contact_dynamics_library =
+          compile_library(device_, metal::contact_dynamics_source,
+                          "failed to compile Metal contact dynamics", metal::safe_math_options());
       contact_respond_pipeline_ =
           compile_pipeline(device_, contact_dynamics_library, @"contact_respond",
                            "failed to create the Metal contact-respond pipeline");
-      contact_gaps_pipeline_ = compile_pipeline(device_, contact_dynamics_library, @"contact_gaps",
-                                                "failed to create the Metal contact-gaps pipeline");
-      contact_reduce_pipeline_ =
-          compile_pipeline(device_, contact_dynamics_library, @"contact_reduce",
-                           "failed to create the Metal contact-reduce pipeline");
-      contact_advance_pipeline_ =
-          compile_pipeline(device_, contact_dynamics_library, @"contact_advance",
-                           "failed to create the Metal contact-advance pipeline");
+      contact_step_tree_pipeline_ =
+          compile_pipeline(device_, contact_dynamics_library, @"contact_step_tree",
+                           "failed to create the Metal contact-step pipeline");
+      contact_tree_pipeline_ = compile_pipeline(device_, contact_dynamics_library, @"contact_tree",
+                                                "failed to create the Metal contact-tree pipeline");
+      contact_record_pipeline_ =
+          compile_pipeline(device_, contact_dynamics_library, @"contact_record",
+                           "failed to create the Metal contact-record pipeline");
       contact_solve_pipeline_ =
           compile_pipeline(device_, contact_dynamics_library, @"contact_solve",
                            "failed to create the Metal contact-solve pipeline");
-      contact_respond_step_pipeline_ =
-          compile_pipeline(device_, contact_dynamics_library, @"contact_respond_step",
-                           "failed to create the Metal contact-respond-step pipeline");
-      contact_gaps_step_pipeline_ =
-          compile_pipeline(device_, contact_dynamics_library, @"contact_gaps_step",
-                           "failed to create the Metal contact-gaps-step pipeline");
-      contact_advance_step_pipeline_ =
-          compile_pipeline(device_, contact_dynamics_library, @"contact_advance_step",
-                           "failed to create the Metal contact-advance-step pipeline");
       flow_solver_ = std::make_unique<metal::FlowSolver>(device_index_);
       cell_kernels_ = std::make_unique<metal::CellKernels>(device_index_);
     }
@@ -700,36 +687,7 @@ class MetalBackend final : public ComputeBackend {
 
   [[nodiscard]] ContactGraph find_cell_contacts(const WorldState& state,
                                                 const ContactParameters& parameters) override {
-    validate_contact_parameters(parameters);
-    const auto geometry = state.geometry_state();
-    if (geometry.size() == 0) {
-      return ContactGraph{};
-    }
-    if (geometry.size() > std::numeric_limits<std::uint32_t>::max()) {
-      throw std::overflow_error("Metal contact launch exceeds the uint32 cell index space");
-    }
-    const auto candidates = find_cell_contact_candidates(state, parameters);
-    if (candidates.empty()) {
-      return ContactGraph(geometry.size(), {});
-    }
-    if (candidates.size() > std::numeric_limits<std::uint32_t>::max() / 2) {
-      throw std::overflow_error("Metal contact candidates exceed the uint32 scan space");
-    }
-
-    ensure_contact_cell_capacity(geometry.size());
-    ensure_contact_candidate_capacity(candidates.size());
-    ensure_contact_pair_capacity(candidates.size());
-    upload_contact_cells(geometry);
-    upload_contact_candidates(candidates);
-    const auto candidate_count = static_cast<std::uint32_t>(candidates.size());
-    // A candidate pair makes at most two contacts, so one command counts,
-    // scans, and fills them.
-    ensure_contact_output_capacity(2 * static_cast<std::size_t>(candidate_count));
-    const auto contact_count = count_and_fill_contacts(candidate_count, parameters);
-    if (contact_count == 0) {
-      return ContactGraph(geometry.size(), {});
-    }
-    return download_contacts(geometry.size(), contact_count);
+    return cell_kernels_->cell_contacts(state, parameters);
   }
 
   [[nodiscard]] ExternalContactGraph find_external_contacts(
@@ -758,46 +716,19 @@ class MetalBackend final : public ComputeBackend {
   [[nodiscard]] ContactSolveResult solve_contact_forces(
       const ContactSystem& system, std::span<const float> initial_multipliers,
       const ContactSolveParameters& parameters) override {
-    validate_contact_system(system);
-    if (initial_multipliers.size() != system.rows.size()) {
-      throw std::invalid_argument("contact multiplier count does not match the contact rows");
-    }
-    for (const auto multiplier : initial_multipliers) {
-      if (!std::isfinite(multiplier) || multiplier < 0.0F) {
-        throw std::invalid_argument("contact multipliers must be finite and non-negative");
-      }
-    }
-    if (!std::isfinite(parameters.tolerance) || parameters.tolerance <= 0.0F) {
-      throw std::invalid_argument("contact solve tolerance must be finite and positive");
-    }
-
+    const auto plan = detail::plan_contact_solve(system, initial_multipliers, parameters.tolerance);
     ContactSolveResult result;
     result.multipliers.assign(initial_multipliers.begin(), initial_multipliers.end());
-    // An incidence entry packs a row index with one bit for the row's side.
-    if (system.bodies.size() >= std::numeric_limits<std::uint32_t>::max() ||
-        system.rows.size() > std::numeric_limits<std::uint32_t>::max() / 2) {
-      throw std::overflow_error("Metal contact dynamics exceeds the uint32 index space");
-    }
-    const auto row_count = static_cast<std::uint32_t>(system.rows.size());
-    const auto body_count = static_cast<std::uint32_t>(system.bodies.size());
+    const auto row_count = plan.data.row_count;
+    const auto body_count = plan.data.body_count;
     if (body_count == 0) {
       return result;
     }
+    ensure_contact_dynamics_capacity(body_count, std::max<std::uint32_t>(row_count, 1));
+    upload_contact_plan(plan);
     if (row_count == 0) {
       // Without contacts every cell moves with its drift and grows freely.
-      ensure_contact_dynamics_capacity(body_count, 1);
-      upload_contact_system(system, initial_multipliers);
-      const MetalContactSolve free{
-          .dt = system.dt,
-          .tolerance = parameters.tolerance,
-          .law = static_cast<std::uint32_t>(system.growth.law),
-          .sensitivity = system.growth.sensitivity,
-          .free_load = system.growth.free_load,
-          .stall_load = system.growth.stall_load,
-          .row_count = 0,
-          .body_count = body_count,
-      };
-      respond_to_contacts(free);
+      respond_to_contacts(plan.data);
       result.response = download_contact_response(body_count);
       return result;
     }
@@ -805,52 +736,20 @@ class MetalBackend final : public ComputeBackend {
     if (!std::isfinite(bound) || bound <= 0.0F) {
       throw std::invalid_argument("contact system has no positive diagonal");
     }
-
-    ensure_contact_dynamics_capacity(body_count, row_count);
-    upload_contact_system(system, initial_multipliers);
-    const MetalContactSolve solve{
-        .dt = system.dt,
-        .tolerance = parameters.tolerance,
-        .law = static_cast<std::uint32_t>(system.growth.law),
-        .sensitivity = system.growth.sensitivity,
-        .free_load = system.growth.free_load,
-        .stall_load = system.growth.stall_load,
-        .row_count = row_count,
-        .body_count = body_count,
-    };
-
-    if (row_count <= contact_solve_group_rows) {
+    const auto first_step_length = 1.0F / bound;
+    const auto group_width = contact_solve_group_width();
+    if (row_count <= contact_solve_group_rows && group_width > 0) {
       // One threadgroup runs the whole solve, so it costs one command.
-      const auto state = run_contact_solve(solve, parameters.max_iterations, 1.0F / bound);
-      result.report = detail::device_contact_solve_report(state.iterations, state.residual,
-                                                          parameters.tolerance);
-      const auto* multipliers =
-          static_cast<const float*>(contact_multipliers_[state.iterations % 2].contents);
-      result.multipliers.assign(multipliers, multipliers + row_count);
-      result.response = download_contact_response(body_count);
-      return result;
+      run_contact_solve(plan.data, parameters.max_iterations, first_step_length, group_width);
+    } else {
+      run_contact_steps(plan.data, parameters.max_iterations, first_step_length);
     }
-
-    // The multipliers and their gaps live in the buffer pair `current` names;
-    // each step writes the other pair.
-    std::size_t current = 0;
-    const detail::ContactSolverOperations operations{
-        .initialize =
-            [&](float first_step_length) {
-              return initialize_contact_solve(solve, first_step_length);
-            },
-        .iterate =
-            [&](std::uint32_t count) {
-              const auto progress = iterate_contact_solve(solve, current, count);
-              current = (current + progress.iterations) % 2;
-              return progress;
-            },
-        .batch = contact_solve_batch,
-    };
-    result.report = detail::solve_contact_system(operations, 1.0F / bound, parameters);
-    const auto* multipliers = static_cast<const float*>(contact_multipliers_[current].contents);
+    const auto state = *static_cast<const MetalContactState*>(contact_state_.contents);
+    result.report =
+        detail::device_contact_solve_report(state.iterations, state.residual, parameters.tolerance);
+    const auto* multipliers =
+        static_cast<const float*>(contact_multipliers_[state.iterations % 2].contents);
     result.multipliers.assign(multipliers, multipliers + row_count);
-    // The respond kernel last ran on the multipliers the solve returns.
     result.response = download_contact_response(body_count);
     return result;
   }
@@ -1425,94 +1324,6 @@ class MetalBackend final : public ComputeBackend {
     }
   }
 
-  void ensure_contact_cell_capacity(std::size_t count) {
-    if (count <= contact_cell_capacity_) {
-      return;
-    }
-    const auto contact_cell_capacity = std::bit_ceil(count);
-    contact_ids_ = allocate_shared_buffer(device_, contact_cell_capacity * sizeof(std::uint64_t),
-                                          "contact cell IDs");
-    contact_centers_ = allocate_shared_buffer(device_, contact_cell_capacity * sizeof(MetalFloat4),
-                                              "contact cell centers");
-    contact_axes_ = allocate_shared_buffer(device_, contact_cell_capacity * sizeof(MetalFloat4),
-                                           "contact cell axes");
-    contact_geometry_ = allocate_shared_buffer(device_, contact_cell_capacity * sizeof(MetalFloat4),
-                                               "contact cell geometry");
-    contact_cell_capacity_ = contact_cell_capacity;
-  }
-
-  void ensure_contact_pair_capacity(std::size_t count) {
-    if (count <= contact_pair_capacity_) {
-      return;
-    }
-    const auto contact_pair_capacity = std::bit_ceil(count);
-    const auto byte_count = contact_pair_capacity * sizeof(std::uint32_t);
-    contact_counts_ = allocate_shared_buffer(device_, byte_count, "contact counts");
-    contact_scan_a_ = allocate_shared_buffer(device_, byte_count, "contact scan A");
-    contact_scan_b_ = allocate_shared_buffer(device_, byte_count, "contact scan B");
-    contact_pair_capacity_ = contact_pair_capacity;
-  }
-
-  void ensure_contact_candidate_capacity(std::size_t count) {
-    if (count <= contact_candidate_capacity_) {
-      return;
-    }
-    const auto contact_candidate_capacity = std::bit_ceil(count);
-    contact_candidates_ = allocate_shared_buffer(
-        device_, contact_candidate_capacity * sizeof(MetalUInt2), "contact candidates");
-    contact_candidate_capacity_ = contact_candidate_capacity;
-  }
-
-  void ensure_contact_output_capacity(std::size_t count) {
-    if (count <= contact_output_capacity_) {
-      return;
-    }
-    const auto contact_output_capacity = std::bit_ceil(count);
-    const auto id_bytes = contact_output_capacity * sizeof(std::uint64_t);
-    const auto index_bytes = contact_output_capacity * sizeof(std::uint32_t);
-    const auto vector_bytes = contact_output_capacity * sizeof(MetalFloat4);
-    const auto scalar_bytes = contact_output_capacity * sizeof(float);
-    contact_first_ids_ = allocate_shared_buffer(device_, id_bytes, "contact first IDs");
-    contact_second_ids_ = allocate_shared_buffer(device_, id_bytes, "contact second IDs");
-    contact_first_slots_ = allocate_shared_buffer(device_, index_bytes, "contact first slots");
-    contact_second_slots_ = allocate_shared_buffer(device_, index_bytes, "contact second slots");
-    contact_ordinals_ = allocate_shared_buffer(device_, index_bytes, "contact ordinals");
-    contact_points_ = allocate_shared_buffer(device_, vector_bytes, "contact points");
-    contact_normals_ = allocate_shared_buffer(device_, vector_bytes, "contact normals");
-    contact_separations_ = allocate_shared_buffer(device_, scalar_bytes, "contact separations");
-    contact_weights_ = allocate_shared_buffer(device_, scalar_bytes, "contact weights");
-    contact_output_capacity_ = contact_output_capacity;
-  }
-
-  void upload_contact_cells(const CellGeometryView& geometry) {
-    std::memcpy(contact_ids_.contents, geometry.ids.data(), geometry.ids.size_bytes());
-    auto* centers = static_cast<MetalFloat4*>(contact_centers_.contents);
-    auto* axes = static_cast<MetalFloat4*>(contact_axes_.contents);
-    auto* shapes = static_cast<MetalFloat4*>(contact_geometry_.contents);
-    for (std::size_t index = 0; index < geometry.size(); ++index) {
-      centers[index] = {
-          geometry.position_x[index],
-          geometry.position_y[index],
-          geometry.position_z[index],
-          0.0F,
-      };
-      axes[index] = {
-          geometry.direction_x[index],
-          geometry.direction_y[index],
-          geometry.direction_z[index],
-          0.0F,
-      };
-      shapes[index] = {geometry.lengths[index], geometry.radii[index], 0.0F, 0.0F};
-    }
-  }
-
-  void upload_contact_candidates(std::span<const ContactCandidate> candidates) {
-    auto* output = static_cast<MetalUInt2*>(contact_candidates_.contents);
-    for (std::size_t index = 0; index < candidates.size(); ++index) {
-      output[index] = {candidates[index].first_slot, candidates[index].second_slot};
-    }
-  }
-
   // Encodes an inclusive prefix sum of `counts` and returns the buffer that
   // holds it: one of the two scratch buffers, or `counts` itself when there is
   // a single element.
@@ -1538,11 +1349,6 @@ class MetalBackend final : public ComputeBackend {
       offset *= 2;
     }
     return scan_input;
-  }
-
-  void encode_contact_scan(id<MTLComputeCommandEncoder> encoder, std::uint32_t element_count) {
-    contact_inclusive_counts_ = encode_inclusive_scan(encoder, contact_counts_, contact_scan_a_,
-                                                      contact_scan_b_, element_count);
   }
 
   // Encodes the per-site cell lists the coupled grid kernel gathers from and
@@ -1622,107 +1428,11 @@ class MetalBackend final : public ComputeBackend {
     }
   }
 
-  // Counts the contacts of every candidate pair, scans the counts, and fills
-  // the contacts, in one command. Returns the number of contacts.
-  [[nodiscard]] std::uint32_t count_and_fill_contacts(std::uint32_t candidate_count,
-                                                      const ContactParameters& parameters) {
-    const MetalFloat4 gpu_parameters{
-        parameters.activation_margin,
-        parameters.parallel_sine_threshold,
-        parameters.degeneracy_epsilon,
-        0.0F,
-    };
-    @autoreleasepool {
-      id<MTLCommandBuffer> command_buffer = [queue_ commandBuffer];
-      id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
-      if (command_buffer == nil || encoder == nil) {
-        throw std::runtime_error("failed to create a Metal contact command");
-      }
-
-      [encoder setComputePipelineState:contact_count_pipeline_];
-      [encoder setBuffer:contact_ids_ offset:0 atIndex:0];
-      [encoder setBuffer:contact_centers_ offset:0 atIndex:1];
-      [encoder setBuffer:contact_axes_ offset:0 atIndex:2];
-      [encoder setBuffer:contact_geometry_ offset:0 atIndex:3];
-      [encoder setBuffer:contact_counts_ offset:0 atIndex:4];
-      [encoder setBytes:&gpu_parameters length:sizeof(gpu_parameters) atIndex:5];
-      [encoder setBytes:&candidate_count length:sizeof(candidate_count) atIndex:6];
-      [encoder setBuffer:contact_candidates_ offset:0 atIndex:7];
-      dispatch_1d(encoder, contact_count_pipeline_, candidate_count);
-      [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
-
-      encode_contact_scan(encoder, candidate_count);
-
-      [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
-
-      [encoder setComputePipelineState:contact_fill_pipeline_];
-      [encoder setBuffer:contact_ids_ offset:0 atIndex:0];
-      [encoder setBuffer:contact_centers_ offset:0 atIndex:1];
-      [encoder setBuffer:contact_axes_ offset:0 atIndex:2];
-      [encoder setBuffer:contact_geometry_ offset:0 atIndex:3];
-      [encoder setBuffer:contact_counts_ offset:0 atIndex:4];
-      [encoder setBuffer:contact_inclusive_counts_ offset:0 atIndex:5];
-      [encoder setBuffer:contact_first_ids_ offset:0 atIndex:6];
-      [encoder setBuffer:contact_second_ids_ offset:0 atIndex:7];
-      [encoder setBuffer:contact_first_slots_ offset:0 atIndex:8];
-      [encoder setBuffer:contact_second_slots_ offset:0 atIndex:9];
-      [encoder setBuffer:contact_ordinals_ offset:0 atIndex:10];
-      [encoder setBuffer:contact_points_ offset:0 atIndex:11];
-      [encoder setBuffer:contact_normals_ offset:0 atIndex:12];
-      [encoder setBuffer:contact_separations_ offset:0 atIndex:13];
-      [encoder setBuffer:contact_weights_ offset:0 atIndex:14];
-      [encoder setBytes:&gpu_parameters length:sizeof(gpu_parameters) atIndex:15];
-      [encoder setBytes:&candidate_count length:sizeof(candidate_count) atIndex:16];
-      [encoder setBuffer:contact_candidates_ offset:0 atIndex:17];
-      dispatch_1d(encoder, contact_fill_pipeline_, candidate_count);
-      [encoder endEncoding];
-      wait_for_command(command_buffer, "Metal contact detection failed");
-    }
-    const auto* inclusive = static_cast<const std::uint32_t*>(contact_inclusive_counts_.contents);
-    return inclusive[candidate_count - 1];
-  }
-
-  [[nodiscard]] ContactGraph download_contacts(std::size_t cell_count,
-                                               std::uint32_t contact_count) const {
-    const auto* first_ids = static_cast<const std::uint64_t*>(contact_first_ids_.contents);
-    const auto* second_ids = static_cast<const std::uint64_t*>(contact_second_ids_.contents);
-    const auto* first_slots = static_cast<const std::uint32_t*>(contact_first_slots_.contents);
-    const auto* second_slots = static_cast<const std::uint32_t*>(contact_second_slots_.contents);
-    const auto* ordinals = static_cast<const std::uint32_t*>(contact_ordinals_.contents);
-    const auto* points = static_cast<const MetalFloat4*>(contact_points_.contents);
-    const auto* normals = static_cast<const MetalFloat4*>(contact_normals_.contents);
-    const auto* separations = static_cast<const float*>(contact_separations_.contents);
-    const auto* weights = static_cast<const float*>(contact_weights_.contents);
-
-    std::vector<CellContact> contacts;
-    contacts.reserve(contact_count);
-    for (std::uint32_t index = 0; index < contact_count; ++index) {
-      if (ordinals[index] > 1) {
-        throw std::runtime_error("Metal contact kernel produced an invalid ordinal");
-      }
-      contacts.push_back({
-          .first_id = first_ids[index],
-          .second_id = second_ids[index],
-          .first_slot = first_slots[index],
-          .second_slot = second_slots[index],
-          .ordinal = static_cast<std::uint8_t>(ordinals[index]),
-          .point_on_first = {points[index].x, points[index].y, points[index].z},
-          .normal = {normals[index].x, normals[index].y, normals[index].z},
-          .signed_separation = separations[index],
-          .weight = weights[index],
-      });
-    }
-    std::ranges::sort(contacts, {}, [](const CellContact& contact) {
-      return std::tuple{contact.first_id, contact.second_id, contact.ordinal};
-    });
-    return ContactGraph(cell_count, std::move(contacts));
-  }
-
   // Projected-gradient steps encoded in one command buffer. The device stops
   // itself at convergence, so the steps left in a batch do nothing.
   static constexpr std::uint32_t contact_solve_batch = 32;
-  // The threadgroup width of contact_gaps_step.
-  static constexpr std::uint32_t contact_step_group = 256;
+  // Terms each threadgroup of the step-at-a-time solve sums.
+  static constexpr std::uint32_t contact_reduction_width = shared::contact_reduction_width;
   // Implicit signal sweeps encoded per command. A step takes about a dozen.
   static constexpr std::uint32_t signal_sweep_batch = 16;
   // Systems of up to this many rows are solved in one threadgroup. Above it,
@@ -1746,16 +1456,15 @@ class MetalBackend final : public ComputeBackend {
           allocate_shared_buffer(device_, capacity * sizeof(MetalContactRow), "contact rows");
       contact_incidence_entries_ = allocate_shared_buffer(
           device_, capacity * 2 * sizeof(std::uint32_t), "contact incidence entries");
+      const auto partials = (capacity + contact_reduction_width - 1) / contact_reduction_width;
       for (std::size_t index = 0; index < 2; ++index) {
         contact_multipliers_[index] =
             allocate_shared_buffer(device_, capacity * sizeof(float), "contact multipliers");
         contact_gaps_[index] =
             allocate_shared_buffer(device_, capacity * sizeof(float), "contact gaps");
         contact_reduce_[index] =
-            allocate_shared_buffer(device_, capacity * sizeof(MetalFloat4), "contact reduction");
+            allocate_shared_buffer(device_, partials * sizeof(MetalFloat4), "contact partial sums");
       }
-      contact_terms_ =
-          allocate_shared_buffer(device_, capacity * sizeof(MetalFloat4), "contact step terms");
       contact_row_capacity_ = capacity;
     }
     if (contact_state_ == nil) {
@@ -1764,116 +1473,31 @@ class MetalBackend final : public ComputeBackend {
     }
   }
 
-  void upload_contact_system(const ContactSystem& system,
-                             std::span<const float> initial_multipliers) {
-    auto* rows = static_cast<MetalContactRow*>(contact_rows_.contents);
-    auto* offsets = static_cast<std::uint32_t*>(contact_incidence_offsets_.contents);
-    auto* entries = static_cast<std::uint32_t*>(contact_incidence_entries_.contents);
-    const auto body_count = system.bodies.size();
-    std::fill_n(offsets, body_count + 1, 0U);
-    for (std::size_t index = 0; index < system.rows.size(); ++index) {
-      const auto& row = system.rows[index];
-      const auto& first = row.first_jacobian;
-      const auto& second = row.second_jacobian;
-      rows[index] = {
-          .first_linear = {first[0], first[1], first[2], row.first_length_lever},
-          .first_angular = {first[3], first[4], first[5], row.offset},
-          .second_linear = {second[0], second[1], second[2], row.second_length_lever},
-          .second_angular = {second[3], second[4], second[5], row.compliance},
-          .first_slot = row.first_slot,
-          .second_slot = row.second_slot,
-          .padding0 = 0,
-          .padding1 = 0,
-      };
-      ++offsets[row.first_slot + 1];
-      if (row.second_slot != invalid_slot) {
-        ++offsets[row.second_slot + 1];
-      }
-    }
-    for (std::size_t body = 0; body < body_count; ++body) {
-      offsets[body + 1] += offsets[body];
-    }
-    std::vector<std::uint32_t> cursors(offsets, offsets + body_count);
-    for (std::size_t index = 0; index < system.rows.size(); ++index) {
-      const auto& row = system.rows[index];
-      const auto entry = static_cast<std::uint32_t>(index) << 1U;
-      entries[cursors[row.first_slot]++] = entry;
-      if (row.second_slot != invalid_slot) {
-        entries[cursors[row.second_slot]++] = entry | 1U;
-      }
-    }
-
-    auto* bodies = static_cast<MetalContactBody*>(contact_bodies_.contents);
-    for (std::size_t body = 0; body < body_count; ++body) {
-      const auto& source = system.bodies[body];
-      bodies[body] = {
-          .axis_mobility = {source.axis.x, source.axis.y, source.axis.z,
-                            source.translational_mobility},
-          .rates = {source.transverse_mobility, source.axial_mobility, source.length_rate, 0.0F},
-          .drift_linear = {source.drift[0], source.drift[1], source.drift[2], 0.0F},
-          .drift_angular = {source.drift[3], source.drift[4], source.drift[5], 0.0F},
-      };
-    }
-    std::memcpy(contact_multipliers_[0].contents, initial_multipliers.data(),
-                initial_multipliers.size() * sizeof(float));
+  void upload_contact_plan(const detail::ContactSolvePlan& plan) {
+    std::memcpy(contact_rows_.contents, plan.rows.data(),
+                plan.rows.size() * sizeof(MetalContactRow));
+    std::memcpy(contact_bodies_.contents, plan.bodies.data(),
+                plan.bodies.size() * sizeof(MetalContactBody));
+    std::memcpy(contact_incidence_offsets_.contents, plan.incidence_offsets.data(),
+                plan.incidence_offsets.size() * sizeof(std::uint32_t));
+    std::memcpy(contact_incidence_entries_.contents, plan.incidence_entries.data(),
+                plan.incidence_entries.size() * sizeof(std::uint32_t));
+    std::memcpy(contact_multipliers_[0].contents, plan.multipliers.data(),
+                plan.multipliers.size() * sizeof(float));
   }
 
-  // Encodes the response to the multipliers in pair `target`, then their gaps
-  // and step terms against pair `previous`, and reduces the terms. Returns the
-  // buffer whose first element holds the reduced terms.
-  id<MTLBuffer> encode_contact_evaluation(id<MTLComputeCommandEncoder> encoder,
-                                          const MetalContactSolve& solve, std::size_t target,
-                                          std::size_t previous, std::uint32_t initial) {
-    [encoder setComputePipelineState:contact_respond_pipeline_];
-    [encoder setBuffer:contact_rows_ offset:0 atIndex:0];
-    [encoder setBuffer:contact_bodies_ offset:0 atIndex:1];
-    [encoder setBuffer:contact_multipliers_[target] offset:0 atIndex:2];
-    [encoder setBuffer:contact_incidence_offsets_ offset:0 atIndex:3];
-    [encoder setBuffer:contact_incidence_entries_ offset:0 atIndex:4];
-    [encoder setBuffer:contact_response_ offset:0 atIndex:5];
-    [encoder setBuffer:contact_state_ offset:0 atIndex:6];
-    [encoder setBytes:&solve length:sizeof(solve) atIndex:7];
-    [encoder setBytes:&initial length:sizeof(initial) atIndex:8];
-    dispatch_1d(encoder, contact_respond_pipeline_, solve.body_count);
-    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
-
-    [encoder setComputePipelineState:contact_gaps_pipeline_];
-    [encoder setBuffer:contact_rows_ offset:0 atIndex:0];
-    [encoder setBuffer:contact_response_ offset:0 atIndex:1];
-    [encoder setBuffer:contact_multipliers_[target] offset:0 atIndex:2];
-    [encoder setBuffer:contact_gaps_[target] offset:0 atIndex:3];
-    [encoder setBuffer:contact_multipliers_[previous] offset:0 atIndex:4];
-    [encoder setBuffer:contact_gaps_[previous] offset:0 atIndex:5];
-    [encoder setBuffer:contact_terms_ offset:0 atIndex:6];
-    [encoder setBuffer:contact_state_ offset:0 atIndex:7];
-    [encoder setBytes:&solve length:sizeof(solve) atIndex:8];
-    [encoder setBytes:&initial length:sizeof(initial) atIndex:9];
-    dispatch_1d(encoder, contact_gaps_pipeline_, solve.row_count);
-    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
-
-    id<MTLBuffer> input = contact_terms_;
-    std::size_t output = 0;
-    auto element_count = solve.row_count;
-    while (element_count > 1) {
-      const auto output_count = (element_count + 1) / 2;
-      [encoder setComputePipelineState:contact_reduce_pipeline_];
-      [encoder setBuffer:input offset:0 atIndex:0];
-      [encoder setBuffer:contact_reduce_[output] offset:0 atIndex:1];
-      [encoder setBytes:&element_count length:sizeof(element_count) atIndex:2];
-      dispatch_1d(encoder, contact_reduce_pipeline_, output_count);
-      [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
-      input = contact_reduce_[output];
-      output = 1 - output;
-      element_count = output_count;
-    }
-    return input;
+  // The width of the single-group solve's threadgroup: the largest multiple of
+  // the reduction width the pipeline allows, up to 1024, or zero when it
+  // allows less than one.
+  [[nodiscard]] std::uint32_t contact_solve_group_width() const {
+    const auto allowed =
+        std::min<NSUInteger>(contact_solve_pipeline_.maxTotalThreadsPerThreadgroup, 1024);
+    return static_cast<std::uint32_t>(allowed / contact_reduction_width * contact_reduction_width);
   }
 
-  // Runs the whole solve from the multipliers in pair zero in one
-  // threadgroup and returns its final state.
-  [[nodiscard]] MetalContactState run_contact_solve(const MetalContactSolve& solve,
-                                                    std::uint32_t max_iterations,
-                                                    float first_step_length) {
+  // Runs the whole solve from the multipliers in pair zero in one threadgroup.
+  void run_contact_solve(const MetalContactSolve& solve, std::uint32_t max_iterations,
+                         float first_step_length, std::uint32_t width) {
     @autoreleasepool {
       id<MTLCommandBuffer> command_buffer = [queue_ commandBuffer];
       id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
@@ -1894,13 +1518,10 @@ class MetalBackend final : public ComputeBackend {
       [encoder setBytes:&solve length:sizeof(solve) atIndex:10];
       [encoder setBytes:&max_iterations length:sizeof(max_iterations) atIndex:11];
       [encoder setBytes:&first_step_length length:sizeof(first_step_length) atIndex:12];
-      const auto width =
-          std::min<NSUInteger>(contact_solve_pipeline_.maxTotalThreadsPerThreadgroup, 1024);
       [encoder dispatchThreadgroups:MTLSizeMake(1, 1, 1)
               threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal contact solve failed");
-      return *static_cast<const MetalContactState*>(contact_state_.contents);
     }
   }
 
@@ -1912,18 +1533,7 @@ class MetalBackend final : public ComputeBackend {
       if (command_buffer == nil || encoder == nil) {
         throw std::runtime_error("failed to create a Metal contact response command");
       }
-      const std::uint32_t initial = 1;
-      [encoder setComputePipelineState:contact_respond_pipeline_];
-      [encoder setBuffer:contact_rows_ offset:0 atIndex:0];
-      [encoder setBuffer:contact_bodies_ offset:0 atIndex:1];
-      [encoder setBuffer:contact_multipliers_[0] offset:0 atIndex:2];
-      [encoder setBuffer:contact_incidence_offsets_ offset:0 atIndex:3];
-      [encoder setBuffer:contact_incidence_entries_ offset:0 atIndex:4];
-      [encoder setBuffer:contact_response_ offset:0 atIndex:5];
-      [encoder setBuffer:contact_state_ offset:0 atIndex:6];
-      [encoder setBytes:&solve length:sizeof(solve) atIndex:7];
-      [encoder setBytes:&initial length:sizeof(initial) atIndex:8];
-      dispatch_1d(encoder, contact_respond_pipeline_, solve.body_count);
+      encode_contact_respond(encoder, solve, 0, 0);
       [encoder endEncoding];
       wait_for_command(command_buffer, "Metal contact response failed");
     }
@@ -1934,95 +1544,101 @@ class MetalBackend final : public ComputeBackend {
     return detail::unpack_contact_response({packed, body_count});
   }
 
-  void encode_contact_advance(id<MTLComputeCommandEncoder> encoder, id<MTLBuffer> reduced,
-                              const MetalContactSolve& solve, std::uint32_t initial,
-                              float first_step_length) {
-    [encoder setComputePipelineState:contact_advance_pipeline_];
-    [encoder setBuffer:reduced offset:0 atIndex:0];
+  void encode_contact_respond(id<MTLComputeCommandEncoder> encoder, const MetalContactSolve& solve,
+                              std::size_t current, std::uint32_t project) {
+    [encoder setComputePipelineState:contact_respond_pipeline_];
+    [encoder setBuffer:contact_rows_ offset:0 atIndex:0];
+    [encoder setBuffer:contact_bodies_ offset:0 atIndex:1];
+    [encoder setBuffer:contact_multipliers_[current] offset:0 atIndex:2];
+    [encoder setBuffer:contact_gaps_[current] offset:0 atIndex:3];
+    [encoder setBuffer:contact_incidence_offsets_ offset:0 atIndex:4];
+    [encoder setBuffer:contact_incidence_entries_ offset:0 atIndex:5];
+    [encoder setBuffer:contact_response_ offset:0 atIndex:6];
+    [encoder setBuffer:contact_state_ offset:0 atIndex:7];
+    [encoder setBytes:&solve length:sizeof(solve) atIndex:8];
+    [encoder setBytes:&project length:sizeof(project) atIndex:9];
+    dispatch_1d(encoder, contact_respond_pipeline_, solve.body_count);
+    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+  }
+
+  // Encodes one evaluation of the rows: the initial gaps of pair zero, or the
+  // projected step from pair `current`. Their terms are summed level by level
+  // and recorded in the solve state.
+  void encode_contact_terms(id<MTLComputeCommandEncoder> encoder, const MetalContactSolve& solve,
+                            std::size_t current, std::uint32_t initial, float first_step_length,
+                            std::uint32_t max_iterations) {
+    const auto next = 1 - current;
+    auto count = (solve.row_count + contact_reduction_width - 1) / contact_reduction_width;
+    [encoder setComputePipelineState:contact_step_tree_pipeline_];
+    [encoder setBuffer:contact_rows_ offset:0 atIndex:0];
+    [encoder setBuffer:contact_response_ offset:0 atIndex:1];
+    [encoder setBuffer:contact_multipliers_[current] offset:0 atIndex:2];
+    [encoder setBuffer:contact_gaps_[current] offset:0 atIndex:3];
+    [encoder setBuffer:contact_multipliers_[next] offset:0 atIndex:4];
+    [encoder setBuffer:contact_gaps_[next] offset:0 atIndex:5];
+    [encoder setBuffer:contact_reduce_[0] offset:0 atIndex:6];
+    [encoder setBuffer:contact_state_ offset:0 atIndex:7];
+    [encoder setBytes:&solve length:sizeof(solve) atIndex:8];
+    [encoder setBytes:&initial length:sizeof(initial) atIndex:9];
+    [encoder dispatchThreadgroups:MTLSizeMake(count, 1, 1)
+            threadsPerThreadgroup:MTLSizeMake(contact_reduction_width, 1, 1)];
+    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+    std::size_t input = 0;
+    while (count > 1) {
+      const auto output_count = (count + contact_reduction_width - 1) / contact_reduction_width;
+      [encoder setComputePipelineState:contact_tree_pipeline_];
+      [encoder setBuffer:contact_reduce_[input] offset:0 atIndex:0];
+      [encoder setBuffer:contact_reduce_[1 - input] offset:0 atIndex:1];
+      [encoder setBytes:&count length:sizeof(count) atIndex:2];
+      [encoder setBuffer:contact_state_ offset:0 atIndex:3];
+      [encoder setBytes:&initial length:sizeof(initial) atIndex:4];
+      [encoder dispatchThreadgroups:MTLSizeMake(output_count, 1, 1)
+              threadsPerThreadgroup:MTLSizeMake(contact_reduction_width, 1, 1)];
+      [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+      input = 1 - input;
+      count = output_count;
+    }
+    [encoder setComputePipelineState:contact_record_pipeline_];
+    [encoder setBuffer:contact_reduce_[input] offset:0 atIndex:0];
     [encoder setBuffer:contact_state_ offset:0 atIndex:1];
     [encoder setBytes:&solve length:sizeof(solve) atIndex:2];
     [encoder setBytes:&initial length:sizeof(initial) atIndex:3];
     [encoder setBytes:&first_step_length length:sizeof(first_step_length) atIndex:4];
-    dispatch_1d(encoder, contact_advance_pipeline_, 1);
+    [encoder setBytes:&max_iterations length:sizeof(max_iterations) atIndex:5];
+    dispatch_1d(encoder, contact_record_pipeline_, 1);
     [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
   }
 
-  [[nodiscard]] float initialize_contact_solve(const MetalContactSolve& solve,
-                                               float first_step_length) {
-    @autoreleasepool {
-      id<MTLCommandBuffer> command_buffer = [queue_ commandBuffer];
-      id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
-      if (command_buffer == nil || encoder == nil) {
-        throw std::runtime_error("failed to create a Metal contact initialization command");
+  // Runs the solve a step at a time over the whole device, in batches of
+  // steps that each cost one command. The device stops itself when the solve
+  // is done, so the steps left in a batch do nothing.
+  void run_contact_steps(const MetalContactSolve& solve, std::uint32_t max_iterations,
+                         float first_step_length) {
+    std::size_t current = 0;
+    auto initial = true;
+    for (;;) {
+      @autoreleasepool {
+        id<MTLCommandBuffer> command_buffer = [queue_ commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+        if (command_buffer == nil || encoder == nil) {
+          throw std::runtime_error("failed to create a Metal contact iteration command");
+        }
+        if (initial) {
+          encode_contact_respond(encoder, solve, 0, 0);
+          encode_contact_terms(encoder, solve, 0, 1, first_step_length, max_iterations);
+          initial = false;
+        }
+        for (std::uint32_t index = 0; index < contact_solve_batch; ++index) {
+          encode_contact_respond(encoder, solve, current, 1);
+          encode_contact_terms(encoder, solve, current, 0, 0.0F, max_iterations);
+          current = 1 - current;
+        }
+        [encoder endEncoding];
+        wait_for_command(command_buffer, "Metal contact solve iteration failed");
       }
-      const auto reduced = encode_contact_evaluation(encoder, solve, 0, 0, 1);
-      encode_contact_advance(encoder, reduced, solve, 1, first_step_length);
-      [encoder endEncoding];
-      wait_for_command(command_buffer, "Metal contact solve initialization failed");
-      return static_cast<const MetalContactState*>(contact_state_.contents)->residual;
-    }
-  }
-
-  [[nodiscard]] detail::ContactSolverProgress iterate_contact_solve(const MetalContactSolve& solve,
-                                                                    std::size_t current,
-                                                                    std::uint32_t count) {
-    @autoreleasepool {
-      const auto before =
-          static_cast<const MetalContactState*>(contact_state_.contents)->iterations;
-      id<MTLCommandBuffer> command_buffer = [queue_ commandBuffer];
-      id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
-      if (command_buffer == nil || encoder == nil) {
-        throw std::runtime_error("failed to create a Metal contact iteration command");
+      if (static_cast<const MetalContactState*>(contact_state_.contents)->done != 0) {
+        return;
       }
-      // Three dispatches a step: the response to the projected multipliers,
-      // the projected step with its gaps and threadgroup terms, and the sum
-      // of those terms that sets the next step length.
-      const auto group_count = (solve.row_count + contact_step_group - 1) / contact_step_group;
-      for (std::uint32_t index = 0; index < count; ++index) {
-        const auto next = 1 - current;
-        [encoder setComputePipelineState:contact_respond_step_pipeline_];
-        [encoder setBuffer:contact_rows_ offset:0 atIndex:0];
-        [encoder setBuffer:contact_bodies_ offset:0 atIndex:1];
-        [encoder setBuffer:contact_multipliers_[current] offset:0 atIndex:2];
-        [encoder setBuffer:contact_gaps_[current] offset:0 atIndex:3];
-        [encoder setBuffer:contact_incidence_offsets_ offset:0 atIndex:4];
-        [encoder setBuffer:contact_incidence_entries_ offset:0 atIndex:5];
-        [encoder setBuffer:contact_response_ offset:0 atIndex:6];
-        [encoder setBuffer:contact_state_ offset:0 atIndex:7];
-        [encoder setBytes:&solve length:sizeof(solve) atIndex:8];
-        dispatch_1d(encoder, contact_respond_step_pipeline_, solve.body_count);
-        [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
-
-        [encoder setComputePipelineState:contact_gaps_step_pipeline_];
-        [encoder setBuffer:contact_rows_ offset:0 atIndex:0];
-        [encoder setBuffer:contact_response_ offset:0 atIndex:1];
-        [encoder setBuffer:contact_multipliers_[current] offset:0 atIndex:2];
-        [encoder setBuffer:contact_gaps_[current] offset:0 atIndex:3];
-        [encoder setBuffer:contact_multipliers_[next] offset:0 atIndex:4];
-        [encoder setBuffer:contact_gaps_[next] offset:0 atIndex:5];
-        [encoder setBuffer:contact_reduce_[0] offset:0 atIndex:6];
-        [encoder setBuffer:contact_state_ offset:0 atIndex:7];
-        [encoder setBytes:&solve length:sizeof(solve) atIndex:8];
-        [encoder dispatchThreadgroups:MTLSizeMake(group_count, 1, 1)
-                threadsPerThreadgroup:MTLSizeMake(contact_step_group, 1, 1)];
-        [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
-
-        [encoder setComputePipelineState:contact_advance_step_pipeline_];
-        [encoder setBuffer:contact_reduce_[0] offset:0 atIndex:0];
-        [encoder setBuffer:contact_state_ offset:0 atIndex:1];
-        [encoder setBytes:&solve length:sizeof(solve) atIndex:2];
-        [encoder setBytes:&group_count length:sizeof(group_count) atIndex:3];
-        const auto width = std::min<NSUInteger>(
-            contact_advance_step_pipeline_.maxTotalThreadsPerThreadgroup, 1024);
-        [encoder dispatchThreadgroups:MTLSizeMake(1, 1, 1)
-                threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
-        [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
-        current = next;
-      }
-      [encoder endEncoding];
-      wait_for_command(command_buffer, "Metal contact solve iteration failed");
-      const auto* state = static_cast<const MetalContactState*>(contact_state_.contents);
-      return {.iterations = state->iterations - before, .residual = state->residual};
     }
   }
 
@@ -2046,17 +1662,12 @@ class MetalBackend final : public ComputeBackend {
   id<MTLComputePipelineState> coupled_scatter_count_pipeline_{nil};
   id<MTLComputePipelineState> coupled_scatter_fill_pipeline_{nil};
   id<MTLComputePipelineState> coupled_scatter_sort_pipeline_{nil};
-  id<MTLComputePipelineState> contact_count_pipeline_{nil};
   id<MTLComputePipelineState> inclusive_scan_pipeline_{nil};
-  id<MTLComputePipelineState> contact_fill_pipeline_{nil};
   id<MTLComputePipelineState> contact_respond_pipeline_{nil};
-  id<MTLComputePipelineState> contact_gaps_pipeline_{nil};
-  id<MTLComputePipelineState> contact_reduce_pipeline_{nil};
-  id<MTLComputePipelineState> contact_advance_pipeline_{nil};
+  id<MTLComputePipelineState> contact_step_tree_pipeline_{nil};
+  id<MTLComputePipelineState> contact_tree_pipeline_{nil};
+  id<MTLComputePipelineState> contact_record_pipeline_{nil};
   id<MTLComputePipelineState> contact_solve_pipeline_{nil};
-  id<MTLComputePipelineState> contact_respond_step_pipeline_{nil};
-  id<MTLComputePipelineState> contact_gaps_step_pipeline_{nil};
-  id<MTLComputePipelineState> contact_advance_step_pipeline_{nil};
   std::unique_ptr<metal::FlowSolver> flow_solver_;
   std::unique_ptr<metal::CellKernels> cell_kernels_;
 
@@ -2143,32 +1754,6 @@ class MetalBackend final : public ComputeBackend {
   std::size_t coupled_scatter_cell_capacity_{0};
   std::size_t coupled_scatter_site_capacity_{0};
 
-  id<MTLBuffer> contact_ids_{nil};
-  id<MTLBuffer> contact_centers_{nil};
-  id<MTLBuffer> contact_axes_{nil};
-  id<MTLBuffer> contact_geometry_{nil};
-  std::size_t contact_cell_capacity_{0};
-
-  id<MTLBuffer> contact_candidates_{nil};
-  std::size_t contact_candidate_capacity_{0};
-
-  id<MTLBuffer> contact_counts_{nil};
-  id<MTLBuffer> contact_scan_a_{nil};
-  id<MTLBuffer> contact_scan_b_{nil};
-  id<MTLBuffer> contact_inclusive_counts_{nil};
-  std::size_t contact_pair_capacity_{0};
-
-  id<MTLBuffer> contact_first_ids_{nil};
-  id<MTLBuffer> contact_second_ids_{nil};
-  id<MTLBuffer> contact_first_slots_{nil};
-  id<MTLBuffer> contact_second_slots_{nil};
-  id<MTLBuffer> contact_ordinals_{nil};
-  id<MTLBuffer> contact_points_{nil};
-  id<MTLBuffer> contact_normals_{nil};
-  id<MTLBuffer> contact_separations_{nil};
-  id<MTLBuffer> contact_weights_{nil};
-  std::size_t contact_output_capacity_{0};
-
   id<MTLBuffer> contact_rows_{nil};
   id<MTLBuffer> contact_bodies_{nil};
   id<MTLBuffer> contact_response_{nil};
@@ -2177,7 +1762,6 @@ class MetalBackend final : public ComputeBackend {
   std::array<id<MTLBuffer>, 2> contact_multipliers_{};
   std::array<id<MTLBuffer>, 2> contact_gaps_{};
   std::array<id<MTLBuffer>, 2> contact_reduce_{};
-  id<MTLBuffer> contact_terms_{nil};
   id<MTLBuffer> contact_state_{nil};
   std::size_t contact_body_capacity_{0};
   std::size_t contact_row_capacity_{0};

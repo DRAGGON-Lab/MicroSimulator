@@ -552,3 +552,21 @@ kernel void advance_coupled_grid(
     atomic_fetch_or_explicit(error, 2u, memory_order_relaxed);
   }
 }
+
+// One step of an inclusive prefix sum: after the steps with offsets 1, 2,
+// 4, ... reach the element count, alternating between two buffers, the last
+// output holds the running totals.
+kernel void inclusive_scan_step(device const uint* input [[buffer(0)]],
+                                device uint* output [[buffer(1)]],
+                                constant uint& offset [[buffer(2)]],
+                                constant uint& element_count [[buffer(3)]],
+                                uint index [[thread_position_in_grid]]) {
+  if (index >= element_count) {
+    return;
+  }
+  uint value = input[index];
+  if (index >= offset) {
+    value += input[index - offset];
+  }
+  output[index] = value;
+}

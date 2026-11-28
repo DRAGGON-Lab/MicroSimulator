@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "microsimulator/constraints.hpp"
+#include "microsimulator/contact_graph.hpp"
 #include "microsimulator/deposition.hpp"
 #include "microsimulator/mechanics.hpp"
 #include "microsimulator/signals.hpp"
@@ -28,6 +29,9 @@ namespace microsimulator::cuda {
                                                const BiomassDeposit& deposit,
                                                const BiomassDragParameters& parameters,
                                                cudaStream_t stream);
+
+[[nodiscard]] ContactGraph cell_contacts(const WorldState& state,
+                                         const ContactParameters& parameters, cudaStream_t stream);
 
 [[nodiscard]] ExternalContactGraph external_contacts(const WorldState& state,
                                                      const ConstraintSet& constraints,

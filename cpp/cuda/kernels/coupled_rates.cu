@@ -1,9 +1,9 @@
 #include <cmath>
 
-#include "contacts.cuh"
 #include "core/shared_constants.hpp"
 #include "coupled_rates.cuh"
 #include "microsimulator/species.hpp"
+#include "scan.cuh"
 
 namespace microsimulator::cuda {
 namespace {

@@ -58,6 +58,8 @@ static_assert(sizeof(BrinkmanDragData) == 32);
 static_assert(sizeof(ExternalContactData) == 32);
 static_assert(sizeof(ExternalContactRecord) == 48);
 static_assert(sizeof(FlowDriftData) == 64);
+static_assert(sizeof(CellContactData) == 32);
+static_assert(sizeof(CellContactRecord) == 48);
 static_assert(sizeof(SignalSweepState) == 16);
 
 }  // namespace microsimulator::device
